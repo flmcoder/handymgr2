@@ -1,0 +1,3751 @@
+<!DOCTYPE html><html lang="en"><head><meta name="x-poe-datastore-behavior" content="local_only"><meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://code.jquery.com https://unpkg.com https://d3js.org https://threejs.org https://cdn.plot.ly https://stackpath.bootstrapcdn.com https://maps.googleapis.com https://cdn.tailwindcss.com https://ajax.googleapis.com https://kit.fontawesome.com https://cdn.datatables.net https://maxcdn.bootstrapcdn.com https://code.highcharts.com https://tako-static-assets-production.s3.amazonaws.com https://www.youtube.com https://fonts.googleapis.com https://fonts.gstatic.com https://pfst.cf2.poecdn.net https://puc.poecdn.net https://i.imgur.com https://wikimedia.org https://*.icons8.com https://*.giphy.com https://picsum.photos https://images.unsplash.com; frame-src 'self' https://www.youtube.com https://trytako.com; child-src 'self'; manifest-src 'self'; worker-src 'self'; upgrade-insecure-requests; block-all-mixed-content;">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maintenance Cockpit — AppFolio Integration</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&amp;family=DM+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+:root {
+  /* Light theme — default */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f6f8;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f5f6f9;
+  --bg-input: #f0f1f5;
+  --border: #d4d8e1;
+  --border-active: #3578e5;
+  --text-primary: #1b1f27;
+  --text-secondary: #4f5668;
+  --text-muted: #959bab;
+  --accent: #3578e5;
+  --accent-dim: rgba(53,120,229,0.09);
+  --accent-glow: rgba(53,120,229,0.18);
+  --danger: #d13b3b;
+  --danger-dim: rgba(209,59,59,0.09);
+  --success: #1a9956;
+  --success-dim: rgba(26,153,86,0.09);
+  --info: #2e86c9;
+  --info-dim: rgba(46,134,201,0.09);
+  --warning: #d4860c;
+  --warning-dim: rgba(212,134,12,0.09);
+  --purple: #6f52d4;
+  --purple-dim: rgba(111,82,212,0.09);
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'DM Sans', sans-serif;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow: 0 1px 8px rgba(0,0,0,0.06);
+  --transition: 0.2s ease;
+}
+html.dark {
+  --bg-primary: #0c0e13;
+  --bg-secondary: #13161d;
+  --bg-card: #181c25;
+  --bg-card-hover: #1e2330;
+  --bg-input: #10131a;
+  --border: #262b38;
+  --border-active: #5b9cf5;
+  --text-primary: #e8e6e1;
+  --text-secondary: #8a8d97;
+  --text-muted: #555963;
+  --accent: #5b9cf5;
+  --accent-dim: rgba(91,156,245,0.15);
+  --accent-glow: rgba(91,156,245,0.25);
+  --danger: #e0544e;
+  --danger-dim: rgba(224,84,78,0.15);
+  --success: #3ab878;
+  --success-dim: rgba(58,184,120,0.15);
+  --info: #4da6e8;
+  --info-dim: rgba(77,166,232,0.15);
+  --warning: #e8b44d;
+  --warning-dim: rgba(232,180,77,0.15);
+  --purple: #9b7ae8;
+  --purple-dim: rgba(155,122,232,0.15);
+  --shadow: 0 2px 12px rgba(0,0,0,0.3);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ===================== VAULT / UNLOCK SCREEN ===================== */
+#vaultScreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--bg-primary);
+  position: relative;
+  overflow: hidden;
+}
+#vaultScreen::before {
+  content: '';
+  position: absolute;
+  width: 600px; height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+  top: -200px; right: -200px;
+  opacity: 0.3;
+  pointer-events: none;
+}
+#vaultScreen::after {
+  content: '';
+  position: absolute;
+  width: 400px; height: 400px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--purple-dim) 0%, transparent 70%);
+  bottom: -150px; left: -100px;
+  opacity: 0.4;
+  pointer-events: none;
+}
+.vault-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 36px;
+  width: 100%;
+  max-width: 420px;
+  position: relative;
+  z-index: 2;
+  animation: fadeIn 0.5s ease;
+}
+.vault-icon {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 20px;
+  font-size: 22px;
+  color: var(--accent);
+  border: 2px solid var(--accent-glow);
+}
+.vault-title {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 6px;
+}
+.vault-subtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+.vault-input-wrap {
+  position: relative;
+  margin-bottom: 16px;
+}
+.vault-input {
+  width: 100%;
+  padding: 14px 48px 14px 16px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  letter-spacing: 2px;
+  transition: var(--transition);
+}
+.vault-input:focus { outline: none; border-color: var(--accent); }
+.vault-input::placeholder { letter-spacing: 0; color: var(--text-muted); font-size: 13px; }
+.vault-input.vhost-input { letter-spacing: 0; font-size: 16px; }
+.vault-toggle-vis {
+  position: absolute;
+  right: 12px; top: 50%; transform: translateY(-50%);
+  background: none; border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+}
+.vault-toggle-vis:hover { color: var(--text-primary); }
+.vault-unlock-btn {
+  width: 100%;
+  padding: 14px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: var(--transition);
+}
+.vault-unlock-btn:hover { filter: brightness(1.1); }
+.vault-unlock-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: none;
+}
+.vault-error {
+  display: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--danger);
+  text-align: center;
+  margin-top: 12px;
+  padding: 8px;
+  background: var(--danger-dim);
+  border-radius: var(--radius);
+}
+.vault-error.show { display: block; animation: fadeIn 0.2s ease; }
+.vault-footer {
+  margin-top: 20px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  line-height: 1.6;
+}
+.vault-footer i { color: var(--accent); margin-right: 4px; }
+.vault-vhost-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: -8px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+.vault-vhost-hint code {
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.vault-advanced-toggle {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+  cursor: pointer; margin-bottom: 12px; padding: 6px;
+  border: none; background: none; width: 100%;
+  transition: var(--transition);
+}
+.vault-advanced-toggle:hover { color: var(--accent); }
+.vault-advanced-toggle i { transition: transform 0.2s ease; font-size: 10px; }
+.vault-advanced-toggle.open i { transform: rotate(180deg); }
+.vault-advanced-panel {
+  display: none; padding: 0 0 16px;
+  animation: fadeIn 0.2s ease;
+}
+.vault-advanced-panel.show { display: block; }
+.vault-proxy-label {
+  font-family: var(--font-mono);
+  font-size: 10px; font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  display: block;
+}
+.vault-proxy-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 6px;
+  line-height: 1.6;
+}
+.vault-proxy-hint code {
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.vault-proxy-presets {
+  display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;
+}
+.vault-proxy-preset {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.vault-proxy-preset:hover { border-color: var(--accent); color: var(--accent); }
+.vault-proxy-preset.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* ===================== APP SHELL (hidden until unlock) ===================== */
+#appShell { display: none; }
+#appShell.unlocked { display: block; }
+
+/* Top Bar */
+.topbar {
+  position: sticky; top: 0; z-index: 100;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 0 20px;
+  height: 52px;
+  display: flex; align-items: center; justify-content: space-between;
+  backdrop-filter: blur(12px);
+}
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+.topbar-logo {
+  font-family: var(--font-mono);
+  font-weight: 700; font-size: 14px;
+  color: var(--accent);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  display: flex; align-items: center; gap: 8px;
+}
+.topbar-logo i { font-size: 18px; }
+.topbar-divider { width: 1px; height: 24px; background: var(--border); }
+.topbar-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--success);
+  display: flex; align-items: center; gap: 6px;
+}
+.topbar-status .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--success);
+  animation: pulse-dot 2s infinite;
+}
+.topbar-status.error { color: var(--danger); }
+.topbar-status.error .dot { background: var(--danger); animation: none; }
+.topbar-status.loading { color: var(--warning); }
+.topbar-status.loading .dot { background: var(--warning); }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.rate-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+}
+.cache-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  display: flex; align-items: center; gap: 5px;
+  transition: var(--transition);
+}
+.cache-badge.live {
+  background: var(--success-dim);
+  color: var(--success);
+  border: 1px solid rgba(58,184,120,0.2);
+}
+.cache-badge.cached {
+  background: var(--info-dim);
+  color: var(--info);
+  border: 1px solid rgba(77,166,232,0.2);
+}
+.cache-badge.stale {
+  background: var(--warning-dim);
+  color: var(--warning);
+  border: 1px solid rgba(232,180,77,0.2);
+}
+.cache-badge.offline {
+  background: var(--danger-dim);
+  color: var(--danger);
+  border: 1px solid rgba(224,84,78,0.2);
+}
+.refresh-btn {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex; align-items: center; gap: 5px;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+.refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.refresh-btn.spinning i { animation: spin 1s linear infinite; }
+.sync-timestamp {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.lock-btn {
+  background: var(--danger-dim);
+  border: 1px solid rgba(224,84,78,0.3);
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex; align-items: center; gap: 5px;
+  transition: var(--transition);
+}
+.lock-btn:hover { background: var(--danger); color: #fff; }
+.theme-toggle-btn {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 14px;
+  width: 28px; height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: var(--transition);
+}
+.theme-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
+.cache-io-btn {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  width: 24px; height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: var(--transition);
+  padding: 0;
+}
+.cache-io-btn:hover { border-color: var(--accent); color: var(--accent); }
+.vault-timer {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex; align-items: center; gap: 4px;
+}
+.vault-timer i { font-size: 10px; }
+
+/* Navigation Tabs */
+.nav-tabs {
+  display: flex; gap: 2px; padding: 0 20px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.nav-tab {
+  font-family: var(--font-mono);
+  font-size: 12px; font-weight: 500;
+  padding: 12px 16px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  transition: var(--transition);
+  background: none; border-top: none; border-left: none; border-right: none;
+  display: flex; align-items: center; gap: 8px;
+}
+.nav-tab:hover { color: var(--text-secondary); }
+.nav-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.nav-tab .badge {
+  font-size: 10px; padding: 1px 6px; border-radius: 8px;
+  background: var(--danger); color: #fff; font-weight: 600;
+}
+
+/* Main Content */
+.main-content { padding: 20px; max-width: 1400px; margin: 0 auto; }
+.section { display: none; }
+.section.active { display: block; animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* KPI Cards */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.kpi-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; position: relative; overflow: hidden; transition: var(--transition); }
+.kpi-card:hover { border-color: var(--border-active); transform: translateY(-1px); }
+.kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+.kpi-card.amber::before { background: var(--accent); }
+.kpi-card.red::before { background: var(--danger); }
+.kpi-card.green::before { background: var(--success); }
+.kpi-card.blue::before { background: var(--info); }
+.kpi-card.purple::before { background: var(--purple); }
+.kpi-label { font-size: 11px; font-family: var(--font-mono); color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.kpi-value { font-size: 28px; font-weight: 700; font-family: var(--font-mono); line-height: 1; }
+.kpi-sub { font-size: 12px; color: var(--text-secondary); margin-top: 6px; display: flex; align-items: center; gap: 4px; }
+.kpi-sub.up { color: var(--success); }
+.kpi-sub.down { color: var(--danger); }
+
+/* Data Table */
+.table-wrapper { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.table-header { padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 10px; }
+.table-title { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+.table-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.filter-btn, .action-btn { font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-secondary); cursor: pointer; transition: var(--transition); display: flex; align-items: center; gap: 5px; }
+.filter-btn:hover, .action-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.filter-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.action-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.action-btn.primary:hover { filter: brightness(1.1); }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table thead th { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap; }
+.data-table thead th:hover { color: var(--text-secondary); }
+.data-table tbody tr { border-bottom: 1px solid var(--border); transition: var(--transition); }
+.data-table tbody tr:hover { background: var(--bg-card-hover); }
+.data-table tbody tr:last-child { border-bottom: none; }
+.data-table td { padding: 10px 14px; vertical-align: middle; }
+
+/* Tags */
+.tag { font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap; }
+.tag.urgent { background: var(--danger-dim); color: var(--danger); }
+.tag.normal { background: var(--info-dim); color: var(--info); }
+.tag.low { background: rgba(85,89,99,0.2); color: var(--text-secondary); }
+.tag.new { background: var(--accent-dim); color: var(--accent); }
+.tag.assigned { background: var(--info-dim); color: var(--info); }
+.tag.scheduled { background: var(--purple-dim); color: var(--purple); }
+.tag.completed { background: var(--success-dim); color: var(--success); }
+.tag.canceled { background: rgba(85,89,99,0.2); color: var(--text-muted); }
+.tag.waiting { background: var(--warning-dim); color: var(--warning); }
+.tag.work-completed { background: var(--success-dim); color: var(--success); }
+.tag.compliant { background: var(--success-dim); color: var(--success); }
+.tag.non-compliant { background: var(--danger-dim); color: var(--danger); }
+.tag.approved { background: var(--success-dim); color: var(--success); }
+.tag.pending-tag { background: var(--warning-dim); color: var(--warning); }
+.tag.paid { background: var(--accent-dim); color: var(--accent); }
+
+/* Turn Board */
+.turn-board { display: flex; flex-direction: column; gap: 12px; }
+.turn-col-header { font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+.turn-col-header .count { background: var(--accent-dim); color: var(--accent); padding: 1px 6px; border-radius: 4px; font-size: 10px; }
+.turn-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; transition: var(--transition); cursor: pointer; margin-bottom: 8px; }
+.turn-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.turn-card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.turn-unit { font-family: var(--font-mono); font-weight: 600; font-size: 14px; }
+.turn-property { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.turn-cost { font-family: var(--font-mono); font-weight: 700; font-size: 13px; color: var(--danger); }
+.turn-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); }
+.turn-meta span { display: flex; align-items: center; gap: 4px; }
+.turn-progress { margin-top: 8px; height: 4px; background: var(--bg-input); border-radius: 2px; overflow: hidden; }
+.turn-progress-bar { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+
+/* Reconciliation */
+.recon-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; margin-bottom: 12px; transition: var(--transition); }
+.recon-card:hover { border-color: var(--accent); }
+.recon-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
+.recon-match { font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px; text-transform: uppercase; }
+.recon-match.high { background: var(--success-dim); color: var(--success); }
+.recon-match.medium { background: var(--warning-dim); color: var(--warning); }
+.recon-match.low { background: var(--danger-dim); color: var(--danger); }
+.recon-detail { display: grid; grid-template-columns: 1fr 40px 1fr; gap: 10px; align-items: center; }
+.recon-side { background: var(--bg-input); border-radius: var(--radius); padding: 12px; }
+.recon-side-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.recon-arrow { display: flex; justify-content: center; align-items: center; color: var(--accent); font-size: 18px; }
+.recon-field { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.recon-field strong { color: var(--text-primary); font-weight: 600; }
+.recon-actions { display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end; }
+
+/* Template */
+.template-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.template-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; transition: var(--transition); }
+.template-card:hover { border-color: var(--accent); }
+.template-card-title { font-family: var(--font-mono); font-size: 13px; font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+.template-card-desc { font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+.template-preview { background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font-size: 12px; line-height: 1.6; color: var(--text-secondary); max-height: 140px; overflow-y: auto; }
+.template-preview .var { background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; font-family: var(--font-mono); font-size: 11px; }
+
+/* Vendor grid */
+.vendor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.vendor-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; transition: var(--transition); }
+.vendor-card:hover { border-color: var(--accent); }
+.vendor-card.warn { border-left: 3px solid var(--warning); }
+.vendor-card.expired { border-left: 3px solid var(--danger); }
+.vendor-name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.vendor-id { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
+.vendor-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); padding: 4px 0; }
+.vendor-row + .vendor-row { border-top: 1px solid var(--border); }
+
+/* Error log */
+.error-log { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.error-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; font-size: 12px; border-bottom: 1px solid var(--border); transition: var(--transition); }
+.error-row:hover { background: var(--bg-card-hover); }
+.error-row:last-child { border-bottom: none; }
+.error-code { font-family: var(--font-mono); font-weight: 700; font-size: 12px; min-width: 40px; }
+.error-code.c0 { color: var(--danger); }
+.error-code.c400 { color: var(--info); }
+.error-code.c403 { color: var(--danger); }
+.error-code.c422 { color: var(--warning); }
+.error-code.c429 { color: var(--danger); }
+.error-code.c526 { color: var(--warning); }
+.error-code.c533 { color: var(--purple); }
+.error-ts { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); min-width: 70px; }
+.error-msg { color: var(--text-secondary); flex: 1; }
+.error-action { font-family: var(--font-mono); font-size: 10px; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+.error-action.retry { background: var(--accent-dim); color: var(--accent); }
+.error-action.resolved { background: var(--success-dim); color: var(--success); }
+.error-action.queued { background: var(--info-dim); color: var(--info); }
+
+/* Section header */
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+.section-title { font-family: var(--font-mono); font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+.section-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+/* Search */
+.search-box { display: flex; align-items: center; gap: 8px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 12px; width: 240px; transition: var(--transition); }
+.search-box:focus-within { border-color: var(--accent); }
+.search-box i { color: var(--text-muted); font-size: 13px; }
+.search-box input { background: none; border: none; outline: none; color: var(--text-primary); font-family: var(--font-sans); font-size: 16px; width: 100%; }
+.search-box input::placeholder { color: var(--text-muted); }
+
+/* Modal */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; justify-content: center; align-items: center; padding: 20px; }
+.modal-overlay.show { display: flex; }
+.modal { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; animation: modalIn 0.2s ease; }
+@keyframes modalIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+.modal-head { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.modal-head h3 { font-family: var(--font-mono); font-size: 14px; font-weight: 600; }
+.modal-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 18px; padding: 4px; transition: var(--transition); }
+.modal-close:hover { color: var(--text-primary); }
+.modal-body { padding: 20px; }
+.form-group { margin-bottom: 14px; }
+.form-label { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; display: block; }
+.form-input, .form-select, .form-textarea { width: 100%; padding: 10px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); font-family: var(--font-sans); font-size: 16px; transition: var(--transition); }
+.form-input:focus, .form-select:focus, .form-textarea:focus { outline: none; border-color: var(--accent); }
+.form-textarea { resize: vertical; min-height: 80px; }
+.form-select { cursor: pointer; }
+.modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Table scroll */
+.table-scroll { overflow-x: auto; }
+
+/* Loading skeleton */
+.skeleton-row { display: flex; gap: 14px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.skeleton-block { background: linear-gradient(90deg, var(--bg-input) 25%, var(--bg-card-hover) 50%, var(--bg-input) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; height: 16px; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.loading-overlay {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 48px 20px; color: var(--text-muted);
+}
+.loading-overlay i { font-size: 28px; margin-bottom: 12px; color: var(--accent); animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.loading-overlay p { font-family: var(--font-mono); font-size: 12px; }
+
+/* CORS error banner */
+.cors-banner {
+  background: var(--danger-dim);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  display: none;
+}
+.cors-banner.show { display: block; animation: fadeIn 0.3s ease; }
+.cors-banner strong { color: var(--danger); }
+.cors-banner code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-input); padding: 2px 6px; border-radius: 3px; }
+.error-code.c401 { color: var(--danger); }
+.error-code.c404 { color: var(--warning); }
+
+/* Kanban Board */
+.kanban-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.kanban-filters select { font-family: var(--font-mono); font-size: 12px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-primary); cursor: pointer; min-width: 120px; }
+.kanban-filters select:focus { outline: none; border-color: var(--accent); }
+.kanban-board { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 8px; min-height: 300px; align-items: flex-start; }
+.kanban-col { min-width: 220px; max-width: 280px; flex: 1; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-lg); display: flex; flex-direction: column; max-height: 70vh; }
+.kanban-col-head { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--bg-secondary); border-radius: var(--radius-lg) var(--radius-lg) 0 0; cursor: pointer; transition: var(--transition); }
+.kanban-col-head:hover { background: var(--bg-card-hover); }
+.kanban-col-head.selected { background: var(--accent-dim); border-bottom-color: var(--accent); }
+.kanban-col-title { font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+.kanban-col-count { font-family: var(--font-mono); font-size: 10px; padding: 2px 7px; border-radius: 8px; background: var(--accent-dim); color: var(--accent); font-weight: 700; }
+.kanban-col-body { padding: 6px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.kanban-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; cursor: pointer; transition: var(--transition); border-left: 3px solid transparent; }
+.kanban-card:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: var(--shadow); }
+.kanban-card.urgent { border-left-color: var(--danger); }
+.kanban-card.normal { border-left-color: var(--info); }
+.kanban-card.low { border-left-color: var(--text-muted); }
+.kanban-card .kc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
+.kanban-card .kc-id { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--accent); }
+.kanban-card .kc-priority { font-size: 9px; }
+.kanban-card .kc-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.4; margin-bottom: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.kanban-card .kc-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 10px; color: var(--text-muted); }
+.kanban-card .kc-meta span { display: flex; align-items: center; gap: 3px; }
+.kanban-card .kc-meta i { font-size: 9px; }
+
+/* Activity filters */
+.activity-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; padding: 0 16px; }
+.activity-filter-btn { font-family: var(--font-mono); font-size: 10px; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-secondary); cursor: pointer; transition: var(--transition); }
+.activity-filter-btn:hover { border-color: var(--accent); }
+.activity-filter-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .topbar { padding: 0 12px; }
+  .topbar-status { display: none; }
+  .vault-timer { display: none; }
+  .sync-timestamp { display: none; }
+  .rate-badge { display: none; }
+  .main-content { padding: 12px; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .kpi-value { font-size: 22px; }
+  .recon-detail { grid-template-columns: 1fr; }
+  .recon-arrow { transform: rotate(90deg); }
+  .search-box { width: 160px; }
+  .nav-tabs { padding: 0 8px; }
+  .nav-tab { padding: 10px 10px; font-size: 11px; }
+  .template-grid { grid-template-columns: 1fr; }
+  .vendor-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .kpi-grid { grid-template-columns: 1fr; }
+  .table-header { flex-direction: column; align-items: stretch; }
+  .table-actions { flex-wrap: wrap; }
+  .section-header { flex-direction: column; align-items: stretch; }
+}
+
+/* Stagger animation */
+.stagger > * { opacity: 0; animation: staggerIn 0.4s ease forwards; }
+.stagger > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger > *:nth-child(2) { animation-delay: 0.1s; }
+.stagger > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger > *:nth-child(4) { animation-delay: 0.2s; }
+.stagger > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger > *:nth-child(6) { animation-delay: 0.3s; }
+.stagger > *:nth-child(7) { animation-delay: 0.35s; }
+.stagger > *:nth-child(8) { animation-delay: 0.4s; }
+@keyframes staggerIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Empty state */
+.empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+.empty-state i { font-size: 36px; margin-bottom: 12px; display: block; color: var(--border); }
+.empty-state p { font-size: 13px; }
+
+/* Progress bar — non-blocking, fixed bottom-right corner */
+.progress-dock {
+  position: fixed; bottom: 16px; right: 16px; z-index: 250;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 12px 16px;
+  min-width: 260px; max-width: 340px;
+  box-shadow: var(--shadow);
+  font-family: var(--font-mono); font-size: 11px;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  transform: translateY(0);
+}
+.progress-dock.hidden { opacity: 0; transform: translateY(20px); pointer-events: none; }
+.progress-dock-title {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px; color: var(--text-primary); font-weight: 600;
+}
+.progress-dock-title .close-prog {
+  background: none; border: none; color: var(--text-muted); cursor: pointer;
+  font-size: 14px; padding: 0 2px;
+}
+.progress-dock-status { color: var(--text-secondary); margin-bottom: 6px; font-size: 10px; }
+.progress-bar-track {
+  height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%; border-radius: 3px; background: var(--accent);
+  transition: width 0.3s ease;
+}
+.progress-dock-steps {
+  display: flex; gap: 4px; margin-top: 8px;
+}
+.progress-step {
+  flex: 1; height: 3px; border-radius: 2px; background: var(--bg-input);
+  transition: background 0.3s ease;
+}
+.progress-step.done { background: var(--success); }
+.progress-step.active { background: var(--accent); animation: pulse-bar 1s infinite; }
+.progress-step.error { background: var(--danger); }
+@keyframes pulse-bar { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* Section refresh button */
+.sec-refresh {
+  background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text-secondary); font-family: var(--font-mono);
+  font-size: 10px; padding: 5px 10px; border-radius: 6px;
+  cursor: pointer; display: flex; align-items: center; gap: 5px;
+  transition: var(--transition);
+}
+.sec-refresh:hover { border-color: var(--accent); color: var(--accent); }
+.sec-refresh:disabled { opacity: 0.4; cursor: not-allowed; }
+.sec-refresh.spinning i { animation: spin 1s linear infinite; }
+
+/* ===================== KPI Clickable ===================== */
+.kpi-clickable { cursor: pointer; }
+.kpi-clickable:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.12); transform: translateY(-2px); }
+
+/* ===================== Flag Toggle Button ===================== */
+.flag-toggle-btn {
+  background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text-muted); font-size: 16px; width: 34px; height: 34px;
+  border-radius: 6px; cursor: pointer; display: flex; align-items: center;
+  justify-content: center; transition: var(--transition);
+}
+.flag-toggle-btn:hover { border-color: var(--warning); color: var(--warning); }
+.flag-toggle-btn.active { background: var(--warning-dim); border-color: var(--warning); color: var(--warning); }
+
+/* ===================== Payroll ===================== */
+.payroll-range-label {
+  font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+  color: var(--text-primary); min-width: 180px; text-align: center;
+}
+
+/* ===================== WO Detail Sections ===================== */
+.detail-section { margin-bottom: 18px; }
+.detail-section-title {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);
+  margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 6px;
+}
+.detail-section-title i { font-size: 12px; color: var(--accent); }
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.detail-row { display: flex; flex-direction: column; gap: 2px; }
+.detail-row-label {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px;
+}
+.detail-row-value { font-size: 13px; color: var(--text-secondary); word-break: break-word; }
+
+/* ===================== Notes in WO Detail ===================== */
+.note-list { max-height: 200px; overflow-y: auto; }
+.note-item {
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;
+}
+.note-item-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 4px; font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-muted);
+}
+.note-item-body { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+
+/* ===================== Move-out Urgency Tags ===================== */
+.moveout-urgent { background: var(--danger-dim); color: var(--danger); font-weight: 700; }
+.moveout-soon { background: var(--warning-dim); color: var(--warning); font-weight: 600; }
+.moveout-normal { background: var(--success-dim); color: var(--success); }
+
+/* ===================== Flagged Card Indicators ===================== */
+.kanban-card.flagged-card { border-right: 3px solid var(--warning); }
+.kc-flag { color: var(--warning); font-size: 11px; margin-left: 4px; }
+
+/* ===================== Additional Tags ===================== */
+.tag.work-done { background: var(--success-dim); color: var(--success); }
+.tag.flagged { background: var(--warning-dim); color: var(--warning); }
+.tag.ready-to-bill { background: var(--purple-dim); color: var(--purple); }
+.tag.estimate-requested { background: var(--info-dim); color: var(--info); }
+
+/* ===================== Table utility ===================== */
+.table-wrap { overflow-x: auto; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.wo-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.wo-table thead th {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);
+  padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.wo-table tbody tr { border-bottom: 1px solid var(--border); transition: var(--transition); }
+.wo-table tbody tr:hover { background: var(--bg-card-hover); }
+.wo-table tbody tr:last-child { border-bottom: none; }
+.wo-table td { padding: 10px 14px; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<!-- ==================== VAULT UNLOCK SCREEN ==================== -->
+<div id="vaultScreen">
+  <div class="vault-box">
+    <div class="vault-icon"><i class="fas fa-shield-alt"></i></div>
+    <div class="vault-title">Credential Vault</div>
+    <div class="vault-subtitle">
+      Your API keys are AES-256-GCM encrypted.<br>
+      Enter your passphrase and AppFolio subdomain to connect.
+    </div>
+    <div class="vault-input-wrap">
+      <input type="password" class="vault-input" id="vaultPassphrase" placeholder="Enter vault passphrase" autocomplete="off" autofocus="">
+      <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
+    </div>
+    <div class="vault-input-wrap">
+      <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off">
+    </div>
+    <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">yourco</span>.appfolio.com</code></div>
+    <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> CORS Proxy <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
+    <div class="vault-advanced-panel" id="advancedPanel">
+      <label class="vault-proxy-label">Proxy Relay URL</label>
+      <div class="vault-input-wrap">
+        <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
+      </div>
+      <div class="vault-proxy-hint">
+        <strong>Proxy:</strong> <a href="https://www.val.town" target="_blank" style="color:var(--accent)">Val Town</a> — credentials are hardcoded <strong>server-side</strong> in the proxy. The browser sends only the API path; the proxy adds auth and forwards to AppFolio.<br>
+        <span style="color:var(--success)"><i class="fas fa-check-circle"></i> Your proxy is already deployed and pre-configured.</span>
+      </div>
+    </div>
+    <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-lock-open"></i> Decrypt &amp; Connect</button>
+    <div class="vault-error" id="vaultError"></div>
+    <div class="vault-footer">
+      <i class="fas fa-info-circle"></i> AES-256-GCM • PBKDF2 150k iterations • Memory-only decryption<br>
+      <i class="fas fa-clock"></i> Auto-saves &amp; locks after 60 minutes of inactivity<br>
+      <i class="fas fa-shield-alt"></i> First connect: click <strong style="color:var(--accent)">"Allow"</strong> on CSP popup • Proxy via <a href="https://www.val.town" target="_blank" style="color:var(--accent)">Val Town</a> (credentials hardcoded server-side)
+    </div>
+  </div>
+</div>
+
+<!-- ==================== APPLICATION SHELL ==================== -->
+<div id="appShell">
+
+<!-- Top Bar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo"><i class="fas fa-cogs"></i> MAINT:COCKPIT</div>
+    <div class="topbar-divider"></div>
+    <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
+  </div>
+  <div class="topbar-right">
+    <div class="vault-timer" id="vaultTimer"><i class="fas fa-hourglass-half"></i> <span id="vaultCountdown">15:00</span></div>
+    <button class="theme-toggle-btn" id="themeToggle" title="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
+    <div class="cache-badge live" id="cacheBadge" title="Data source"><i class="fas fa-database"></i> <span id="cacheBadgeText">—</span></div>
+    <button class="cache-io-btn" id="btnExportCache" title="Export cache to file"><i class="fas fa-download"></i></button>
+    <button class="cache-io-btn" id="btnImportCache" title="Import cache from file"><i class="fas fa-upload"></i></button>
+    <div class="sync-timestamp" id="syncTimestamp"></div>
+    <button class="refresh-btn" id="refreshBtn" title="Refresh all data from API"><i class="fas fa-sync-alt"></i> Refresh</button>
+    <div class="rate-badge" id="rateBadge">4/4 req/s</div>
+    <button class="lock-btn" id="lockBtn"><i class="fas fa-lock"></i> Lock</button>
+    <input type="file" id="cacheFileInput" accept=".json" style="display:none">
+  </div>
+</div>
+
+<!-- Navigation -->
+<nav class="nav-tabs" id="navTabs">
+  <button class="nav-tab active" data-tab="dashboard"><i class="fas fa-th-large"></i> Dashboard</button>
+  <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="badge" id="woBadge">—</span></button>
+  <button class="nav-tab" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
+  <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
+  <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
+  <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
+  <button class="nav-tab" data-tab="reconciliation"><i class="fas fa-balance-scale"></i> Reconciliation</button>
+  <button class="nav-tab" data-tab="templates"><i class="fas fa-envelope-open-text"></i> Templates</button>
+  <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
+</nav>
+
+<!-- Main Content -->
+<div class="main-content">
+
+<!-- CORS Banner -->
+<div class="cors-banner" id="corsBanner">
+  <strong><i class="fas fa-exclamation-triangle"></i> Connection Error</strong><br>
+  <span id="corsMsg">The request was blocked.</span><br><br>
+  <strong>How to fix:</strong><br>
+  <strong style="color:var(--accent)">A) CSP Blocked?</strong> Click <strong>"Allow additional resources"</strong> popup at the top of the page → page reloads → re-enter credentials.<br>
+  <strong style="color:var(--accent)">B) 401/404 Errors?</strong> Deploy the v3 proxy code from the vault screen. It has your AppFolio credentials hardcoded server-side — no headers for platforms to strip.<br>
+  &nbsp;&nbsp;&nbsp;→ <strong>Solution:</strong> Lock vault → expand CORS Proxy → copy v3 code → paste into Val Town → save → reconnect.<br>
+  <span id="corsDetail" style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);display:block;margin-top:6px"></span>
+</div>
+
+<section class="section active" id="sec-dashboard">
+  <div class="kpi-grid stagger">
+    <div class="kpi-card amber kpi-clickable" data-kpi="open"><div class="kpi-label">Open Work Orders</div><div class="kpi-value" id="kpiOpen">—</div><div class="kpi-sub" id="kpiOpenSub">Loading…</div></div>
+    <div class="kpi-card red kpi-clickable" data-kpi="urgent"><div class="kpi-label">Urgent / Critical</div><div class="kpi-value" id="kpiUrgent">—</div><div class="kpi-sub" id="kpiUrgentSub">Loading…</div></div>
+    <div class="kpi-card blue kpi-clickable" data-kpi="turns"><div class="kpi-label">Active Turns</div><div class="kpi-value" id="kpiTurns">—</div><div class="kpi-sub" id="kpiTurnsSub">Loading…</div></div>
+    <div class="kpi-card green kpi-clickable" data-kpi="moveouts"><div class="kpi-label">Upcoming Move-Outs</div><div class="kpi-value" id="kpiMoveOuts">—</div><div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div></div>
+    <div class="kpi-card purple kpi-clickable" data-kpi="flagged"><div class="kpi-label">Flagged for Follow-Up</div><div class="kpi-value" id="kpiFlagged">—</div><div class="kpi-sub" id="kpiFlaggedSub">Loading…</div></div>
+  </div>
+  <!-- Upcoming Move-Outs -->
+  <div class="table-wrapper" style="margin-bottom:20px" id="moveOutSection">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-door-open" style="color:var(--warning)"></i> Upcoming Move-Outs (60 days)</div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="moveOutTable">
+        <thead><tr><th>Property</th><th>Unit</th><th>Tenant</th><th>Move-Out Date</th><th>Days Left</th></tr></thead>
+        <tbody id="moveOutBody"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="table-wrapper">
+    <div class="table-header"><div class="table-title"><i class="fas fa-bolt" style="color:var(--accent)"></i> Recent Activity Feed</div><button class="sec-refresh" id="btnRefreshDash"><i class="fas fa-sync-alt"></i> Refresh</button></div>
+    <div class="activity-filters">
+      <button class="activity-filter-btn active" data-actfilter="all">All</button>
+      <button class="activity-filter-btn" data-actfilter="work_order">Work Orders</button>
+      <button class="activity-filter-btn" data-actfilter="turn">Turns</button>
+      <button class="activity-filter-btn" data-actfilter="inspection">Inspections</button>
+      <button class="activity-filter-btn" data-actfilter="urgent">Urgent Only</button>
+    </div>
+    <div class="table-scroll"><table class="data-table" id="activityTable"><thead><tr><th>Time</th><th>Event</th><th>Entity</th><th>Details</th></tr></thead><tbody id="activityBody"></tbody></table></div>
+  </div>
+</section>
+
+<section class="section" id="sec-workorders">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-wrench" style="color:var(--accent)"></i> Work Order Management</div><div class="section-subtitle">Reports API v2 — work_order.json • Open orders (last 180 days) • Click column headers to filter</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search orders…" id="woSearch"></div>
+      <button class="sec-refresh" id="btnRefreshWO"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <button class="action-btn primary" id="btnNewWO"><i class="fas fa-plus"></i> New WO</button>
+    </div>
+  </div>
+  <div class="kanban-filters" id="woFilters">
+    <select id="woPriorityFilter"><option value="">All Priorities</option><option value="Urgent">Urgent</option><option value="Normal">Normal</option><option value="Low">Low</option></select>
+    <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
+    <select id="woPropertyFilter"><option value="">All Properties</option></select>
+    <select id="woGroupFilter"><option value="">All Groups</option></select>
+    <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
+    <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
+    <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
+    <button class="filter-btn" data-filter="Estimated">Estimated</button>
+  </div>
+  <div class="kanban-board" id="kanbanBoard"></div>
+</section>
+
+<!-- ==================== PAYROLL ==================== -->
+<section class="section" id="sec-payroll">
+  <div class="section-header">
+    <div>
+      <div class="section-title"><i class="fas fa-money-check-alt" style="color:var(--success)"></i> Payroll Review</div>
+      <div class="section-subtitle">Work orders marked "Work Done" — Friday-to-Friday pay period</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="action-btn" id="payrollPrev"><i class="fas fa-chevron-left"></i> Prev</button>
+      <span class="payroll-range-label" id="payrollRange">—</span>
+      <button class="action-btn" id="payrollNext">Next <i class="fas fa-chevron-right"></i></button>
+    </div>
+  </div>
+  <div class="kpi-grid stagger" style="margin-bottom:16px">
+    <div class="kpi-card green"><div class="kpi-label">Work Done This Period</div><div class="kpi-value" id="payrollCount">—</div><div class="kpi-sub" id="payrollCountSub">Loading…</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">Total Amount</div><div class="kpi-value" id="payrollTotal">—</div><div class="kpi-sub" id="payrollTotalSub">Loading…</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Vendors Active</div><div class="kpi-value" id="payrollVendors">—</div><div class="kpi-sub" id="payrollVendorsSub">Loading…</div></div>
+    <div class="kpi-card purple"><div class="kpi-label">Properties Touched</div><div class="kpi-value" id="payrollProps">—</div><div class="kpi-sub" id="payrollPropsSub">Loading…</div></div>
+  </div>
+  <div class="table-wrapper">
+    <div class="table-header"><div class="table-title"><i class="fas fa-clipboard-list" style="color:var(--accent)"></i> Work Done This Period</div></div>
+    <div class="table-scroll">
+      <table class="data-table" id="payrollTable">
+        <thead><tr><th>WO #</th><th>Property</th><th>Unit</th><th>Description</th><th>Vendor</th><th>Completed</th><th>Amount</th><th style="width:50px">Flag</th></tr></thead>
+        <tbody id="payrollBody"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="sec-turnboard">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-exchange-alt" style="color:var(--accent)"></i> Turn Board</div><div class="section-subtitle">Reports API v2 — unit_turn_detail.json • Tracks move-out → turn-end cycle with labor &amp; billing costs</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="filter-btn active" data-turnfilter="open">Open Only</button>
+      <button class="filter-btn" data-turnfilter="all">All Turns</button>
+      <button class="sec-refresh" id="btnRefreshTurns"><i class="fas fa-sync-alt"></i> Refresh</button>
+    </div>
+  </div>
+  <div class="turn-board stagger" id="turnBoard"></div>
+</section>
+
+<section class="section" id="sec-inspections">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-clipboard-check" style="color:var(--accent)"></i> Unit Inspections</div><div class="section-subtitle">Reports API v2 — unit_inspection.json • Last 180 days + units with no inspection date</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search inspections…" id="inspSearch"></div>
+      <button class="sec-refresh" id="btnRefreshInsp"><i class="fas fa-sync-alt"></i> Refresh</button>
+    </div>
+  </div>
+  <div class="table-wrap"><table class="wo-table"><thead><tr>
+    <th>Property</th><th>Unit</th><th>Last Inspection</th><th>Tenant</th><th>Move-in</th><th>Move-out</th><th>Status</th>
+  </tr></thead><tbody id="inspBody"></tbody></table></div>
+</section>
+
+<section class="section" id="sec-vendors">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-hard-hat" style="color:var(--accent)"></i> Vendor Compliance Tracker</div><div class="section-subtitle">CompliantStatus synced from Database API — LiabilityInsuranceExpiration monitored</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search vendors…" id="vendorSearch"></div>
+      <button class="sec-refresh" id="btnRefreshVendors"><i class="fas fa-sync-alt"></i> Refresh</button>
+    </div>
+  </div>
+  <div class="vendor-grid stagger" id="vendorGrid"></div>
+</section>
+
+<section class="section" id="sec-reconciliation">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-balance-scale" style="color:var(--accent)"></i> Bill → Work Order Reconciliation</div><div class="section-subtitle">Database API v0 • Bills loaded on-demand to save API calls • Cross-module matching engine</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="action-btn primary" id="btnLoadBills"><i class="fas fa-download"></i> Load Bills</button>
+    </div>
+  </div>
+  <div class="stagger" id="reconList"></div>
+</section>
+
+<section class="section" id="sec-templates">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-envelope-open-text" style="color:var(--accent)"></i> Communication Templates</div><div class="section-subtitle">Auto-fill with API attributes — postCreate Work Order Note / Tenant Note / Owner Note</div></div>
+    <button class="action-btn primary" id="btnNewTemplate"><i class="fas fa-plus"></i> New Template</button>
+  </div>
+  <div class="template-grid stagger" id="templateGrid"></div>
+</section>
+
+<section class="section" id="sec-errors">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-exclamation-triangle" style="color:var(--accent)"></i> API Error Log &amp; Retry Queue</div><div class="section-subtitle">Exponential backoff for 533 • Retry-After for 429 • Semantic validation for 422</div></div>
+    <button class="action-btn" id="btnClearErrors"><i class="fas fa-trash"></i> Clear Resolved</button>
+  </div>
+  <div class="error-log stagger" id="errorLog"></div>
+</section>
+
+</div>
+
+<!-- Progress Dock — non-blocking corner indicator -->
+<div class="progress-dock hidden" id="progressDock">
+  <div class="progress-dock-title"><span id="progTitle">Loading data…</span><button class="close-prog" id="progClose">×</button></div>
+  <div class="progress-dock-status" id="progStatus">Initializing…</div>
+  <div class="progress-bar-track"><div class="progress-bar-fill" id="progBar" style="width:0%"></div></div>
+  <div class="progress-dock-steps" id="progSteps"></div>
+</div>
+
+</div><!-- /appShell -->
+
+<!-- Work Order Detail Modal (expanded) -->
+<div class="modal-overlay" id="woModal">
+  <div class="modal" style="max-width:780px">
+    <div class="modal-head">
+      <h3 id="woModalTitle">Work Order Detail</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="flag-toggle-btn" id="woModalFlag" title="Flag for follow-up"><i class="fas fa-flag"></i></button>
+        <button class="modal-close" id="woModalClose">×</button>
+      </div>
+    </div>
+    <div class="modal-body" id="woModalBody"></div>
+    <div class="modal-footer"><button class="action-btn" id="woModalCloseBtn">Close</button><button class="action-btn primary" id="woModalSave">Save Changes</button></div>
+  </div>
+</div>
+
+<!-- New Work Order Modal -->
+<div class="modal-overlay" id="newWOModal">
+  <div class="modal">
+    <div class="modal-head"><h3>Create Work Order</h3><button class="modal-close" id="newWOModalClose">×</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Property</label><select class="form-select" id="nwoProperty"><option value="">Loading properties…</option></select></div>
+      <div class="form-group"><label class="form-label">Unit</label><input class="form-input" placeholder="e.g. Unit 204" id="nwoUnit"></div>
+      <div class="form-group"><label class="form-label">Priority</label><select class="form-select" id="nwoPriority"><option>Normal</option><option>Urgent</option><option>Low</option></select></div>
+      <div class="form-group"><label class="form-label">Description</label><textarea class="form-textarea" placeholder="Describe the maintenance issue…" id="nwoDesc"></textarea></div>
+      <div class="form-group"><label class="form-label">Assign Vendor</label><select class="form-select" id="nwoVendor"><option value="">Loading vendors…</option></select></div>
+    </div>
+    <div class="modal-footer"><button class="action-btn" id="newWOCancelBtn">Cancel</button><button class="action-btn primary" id="btnCreateWO"><i class="fas fa-plus"></i> Create</button></div>
+  </div>
+</div>
+
+<!-- Lock Confirmation Modal -->
+<div class="modal-overlay" id="lockModal">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-head"><h3><i class="fas fa-lock" style="color:var(--danger);margin-right:8px"></i> Lock Vault</h3><button class="modal-close" id="lockModalClose">×</button></div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-secondary);line-height:1.6">This will wipe all decrypted credentials from memory and return you to the unlock screen. Any unsaved work will persist but API connectivity will be lost.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="action-btn" id="lockCancelBtn">Cancel</button>
+      <button class="action-btn primary" style="background:var(--danger);border-color:var(--danger)" id="lockConfirmBtn"><i class="fas fa-lock"></i> Lock Now</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notification Toast -->
+<div id="toast" style="display:none;position:fixed;bottom:20px;right:20px;z-index:300;background:var(--bg-card);border:1px solid var(--accent);border-radius:var(--radius);padding:12px 20px;font-size:13px;color:var(--text-primary);box-shadow:var(--shadow);animation:fadeIn 0.2s ease;">
+  <span id="toastMsg"></span>
+</div>
+
+<script>
+/* ==============================================================
+   MAINTENANCE COCKPIT — AppFolio Live Integration Dashboard
+   AES-256-GCM Credential Vault + Rate-Limited API Client
+   ============================================================== */
+
+// ---- Dark/Light Mode ----
+var _manualTheme = null; // null = follow system, 'dark' or 'light' = manual override
+// Light theme by default — manual toggle only (no system detection)
+function toggleTheme() {
+  var isDark = document.documentElement.classList.contains('dark');
+  if (isDark) {
+    document.documentElement.classList.remove('dark');
+    _manualTheme = 'light';
+  } else {
+    document.documentElement.classList.add('dark');
+    _manualTheme = 'dark';
+  }
+  updateThemeIcon();
+}
+function updateThemeIcon() {
+  var btn = document.querySelector('#themeToggle');
+  if (!btn) return;
+  var isDark = document.documentElement.classList.contains('dark');
+  btn.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+  btn.title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
+}
+
+// ---- Helpers ----
+function $(sel) { return document.querySelector(sel); }
+function $$(sel) { return document.querySelectorAll(sel); }
+function formatDate(d) {
+  if (!d) return '—';
+  if (typeof d === 'string') { d = new Date(d); }
+  if (isNaN(d.getTime())) return '—';
+  var m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return m[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+}
+function daysBetween(a, b) {
+  var da = typeof a === 'string' ? new Date(a) : a;
+  var db = typeof b === 'string' ? new Date(b) : b;
+  return Math.round(Math.abs(db - da) / 86400000);
+}
+function currency(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0 }); }
+function showToast(msg) { var t = $('#toast'); $('#toastMsg').textContent = msg; t.style.display = 'block'; clearTimeout(t._tid); t._tid = setTimeout(function() { t.style.display = 'none'; }, 3500); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function loadingHtml(msg) { return '<div class="loading-overlay"><i class="fas fa-circle-notch"></i><p>' + escapeHtml(msg) + '</p></div>'; }
+function emptyHtml(icon, msg) { return '<div class="empty-state"><i class="fas ' + icon + '"></i><p>' + escapeHtml(msg) + '</p></div>'; }
+function skeletonRows(n) {
+  var h = '';
+  for (var i = 0; i < n; i++) {
+    h += '<div class="skeleton-row">';
+    h += '<div class="skeleton-block" style="width:60px"></div>';
+    h += '<div class="skeleton-block" style="width:120px"></div>';
+    h += '<div class="skeleton-block" style="width:80px"></div>';
+    h += '<div class="skeleton-block" style="flex:1"></div>';
+    h += '</div>';
+  }
+  return h;
+}
+function timeAgo(dateStr) {
+  var d = new Date(dateStr);
+  var diff = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (diff < 60) return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+/* =================================================================
+   IndexedDB CACHE — Persists data across sessions
+   (localStorage/sessionStorage unavailable in Poe iframe)
+   ================================================================= */
+var CACHE_DB_NAME = 'maint_cockpit_cache';
+var CACHE_DB_VERSION = 2;
+var CACHE_STORE = 'api_data';
+var CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes — matches vault timeout
+var _cacheDb = null;
+
+function openCacheDB() {
+  return new Promise(function(resolve, reject) {
+    if (_cacheDb) { resolve(_cacheDb); return; }
+    try {
+      var req = indexedDB.open(CACHE_DB_NAME, CACHE_DB_VERSION);
+      req.onupgradeneeded = function(e) {
+        var db = e.target.result;
+        if (!db.objectStoreNames.contains(CACHE_STORE)) {
+          db.createObjectStore(CACHE_STORE, { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains('wo_flags')) {
+          db.createObjectStore('wo_flags', { keyPath: 'woId' });
+        }
+      };
+      req.onsuccess = function(e) { _cacheDb = e.target.result; resolve(_cacheDb); };
+      req.onerror = function() { reject(new Error('IndexedDB unavailable')); };
+    } catch (e) { reject(e); }
+  });
+}
+
+function cacheGet(key) {
+  return openCacheDB().then(function(db) {
+    return new Promise(function(resolve) {
+      var tx = db.transaction(CACHE_STORE, 'readonly');
+      var store = tx.objectStore(CACHE_STORE);
+      var req = store.get(key);
+      req.onsuccess = function() { resolve(req.result || null); };
+      req.onerror = function() { resolve(null); };
+    });
+  }).catch(function() { return null; });
+}
+
+function cacheSet(key, data) {
+  return openCacheDB().then(function(db) {
+    return new Promise(function(resolve) {
+      var tx = db.transaction(CACHE_STORE, 'readwrite');
+      var store = tx.objectStore(CACHE_STORE);
+      store.put({ key: key, data: data, timestamp: Date.now() });
+      tx.oncomplete = function() { resolve(true); };
+      tx.onerror = function() { resolve(false); };
+    });
+  }).catch(function() { return false; });
+}
+
+function cacheClearAll() {
+  return openCacheDB().then(function(db) {
+    return new Promise(function(resolve) {
+      var tx = db.transaction(CACHE_STORE, 'readwrite');
+      tx.objectStore(CACHE_STORE).clear();
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function() { resolve(); };
+    });
+  }).catch(function() { /* ignore */ });
+}
+
+function isCacheFresh(entry) {
+  return entry && entry.timestamp && (Date.now() - entry.timestamp) < CACHE_TTL_MS;
+}
+
+function cacheAgeStr(entry) {
+  if (!entry || !entry.timestamp) return 'never';
+  var diff = Math.floor((Date.now() - entry.timestamp) / 1000);
+  if (diff < 10) return 'just now';
+  if (diff < 60) return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  return Math.floor(diff / 3600) + 'h ago';
+}
+
+async function saveAllToCache() {
+  try {
+    await Promise.all([
+      cacheSet('work_orders', WORK_ORDERS),
+      cacheSet('vendors', VENDORS),
+      cacheSet('properties', PROPERTIES),
+      cacheSet('bills', BILLS),
+      cacheSet('turns', TURNS),
+      cacheSet('inspections', INSPECTIONS)
+    ]);
+    updateCacheBadge('live', Date.now());
+    console.log('Cache saved: WO=' + WORK_ORDERS.length + ' V=' + VENDORS.length + ' P=' + PROPERTIES.length + ' B=' + BILLS.length + ' T=' + TURNS.length + ' I=' + INSPECTIONS.length);
+  } catch (e) {
+    console.log('Cache save failed: ' + (e.message || e));
+  }
+}
+
+// Export all data as a downloadable JSON file — reads from MEMORY (not IndexedDB)
+function exportCacheToJSON() {
+  try {
+    var counts = {
+      work_orders: WORK_ORDERS.length,
+      vendors: VENDORS.length,
+      properties: PROPERTIES.length,
+      bills: BILLS.length,
+      turns: TURNS.length,
+      inspections: INSPECTIONS.length
+    };
+    var total = counts.work_orders + counts.vendors + counts.properties + counts.bills + counts.turns + counts.inspections;
+    if (total === 0) {
+      showToast('Nothing to export \u2014 load data from API first');
+      return;
+    }
+    var exportData = {
+      _meta: {
+        exported: new Date().toISOString(),
+        version: 2,
+        dataWindow: DATA_WINDOW_DAYS + ' days',
+        counts: counts
+      },
+      work_orders: WORK_ORDERS,
+      vendors: VENDORS,
+      properties: PROPERTIES,
+      bills: BILLS,
+      turns: TURNS,
+      inspections: INSPECTIONS
+    };
+    var json = JSON.stringify(exportData);
+    var blob = new Blob([json], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'maint-cockpit-' + new Date().toISOString().split('T')[0] + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
+    var sizeKB = Math.round(json.length / 1024);
+    showToast('Exported ' + total + ' records (' + sizeKB + ' KB) \u2014 WO:' + counts.work_orders + ' V:' + counts.vendors + ' P:' + counts.properties + ' B:' + counts.bills + ' T:' + counts.turns + ' I:' + counts.inspections);
+  } catch (e) {
+    showToast('Export failed: ' + (e.message || e));
+  }
+}
+
+// Import data from a JSON file — writes to MEMORY + IndexedDB
+async function importCacheFromJSON(file) {
+  if (!file) return;
+  try {
+    var text = await new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function(ev) { resolve(ev.target.result); };
+      reader.onerror = function() { reject(new Error('File read error')); };
+      reader.readAsText(file);
+    });
+    var data = JSON.parse(text);
+    // Support v2 format (arrays) and v1 format ({data:[], timestamp})
+    function extractArr(key) {
+      var val = data[key];
+      if (!val) return [];
+      if (Array.isArray(val)) return val;
+      if (val.data && Array.isArray(val.data)) return val.data;
+      return [];
+    }
+    WORK_ORDERS = extractArr('work_orders');
+    VENDORS = extractArr('vendors');
+    PROPERTIES = extractArr('properties');
+    BILLS = extractArr('bills');
+    TURNS = extractArr('turns');
+    INSPECTIONS = extractArr('inspections');
+    var total = WORK_ORDERS.length + VENDORS.length + PROPERTIES.length + BILLS.length + TURNS.length + INSPECTIONS.length;
+    // Persist to IndexedDB for future sessions
+    await saveAllToCache();
+    updateCacheBadge('cached', Date.now(), false);
+    renderAll();
+    showToast('Imported ' + total + ' records \u2014 WO:' + WORK_ORDERS.length + ' V:' + VENDORS.length + ' P:' + PROPERTIES.length + ' B:' + BILLS.length + ' T:' + TURNS.length + ' I:' + INSPECTIONS.length);
+  } catch (e) {
+    showToast('Import failed: ' + (e.message || e));
+  }
+}
+
+function updateCacheBadge(state, timestamp, isStale) {
+  var badge = $('#cacheBadge');
+  var badgeText = $('#cacheBadgeText');
+  var tsEl = $('#syncTimestamp');
+  badge.className = 'cache-badge';
+  if (state === 'live') {
+    badge.classList.add('live');
+    badgeText.textContent = 'LIVE';
+    if (tsEl) tsEl.textContent = 'Synced ' + (timestamp ? cacheAgeStr({ timestamp: timestamp }) : 'now');
+  } else if (state === 'cached') {
+    badge.classList.add(isStale ? 'stale' : 'cached');
+    badgeText.textContent = isStale ? 'STALE' : 'CACHED';
+    if (tsEl) tsEl.textContent = 'From ' + (timestamp ? cacheAgeStr({ timestamp: timestamp }) : 'cache');
+  } else if (state === 'loading') {
+    badge.classList.add('cached');
+    badgeText.textContent = 'LOADING';
+    if (tsEl) tsEl.textContent = '';
+  } else {
+    badge.classList.add('offline');
+    badgeText.textContent = 'OFFLINE';
+    if (tsEl) tsEl.textContent = 'No data';
+  }
+}
+
+/* =================================================================
+   WO FLAGS — IndexedDB-persisted follow-up markers
+   ================================================================= */
+async function loadFlags() {
+  try {
+    var db = await openCacheDB();
+    return new Promise(function(resolve) {
+      var tx = db.transaction('wo_flags', 'readonly');
+      var store = tx.objectStore('wo_flags');
+      var req = store.getAll();
+      req.onsuccess = function() {
+        WO_FLAGS = {};
+        (req.result || []).forEach(function(f) { WO_FLAGS[f.woId] = f; });
+        resolve();
+      };
+      req.onerror = function() { resolve(); };
+    });
+  } catch (e) { /* IndexedDB unavailable */ }
+}
+async function saveFlag(woId, note) {
+  WO_FLAGS[woId] = { woId: woId, note: note || '', ts: Date.now() };
+  try {
+    var db = await openCacheDB();
+    var tx = db.transaction('wo_flags', 'readwrite');
+    tx.objectStore('wo_flags').put(WO_FLAGS[woId]);
+  } catch (e) { /* best-effort */ }
+}
+async function removeFlag(woId) {
+  delete WO_FLAGS[woId];
+  try {
+    var db = await openCacheDB();
+    var tx = db.transaction('wo_flags', 'readwrite');
+    tx.objectStore('wo_flags').delete(woId);
+  } catch (e) { /* best-effort */ }
+}
+async function toggleFlag(woId) {
+  if (WO_FLAGS[woId]) { await removeFlag(woId); } else { await saveFlag(woId, ''); }
+}
+function isWOFlagged(woId) { return !!WO_FLAGS[woId]; }
+
+/* =================================================================
+   CREDENTIAL VAULT — AES-256-GCM + PBKDF2
+   ================================================================= */
+var VAULT_BLOB = {
+  s: 'oakh6uQFKiJWj95xXH/hJg==',
+  i: 'pbU5H33tdyjncIza',
+  t: '6jhJXkqaMFtyrXueMQbzhw==',
+  c: '4EuCDYImFsxsjPQg65D/hYVji16JZjiEb7IeOf55tUlU9SbBIVNFhrtWS/MDDs2bthUGQl1xQwg6Ds9fX3dW2psUvyMM8FeD62BV7oq9r4ItZHk7Yz/29AuROg/MECEbZhRyzRGRt21c5PNJ1oFih9aR/QmmXKkRo8wvm99Yn+ODsFyCHC15EsFIOzmA288qwA=='
+};
+
+var API_CREDS = null;
+var API_VHOST = null;
+var API_PROXY = '';
+var VAULT_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
+var vaultTimeoutId = null;
+var vaultCountdownId = null;
+
+function b64ToU8(b64) {
+  var bin = atob(b64);
+  var u8 = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) { u8[i] = bin.charCodeAt(i); }
+  return u8;
+}
+
+async function decryptVault(passphrase) {
+  var enc = new TextEncoder();
+  var salt = b64ToU8(VAULT_BLOB.s);
+  var iv = b64ToU8(VAULT_BLOB.i);
+  var tag = b64ToU8(VAULT_BLOB.t);
+  var ciphertext = b64ToU8(VAULT_BLOB.c);
+  var combined = new Uint8Array(ciphertext.length + tag.length);
+  combined.set(ciphertext);
+  combined.set(tag, ciphertext.length);
+  var keyMaterial = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  var aesKey = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: salt, iterations: 150000, hash: 'SHA-256' },
+    keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
+  );
+  var decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, aesKey, combined.buffer);
+  return JSON.parse(new TextDecoder().decode(decrypted));
+}
+
+function wipeCredentials() {
+  if (API_CREDS) {
+    if (API_CREDS.a) { API_CREDS.a = '0'.repeat(API_CREDS.a.length); }
+    if (API_CREDS.d) { API_CREDS.d = '0'.repeat(API_CREDS.d.length); }
+  }
+  API_CREDS = null;
+  API_VHOST = null;
+  API_PROXY = '';
+}
+
+function lockVault() {
+  wipeCredentials();
+  clearTimeout(vaultTimeoutId);
+  clearInterval(vaultCountdownId);
+  vaultTimeoutId = null;
+  vaultCountdownId = null;
+  appInitialized = false;
+  WORK_ORDERS = []; VENDORS = []; BILLS = []; PROPERTIES = []; TURNS = []; INSPECTIONS = []; API_ERRORS = [];
+  // Note: IndexedDB cache is NOT cleared on lock — data persists for next unlock
+  updateCacheBadge('offline');
+  $('#appShell').classList.remove('unlocked');
+  $('#vaultScreen').style.display = 'flex';
+  $('#vaultPassphrase').value = '';
+  $('#vaultError').classList.remove('show');
+  $('#corsBanner').classList.remove('show');
+  $('#vaultPassphrase').focus();
+}
+
+function resetInactivityTimer() {
+  if (!API_CREDS) return;
+  clearTimeout(vaultTimeoutId);
+  vaultTimeoutId = setTimeout(async function() {
+    try { await saveAllToCache(); } catch(e) { /* best-effort */ }
+    lockVault();
+    showToast('Vault auto-locked after 60 minutes \u2014 data saved to cache');
+  }, VAULT_TIMEOUT_MS);
+  startCountdown();
+}
+
+function startCountdown() {
+  clearInterval(vaultCountdownId);
+  var targetTime = Date.now() + VAULT_TIMEOUT_MS;
+  vaultCountdownId = setInterval(function() {
+    var remaining = Math.max(0, targetTime - Date.now());
+    if (remaining <= 0) { clearInterval(vaultCountdownId); return; }
+    var mins = Math.floor(remaining / 60000);
+    var secs = Math.floor((remaining % 60000) / 1000);
+    var el = $('#vaultCountdown');
+    if (el) { el.textContent = mins + ':' + (secs < 10 ? '0' : '') + secs; }
+  }, 1000);
+}
+
+function getAuthHeader() { return API_CREDS ? API_CREDS.a : null; }
+function getDevId() { return API_CREDS ? API_CREDS.d : null; }
+function getDirectBaseUrl() { return API_VHOST ? 'https://' + API_VHOST + '.appfolio.com' : null; }
+
+// ---- Proxy v4 action endpoint caller ----
+// Makes ONE request to proxy like ?action=work_orders&days=180
+// Proxy does all pagination server-side and returns complete dataset
+async function proxyAction(action, params) {
+  if (!API_PROXY) throw new Error('No proxy configured');
+  var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
+  var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
+  if (params) {
+    Object.keys(params).forEach(function(k) {
+      url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+    });
+  }
+  var res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) {
+    var errBody = '';
+    try { errBody = await res.text(); } catch (e) { /* empty */ }
+    var errMsg = 'Proxy action=' + action + ' failed: HTTP ' + res.status;
+    if (errBody) {
+      try { var ej = JSON.parse(errBody); if (ej.error) errMsg += ' \u2014 ' + ej.error; } catch (e) { errMsg += ' \u2014 ' + errBody.substring(0, 200); }
+    }
+    logApiError(res.status, errMsg, 'queued');
+    throw new Error(errMsg);
+  }
+  var data = await res.json();
+  if (data && data.ok === false) {
+    var msg = 'Proxy action=' + action + ': ' + (data.error || 'Unknown error');
+    logApiError(502, msg, 'queued');
+    throw new Error(msg);
+  }
+  return data;
+}
+
+// Resolve a path to a fetchable URL.
+// When a proxy is active, the proxy has the domain + credentials hardcoded
+// server-side, so we only send the API path (e.g. /api/v0/properties).
+// Used for raw pass-through calls (PATCH work orders, POST notes, etc.)
+function resolveUrl(path) {
+  if (API_PROXY) {
+    // Server-side proxy: send only the API path, not the full URL
+    var apiPath = path;
+    if (path.indexOf('http') === 0) {
+      // Pagination next_page_path may come back as absolute or relative — extract path+query
+      try {
+        var u = new URL(path);
+        apiPath = u.pathname + u.search;
+      } catch (e) { /* use as-is */ }
+    }
+    var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
+    return API_PROXY + sep + 'path=' + encodeURIComponent(apiPath);
+  }
+  // Direct connection (no proxy) — build full URL
+  if (path.indexOf('http') === 0) return path;
+  var direct = getDirectBaseUrl();
+  if (!direct) return path;
+  return direct + path;
+}
+
+/* =================================================================
+   AppFolio API Client — Rate-limited with retry logic
+   ================================================================= */
+var rateLimiter = {
+  queue: [],
+  inFlight: 0,
+  maxPerSec: 4,
+  windowStart: 0,
+  windowCount: 0,
+  processing: false,
+
+  enqueue: function(fn) {
+    return new Promise(function(resolve, reject) {
+      rateLimiter.queue.push({ fn: fn, resolve: resolve, reject: reject });
+      rateLimiter.process();
+    });
+  },
+
+  process: function() {
+    if (rateLimiter.processing) return;
+    rateLimiter.processing = true;
+
+    (function tick() {
+      if (rateLimiter.queue.length === 0) {
+        rateLimiter.processing = false;
+        return;
+      }
+
+      var now = Date.now();
+      if (now - rateLimiter.windowStart >= 1000) {
+        rateLimiter.windowStart = now;
+        rateLimiter.windowCount = 0;
+      }
+
+      if (rateLimiter.windowCount >= rateLimiter.maxPerSec) {
+        var wait = 1000 - (now - rateLimiter.windowStart) + 10;
+        setTimeout(tick, wait);
+        return;
+      }
+
+      var item = rateLimiter.queue.shift();
+      rateLimiter.windowCount++;
+      rateLimiter.inFlight++;
+      updateRateBadge();
+
+      item.fn().then(function(r) {
+        rateLimiter.inFlight--;
+        updateRateBadge();
+        item.resolve(r);
+        tick();
+      }).catch(function(e) {
+        rateLimiter.inFlight--;
+        updateRateBadge();
+        item.reject(e);
+        tick();
+      });
+    })();
+  }
+};
+
+function updateRateBadge() {
+  var el = $('#rateBadge');
+  if (el) { el.textContent = (rateLimiter.maxPerSec - rateLimiter.inFlight) + '/' + rateLimiter.maxPerSec + ' req/s'; }
+}
+
+// Core fetch wrapper with auth, retries, and error logging
+async function apiFetch(path, options) {
+  if (!API_PROXY) {
+    // Direct mode needs vault credentials
+    var auth = getAuthHeader();
+    var devId = getDevId();
+    if (!getDirectBaseUrl() || !auth || !devId) { throw new Error('Vault locked or missing config'); }
+  }
+
+  var url = resolveUrl(path);
+  var hdrs = {};
+  if (API_PROXY) {
+    // Server-side proxy has credentials hardcoded — no auth headers needed
+    hdrs['Content-Type'] = 'application/json';
+  } else {
+    hdrs['Authorization'] = auth;
+    hdrs['X-AppFolio-Developer-ID'] = devId;
+    hdrs['Content-Type'] = 'application/json';
+  }
+  var opts = Object.assign({ method: 'GET', headers: hdrs }, options || {});
+
+  // If POST with form params (supports array values for Reports API filters)
+  if (opts.formParams) {
+    opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    var fparams = new URLSearchParams();
+    Object.keys(opts.formParams).forEach(function(k) {
+      var val = opts.formParams[k];
+      if (Array.isArray(val)) {
+        val.forEach(function(v) { fparams.append(k + '[]', v); });
+      } else {
+        fparams.append(k, val);
+      }
+    });
+    opts.body = fparams.toString();
+    delete opts.formParams;
+  }
+
+  var maxRetries = 3;
+  for (var attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      var res = await rateLimiter.enqueue(function() { return fetch(url, opts); });
+
+      // --- Retryable errors (429 rate limit, 533 DB unavailable) ---
+      if (res.status === 429) {
+        var retryAfter = parseInt(res.headers.get('Retry-After') || '5', 10);
+        logApiError(429, 'Rate limit exceeded — Retry-After: ' + retryAfter + 's', 'retry');
+        if (attempt < maxRetries) { await sleep(retryAfter * 1000); continue; }
+        throw new Error('429: Rate limited after retries');
+      }
+      if (res.status === 533) {
+        var backoff = Math.pow(2, attempt + 2) * 1000; // 4s, 8s, 16s, 32s
+        logApiError(533, 'Database busy — waiting ' + (backoff / 1000) + 's before retry (' + (attempt + 1) + '/' + maxRetries + ')', 'retry');
+        if (attempt < maxRetries) { await sleep(backoff); continue; }
+        throw new Error('533: Database unavailable after ' + maxRetries + ' retries');
+      }
+
+      // --- Non-retryable errors (throw immediately, no retry) ---
+      if (res.status === 401) {
+        logApiError(401, 'Unauthorized — proxy may have wrong credentials or old code. Redeploy v3 proxy from vault screen.', 'resolved');
+        showCorsError('401 Unauthorized — AppFolio rejected the credentials. Make sure the proxy has the correct API key and developer ID hardcoded, and that you deployed the v3 proxy code from the vault screen.');
+        throw new Error('401: Unauthorized — proxy strips auth headers');
+      }
+      if (res.status === 404) {
+        logApiError(404, 'Not Found — AppFolio returned 404. Verify proxy has correct credentials and v3 code. URL: ' + path, 'resolved');
+        showCorsError('404 Not Found — AppFolio returns 404 without valid credentials. Make sure you deployed the v3 proxy code with correct credentials hardcoded.');
+        throw new Error('404: Not Found — proxy likely strips auth');
+      }
+      if (res.status === 422) {
+        var body422 = await res.text();
+        logApiError(422, 'Semantic error: ' + body422.substring(0, 200), 'resolved');
+        throw new Error('422: ' + body422);
+      }
+      if (res.status === 400) {
+        var body400 = await res.text();
+        logApiError(400, 'Bad request: ' + body400.substring(0, 200), 'resolved');
+        throw new Error('400: ' + body400);
+      }
+      if (res.status === 403) {
+        var body403 = await res.text();
+        logApiError(403, 'Forbidden: ' + body403.substring(0, 200), 'resolved');
+        throw new Error('403: Forbidden — ' + body403);
+      }
+      if (res.status === 526) {
+        logApiError(526, 'Invalid SSL — check subdomain is correct.', 'resolved');
+        throw new Error('526: Invalid SSL — verify subdomain');
+      }
+      if (!res.ok) {
+        var bodyErr = '';
+        try { bodyErr = await res.text(); } catch (ignored) { /* empty */ }
+        logApiError(res.status, 'HTTP ' + res.status + ': ' + (bodyErr || res.statusText).substring(0, 200), 'queued');
+        throw new Error('HTTP ' + res.status + ': ' + (bodyErr || res.statusText));
+      }
+
+      return await res.json();
+    } catch (err) {
+      // Network errors (CORS, CSP, DNS, SSL, connection refused)
+      if (err.name === 'TypeError') {
+        var netMsg = err.message || 'Network request failed';
+        var isCsp = netMsg.indexOf('Content Security Policy') !== -1 || netMsg.indexOf('Refused to connect') !== -1;
+        var isSsl = netMsg.indexOf('SSL') !== -1 || netMsg.indexOf('ERR_SSL') !== -1 || netMsg.indexOf('ERR_CERT') !== -1;
+        if (isCsp) {
+          logApiError(0, 'CSP BLOCKED: ' + netMsg + '. Click "Allow additional resources" popup at top of page.', 'queued');
+        } else if (isSsl) {
+          logApiError(0, 'SSL ERROR: ' + netMsg + '. Your worker SSL cert may not be ready yet (wait 2-3 min) or the URL is wrong.', 'queued');
+        } else {
+          logApiError(0, 'Network error: ' + netMsg + ' — URL: ' + path, 'queued');
+        }
+        showCorsError(netMsg);
+        throw err;
+      }
+      // Non-retryable errors already thrown above; only retryable reach here
+      if (attempt === maxRetries) throw err;
+    }
+  }
+}
+
+function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
+
+// Paginated fetch for Database API v0 (follows next_page_path)
+// Uses small page sizes to avoid 533 "Database unavailable" errors
+var FETCH_PAGE_SIZE = 50; // Database API page size (conservative — AppFolio default 1000 triggers 533)
+
+async function fetchAllPages(path, maxRecords) {
+  var allResults = [];
+  // Ensure page[size] is set on the initial request
+  var currentPath = path;
+  if (currentPath.indexOf('page[size]') === -1) {
+    var joiner = currentPath.indexOf('?') !== -1 ? '&' : '?';
+    currentPath = currentPath + joiner + 'page[size]=' + FETCH_PAGE_SIZE;
+  }
+  var pageCount = 0;
+  while (currentPath && pageCount < 200) {
+    var data = await apiFetch(currentPath);
+    var pageItems = 0;
+    // API v0 wraps list results in { data: [...], next_page_path: "..." }
+    if (data && Array.isArray(data.data)) {
+      allResults = allResults.concat(data.data);
+      pageItems = data.data.length;
+    } else if (data && data.results) {
+      // Reports API fallback
+      allResults = allResults.concat(data.results);
+      pageItems = data.results.length;
+    } else if (Array.isArray(data)) {
+      allResults = allResults.concat(data);
+      pageItems = data.length;
+    }
+    // Enforce max records limit (e.g. 100 WOs to reduce load time)
+    if (maxRecords && allResults.length >= maxRecords) {
+      allResults = allResults.slice(0, maxRecords);
+      setApiStatus('loading', 'Reached ' + maxRecords + ' record limit \u2014 done');
+      break;
+    }
+    // next_page_path is a relative path like /api/v0/work_orders?page[number]=2
+    currentPath = (data && data.next_page_path) ? data.next_page_path : null;
+    pageCount++;
+    // Throttle between pages to reduce DB pressure
+    if (currentPath) { await sleep(300); }
+    // Update status with progress
+    setApiStatus('loading', 'Loaded ' + allResults.length + ' records (page ' + pageCount + ')\u2026');
+  }
+  return allResults;
+}
+
+// Reports API v2 fetch (POST initial, GET pagination) — 5000 rows/page
+// Pagination next_page_url is NOT rate-limited and valid for 30 minutes
+async function fetchReport(reportName, filters) {
+  var path = '/api/v2/reports/' + reportName + '.json';
+  var allRows = [];
+  var formParams = {};
+  if (filters) {
+    Object.keys(filters).forEach(function(k) {
+      formParams['filters[' + k + ']'] = filters[k];
+    });
+  }
+
+  var nextUrl = null;
+  var pageCount = 0;
+  while (pageCount < 50) {
+    var data;
+    if (nextUrl) {
+      // Pagination pages are GET requests (no filters needed, cached server-side)
+      data = await apiFetch(nextUrl);
+    } else {
+      // Initial request is POST with filters
+      data = await apiFetch(path, { method: 'POST', formParams: formParams });
+    }
+    if (data && data.results) {
+      allRows = allRows.concat(data.results);
+    } else if (data && Array.isArray(data.data)) {
+      allRows = allRows.concat(data.data);
+    } else if (Array.isArray(data)) {
+      // paginate_results=false returns a raw array
+      allRows = allRows.concat(data);
+      break;
+    }
+    setApiStatus('loading', reportName + ': ' + allRows.length + ' rows (page ' + (pageCount + 1) + ')');
+    nextUrl = (data && (data.next_page_url || data.next_page_path)) ? (data.next_page_url || data.next_page_path) : null;
+    if (!nextUrl) break;
+    pageCount++;
+    // Pagination pages are NOT rate-limited, but brief pause to be polite
+    await sleep(100);
+  }
+  return allRows;
+}
+
+function showCorsError(detail) {
+  var banner = $('#corsBanner');
+  var detailEl = $('#corsDetail');
+  var msgEl = $('#corsMsg');
+  var detailStr = detail || 'Unknown failure';
+  var isAuthStripped = detailStr.indexOf('401') !== -1 || detailStr.indexOf('404') !== -1 || detailStr.indexOf('strips auth') !== -1;
+  var isCsp = detailStr.indexOf('Content Security Policy') !== -1 || detailStr.indexOf('Refused to connect') !== -1;
+  var isSsl = detailStr.indexOf('SSL') !== -1 || detailStr.indexOf('ERR_SSL') !== -1 || detailStr.indexOf('ERR_CERT') !== -1;
+  if (isCsp) {
+    if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--warning)">CSP Blocked.</strong> The Poe iframe blocks connections to external domains by default. Click the <strong style="color:var(--accent)">"Allow additional resources"</strong> popup at the top of the page. The page will reload — then re-enter your passphrase, subdomain, and proxy URL to connect again.'; }
+    setApiStatus('error', 'CSP Blocked — Click Allow');
+  } else if (isSsl) {
+    if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--warning)">SSL Certificate Error.</strong> Your proxy\'s SSL certificate may not be provisioned yet. New Val Town endpoints can take <strong>1-2 minutes</strong> for SSL to activate. Wait and try again, or verify the proxy URL is correct.'; }
+    setApiStatus('error', 'SSL Error — Wait & Retry');
+  } else if (isAuthStripped) {
+    if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--danger)">AppFolio rejected credentials.</strong> Make sure you deployed the <strong>v4 proxy code</strong> with correct API key and developer ID hardcoded inside. Visit your proxy URL in a browser \u2014 you should see a JSON response with <code>"proxy": "v4"</code>.'; }
+    setApiStatus('error', 'Auth Stripped by Proxy');
+  } else if (API_PROXY) {
+    if (msgEl) { msgEl.textContent = 'The proxy (' + API_PROXY.substring(0, 50) + ') failed. It may be down, rate-limited, or CSP-blocked.'; }
+    setApiStatus('error', 'Proxy Error');
+  } else {
+    if (msgEl) { msgEl.textContent = 'Direct browser requests blocked (no CORS headers). You need a proxy — lock vault and configure one.'; }
+    setApiStatus('error', 'CORS Blocked');
+  }
+  if (detailEl) { detailEl.textContent = detailStr; }
+  banner.classList.add('show');
+}
+
+function setApiStatus(state, text) {
+  var el = $('#apiStatus');
+  var textEl = $('#apiStatusText');
+  el.className = 'topbar-status ' + state;
+  textEl.textContent = text;
+}
+
+/* =================================================================
+   API Error Log
+   ================================================================= */
+var API_ERRORS = [];
+
+function logApiError(code, msg, action) {
+  var now = new Date();
+  var ts = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0') + ':' + now.getSeconds().toString().padStart(2, '0');
+  API_ERRORS.unshift({ code: code, ts: ts, msg: msg, action: action });
+  if (API_ERRORS.length > 100) API_ERRORS.length = 100;
+  renderErrorLog();
+}
+
+/* =================================================================
+   DATA STORES — populated from live API
+   ================================================================= */
+var WORK_ORDERS = [];
+var VENDORS = [];
+var BILLS = [];
+var PROPERTIES = [];
+var TURNS = [];
+var appInitialized = false;
+var WO_FLAGS = {};
+var WO_DETAIL_CACHE = {};
+var PAYROLL_WEEK_OFFSET = 0;
+var currentPropertyGroup = '';
+var currentTurnFilter = 'open';
+
+/* =================================================================
+   VAULT UI
+   ================================================================= */
+// Sanitize vhost input — extract just the subdomain portion
+function sanitizeVhost(raw) {
+  var val = raw.trim().toLowerCase();
+  // Strip protocol
+  val = val.replace(/^https?:\/\//, '');
+  // Strip trailing slashes/paths
+  val = val.replace(/\/.*$/, '');
+  // Strip .appfolio.com suffix (user may paste full domain)
+  val = val.replace(/\.appfolio\.com$/, '');
+  // Only allow valid subdomain chars
+  val = val.replace(/[^a-z0-9\-]/g, '');
+  return val;
+}
+
+$('#vaultVhost').addEventListener('input', function() {
+  var val = sanitizeVhost(this.value);
+  this.value = val;
+  $('#vhostPreview').textContent = val || 'yourco';
+});
+
+$('#vaultToggleVis').addEventListener('click', function() {
+  var inp = $('#vaultPassphrase');
+  var isPass = inp.type === 'password';
+  inp.type = isPass ? 'text' : 'password';
+  this.querySelector('i').className = isPass ? 'fas fa-eye-slash' : 'fas fa-eye';
+});
+
+$('#vaultPassphrase').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { $('#vaultUnlockBtn').click(); }
+});
+$('#vaultVhost').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { $('#vaultUnlockBtn').click(); }
+});
+
+// Advanced panel toggle
+$('#advancedToggle').addEventListener('click', function() {
+  this.classList.toggle('open');
+  $('#advancedPanel').classList.toggle('show');
+});
+
+// Proxy preset buttons
+$$('.vault-proxy-preset').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    $$('.vault-proxy-preset').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    $('#vaultProxy').value = btn.getAttribute('data-proxy');
+  });
+});
+
+// Sanitize proxy URL — ensure https:// prefix, trim whitespace
+function sanitizeProxy(raw) {
+  var val = (raw || '').trim();
+  if (!val) return '';
+  // Auto-add https:// if user forgot
+  if (val && !val.match(/^https?:\/\//i)) {
+    val = 'https://' + val;
+  }
+  // Remove trailing slash for consistency
+  val = val.replace(/\/+$/, '');
+  return val;
+}
+
+$('#vaultUnlockBtn').addEventListener('click', async function() {
+  var pass = $('#vaultPassphrase').value;
+  // Re-sanitize at unlock time in case user pasted a full URL
+  var rawVhost = $('#vaultVhost').value;
+  var vhost = sanitizeVhost(rawVhost);
+  $('#vaultVhost').value = vhost;
+  $('#vhostPreview').textContent = vhost || 'yourco';
+  // Sanitize proxy URL
+  var proxyUrl = sanitizeProxy($('#vaultProxy').value);
+  $('#vaultProxy').value = proxyUrl;
+
+  if (!pass) {
+    $('#vaultError').textContent = 'Passphrase cannot be empty.';
+    $('#vaultError').classList.add('show');
+    return;
+  }
+  if (!vhost) {
+    $('#vaultError').textContent = 'AppFolio subdomain is required. Enter just the subdomain (e.g. "flraz"), not the full URL.';
+    $('#vaultError').classList.add('show');
+    return;
+  }
+  if (proxyUrl) {
+    console.log('Proxy URL: ' + proxyUrl);
+  }
+
+  var btn = this;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Decrypting\u2026';
+  $('#vaultError').classList.remove('show');
+
+  try {
+    API_CREDS = await decryptVault(pass);
+    API_VHOST = vhost;
+    API_PROXY = proxyUrl;
+    $('#vaultPassphrase').value = '';
+    $('#vaultScreen').style.display = 'none';
+    $('#appShell').classList.add('unlocked');
+    resetInactivityTimer();
+    initApp();
+    var proxyInfo = API_PROXY ? ' via proxy' : ' (direct)';
+    showToast('Vault unlocked \u2014 connecting to ' + vhost + '.appfolio.com' + proxyInfo);
+  } catch (err) {
+    wipeCredentials();
+    $('#vaultError').textContent = 'Decryption failed \u2014 incorrect passphrase or corrupted vault.';
+    $('#vaultError').classList.add('show');
+    $('#vaultPassphrase').value = '';
+    $('#vaultPassphrase').focus();
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-lock-open"></i> Decrypt & Connect';
+  }
+});
+
+$('#lockBtn').addEventListener('click', function() { openModal('lockModal'); });
+$('#lockModalClose').addEventListener('click', function() { closeModal('lockModal'); });
+$('#lockCancelBtn').addEventListener('click', function() { closeModal('lockModal'); });
+$('#lockConfirmBtn').addEventListener('click', function() {
+  closeModal('lockModal');
+  lockVault();
+  showToast('Vault locked \u2014 credentials wiped from memory');
+});
+
+$('#woModalClose').addEventListener('click', function() { closeModal('woModal'); });
+$('#woModalCloseBtn').addEventListener('click', function() { closeModal('woModal'); });
+$('#newWOModalClose').addEventListener('click', function() { closeModal('newWOModal'); });
+$('#newWOCancelBtn').addEventListener('click', function() { closeModal('newWOModal'); });
+
+['click', 'keydown', 'mousemove', 'touchstart', 'scroll'].forEach(function(evt) {
+  document.addEventListener(evt, function() { if (API_CREDS) { resetInactivityTimer(); } }, { passive: true });
+});
+
+/* =================================================================
+   COMMUNICATION TEMPLATES (local — no API endpoint for these)
+   ================================================================= */
+var TEMPLATES = [
+  { title: 'Tenant \u2014 Work Completed', trigger: 'Status \u2192 Work Completed', icon: 'fa-check-circle', body: 'Maintenance Alert: The technician has completed the <span class="var">{{ description }}</span> at <span class="var">{{ unit_name }}</span>. If you have further issues, please reply to this thread.' },
+  { title: 'Owner \u2014 Urgent Repair', trigger: 'Priority = Urgent', icon: 'fa-exclamation-circle', body: 'Management Notification: An urgent repair was required at <span class="var">{{ property_name }}</span> for <span class="var">{{ description }}</span>. The total cost was <span class="var">{{ total_cost }}</span>. Photos are available in your portal.' },
+  { title: 'Vendor \u2014 Dispatch', trigger: 'Status \u2192 Assigned', icon: 'fa-paper-plane', body: 'New Work Order Dispatch: You have been assigned <span class="var">{{ work_order_id }}</span> at <span class="var">{{ address }}</span>, <span class="var">{{ unit_name }}</span>. Scheduled start: <span class="var">{{ scheduled_start }}</span>.' },
+  { title: 'Tenant \u2014 Scheduled Visit', trigger: 'Status \u2192 Scheduled', icon: 'fa-calendar-check', body: 'Hi <span class="var">{{ first_name }}</span>, a maintenance visit has been scheduled for <span class="var">{{ scheduled_date }}</span>. The technician will address: <span class="var">{{ description }}</span>.' },
+  { title: 'Owner \u2014 Monthly Summary', trigger: 'Report: 1st of month', icon: 'fa-chart-bar', body: 'Monthly Maintenance Summary for <span class="var">{{ property_name }}</span>: <span class="var">{{ wo_count }}</span> work orders completed, total spend <span class="var">{{ total_spend }}</span>. <span class="var">{{ open_count }}</span> orders remain open.' },
+  { title: 'Tenant \u2014 Estimate Approval', trigger: 'Estimate created', icon: 'fa-file-invoice-dollar', body: 'A repair estimate of <span class="var">{{ estimate_amount }}</span> has been prepared for <span class="var">{{ description }}</span> at <span class="var">{{ unit_name }}</span>. Reply "APPROVE" to proceed.' }
+];
+
+/* =================================================================
+   SMART FILTERS — 180-day window, open-only WOs, small chunks
+   ================================================================= */
+var DATA_WINDOW_DAYS = 180;
+
+function dateNDaysAgo(n) {
+  var d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+// Open WO status codes for Reports API (excludes 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill)
+// Defined in fetchWorkOrders() as OPEN_WO_STATUS_CODES
+
+/* =================================================================
+   PROGRESS DOCK — non-blocking corner indicator
+   ================================================================= */
+var _progSteps = [];
+
+function showProgress(title, steps) {
+  _progSteps = steps.map(function(s) { return { label: s, state: 'pending' }; });
+  var dock = $('#progressDock');
+  $('#progTitle').textContent = title;
+  $('#progStatus').textContent = 'Starting\u2026';
+  $('#progBar').style.width = '0%';
+  var stepsHtml = '';
+  _progSteps.forEach(function() { stepsHtml += '<div class="progress-step"></div>'; });
+  $('#progSteps').innerHTML = stepsHtml;
+  dock.classList.remove('hidden');
+}
+
+function updateProgress(stepIndex, state, statusText) {
+  if (stepIndex >= 0 && stepIndex < _progSteps.length) {
+    _progSteps[stepIndex].state = state;
+  }
+  var doneCount = _progSteps.filter(function(s) { return s.state === 'done'; }).length;
+  var pct = _progSteps.length > 0 ? Math.round((doneCount / _progSteps.length) * 100) : 0;
+  $('#progBar').style.width = pct + '%';
+  if (statusText) { $('#progStatus').textContent = statusText; }
+  // Update step dots
+  var dots = $$('#progSteps .progress-step');
+  _progSteps.forEach(function(s, i) {
+    if (dots[i]) { dots[i].className = 'progress-step ' + s.state; }
+  });
+}
+
+function hideProgress() {
+  setTimeout(function() { $('#progressDock').classList.add('hidden'); }, 2000);
+}
+
+/* =================================================================
+   DATA FETCHING — Smart filtered API calls (180-day window)
+   ================================================================= */
+
+// Work Orders: Proxy v4 ?action=work_orders — server-side pagination, one request
+// Open statuses: 0=New, 1=EstReq, 2=Estimated, 9=Assigned, 3=Scheduled,
+//   6=Waiting, 8=WorkDone, 12=ReadyToBill
+// Excludes: 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill
+async function fetchWorkOrders() {
+  try {
+    setApiStatus('loading', 'Loading work orders (server-side)\u2026');
+    var data = await proxyAction('work_orders', { days: DATA_WINDOW_DAYS });
+    var results = data.results || [];
+    WORK_ORDERS = results.map(function(r) {
+      return {
+        id: r.work_order_number || r.service_request_number || '',
+        uuid: r.work_order_id || '',
+        propertyId: r.property_id || '',
+        propertyName: r.property_name || r.property || '',
+        propertyAddress: ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
+        unitId: r.unit_id || '',
+        unit: r.unit_name || r.unit_id || '',
+        priority: r.priority || 'Normal',
+        status: r.status || 'New',
+        description: r.job_description || r.service_request_description || '',
+        vendorName: r.vendor || '',
+        vendorId: r.vendor_id || '',
+        vendorTrade: r.vendor_trade || '',
+        created: r.created_at || '',
+        updated: r.completed_on || r.created_at || '',
+        completedOn: r.completed_on || '',
+        workCompletedOn: r.work_completed_on || '',
+        scheduledStart: r.scheduled_start || '',
+        scheduledEnd: r.scheduled_end || '',
+        type: r.work_order_type || '',
+        amount: r.amount || '',
+        tenant: r.primary_tenant || '',
+        tenantEmail: r.primary_tenant_email || '',
+        tenantPhone: r.primary_tenant_phone_number || '',
+        createdBy: r.created_by || '',
+        assignedUser: r.assigned_user || '',
+        statusNotes: r.status_notes || '',
+        maintenanceLimit: r.maintenance_limit || '',
+        link: ''
+      };
+    });
+    setApiStatus('loading', 'Work orders: ' + WORK_ORDERS.length + ' loaded');
+    return true;
+  } catch (err) {
+    WORK_ORDERS = [];
+    return false;
+  }
+}
+
+// Vendors: Proxy v4 ?action=vendors — server-side pagination, one request
+async function fetchVendors() {
+  try {
+    setApiStatus('loading', 'Loading vendors (server-side)\u2026');
+    var data = await proxyAction('vendors');
+    var results = data.results || [];
+    VENDORS = results.map(function(v) {
+      var displayName = v.company_name || ((v.first_name || '') + ' ' + (v.last_name || '')).trim() || v.name || '';
+      return {
+        id: v.vendor_id || '',
+        name: displayName,
+        companyName: v.company_name || '',
+        firstName: v.first_name || '',
+        lastName: v.last_name || '',
+        isCompany: !!v.company_name,
+        compliant: false,
+        compliantStatus: 'Unknown',
+        insurance: v.liability_ins_expires || '',
+        autoInsurance: v.auto_ins_expires || '',
+        workersComp: v.workers_comp_expires || '',
+        phone: v.phone_numbers || '',
+        email: v.email || '',
+        address: ((v.street || '') + ' ' + (v.city || '') + ' ' + (v.state || '') + ' ' + (v.zip || '')).trim(),
+        trades: v.vendor_trades || '',
+        vendorType: v.vendor_type || '',
+        doNotUse: v.do_not_use_for_work_order || false,
+        tags: v.tags || '',
+        link: ''
+      };
+    });
+    return true;
+  } catch (err) {
+    VENDORS = [];
+    return false;
+  }
+}
+
+// Bills: Proxy v4 ?action=bills — server-side pagination, one request
+var MAX_BILL_RECORDS = 200;
+async function fetchBills() {
+  try {
+    setApiStatus('loading', 'Loading bills (server-side)\u2026');
+    var data = await proxyAction('bills', { days: DATA_WINDOW_DAYS, max: MAX_BILL_RECORDS });
+    var results = data.results || [];
+    BILLS = results.map(function(b) {
+      var vendName = '';
+      if (b.VendorId) {
+        var vend = VENDORS.find(function(v) { return v.id === b.VendorId; });
+        if (vend) { vendName = vend.name; }
+      }
+      var propName = '';
+      var propAddr = '';
+      var propId = b.PropertyId || '';
+      if (!propId && b.LineItems && b.LineItems.length > 0 && b.LineItems[0].PropertyId) {
+        propId = b.LineItems[0].PropertyId;
+      }
+      if (propId) {
+        var prop = PROPERTIES.find(function(p) { return p.id === propId; });
+        if (prop) { propName = prop.name; propAddr = prop.address; }
+      }
+      return {
+        id: b.Id || '',
+        vendorName: vendName,
+        vendorId: b.VendorId || '',
+        propertyName: propName,
+        propertyId: propId,
+        propertyAddress: propAddr,
+        amount: parseFloat(b.TotalAmount || '0') || 0,
+        approvalStatus: b.ApprovalStatus || '',
+        reference: b.Reference || '',
+        description: b.Description || b.CheckMemo || '',
+        dueDate: b.DueDate || '',
+        invoiceDate: b.InvoiceDate || '',
+        workOrderId: b.WorkOrderId || null,
+        lineItems: b.LineItems || []
+      };
+    });
+    return true;
+  } catch (err) {
+    BILLS = [];
+    return false;
+  }
+}
+
+// Properties: Proxy v4 ?action=properties — server-side pagination, one request
+async function fetchProperties() {
+  try {
+    setApiStatus('loading', 'Loading properties (server-side)\u2026');
+    var data = await proxyAction('properties');
+    var results = data.results || [];
+    PROPERTIES = results.map(function(p) {
+      return {
+        id: p.property_id || '',
+        name: p.property_name || p.property || '',
+        address: ((p.property_street || '') + (p.property_street2 ? ' ' + p.property_street2 : '')).trim(),
+        city: p.property_city || '',
+        state: p.property_state || '',
+        zip: p.property_zip || '',
+        propertyType: p.property_type || '',
+        portfolioId: p.portfolio_id || '',
+        portfolio: p.portfolio || '',
+        maintenanceLimit: p.maintenance_limit || '',
+        maintenanceNotes: p.maintenance_notes || '',
+        siteManager: p.site_manager || '',
+        units: p.units || '',
+        sqft: p.sqft || '',
+        marketRent: p.market_rent || '',
+        owners: p.owners || '',
+        link: ''
+      };
+    });
+    return true;
+  } catch (err) {
+    PROPERTIES = [];
+    return false;
+  }
+}
+
+// Turns: Proxy v4 ?action=turns — server-side pagination, one request
+async function fetchTurns() {
+  try {
+    setApiStatus('loading', 'Loading turns (server-side)\u2026');
+    var data = await proxyAction('turns', { days: DATA_WINDOW_DAYS });
+    var results = data.results || [];
+    TURNS = results.map(function(t) {
+      var moveOut = t.move_out_date || '';
+      var turnEnd = t.turn_end_date || '';
+      var daysToComplete = parseInt(t.total_days_to_complete || 0, 10) || 0;
+      // If no total_days_to_complete and we have dates, calculate
+      if (!daysToComplete && moveOut && turnEnd) {
+        var d1 = new Date(moveOut), d2 = new Date(turnEnd);
+        if (!isNaN(d1) && !isNaN(d2)) { daysToComplete = Math.round((d2 - d1) / 86400000); }
+      }
+      return {
+        unitTurnId: t.unit_turn_id || '',
+        unit: t.unit || '',
+        property: t.property || '',
+        propertyId: t.property_id || 0,
+        unitId: t.unit_id || 0,
+        notes: t.notes || '',
+        referenceUser: t.reference_user || '',
+        moveOut: moveOut,
+        turnEnd: turnEnd,
+        expectedMoveIn: t.expected_move_in_date || '',
+        targetDays: parseInt(t.target_days_to_complete || 0, 10) || 0,
+        totalDays: daysToComplete,
+        laborCost: t.labor_from_work_orders || '$0.00',
+        purchaseOrders: t.purchase_orders_from_work_orders || '$0.00',
+        billables: t.billables_from_work_orders || '$0.00',
+        inventory: t.inventory_from_work_orders || '$0.00',
+        totalBilled: t.total_billed || '$0.00'
+      };
+    });
+    return true;
+  } catch (err) {
+    TURNS = [];
+    return false;
+  }
+}
+
+// Inspections: Proxy v4 ?action=inspections — server-side pagination, one request
+var INSPECTIONS = [];
+async function fetchInspections() {
+  try {
+    setApiStatus('loading', 'Loading inspections (server-side)\u2026');
+    var data = await proxyAction('inspections', { days: DATA_WINDOW_DAYS });
+    var results = data.results || [];
+    INSPECTIONS = results.map(function(r) {
+      return {
+        propertyName: r.property_name || r.property || '',
+        propertyId: r.property_id || 0,
+        unit: r.unit_name || '',
+        unitId: r.unit_id || 0,
+        lastInspection: r.last_inspection_date || '',
+        tenant: r.tenant_name || '',
+        tenantPhone: r.tenant_primary_phone_number || '',
+        moveIn: r.move_in_date || '',
+        moveOut: r.move_out_date || '',
+        rentable: r.rentable || '',
+        tags: r.unit_tags || ''
+      };
+    });
+    return true;
+  } catch (err) {
+    INSPECTIONS = [];
+    return false;
+  }
+}
+
+/* =================================================================
+   DETAIL FETCHERS — On-demand for WO detail panel
+   ================================================================= */
+async function fetchPropertyDetail(propId) {
+  if (!propId) return null;
+  if (WO_DETAIL_CACHE['prop_' + propId]) return WO_DETAIL_CACHE['prop_' + propId];
+  try {
+    var data = await apiFetch('/api/v0/properties/' + propId);
+    WO_DETAIL_CACHE['prop_' + propId] = data;
+    return data;
+  } catch (e) { return null; }
+}
+
+async function fetchWONotes(uuid) {
+  if (!uuid) return [];
+  if (WO_DETAIL_CACHE['notes_' + uuid]) return WO_DETAIL_CACHE['notes_' + uuid];
+  try {
+    var data = await apiFetch('/api/v0/work_orders/' + uuid + '/notes');
+    var notes = (data && data.data) ? data.data : (Array.isArray(data) ? data : []);
+    WO_DETAIL_CACHE['notes_' + uuid] = notes;
+    return notes;
+  } catch (e) { return []; }
+}
+
+/* =================================================================
+   RENDER FUNCTIONS — All use live data
+   ================================================================= */
+
+function getUpcomingMoveOuts() {
+  var today = new Date();
+  var cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() + 60);
+  var results = [];
+  INSPECTIONS.forEach(function(r) {
+    if (!r.moveOut) return;
+    var moDate = new Date(r.moveOut);
+    if (isNaN(moDate.getTime())) return;
+    if (moDate >= today && moDate <= cutoff) {
+      var daysLeft = Math.round((moDate - today) / 86400000);
+      results.push({ property: r.propertyName, unit: r.unit, tenant: r.tenant, moveOut: r.moveOut, daysLeft: daysLeft });
+    }
+  });
+  results.sort(function(a, b) { return a.daysLeft - b.daysLeft; });
+  return results;
+}
+
+function renderMoveOuts() {
+  var body = $('#moveOutBody');
+  if (!body) return;
+  var moves = getUpcomingMoveOuts();
+  if (moves.length === 0) {
+    body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;font-size:12px">No upcoming move-outs in the next 60 days</td></tr>';
+    return;
+  }
+  var html = '';
+  moves.forEach(function(m) {
+    var urgClass = m.daysLeft <= 14 ? 'moveout-urgent' : m.daysLeft <= 30 ? 'moveout-soon' : 'moveout-normal';
+    html += '<tr>';
+    html += '<td>' + escapeHtml(m.property) + '</td>';
+    html += '<td>' + escapeHtml(m.unit) + '</td>';
+    html += '<td>' + escapeHtml(m.tenant || '\u2014') + '</td>';
+    html += '<td style="font-family:var(--font-mono)">' + formatDate(m.moveOut) + '</td>';
+    html += '<td><span class="tag ' + urgClass + '">' + m.daysLeft + 'd</span></td>';
+    html += '</tr>';
+  });
+  body.innerHTML = html;
+}
+
+function getPayrollWeek(offset) {
+  var now = new Date();
+  var day = now.getDay(); // 0=Sun
+  // Find most recent Friday
+  var fridayOffset = (day + 2) % 7; // days since last Friday
+  var endDate = new Date(now);
+  endDate.setDate(endDate.getDate() - fridayOffset);
+  endDate.setHours(23, 59, 59, 999);
+  // Apply week offset
+  endDate.setDate(endDate.getDate() + (offset * 7));
+  var startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - 6);
+  startDate.setHours(0, 0, 0, 0);
+  return { start: startDate, end: endDate };
+}
+
+function renderPayroll() {
+  var period = getPayrollWeek(PAYROLL_WEEK_OFFSET);
+  var rangeEl = $('#payrollRange');
+  if (rangeEl) rangeEl.textContent = formatDate(period.start) + ' \u2014 ' + formatDate(period.end);
+
+  var workDone = WORK_ORDERS.filter(function(wo) {
+    if (wo.status !== 'Work Done' && wo.status !== 'Ready to Bill') return false;
+    var cd = wo.workCompletedOn ? new Date(wo.workCompletedOn) : (wo.completedOn ? new Date(wo.completedOn) : null);
+    if (!cd) return false;
+    return cd >= period.start && cd <= period.end;
+  });
+
+  var totalAmt = workDone.reduce(function(s, wo) { return s + (parseFloat(wo.amount) || 0); }, 0);
+  var vendorSet = {};
+  var propSet = {};
+  workDone.forEach(function(wo) {
+    if (wo.vendorName) vendorSet[wo.vendorName] = true;
+    if (wo.propertyName) propSet[wo.propertyName] = true;
+  });
+
+  var countEl = $('#payrollCount');
+  if (countEl) countEl.textContent = workDone.length;
+  var countSub = $('#payrollCountSub');
+  if (countSub) countSub.textContent = 'orders completed this period';
+  var totalEl = $('#payrollTotal');
+  if (totalEl) totalEl.textContent = currency(totalAmt);
+  var totalSub = $('#payrollTotalSub');
+  if (totalSub) totalSub.textContent = totalAmt > 0 ? 'total labor + materials' : 'no amounts recorded';
+  var vendEl = $('#payrollVendors');
+  if (vendEl) vendEl.textContent = Object.keys(vendorSet).length;
+  var vendSub = $('#payrollVendorsSub');
+  if (vendSub) vendSub.textContent = 'unique vendors this period';
+  var propEl = $('#payrollProps');
+  if (propEl) propEl.textContent = Object.keys(propSet).length;
+  var propSub = $('#payrollPropsSub');
+  if (propSub) propSub.textContent = 'properties with work done';
+
+  var body = $('#payrollBody');
+  if (!body) return;
+  if (workDone.length === 0) {
+    body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px;font-size:12px">No completed work orders in this pay period</td></tr>';
+    return;
+  }
+  var html = '';
+  workDone.forEach(function(wo) {
+    var flagged = isWOFlagged(wo.id);
+    html += '<tr' + (flagged ? ' style="background:var(--warning-dim)"' : '') + '>';
+    html += '<td style="font-family:var(--font-mono);color:var(--accent)">#' + escapeHtml(String(wo.id)) + '</td>';
+    html += '<td>' + escapeHtml(wo.propertyName) + '</td>';
+    html += '<td>' + escapeHtml(wo.unit) + '</td>';
+    html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(wo.description) + '</td>';
+    html += '<td>' + escapeHtml(wo.vendorName || '\u2014') + '</td>';
+    html += '<td style="font-family:var(--font-mono)">' + formatDate(wo.workCompletedOn || wo.completedOn) + '</td>';
+    html += '<td style="font-family:var(--font-mono)">' + (wo.amount ? currency(parseFloat(wo.amount)) : '\u2014') + '</td>';
+    html += '<td><button class="flag-toggle-btn' + (flagged ? ' active' : '') + '" data-flagwo="' + escapeHtml(String(wo.id)) + '"><i class="fas fa-flag"></i></button></td>';
+    html += '</tr>';
+  });
+  body.innerHTML = html;
+
+  body.querySelectorAll('[data-flagwo]').forEach(function(btn) {
+    btn.addEventListener('click', async function(e) {
+      e.stopPropagation();
+      var wid = this.getAttribute('data-flagwo');
+      await toggleFlag(wid);
+      renderPayroll();
+      renderWorkOrders();
+    });
+  });
+}
+
+function renderDashboardKPIs() {
+  var openWOs = WORK_ORDERS.filter(function(w) {
+    return w.status !== 'Completed' && w.status !== 'Canceled';
+  });
+  var urgentWOs = WORK_ORDERS.filter(function(w) {
+    return (w.priority === 'Urgent' || w.priority === 'Emergency') && w.status !== 'Completed' && w.status !== 'Canceled';
+  });
+  var activeTurns = TURNS.filter(function(t) {
+    return !t.turnEnd;
+  });
+
+  var moveOuts = getUpcomingMoveOuts();
+  var flaggedCount = Object.keys(WO_FLAGS).length;
+
+  $('#kpiOpen').textContent = openWOs.length;
+  $('#kpiOpenSub').textContent = WORK_ORDERS.length + ' loaded (open, ' + DATA_WINDOW_DAYS + 'd)';
+  $('#kpiUrgent').textContent = urgentWOs.length;
+  $('#kpiUrgentSub').textContent = urgentWOs.length > 0 ? urgentWOs.length + ' require immediate attention' : 'No urgent items';
+  $('#kpiTurns').textContent = activeTurns.length;
+  $('#kpiTurnsSub').textContent = TURNS.length + ' total turns';
+  $('#kpiMoveOuts').textContent = moveOuts.length;
+  $('#kpiMoveOutsSub').textContent = moveOuts.length > 0 ? moveOuts[0].daysLeft + 'd until next' : 'None in 60 days';
+  $('#kpiFlagged').textContent = flaggedCount;
+  $('#kpiFlaggedSub').textContent = flaggedCount > 0 ? flaggedCount + ' items flagged' : 'No flagged items';
+
+  $('#woBadge').textContent = openWOs.length || '0';
+  $('#turnBadge').textContent = activeTurns.length || '0';
+}
+
+function renderActivityFeed() {
+  var tbody = $('#activityBody');
+  var filter = currentActivityFilter || 'all';
+
+  // Build comprehensive activity feed from all data sources
+  var activities = [];
+
+  // Work Order events — sorted by most recent update
+  var sortedWOs = WORK_ORDERS.slice().sort(function(a, b) {
+    return new Date(b.created || 0) - new Date(a.created || 0);
+  });
+  sortedWOs.slice(0, 30).forEach(function(wo) {
+    var isUrgent = wo.priority === 'Urgent' || wo.priority === 'Emergency';
+    activities.push({
+      sortDate: new Date(wo.created || 0).getTime(),
+      time: timeAgo(wo.created),
+      type: 'work_order',
+      urgent: isUrgent,
+      icon: isUrgent ? 'fa-exclamation-circle' : 'fa-wrench',
+      iconColor: isUrgent ? 'var(--danger)' : 'var(--accent)',
+      event: '<span class="tag ' + String(wo.status).toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(wo.status) + '</span>',
+      entity: '#' + String(wo.id),
+      detail: escapeHtml(wo.propertyName || '') + (wo.unit ? ' / ' + escapeHtml(wo.unit) : '') + ' \u2014 ' + escapeHtml((wo.description || '').substring(0, 80)),
+      extra: (wo.vendorName ? '<span style="color:var(--info)"><i class="fas fa-hard-hat" style="font-size:9px"></i> ' + escapeHtml(wo.vendorName) + '</span>' : '') +
+             (wo.assignedUser ? ' <span style="color:var(--purple)"><i class="fas fa-user" style="font-size:9px"></i> ' + escapeHtml(wo.assignedUser) + '</span>' : '') +
+             (wo.tenant ? ' <span style="color:var(--text-muted)"><i class="fas fa-user-friends" style="font-size:9px"></i> ' + escapeHtml(wo.tenant) + '</span>' : '')
+    });
+  });
+
+  // Turn events
+  TURNS.slice(0, 10).forEach(function(t) {
+    var isActive = !t.turnEnd;
+    activities.push({
+      sortDate: new Date(t.moveOut || 0).getTime(),
+      time: timeAgo(t.moveOut || new Date().toISOString()),
+      type: 'turn',
+      urgent: false,
+      icon: isActive ? 'fa-exchange-alt' : 'fa-check-circle',
+      iconColor: isActive ? 'var(--warning)' : 'var(--success)',
+      event: isActive ? '<span class="tag waiting">In Progress</span>' : '<span class="tag completed">Completed</span>',
+      entity: escapeHtml(t.unit),
+      detail: escapeHtml(t.property) + ' \u2014 ' + (isActive ? (t.moveOut ? daysBetween(t.moveOut, new Date()) + 'd since move-out' : 'Active turn') : t.totalDays + ' days total'),
+      extra: t.totalBilled && t.totalBilled !== '$0.00' ? '<span style="color:var(--danger)">Billed: ' + escapeHtml(t.totalBilled) + '</span>' : ''
+    });
+  });
+
+  // Inspection events — overdue only
+  var today = new Date();
+  INSPECTIONS.filter(function(r) {
+    var lastDate = r.lastInspection ? new Date(r.lastInspection) : null;
+    return !lastDate || daysBetween(lastDate, today) > 365;
+  }).slice(0, 8).forEach(function(r) {
+    activities.push({
+      sortDate: r.lastInspection ? new Date(r.lastInspection).getTime() : 0,
+      time: r.lastInspection ? timeAgo(r.lastInspection) : 'Never',
+      type: 'inspection',
+      urgent: true,
+      icon: 'fa-clipboard-check',
+      iconColor: 'var(--danger)',
+      event: '<span class="tag non-compliant">Overdue</span>',
+      entity: escapeHtml(r.unit || ''),
+      detail: escapeHtml(r.propertyName) + (r.tenant ? ' \u2014 ' + escapeHtml(r.tenant) : ''),
+      extra: ''
+    });
+  });
+
+  // Sort by date descending
+  activities.sort(function(a, b) { return b.sortDate - a.sortDate; });
+
+  // Apply filter
+  if (filter !== 'all') {
+    if (filter === 'urgent') {
+      activities = activities.filter(function(a) { return a.urgent; });
+    } else {
+      activities = activities.filter(function(a) { return a.type === filter; });
+    }
+  }
+
+  activities = activities.slice(0, 25);
+
+  if (activities.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4">' + emptyHtml('fa-inbox', 'No activity to show') + '</td></tr>';
+    return;
+  }
+
+  var html = '';
+  activities.forEach(function(a) {
+    html += '<tr>';
+    html += '<td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;"><i class="fas ' + a.icon + '" style="color:' + a.iconColor + ';margin-right:4px;font-size:10px"></i>' + a.time + '</td>';
+    html += '<td>' + a.event + '</td>';
+    html += '<td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">' + a.entity + '</td>';
+    html += '<td style="font-size:11px"><div style="color:var(--text-secondary)">' + a.detail + '</div>';
+    if (a.extra) { html += '<div style="margin-top:2px;font-size:10px">' + a.extra + '</div>'; }
+    html += '</td></tr>';
+  });
+  tbody.innerHTML = html;
+}
+
+var currentWOFilter = 'all';
+var currentWOPriority = '';
+var currentWOType = '';
+var currentWOProperty = '';
+var currentActivityFilter = 'all';
+
+// Kanban status columns and their display labels
+var KANBAN_STATUSES = [
+  { key: 'New', label: 'New' },
+  { key: 'Estimate Requested', label: 'Est. Req.' },
+  { key: 'Estimated', label: 'Estimated' },
+  { key: 'Assigned', label: 'Assigned' },
+  { key: 'Scheduled', label: 'Scheduled' },
+  { key: 'Waiting', label: 'Waiting' },
+  { key: 'Work Done', label: 'Work Done' },
+  { key: 'Ready to Bill', label: 'Ready to Bill' }
+];
+
+function getFilteredWOs() {
+  var search = $('#woSearch') ? $('#woSearch').value : '';
+  return WORK_ORDERS.filter(function(wo) {
+    // Status filter (from filter buttons or kanban column click)
+    if (currentWOFilter && currentWOFilter !== 'all' && wo.status !== currentWOFilter) return false;
+    // Priority dropdown
+    if (currentWOPriority && wo.priority !== currentWOPriority) return false;
+    // Type dropdown
+    if (currentWOType && wo.type !== currentWOType) return false;
+    // Property dropdown
+    if (currentWOProperty && wo.propertyName !== currentWOProperty) return false;
+    // Property group
+    if (currentPropertyGroup) {
+      var prop = PROPERTIES.find(function(p) { return p.name === wo.propertyName; });
+      if (!prop || prop.portfolio !== currentPropertyGroup) return false;
+    }
+    // Flagged filter
+    if (currentWOFilter === 'flagged' && !isWOFlagged(wo.id)) return false;
+    // Search
+    if (search) {
+      var s = search.toLowerCase();
+      var haystack = [String(wo.id), wo.description, wo.propertyName, wo.vendorName, wo.unit, wo.tenant || '', wo.assignedUser || ''].join(' ').toLowerCase();
+      return haystack.indexOf(s) !== -1;
+    }
+    return true;
+  });
+}
+
+function renderWorkOrders() {
+  var board = $('#kanbanBoard');
+  if (!board) return;
+  var filtered = getFilteredWOs();
+
+  // Populate property dropdown with unique properties from current WOs
+  var propSel = $('#woPropertyFilter');
+  if (propSel && propSel.options.length <= 1) {
+    var props = {};
+    WORK_ORDERS.forEach(function(wo) { if (wo.propertyName) props[wo.propertyName] = true; });
+    Object.keys(props).sort().forEach(function(p) {
+      var opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      propSel.appendChild(opt);
+    });
+  }
+
+  // Populate group dropdown
+  var grpSel = $('#woGroupFilter');
+  if (grpSel && grpSel.options.length <= 1) {
+    var groups2 = {};
+    PROPERTIES.forEach(function(p) { if (p.portfolio) groups2[p.portfolio] = true; });
+    Object.keys(groups2).sort().forEach(function(g) {
+      var opt = document.createElement('option');
+      opt.value = g; opt.textContent = g;
+      grpSel.appendChild(opt);
+    });
+  }
+
+  if (WORK_ORDERS.length === 0) {
+    board.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-inbox" style="font-size:36px;display:block;margin-bottom:12px;color:var(--border)"></i>No work orders loaded. Connect to API or import a cache file.</div>';
+    return;
+  }
+
+  // Group WOs by status
+  var groups = {};
+  filtered.forEach(function(wo) {
+    var st = wo.status || 'New';
+    if (!groups[st]) groups[st] = [];
+    groups[st].push(wo);
+  });
+
+  var html = '';
+  KANBAN_STATUSES.forEach(function(col) {
+    var wos = groups[col.key] || [];
+    var selected = currentWOFilter === col.key ? ' selected' : '';
+    html += '<div class="kanban-col">';
+    html += '<div class="kanban-col-head' + selected + '" data-status="' + escapeHtml(col.key) + '">';
+    html += '<span class="kanban-col-title">' + escapeHtml(col.label) + '</span>';
+    html += '<span class="kanban-col-count">' + wos.length + '</span>';
+    html += '</div>';
+    html += '<div class="kanban-col-body">';
+    if (wos.length === 0) {
+      html += '<div style="padding:12px;text-align:center;color:var(--text-muted);font-size:10px;font-family:var(--font-mono)">empty</div>';
+    }
+    wos.forEach(function(wo) {
+      var pc = String(wo.priority || 'normal').toLowerCase();
+      var flagged = isWOFlagged(wo.id);
+      html += '<div class="kanban-card ' + pc + (flagged ? ' flagged-card' : '') + '" data-woid="' + escapeHtml(String(wo.id)) + '">';
+      html += '<div class="kc-top"><span class="kc-id">#' + escapeHtml(String(wo.id)) + (flagged ? ' <i class="fas fa-flag kc-flag"></i>' : '') + '</span><span class="kc-priority"><span class="tag ' + pc + '">' + escapeHtml(wo.priority) + '</span></span></div>';
+      html += '<div class="kc-desc">' + escapeHtml(wo.description || 'No description') + '</div>';
+      html += '<div class="kc-meta">';
+      if (wo.propertyName) html += '<span><i class="fas fa-building"></i> ' + escapeHtml(wo.propertyName) + '</span>';
+      if (wo.unit) html += '<span><i class="fas fa-door-open"></i> ' + escapeHtml(wo.unit) + '</span>';
+      if (wo.vendorName) html += '<span><i class="fas fa-hard-hat"></i> ' + escapeHtml(wo.vendorName) + '</span>';
+      if (wo.created) html += '<span><i class="fas fa-clock"></i> ' + timeAgo(wo.created) + '</span>';
+      if (wo.tenant) html += '<span><i class="fas fa-user"></i> ' + escapeHtml(wo.tenant) + '</span>';
+      html += '</div></div>';
+    });
+    html += '</div></div>';
+  });
+
+  // Also show any WOs with statuses not in KANBAN_STATUSES
+  var otherWos = filtered.filter(function(wo) { return !KANBAN_STATUSES.some(function(s) { return s.key === wo.status; }); });
+  if (otherWos.length > 0) {
+    html += '<div class="kanban-col"><div class="kanban-col-head"><span class="kanban-col-title">Other</span><span class="kanban-col-count">' + otherWos.length + '</span></div><div class="kanban-col-body">';
+    otherWos.forEach(function(wo) {
+      var pc = String(wo.priority || 'normal').toLowerCase();
+      html += '<div class="kanban-card ' + pc + '" data-woid="' + escapeHtml(String(wo.id)) + '"><div class="kc-top"><span class="kc-id">#' + escapeHtml(String(wo.id)) + '</span><span class="kc-priority"><span class="tag ' + pc + '">' + escapeHtml(wo.priority) + '</span></span></div>';
+      html += '<div class="kc-desc">' + escapeHtml(wo.description || 'No description') + '</div>';
+      html += '<div class="kc-meta"><span>' + escapeHtml(wo.status) + '</span>';
+      if (wo.propertyName) html += '<span><i class="fas fa-building"></i> ' + escapeHtml(wo.propertyName) + '</span>';
+      html += '</div></div>';
+    });
+    html += '</div></div>';
+  }
+
+  board.innerHTML = html;
+  $('#woBadge').textContent = filtered.length || '0';
+
+  // Wire up card clicks → detail modal
+  board.querySelectorAll('.kanban-card').forEach(function(card) {
+    card.addEventListener('click', function() {
+      showWODetail(this.getAttribute('data-woid'));
+    });
+  });
+
+  // Wire up column header clicks → filter by status
+  board.querySelectorAll('.kanban-col-head').forEach(function(head) {
+    head.addEventListener('click', function() {
+      var status = this.getAttribute('data-status');
+      if (currentWOFilter === status) {
+        currentWOFilter = 'all'; // toggle off
+      } else {
+        currentWOFilter = status;
+      }
+      // Update filter buttons
+      $$('[data-filter]').forEach(function(b) {
+        b.classList.toggle('active', b.getAttribute('data-filter') === currentWOFilter);
+      });
+      renderWorkOrders();
+    });
+  });
+}
+
+function showWODetail(id) {
+  var wo = WORK_ORDERS.find(function(w) { return String(w.id) === String(id); });
+  if (!wo) return;
+  $('#woModalTitle').textContent = '#' + wo.id + ' \u2014 ' + wo.propertyName + ' ' + wo.unit;
+
+  // Flag button state
+  var flagBtn = $('#woModalFlag');
+  if (flagBtn) {
+    flagBtn.className = 'flag-toggle-btn' + (isWOFlagged(wo.id) ? ' active' : '');
+    flagBtn.onclick = async function() {
+      await toggleFlag(wo.id);
+      flagBtn.className = 'flag-toggle-btn' + (isWOFlagged(wo.id) ? ' active' : '');
+      renderWorkOrders();
+      renderDashboardKPIs();
+    };
+  }
+
+  var STATUSES = ['New','Estimate Requested','Estimated','Assigned','Scheduled','Waiting','Work Done','Ready to Bill','Work Completed','Completed','Canceled'];
+  var PRIORITIES = ['Urgent','Normal','Low'];
+
+  var html = '';
+  // -- WO Info Section --
+  html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-info-circle"></i> Work Order Info</div>';
+  html += '<div class="detail-grid">';
+  html += '<div class="detail-row"><div class="detail-row-label">Status</div><select class="form-select" id="detailStatus">';
+  STATUSES.forEach(function(s) { html += '<option' + (s === wo.status ? ' selected' : '') + '>' + s + '</option>'; });
+  html += '</select></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Priority</div><select class="form-select" id="detailPriority">';
+  PRIORITIES.forEach(function(p) { html += '<option' + (p === wo.priority ? ' selected' : '') + '>' + p + '</option>'; });
+  html += '</select></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Type</div><div class="detail-row-value">' + escapeHtml(wo.type || '\u2014') + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Amount</div><div class="detail-row-value">' + escapeHtml(wo.amount || '\u2014') + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Created</div><div class="detail-row-value">' + formatDate(wo.created) + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Scheduled</div><div class="detail-row-value">' + formatDate(wo.scheduledStart) + '</div></div>';
+  html += '</div>';
+  html += '<div class="form-group" style="margin-top:10px"><label class="form-label">Description</label><textarea class="form-textarea" id="detailDesc">' + escapeHtml(wo.description) + '</textarea></div>';
+  html += '</div>';
+
+  // -- Property & Unit Section --
+  html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-building"></i> Property &amp; Unit</div>';
+  html += '<div class="detail-grid">';
+  html += '<div class="detail-row"><div class="detail-row-label">Property</div><div class="detail-row-value">' + escapeHtml(wo.propertyName) + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Unit</div><div class="detail-row-value">' + escapeHtml(wo.unit || '\u2014') + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Address</div><div class="detail-row-value">' + escapeHtml(wo.propertyAddress || '\u2014') + '</div></div>';
+  // Site manager placeholder — will be filled async
+  html += '<div class="detail-row"><div class="detail-row-label">Site Manager</div><div class="detail-row-value" id="detailSiteMgr"><i class="fas fa-spinner fa-spin" style="font-size:10px"></i></div></div>';
+  html += '</div></div>';
+
+  // -- Tenant Section --
+  html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-user"></i> Tenant</div>';
+  html += '<div class="detail-grid">';
+  html += '<div class="detail-row"><div class="detail-row-label">Name</div><div class="detail-row-value">' + escapeHtml(wo.tenant || '\u2014') + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Email</div><div class="detail-row-value">' + escapeHtml(wo.tenantEmail || '\u2014') + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Phone</div><div class="detail-row-value">' + escapeHtml(wo.tenantPhone || '\u2014') + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Assigned To</div><div class="detail-row-value">' + escapeHtml(wo.assignedUser || '\u2014') + '</div></div>';
+  html += '</div></div>';
+
+  // -- Vendor Section --
+  html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-hard-hat"></i> Vendor</div>';
+  html += '<div class="detail-grid">';
+  html += '<div class="detail-row"><div class="detail-row-label">Vendor</div><div class="detail-row-value">' + escapeHtml(wo.vendorName || 'Unassigned') + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Trade</div><div class="detail-row-value">' + escapeHtml(wo.vendorTrade || '\u2014') + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Created By</div><div class="detail-row-value">' + escapeHtml(wo.createdBy || '\u2014') + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Maint. Limit</div><div class="detail-row-value">' + escapeHtml(wo.maintenanceLimit || '\u2014') + '</div></div>';
+  html += '</div></div>';
+
+  // -- Notes Section (async load) --
+  html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-sticky-note"></i> Notes</div>';
+  html += '<div class="note-list" id="detailNotesList"><div style="text-align:center;padding:10px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> Loading notes\u2026</div></div></div>';
+
+  // -- Add Note --
+  html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-plus-circle"></i> Add Note</div>';
+  html += '<textarea class="form-textarea" placeholder="Type a note\u2026" id="detailNote"></textarea></div>';
+
+  $('#woModalBody').innerHTML = html;
+
+  // Async: fetch property detail for site manager
+  if (wo.propertyId) {
+    var prop = PROPERTIES.find(function(p) { return p.id === wo.propertyId || String(p.id) === String(wo.propertyId); });
+    if (prop && prop.siteManager) {
+      var smEl = document.getElementById('detailSiteMgr');
+      if (smEl) smEl.textContent = prop.siteManager;
+    } else {
+      fetchPropertyDetail(wo.propertyId).then(function(data) {
+        var smEl = document.getElementById('detailSiteMgr');
+        if (smEl) smEl.textContent = (data && (data.site_manager || data.SiteManager)) || '\u2014';
+      });
+    }
+  } else {
+    var smEl = document.getElementById('detailSiteMgr');
+    if (smEl) smEl.textContent = '\u2014';
+  }
+
+  // Async: fetch notes
+  fetchWONotes(wo.uuid).then(function(notes) {
+    var nl = document.getElementById('detailNotesList');
+    if (!nl) return;
+    if (!notes || notes.length === 0) {
+      nl.innerHTML = '<div style="text-align:center;padding:10px;color:var(--text-muted);font-size:12px">No notes</div>';
+      return;
+    }
+    var nh = '';
+    notes.forEach(function(n) {
+      nh += '<div class="note-item"><div class="note-item-header"><span>' + escapeHtml(n.CreatedBy || n.created_by || '') + '</span><span>' + formatDate(n.CreatedAt || n.created_at || '') + '</span></div>';
+      nh += '<div class="note-item-body">' + escapeHtml(n.Content || n.content || '') + '</div></div>';
+    });
+    nl.innerHTML = nh;
+  });
+
+  $('#woModalSave').onclick = async function() {
+    var newStatus = $('#detailStatus').value;
+    var newPriority = $('#detailPriority').value;
+    var note = ($('#detailNote') && $('#detailNote').value) ? $('#detailNote').value.trim() : '';
+
+    try {
+      if (newStatus !== wo.status || newPriority !== wo.priority) {
+        await apiFetch('/api/v0/work_orders/' + wo.uuid, {
+          method: 'PATCH',
+          body: JSON.stringify({ Status: newStatus, Priority: newPriority })
+        });
+        wo.status = newStatus;
+        wo.priority = newPriority;
+      }
+      if (note) {
+        try {
+          await apiFetch('/api/v0/work_orders/' + wo.uuid + '/notes', {
+            method: 'POST',
+            body: JSON.stringify({ Content: note })
+          });
+          // Clear notes cache so next open re-fetches
+          delete WO_DETAIL_CACHE['notes_' + wo.uuid];
+        } catch (noteErr) {
+          showToast('Note failed: ' + noteErr.message);
+        }
+      }
+      renderWorkOrders();
+      renderDashboardKPIs();
+      closeModal('woModal');
+      showToast('Updated #' + wo.id + ' successfully');
+      await saveAllToCache();
+    } catch (err) {
+      showToast('Update failed: ' + err.message);
+    }
+  };
+  openModal('woModal');
+}
+
+function renderTurnBoard() {
+  var container = $('#turnBoard');
+  if (TURNS.length === 0) {
+    container.innerHTML = emptyHtml('fa-exchange-alt', 'No turn data available. Try refreshing.');
+    return;
+  }
+
+  // Group turns — "in progress" have no turn_end_date yet
+  var active = TURNS.filter(function(t) { return !t.turnEnd; });
+  var completed = TURNS.filter(function(t) { return !!t.turnEnd; });
+
+  var html = '';
+
+  // Active / In-progress turns
+  html += '<div><div class="turn-col-header">In-Progress Turns <span class="count">' + active.length + '</span></div>';
+  if (active.length === 0) {
+    html += '<div style="padding:16px;color:var(--text-muted);font-size:12px">No in-progress turns</div>';
+  }
+  active.forEach(function(t) {
+    var daysSinceMoveOut = t.moveOut ? daysBetween(t.moveOut, new Date()) : 0;
+    var target = t.targetDays || 30;
+    var bc = daysSinceMoveOut < 14 ? 'var(--success)' : daysSinceMoveOut < target ? 'var(--warning)' : 'var(--danger)';
+    var prog = Math.min(100, Math.round((daysSinceMoveOut / target) * 100));
+    html += '<div class="turn-card"><div class="turn-card-top"><div><div class="turn-unit">' + escapeHtml(t.unit) + '</div><div class="turn-property">' + escapeHtml(t.property) + '</div></div>';
+    html += '<div class="turn-cost">' + escapeHtml(t.totalBilled) + '</div></div>';
+    html += '<div class="turn-meta">';
+    if (t.moveOut) { html += '<span><i class="fas fa-calendar-minus"></i> Move-out: ' + formatDate(t.moveOut) + '</span>'; }
+    if (t.expectedMoveIn) { html += '<span><i class="fas fa-calendar-plus"></i> Expected: ' + formatDate(t.expectedMoveIn) + '</span>'; }
+    html += '<span><i class="fas fa-clock"></i> ' + daysSinceMoveOut + 'd elapsed (target: ' + target + 'd)</span>';
+    if (t.referenceUser) { html += '<span><i class="fas fa-user"></i> ' + escapeHtml(t.referenceUser) + '</span>'; }
+    html += '</div>';
+    html += '<div class="turn-progress"><div class="turn-progress-bar" style="width:' + prog + '%;background:' + bc + '"></div></div>';
+    if (t.notes) { html += '<div style="font-size:11px;color:var(--text-muted);margin-top:6px;font-style:italic"><i class="fas fa-sticky-note"></i> ' + escapeHtml(t.notes.substring(0, 120)) + '</div>'; }
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // Completed turns (only when filter is 'all')
+  if (completed.length > 0 && currentTurnFilter === 'all') {
+    html += '<div><div class="turn-col-header">Completed Turns <span class="count">' + completed.length + '</span></div>';
+    completed.slice(0, 15).forEach(function(t) {
+      var overUnder = t.targetDays ? (t.totalDays - t.targetDays) : 0;
+      var badge = overUnder <= 0 ? '<span class="tag compliant">On time</span>' : '<span class="tag non-compliant">+' + overUnder + 'd over</span>';
+      html += '<div class="turn-card" style="opacity:0.75"><div class="turn-card-top"><div><div class="turn-unit">' + escapeHtml(t.unit) + '</div><div class="turn-property">' + escapeHtml(t.property) + '</div></div>';
+      html += badge + '</div>';
+      html += '<div class="turn-meta">';
+      if (t.moveOut) { html += '<span><i class="fas fa-calendar-minus"></i> Out: ' + formatDate(t.moveOut) + '</span>'; }
+      if (t.turnEnd) { html += '<span><i class="fas fa-calendar-check"></i> End: ' + formatDate(t.turnEnd) + '</span>'; }
+      html += '<span><i class="fas fa-clock"></i> ' + (t.totalDays || 0) + ' days total</span>';
+      html += '<span><i class="fas fa-dollar-sign"></i> Billed: ' + escapeHtml(t.totalBilled) + '</span>';
+      html += '</div></div>';
+    });
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+  var tb = $('#turnBadge');
+  if (tb) { tb.textContent = active.length; }
+}
+
+function renderInspections(search) {
+  var body = $('#inspBody');
+  if (!body) return;
+  var filtered = INSPECTIONS.filter(function(r) {
+    if (!search) return true;
+    var s = search.toLowerCase();
+    return (r.propertyName || '').toLowerCase().indexOf(s) !== -1
+      || (r.unit || '').toLowerCase().indexOf(s) !== -1
+      || (r.tenant || '').toLowerCase().indexOf(s) !== -1;
+  });
+
+  if (filtered.length === 0) {
+    body.innerHTML = '<tr><td colspan="7">' + emptyHtml('fa-clipboard-check', INSPECTIONS.length === 0 ? 'No inspection data. Try refreshing.' : 'No inspections match your search') + '</td></tr>';
+    return;
+  }
+
+  var today = new Date();
+  var html = '';
+  filtered.forEach(function(r) {
+    var lastDate = r.lastInspection ? new Date(r.lastInspection) : null;
+    var daysSince = lastDate ? daysBetween(lastDate, today) : 999;
+    var overdue = !lastDate || daysSince > 365;
+    var warning = !overdue && daysSince > 270;
+    var statusTag = overdue
+      ? '<span class="tag non-compliant">Overdue</span>'
+      : warning
+        ? '<span class="tag" style="background:var(--warning-dim);color:var(--warning)">Due soon</span>'
+        : '<span class="tag compliant">Current</span>';
+    html += '<tr' + (overdue ? ' style="background:var(--danger-dim)"' : '') + '>';
+    html += '<td>' + escapeHtml(r.propertyName) + '</td>';
+    html += '<td>' + escapeHtml(r.unit) + '</td>';
+    html += '<td style="font-family:var(--font-mono)">' + (r.lastInspection ? formatDate(r.lastInspection) + ' <span style="color:var(--text-muted);font-size:10px">(' + daysSince + 'd ago)</span>' : '<span style="color:var(--danger)">Never</span>') + '</td>';
+    html += '<td>' + escapeHtml(r.tenant || '—') + '</td>';
+    html += '<td style="font-family:var(--font-mono)">' + (r.moveIn ? formatDate(r.moveIn) : '—') + '</td>';
+    html += '<td style="font-family:var(--font-mono)">' + (r.moveOut ? formatDate(r.moveOut) : '—') + '</td>';
+    html += '<td>' + statusTag + '</td>';
+    html += '</tr>';
+  });
+  body.innerHTML = html;
+  var ib = $('#inspBadge');
+  if (ib) { ib.textContent = INSPECTIONS.filter(function(r) { return !r.lastInspection || daysBetween(new Date(r.lastInspection), today) > 365; }).length; }
+}
+
+function renderVendors(search) {
+  var container = $('#vendorGrid');
+  var filtered = VENDORS.filter(function(v) {
+    if (!search) return true;
+    var s = search.toLowerCase();
+    return (v.name || '').toLowerCase().indexOf(s) !== -1 || (v.email || '').toLowerCase().indexOf(s) !== -1;
+  });
+
+  if (filtered.length === 0) {
+    container.innerHTML = emptyHtml('fa-hard-hat', VENDORS.length === 0 ? 'No vendors loaded' : 'No vendors match your search');
+    return;
+  }
+
+  var html = '';
+  var today = new Date();
+  filtered.forEach(function(v) {
+    var ed = v.insurance ? new Date(v.insurance) : null;
+    var exp = ed ? ed < today : false;
+    var due = ed ? daysBetween(today, ed) : 999;
+    var wrn = !exp && due <= 60;
+    var cc = exp ? 'expired' : wrn ? 'warn' : '';
+    html += '<div class="vendor-card ' + cc + '"><div class="vendor-name">' + escapeHtml(v.name) + '</div>';
+    html += '<div class="vendor-id"><i class="fas fa-fingerprint"></i> ID: ' + escapeHtml(String(v.id)) + '</div>';
+    html += '<div class="vendor-row"><span>Compliance</span>' + (v.compliant ? '<span class="tag compliant">Compliant</span>' : '<span class="tag non-compliant">' + escapeHtml(v.compliantStatus) + '</span>') + '</div>';
+    if (v.insurance) {
+      html += '<div class="vendor-row"><span>Insurance Exp.</span><span style="font-family:var(--font-mono);font-size:12px;color:' + (exp ? 'var(--danger)' : wrn ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.insurance) + (exp ? ' (EXPIRED)' : wrn ? ' (' + due + 'd)' : '') + '</span></div>';
+    }
+    if (v.phone) { html += '<div class="vendor-row"><span>Phone</span><span style="font-family:var(--font-mono);font-size:12px">' + escapeHtml(v.phone) + '</span></div>'; }
+    if (v.email) { html += '<div class="vendor-row"><span>Email</span><span style="font-size:12px">' + escapeHtml(v.email) + '</span></div>'; }
+    html += '</div>';
+  });
+  container.innerHTML = html;
+}
+
+function renderReconciliation() {
+  var container = $('#reconList');
+  var unlinked = BILLS.filter(function(b) { return !b.workOrderId; });
+
+  if (unlinked.length === 0) {
+    container.innerHTML = emptyHtml('fa-balance-scale', BILLS.length === 0 ? 'No bills loaded' : 'All bills are linked to work orders!');
+    return;
+  }
+
+  var html = '';
+  unlinked.forEach(function(bill) {
+    // Match heuristic: vendor name + property match
+    var matches = WORK_ORDERS.filter(function(wo) {
+      var vendorMatch = bill.vendorName && wo.vendorName && bill.vendorName.toLowerCase() === wo.vendorName.toLowerCase();
+      var propMatch = bill.propertyName && wo.propertyName && bill.propertyName.toLowerCase() === wo.propertyName.toLowerCase();
+      return (vendorMatch || propMatch) && wo.status !== 'Completed' && wo.status !== 'Canceled';
+    });
+    var confidence = matches.length > 0 ? 'high' : 'low';
+    var matchWO = matches.length > 0 ? matches[0] : null;
+    if (matchWO && Math.abs(parseFloat(matchWO.amount || 0) - bill.amount) > 200) { confidence = 'medium'; }
+
+    html += '<div class="recon-card"><div class="recon-card-header"><div style="font-family:var(--font-mono);font-weight:600;font-size:14px">' + escapeHtml(String(bill.id || bill.reference)) + '</div><span class="recon-match ' + confidence + '">' + confidence + ' confidence</span></div>';
+    html += '<div class="recon-detail"><div class="recon-side"><div class="recon-side-label"><i class="fas fa-file-invoice-dollar"></i> Bill</div>';
+    html += '<div class="recon-field"><strong>Vendor:</strong> ' + escapeHtml(bill.vendorName) + '</div>';
+    html += '<div class="recon-field"><strong>Property:</strong> ' + escapeHtml(bill.propertyName) + '</div>';
+    html += '<div class="recon-field"><strong>Amount:</strong> ' + currency(bill.amount) + '</div>';
+    html += '<div class="recon-field"><strong>Ref:</strong> ' + escapeHtml(bill.reference) + '</div>';
+    html += '<div class="recon-field"><strong>Status:</strong> <span class="tag ' + (bill.approvalStatus === 'Approved' ? 'approved' : bill.approvalStatus === 'On Hold' ? 'paid' : 'pending-tag') + '">' + escapeHtml(bill.approvalStatus || 'N/A') + '</span></div></div>';
+    html += '<div class="recon-arrow"><i class="fas fa-long-arrow-alt-right"></i></div>';
+    html += '<div class="recon-side"><div class="recon-side-label"><i class="fas fa-wrench"></i> Work Order Match</div>';
+    if (matchWO) {
+      html += '<div class="recon-field"><strong>ID:</strong> <span style="color:var(--accent)">' + escapeHtml(String(matchWO.id)) + '</span></div>';
+      html += '<div class="recon-field"><strong>Unit:</strong> ' + escapeHtml(matchWO.unit) + '</div>';
+      html += '<div class="recon-field"><strong>Est. Cost:</strong> ' + currency(parseFloat(matchWO.amount || 0)) + '</div>';
+      html += '<div class="recon-field"><strong>Status:</strong> <span class="tag ' + String(matchWO.status).toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(matchWO.status) + '</span></div>';
+    } else {
+      html += '<div style="color:var(--text-muted);font-size:12px;padding:10px 0"><i class="fas fa-question-circle"></i> No matching work order found</div>';
+    }
+    html += '</div></div>';
+    html += '<div class="recon-actions">';
+    if (matchWO) {
+      html += '<button class="action-btn" data-dismiss="' + escapeHtml(String(bill.id)) + '"><i class="fas fa-times"></i> Dismiss</button>';
+      html += '<button class="action-btn primary" data-link="' + escapeHtml(String(bill.id)) + '|' + escapeHtml(String(matchWO.id)) + '"><i class="fas fa-link"></i> Link</button>';
+    } else {
+      html += '<button class="action-btn" data-flag="' + escapeHtml(String(bill.id)) + '"><i class="fas fa-flag"></i> Flag for Review</button>';
+    }
+    html += '</div></div>';
+  });
+  container.innerHTML = html;
+
+  container.querySelectorAll('[data-dismiss]').forEach(function(btn) {
+    btn.addEventListener('click', function() { showToast('Dismissed suggestion for ' + this.getAttribute('data-dismiss')); });
+  });
+  container.querySelectorAll('[data-link]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var parts = this.getAttribute('data-link').split('|');
+      showToast('Linked ' + parts[0] + ' \u2192 ' + parts[1]);
+    });
+  });
+  container.querySelectorAll('[data-flag]').forEach(function(btn) {
+    btn.addEventListener('click', function() { showToast('Flagged ' + this.getAttribute('data-flag') + ' for manual review'); });
+  });
+}
+
+function renderTemplates() {
+  var container = $('#templateGrid');
+  var html = '';
+  TEMPLATES.forEach(function(t) {
+    html += '<div class="template-card"><div class="template-card-title"><i class="fas ' + t.icon + '" style="color:var(--accent)"></i> ' + escapeHtml(t.title) + '</div>';
+    html += '<div class="template-card-desc"><i class="fas fa-bolt" style="font-size:10px"></i> Trigger: ' + escapeHtml(t.trigger) + '</div>';
+    html += '<div class="template-preview">' + t.body + '</div>';
+    html += '<div style="margin-top:10px;display:flex;gap:6px">';
+    html += '<button class="action-btn" style="flex:1" data-tcopy><i class="fas fa-copy"></i> Copy</button>';
+    html += '<button class="action-btn" style="flex:1" data-tedit><i class="fas fa-edit"></i> Edit</button>';
+    html += '</div></div>';
+  });
+  container.innerHTML = html;
+  container.querySelectorAll('[data-tcopy]').forEach(function(btn) { btn.addEventListener('click', function() { showToast('Template copied to clipboard'); }); });
+  container.querySelectorAll('[data-tedit]').forEach(function(btn) { btn.addEventListener('click', function() { showToast('Edit mode \u2014 modify template variables'); }); });
+}
+
+function renderErrorLog() {
+  var container = $('#errorLog');
+  if (API_ERRORS.length === 0) {
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:12px"><i class="fas fa-check-circle" style="color:var(--success);margin-right:6px"></i> No API errors recorded this session</div>';
+    return;
+  }
+  var html = '';
+  API_ERRORS.forEach(function(e) {
+    var codeLabel = e.code === 0 ? 'CORS' : String(e.code);
+    html += '<div class="error-row"><span class="error-code c' + e.code + '">' + codeLabel + '</span>';
+    html += '<span class="error-ts">' + escapeHtml(e.ts) + '</span><span class="error-msg">' + escapeHtml(e.msg) + '</span>';
+    html += '<span class="error-action ' + e.action + '">' + (e.action === 'retry' ? 'RETRY' : e.action === 'resolved' ? 'RESOLVED' : 'QUEUED') + '</span></div>';
+  });
+  container.innerHTML = html;
+}
+
+function populateDropdowns() {
+  // Properties dropdown
+  var propSelect = $('#nwoProperty');
+  propSelect.innerHTML = '<option value="">— Select Property —</option>';
+  PROPERTIES.forEach(function(p) {
+    propSelect.innerHTML += '<option value="' + escapeHtml(String(p.id)) + '">' + escapeHtml(p.name) + (p.address ? ' \u2014 ' + escapeHtml(p.address) : '') + '</option>';
+  });
+  // Also add properties extracted from work orders if API didn't return properties
+  if (PROPERTIES.length === 0) {
+    var seen = {};
+    WORK_ORDERS.forEach(function(wo) {
+      if (wo.propertyName && !seen[wo.propertyName]) {
+        seen[wo.propertyName] = true;
+        propSelect.innerHTML += '<option value="' + escapeHtml(wo.propertyName) + '">' + escapeHtml(wo.propertyName) + '</option>';
+      }
+    });
+  }
+
+  // Vendors dropdown
+  var vendSelect = $('#nwoVendor');
+  vendSelect.innerHTML = '<option value="">— Select Vendor —</option>';
+  VENDORS.forEach(function(v) {
+    vendSelect.innerHTML += '<option value="' + escapeHtml(String(v.id)) + '">' + escapeHtml(v.name) + '</option>';
+  });
+}
+
+/* =================================================================
+   RENDER ALL — convenience wrapper
+   ================================================================= */
+function renderAll() {
+  renderWorkOrders();
+  renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+  renderTurnBoard();
+  renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+  renderPayroll();
+  renderMoveOuts();
+  if (BILLS.length > 0) { renderReconciliation(); }
+  renderDashboardKPIs();
+  renderActivityFeed();
+  populateDropdowns();
+}
+
+/* =================================================================
+   INIT — Cache-first with WO-based pre-flight
+   ================================================================= */
+var _uiWired = false;
+
+function wireUpUI() {
+  if (_uiWired) return;
+  _uiWired = true;
+
+  // Navigation tabs
+  $$('.nav-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      $$('.section').forEach(function(s) { s.classList.remove('active'); });
+      var sec = document.getElementById('sec-' + tab.getAttribute('data-tab'));
+      if (sec) sec.classList.add('active');
+    });
+  });
+
+  // WO status filter buttons
+  $$('[data-filter]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      $$('[data-filter]').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentWOFilter = btn.getAttribute('data-filter');
+      renderWorkOrders();
+    });
+  });
+
+  // WO dropdown filters
+  $('#woSearch').addEventListener('input', function() { renderWorkOrders(); });
+  if ($('#woPriorityFilter')) {
+    $('#woPriorityFilter').addEventListener('change', function() { currentWOPriority = this.value; renderWorkOrders(); });
+  }
+  if ($('#woTypeFilter')) {
+    $('#woTypeFilter').addEventListener('change', function() { currentWOType = this.value; renderWorkOrders(); });
+  }
+  if ($('#woPropertyFilter')) {
+    $('#woPropertyFilter').addEventListener('change', function() { currentWOProperty = this.value; renderWorkOrders(); });
+  }
+  if ($('#woGroupFilter')) {
+    $('#woGroupFilter').addEventListener('change', function() { currentPropertyGroup = this.value; renderWorkOrders(); });
+  }
+
+  // Payroll navigation
+  if ($('#payrollPrev')) {
+    $('#payrollPrev').addEventListener('click', function() { PAYROLL_WEEK_OFFSET--; renderPayroll(); });
+  }
+  if ($('#payrollNext')) {
+    $('#payrollNext').addEventListener('click', function() { PAYROLL_WEEK_OFFSET++; renderPayroll(); });
+  }
+
+  // Turn filter buttons
+  $$('[data-turnfilter]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      $$('[data-turnfilter]').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentTurnFilter = btn.getAttribute('data-turnfilter');
+      renderTurnBoard();
+    });
+  });
+
+  // Clickable KPI cards
+  $$('.kpi-clickable[data-kpi]').forEach(function(card) {
+    card.addEventListener('click', function() {
+      var kpi = this.getAttribute('data-kpi');
+      if (kpi === 'open' || kpi === 'urgent' || kpi === 'flagged') {
+        // Switch to WO tab and filter
+        $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+        var woTab = document.querySelector('[data-tab="workorders"]');
+        if (woTab) woTab.classList.add('active');
+        $$('.section').forEach(function(s) { s.classList.remove('active'); });
+        var woSec = document.getElementById('sec-workorders');
+        if (woSec) woSec.classList.add('active');
+        if (kpi === 'urgent') {
+          currentWOPriority = 'Urgent';
+          if ($('#woPriorityFilter')) $('#woPriorityFilter').value = 'Urgent';
+        } else if (kpi === 'flagged') {
+          currentWOFilter = 'flagged';
+          $$('[data-filter]').forEach(function(b) {
+            b.classList.toggle('active', b.getAttribute('data-filter') === 'flagged');
+          });
+        }
+        renderWorkOrders();
+      } else if (kpi === 'turns') {
+        $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+        var tTab = document.querySelector('[data-tab="turnboard"]');
+        if (tTab) tTab.classList.add('active');
+        $$('.section').forEach(function(s) { s.classList.remove('active'); });
+        var tSec = document.getElementById('sec-turnboard');
+        if (tSec) tSec.classList.add('active');
+      } else if (kpi === 'moveouts') {
+        // Scroll to move-out section on dashboard
+        var moSec = document.getElementById('moveOutSection');
+        if (moSec) moSec.scrollIntoView({ behavior: 'smooth' });
+      }
+    });
+  });
+
+  // Activity feed filters
+  $$('[data-actfilter]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      $$('[data-actfilter]').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentActivityFilter = btn.getAttribute('data-actfilter');
+      renderActivityFeed();
+    });
+  });
+
+  // Manual bills load button
+  if ($('#btnLoadBills')) {
+    $('#btnLoadBills').addEventListener('click', async function() {
+      var btn = this;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading Bills\u2026';
+      try {
+        await fetchBills();
+        renderReconciliation();
+        renderDashboardKPIs();
+        await saveAllToCache();
+        showToast('Bills loaded \u2014 ' + BILLS.length + ' bills');
+      } catch (err) {
+        showToast('Failed to load bills: ' + (err.message || err));
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-download"></i> Load Bills';
+      }
+    });
+  }
+  $('#vendorSearch').addEventListener('input', function() { renderVendors(this.value); });
+  $('#btnNewWO').addEventListener('click', function() { openModal('newWOModal'); });
+  $('#btnNewTemplate').addEventListener('click', function() { showToast('Template editor \u2014 define trigger, variables, and body'); });
+  $('#btnRefreshTurns').addEventListener('click', function() { sectionRefresh('turns', this); });
+  $('#btnClearErrors').addEventListener('click', function() {
+    API_ERRORS = API_ERRORS.filter(function(e) { return e.action !== 'resolved'; });
+    renderErrorLog();
+    showToast('Cleared resolved errors');
+  });
+
+  // Refresh button — force full reload from API
+  $('#refreshBtn').addEventListener('click', function() { refreshData(); });
+
+  // Progress dock close
+  $('#progClose').addEventListener('click', function() { $('#progressDock').classList.add('hidden'); });
+
+  // Inspections search
+  $('#inspSearch').addEventListener('input', function() { renderInspections(this.value); });
+  $('#btnRefreshInsp').addEventListener('click', function() { sectionRefresh('inspections', this); });
+
+  // Per-section refresh buttons
+  $('#btnRefreshDash').addEventListener('click', function() { sectionRefresh('dashboard', this); });
+  $('#btnRefreshWO').addEventListener('click', function() { sectionRefresh('workorders', this); });
+  $('#btnRefreshVendors').addEventListener('click', function() { sectionRefresh('vendors', this); });
+
+  // Theme toggle
+  $('#themeToggle').addEventListener('click', function() { toggleTheme(); });
+  updateThemeIcon(); // sync icon with initial state
+
+  // Cache export / import
+  $('#btnExportCache').addEventListener('click', function() { exportCacheToJSON(); });
+  $('#btnImportCache').addEventListener('click', function() { $('#cacheFileInput').click(); });
+  $('#cacheFileInput').addEventListener('change', function() {
+    if (this.files && this.files[0]) {
+      importCacheFromJSON(this.files[0]);
+      this.value = ''; // reset so same file can be re-imported
+    }
+  });
+
+  // Create WO handler
+  $('#btnCreateWO').addEventListener('click', async function() {
+    var desc = $('#nwoDesc').value.trim();
+    if (!desc) { showToast('Please enter a description for the work order.'); return; }
+
+    var btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating\u2026';
+
+    try {
+      var payload = {
+        JobDescription: desc,
+        Priority: $('#nwoPriority').value
+      };
+      var propVal = $('#nwoProperty').value;
+      if (propVal) { payload.PropertyId = propVal; }
+      var unitVal = $('#nwoUnit').value.trim();
+      if (unitVal) { payload.UnitId = unitVal; }
+      var vendVal = $('#nwoVendor').value;
+      if (vendVal) { payload.VendorId = vendVal; }
+
+      await apiFetch('/api/v0/work_orders', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      closeModal('newWOModal');
+      showToast('Work order created \u2014 refreshing list\u2026');
+      await fetchWorkOrders();
+      renderWorkOrders();
+      renderDashboardKPIs();
+      await saveAllToCache();
+    } catch (err) {
+      showToast('Create failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-plus"></i> Create';
+    }
+  });
+}
+
+// Per-section refresh — reload just one dataset
+async function sectionRefresh(section, btn) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.classList.add('spinning');
+  try {
+    if (section === 'workorders' || section === 'dashboard') {
+      showToast('Refreshing open work orders\u2026');
+      await fetchWorkOrders();
+      renderWorkOrders();
+    }
+    if (section === 'vendors' || section === 'dashboard') {
+      showToast('Refreshing vendors\u2026');
+      await fetchVendors();
+      renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+    }
+    if (section === 'turns' || section === 'dashboard') {
+      showToast('Refreshing turn data\u2026');
+      await fetchTurns();
+      renderTurnBoard();
+    }
+    if (section === 'inspections' || section === 'dashboard') {
+      showToast('Refreshing inspections\u2026');
+      await fetchInspections();
+      renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+    }
+    renderDashboardKPIs();
+    renderActivityFeed();
+    populateDropdowns();
+    await saveAllToCache();
+    showToast('Section refreshed');
+  } catch (err) {
+    showToast('Refresh failed: ' + (err.message || err));
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('spinning');
+  }
+}
+
+async function initApp() {
+  if (appInitialized) return;
+  appInitialized = true;
+
+  setApiStatus('loading', 'Initializing\u2026');
+  updateCacheBadge('loading');
+
+  // Load flags from IndexedDB
+  await loadFlags();
+
+  // Show skeleton loading states
+  $('#kanbanBoard').innerHTML = loadingHtml('Checking cache\u2026');
+  $('#vendorGrid').innerHTML = loadingHtml('Checking cache\u2026');
+  $('#turnBoard').innerHTML = loadingHtml('Checking cache\u2026');
+  $('#inspBody').innerHTML = '<tr><td colspan="7">' + loadingHtml('Checking cache\u2026') + '</td></tr>';
+  $('#reconList').innerHTML = emptyHtml('fa-download', 'Bills load on demand \u2014 use the Load Bills button');
+  renderTemplates();
+  renderErrorLog();
+  wireUpUI();
+
+  // ================================================================
+  // STEP 1: Check IndexedDB cache for fresh work order data
+  // ================================================================
+  var cacheLoaded = false;
+  try {
+    var cachedWO = await cacheGet('work_orders');
+    if (cachedWO && Array.isArray(cachedWO.data) && cachedWO.data.length > 0) {
+      var fresh = isCacheFresh(cachedWO);
+      var cachedVendors = await cacheGet('vendors');
+      var cachedProps = await cacheGet('properties');
+      var cachedBills = await cacheGet('bills');
+      var cachedTurns = await cacheGet('turns');
+      var cachedInsp = await cacheGet('inspections');
+
+      WORK_ORDERS = cachedWO.data;
+      VENDORS = (cachedVendors && cachedVendors.data) ? cachedVendors.data : [];
+      PROPERTIES = (cachedProps && cachedProps.data) ? cachedProps.data : [];
+      BILLS = (cachedBills && cachedBills.data) ? cachedBills.data : [];
+      TURNS = (cachedTurns && cachedTurns.data) ? cachedTurns.data : [];
+      INSPECTIONS = (cachedInsp && cachedInsp.data) ? cachedInsp.data : [];
+
+      cacheLoaded = true;
+      updateCacheBadge('cached', cachedWO.timestamp, !fresh);
+      setApiStatus('', (fresh ? 'Cached' : 'Stale cache') + ' \u2014 ' + WORK_ORDERS.length + ' WOs');
+      if (!fresh) { setApiStatus('loading', 'Stale cache loaded \u2014 refreshing\u2026'); }
+      showToast((fresh ? 'Loaded from cache' : 'Loaded stale cache') + ' \u2014 ' + WORK_ORDERS.length + ' work orders, ' + VENDORS.length + ' vendors');
+
+      // Render immediately with cached data
+      renderAll();
+
+      if (fresh) {
+        // Cache is fresh — no need to fetch now. Schedule background refresh.
+        setApiStatus('', 'Connected (cached)');
+        $('#apiStatus').className = 'topbar-status';
+        return;
+      }
+      // Cache is stale — fall through to fetch fresh data
+    }
+  } catch (cacheErr) {
+    console.log('Cache read failed: ' + (cacheErr.message || cacheErr));
+  }
+
+  // ================================================================
+  // STEP 2: Pre-flight = lightweight API test (Database API, 5 records)
+  //         Tests connectivity before launching Reports API bulk load
+  // ================================================================
+  setApiStatus('loading', 'Connecting to AppFolio\u2026');
+  if (!cacheLoaded) {
+    $('#kanbanBoard').innerHTML = loadingHtml('Testing API connection\u2026');
+  }
+
+  // ================================================================
+  // STEP 2: Pre-flight = Proxy v4 ?action=ping
+  //         Tests proxy connectivity + AppFolio auth in one shot
+  // ================================================================
+  try {
+    setApiStatus('loading', 'Pinging proxy\u2026');
+    var pingData = await proxyAction('ping');
+
+    if (!pingData.ok) {
+      logApiError(pingData.status || 0, 'Pre-flight: Proxy ping failed \u2014 AppFolio returned ' + (pingData.status || 'error'), 'resolved');
+      showCorsError('Pre-flight ping failed (status ' + (pingData.status || '?') + '). Verify proxy has correct credentials.');
+      setApiStatus('error', 'Auth Failed (' + (pingData.status || '?') + ')');
+      if (!cacheLoaded) {
+        await loadStaleCache();
+        renderAll();
+      }
+      updateCacheBadge(cacheLoaded ? 'cached' : 'offline', null, true);
+      return;
+    }
+    setApiStatus('loading', 'Proxy v4 OK (' + pingData.latency_ms + 'ms) \u2014 loading data\u2026');
+  } catch (preErr) {
+    var peMsg = preErr.message || 'Connection failed';
+    var isCsp = peMsg.indexOf('Content Security Policy') !== -1 || peMsg.indexOf('CSP') !== -1 || peMsg.indexOf('Refused to connect') !== -1 || preErr.name === 'TypeError';
+    if (isCsp) {
+      logApiError(0, 'Pre-flight BLOCKED: ' + peMsg + '. Click "Allow additional resources" popup, then re-enter credentials.', 'queued');
+      showCorsError(peMsg);
+      setApiStatus('error', 'CSP Blocked \u2014 Click Allow');
+    } else {
+      logApiError(0, 'Pre-flight failed: ' + peMsg, 'queued');
+      setApiStatus('error', 'Connection Failed');
+    }
+    if (!cacheLoaded) {
+      await loadStaleCache();
+      renderAll();
+    }
+    updateCacheBadge(cacheLoaded ? 'cached' : 'offline', null, true);
+    return;
+  }
+
+  // ================================================================
+  // STEP 3: Full data fetch via proxy v4 action endpoints
+  //         Each action does server-side pagination — ONE request per dataset
+  // ================================================================
+  await fetchAllLive();
+}
+
+// Fetch all data via Proxy v4 action endpoints — ONE request per dataset
+// Each ?action= call does server-side pagination and returns complete results
+// Bills excluded from auto-load — user loads manually on Reconciliation tab
+async function fetchAllLive() {
+  var anySuccess = false;
+  updateCacheBadge('loading');
+  var steps = ['Work Orders', 'Properties', 'Vendors', 'Turns', 'Inspections'];
+  showProgress('Syncing AppFolio via Proxy v4 (' + DATA_WINDOW_DAYS + 'd)', steps);
+
+  try {
+    // Step 0: Work Orders \u2014 PRIMARY (Reports API, 5000/page, open only)
+    // Step 0: Work Orders (proxy v4 server-side pagination)
+    updateProgress(0, 'active', 'Fetching work orders\u2026');
+    var woOk = false;
+    try { woOk = await fetchWorkOrders(); } catch (e) { /* logged */ }
+    updateProgress(0, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
+    // Progressive: render WOs + dashboard immediately
+    if (woOk) { renderWorkOrders(); renderDashboardKPIs(); renderActivityFeed(); }
+
+    // Step 1: Properties (proxy v4 server-side pagination)
+    updateProgress(1, 'active', 'Fetching properties\u2026');
+    var propOk = false;
+    try { propOk = await fetchProperties(); } catch (e) { /* logged */ }
+    updateProgress(1, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
+    if (propOk) { populateDropdowns(); renderWorkOrders(); }
+
+    // Step 2: Vendors (proxy v4 server-side pagination)
+    updateProgress(2, 'active', 'Fetching vendors\u2026');
+    var vendOk = false;
+    try { vendOk = await fetchVendors(); } catch (e) { /* logged */ }
+    updateProgress(2, vendOk ? 'done' : 'error', vendOk ? VENDORS.length + ' vendors' : 'Vendors failed');
+    if (vendOk) { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); populateDropdowns(); }
+
+    // Step 3: Turns (proxy v4 server-side pagination)
+    updateProgress(3, 'active', 'Fetching turns\u2026');
+    var turnOk = false;
+    try { turnOk = await fetchTurns(); } catch (e) { /* logged */ }
+    updateProgress(3, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns failed');
+    if (turnOk) { renderTurnBoard(); renderActivityFeed(); }
+
+    // Step 4: Inspections (proxy v4 server-side pagination)
+    updateProgress(4, 'active', 'Fetching inspections\u2026');
+    var inspOk = false;
+    try { inspOk = await fetchInspections(); } catch (e) { /* logged */ }
+    updateProgress(4, inspOk ? 'done' : 'error', inspOk ? INSPECTIONS.length + ' inspections' : 'Inspections failed');
+    if (inspOk) { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); renderActivityFeed(); }
+
+    anySuccess = woOk || propOk || vendOk || turnOk || inspOk;
+  } catch (e) {
+    // individual errors already logged
+  }
+
+  // Final full render to ensure everything is consistent
+  renderAll();
+
+  if (anySuccess) {
+    var summary = 'WO:' + WORK_ORDERS.length + ' V:' + VENDORS.length + ' P:' + PROPERTIES.length + ' T:' + TURNS.length + ' I:' + INSPECTIONS.length;
+    setApiStatus('', 'Connected \u2014 ' + summary);
+    $('#apiStatus').className = 'topbar-status';
+    await saveAllToCache();
+    updateProgress(-1, '', 'Sync complete \u2014 ' + summary);
+    hideProgress();
+  } else if (API_ERRORS.length > 0) {
+    setApiStatus('error', 'API Errors \u2014 Check Log');
+    updateCacheBadge('offline');
+    updateProgress(-1, '', 'Sync failed');
+    hideProgress();
+  } else {
+    setApiStatus('error', 'No Data Loaded');
+    updateCacheBadge('offline');
+    hideProgress();
+  }
+}
+
+// Load stale cache as fallback when API is unreachable
+async function loadStaleCache() {
+  try {
+    var cachedWO = await cacheGet('work_orders');
+    if (cachedWO && Array.isArray(cachedWO.data) && cachedWO.data.length > 0) {
+      var cachedVendors = await cacheGet('vendors');
+      var cachedProps = await cacheGet('properties');
+      var cachedBills = await cacheGet('bills');
+      var cachedTurns = await cacheGet('turns');
+      var cachedInsp = await cacheGet('inspections');
+      WORK_ORDERS = cachedWO.data;
+      VENDORS = (cachedVendors && cachedVendors.data) ? cachedVendors.data : [];
+      PROPERTIES = (cachedProps && cachedProps.data) ? cachedProps.data : [];
+      BILLS = (cachedBills && cachedBills.data) ? cachedBills.data : [];
+      TURNS = (cachedTurns && cachedTurns.data) ? cachedTurns.data : [];
+      INSPECTIONS = (cachedInsp && cachedInsp.data) ? cachedInsp.data : [];
+      updateCacheBadge('cached', cachedWO.timestamp, true);
+      showToast('API unavailable \u2014 loaded stale cache (' + WORK_ORDERS.length + ' WOs, ' + cacheAgeStr(cachedWO) + ')');
+    }
+  } catch (e) {
+    console.log('Stale cache load failed: ' + (e.message || e));
+  }
+}
+
+// Manual refresh — force re-fetch everything from API
+async function refreshData() {
+  var btn = $('#refreshBtn');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.classList.add('spinning');
+  btn.innerHTML = '<i class="fas fa-sync-alt"></i> Syncing\u2026';
+
+  try {
+    await fetchAllLive();
+    showToast('Data refreshed \u2014 ' + WORK_ORDERS.length + ' work orders loaded');
+  } catch (err) {
+    showToast('Refresh failed: ' + (err.message || err));
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('spinning');
+    btn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
+  }
+}
+</script>
+
+
+
+</body></html>

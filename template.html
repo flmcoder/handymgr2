@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maintenance Cockpit — AppFolio Integration</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+/* __CSS_PLACEHOLDER__ */
+</style>
+</head>
+<body>
+
+<!-- ==================== VAULT UNLOCK SCREEN ==================== -->
+<div id="vaultScreen">
+  <div class="vault-box">
+    <div class="vault-icon"><i class="fas fa-shield-alt"></i></div>
+    <div class="vault-title">Credential Vault</div>
+    <div class="vault-subtitle">
+      Your API keys are AES-256-GCM encrypted.<br>
+      Enter your passphrase and AppFolio subdomain to connect.
+    </div>
+    <div class="vault-input-wrap">
+      <input type="password" class="vault-input" id="vaultPassphrase" placeholder="Enter vault passphrase" autocomplete="off" autofocus>
+      <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
+    </div>
+    <div class="vault-input-wrap">
+      <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off">
+    </div>
+    <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">yourco</span>.appfolio.com</code></div>
+    <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> CORS Proxy <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
+    <div class="vault-advanced-panel" id="advancedPanel">
+      <label class="vault-proxy-label">Proxy Relay URL</label>
+      <div class="vault-input-wrap">
+        <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
+      </div>
+      <div class="vault-proxy-hint">
+        <strong>Proxy:</strong> <a href="https://www.val.town" target="_blank" style="color:var(--accent)">Val Town</a> — credentials are hardcoded <strong>server-side</strong> in the proxy. The browser sends only the API path; the proxy adds auth and forwards to AppFolio.<br>
+        <span style="color:var(--success)"><i class="fas fa-check-circle"></i> Your proxy is already deployed and pre-configured.</span>
+      </div>
+    </div>
+    <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-lock-open"></i> Decrypt &amp; Connect</button>
+    <div class="vault-error" id="vaultError"></div>
+    <div class="vault-footer">
+      <i class="fas fa-info-circle"></i> AES-256-GCM &bull; PBKDF2 150k iterations &bull; Memory-only decryption<br>
+      <i class="fas fa-clock"></i> Auto-saves &amp; locks after 60 minutes of inactivity<br>
+      <i class="fas fa-shield-alt"></i> First connect: click <strong style="color:var(--accent)">"Allow"</strong> on CSP popup &bull; Proxy via <a href="https://www.val.town" target="_blank" style="color:var(--accent)">Val Town</a> (credentials hardcoded server-side)
+    </div>
+  </div>
+</div>
+
+<!-- ==================== APPLICATION SHELL ==================== -->
+<div id="appShell">
+
+<!-- Top Bar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo"><i class="fas fa-cogs"></i> MAINT:COCKPIT</div>
+    <div class="topbar-divider"></div>
+    <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
+  </div>
+  <div class="topbar-right">
+    <div class="vault-timer" id="vaultTimer"><i class="fas fa-hourglass-half"></i> <span id="vaultCountdown">15:00</span></div>
+    <button class="theme-toggle-btn" id="themeToggle" title="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
+    <div class="cache-badge live" id="cacheBadge" title="Data source"><i class="fas fa-database"></i> <span id="cacheBadgeText">—</span></div>
+    <button class="cache-io-btn" id="btnExportCache" title="Export cache to file"><i class="fas fa-download"></i></button>
+    <button class="cache-io-btn" id="btnImportCache" title="Import cache from file"><i class="fas fa-upload"></i></button>
+    <div class="sync-timestamp" id="syncTimestamp"></div>
+    <button class="refresh-btn" id="refreshBtn" title="Refresh all data from API"><i class="fas fa-sync-alt"></i> Refresh</button>
+    <div class="rate-badge" id="rateBadge">4/4 req/s</div>
+    <button class="lock-btn" id="lockBtn"><i class="fas fa-lock"></i> Lock</button>
+    <input type="file" id="cacheFileInput" accept=".json" style="display:none">
+  </div>
+</div>
+
+<!-- Navigation -->
+<nav class="nav-tabs" id="navTabs">
+  <button class="nav-tab active" data-tab="dashboard"><i class="fas fa-th-large"></i> Dashboard</button>
+  <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="badge" id="woBadge">—</span></button>
+  <button class="nav-tab" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
+  <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
+  <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
+  <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
+  <button class="nav-tab" data-tab="reconciliation"><i class="fas fa-balance-scale"></i> Reconciliation</button>
+  <button class="nav-tab" data-tab="templates"><i class="fas fa-envelope-open-text"></i> Templates</button>
+  <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
+</nav>
+
+<!-- Main Content -->
+<div class="main-content">
+
+<!-- CORS Banner -->
+<div class="cors-banner" id="corsBanner">
+  <strong><i class="fas fa-exclamation-triangle"></i> Connection Error</strong><br>
+  <span id="corsMsg">The request was blocked.</span><br><br>
+  <strong>How to fix:</strong><br>
+  <strong style="color:var(--accent)">A) CSP Blocked?</strong> Click <strong>"Allow additional resources"</strong> popup at the top of the page → page reloads → re-enter credentials.<br>
+  <strong style="color:var(--accent)">B) 401/404 Errors?</strong> Deploy the v3 proxy code from the vault screen. It has your AppFolio credentials hardcoded server-side — no headers for platforms to strip.<br>
+  &nbsp;&nbsp;&nbsp;→ <strong>Solution:</strong> Lock vault → expand CORS Proxy → copy v3 code → paste into Val Town → save → reconnect.<br>
+  <span id="corsDetail" style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);display:block;margin-top:6px"></span>
+</div>
+
+<section class="section active" id="sec-dashboard">
+  <div class="kpi-grid stagger">
+    <div class="kpi-card amber kpi-clickable" data-kpi="open"><div class="kpi-label">Open Work Orders</div><div class="kpi-value" id="kpiOpen">—</div><div class="kpi-sub" id="kpiOpenSub">Loading…</div></div>
+    <div class="kpi-card red kpi-clickable" data-kpi="urgent"><div class="kpi-label">Urgent / Critical</div><div class="kpi-value" id="kpiUrgent">—</div><div class="kpi-sub" id="kpiUrgentSub">Loading…</div></div>
+    <div class="kpi-card blue kpi-clickable" data-kpi="turns"><div class="kpi-label">Active Turns</div><div class="kpi-value" id="kpiTurns">—</div><div class="kpi-sub" id="kpiTurnsSub">Loading…</div></div>
+    <div class="kpi-card green kpi-clickable" data-kpi="moveouts"><div class="kpi-label">Upcoming Move-Outs</div><div class="kpi-value" id="kpiMoveOuts">—</div><div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div></div>
+    <div class="kpi-card purple kpi-clickable" data-kpi="flagged"><div class="kpi-label">Flagged for Follow-Up</div><div class="kpi-value" id="kpiFlagged">—</div><div class="kpi-sub" id="kpiFlaggedSub">Loading…</div></div>
+  </div>
+  <!-- Upcoming Move-Outs -->
+  <div class="table-wrapper" style="margin-bottom:20px" id="moveOutSection">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-door-open" style="color:var(--warning)"></i> Upcoming Move-Outs (60 days)</div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="moveOutTable">
+        <thead><tr><th>Property</th><th>Unit</th><th>Tenant</th><th>Move-Out Date</th><th>Days Left</th></tr></thead>
+        <tbody id="moveOutBody"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="table-wrapper">
+    <div class="table-header"><div class="table-title"><i class="fas fa-bolt" style="color:var(--accent)"></i> Recent Activity Feed</div><button class="sec-refresh" id="btnRefreshDash"><i class="fas fa-sync-alt"></i> Refresh</button></div>
+    <div class="activity-filters">
+      <button class="activity-filter-btn active" data-actfilter="all">All</button>
+      <button class="activity-filter-btn" data-actfilter="work_order">Work Orders</button>
+      <button class="activity-filter-btn" data-actfilter="turn">Turns</button>
+      <button class="activity-filter-btn" data-actfilter="inspection">Inspections</button>
+      <button class="activity-filter-btn" data-actfilter="urgent">Urgent Only</button>
+    </div>
+    <div class="table-scroll"><table class="data-table" id="activityTable"><thead><tr><th>Time</th><th>Event</th><th>Entity</th><th>Details</th></tr></thead><tbody id="activityBody"></tbody></table></div>
+  </div>
+</section>
+
+<section class="section" id="sec-workorders">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-wrench" style="color:var(--accent)"></i> Work Order Management</div><div class="section-subtitle">Reports API v2 — work_order.json &bull; Open orders (last 180 days) &bull; Click column headers to filter</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search orders…" id="woSearch"></div>
+      <button class="sec-refresh" id="btnRefreshWO"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <button class="action-btn primary" id="btnNewWO"><i class="fas fa-plus"></i> New WO</button>
+    </div>
+  </div>
+  <div class="kanban-filters" id="woFilters">
+    <select id="woPriorityFilter"><option value="">All Priorities</option><option value="Urgent">Urgent</option><option value="Normal">Normal</option><option value="Low">Low</option></select>
+    <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
+    <select id="woPropertyFilter"><option value="">All Properties</option></select>
+    <select id="woGroupFilter"><option value="">All Groups</option></select>
+    <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
+    <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
+    <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
+    <button class="filter-btn" data-filter="Estimated">Estimated</button>
+  </div>
+  <div class="kanban-board" id="kanbanBoard"></div>
+</section>
+
+<!-- ==================== PAYROLL ==================== -->
+<section class="section" id="sec-payroll">
+  <div class="section-header">
+    <div>
+      <div class="section-title"><i class="fas fa-money-check-alt" style="color:var(--success)"></i> Payroll Review</div>
+      <div class="section-subtitle">Work orders marked "Work Done" — Friday-to-Friday pay period</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="action-btn" id="payrollPrev"><i class="fas fa-chevron-left"></i> Prev</button>
+      <span class="payroll-range-label" id="payrollRange">—</span>
+      <button class="action-btn" id="payrollNext">Next <i class="fas fa-chevron-right"></i></button>
+    </div>
+  </div>
+  <div class="kpi-grid stagger" style="margin-bottom:16px">
+    <div class="kpi-card green"><div class="kpi-label">Work Done This Period</div><div class="kpi-value" id="payrollCount">—</div><div class="kpi-sub" id="payrollCountSub">Loading…</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">Total Amount</div><div class="kpi-value" id="payrollTotal">—</div><div class="kpi-sub" id="payrollTotalSub">Loading…</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Vendors Active</div><div class="kpi-value" id="payrollVendors">—</div><div class="kpi-sub" id="payrollVendorsSub">Loading…</div></div>
+    <div class="kpi-card purple"><div class="kpi-label">Properties Touched</div><div class="kpi-value" id="payrollProps">—</div><div class="kpi-sub" id="payrollPropsSub">Loading…</div></div>
+  </div>
+  <div class="table-wrapper">
+    <div class="table-header"><div class="table-title"><i class="fas fa-clipboard-list" style="color:var(--accent)"></i> Work Done This Period</div></div>
+    <div class="table-scroll">
+      <table class="data-table" id="payrollTable">
+        <thead><tr><th>WO #</th><th>Property</th><th>Unit</th><th>Description</th><th>Vendor</th><th>Completed</th><th>Amount</th><th style="width:50px">Flag</th></tr></thead>
+        <tbody id="payrollBody"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="sec-turnboard">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-exchange-alt" style="color:var(--accent)"></i> Turn Board</div><div class="section-subtitle">Reports API v2 — unit_turn_detail.json &bull; Tracks move-out → turn-end cycle with labor &amp; billing costs</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="filter-btn active" data-turnfilter="open">Open Only</button>
+      <button class="filter-btn" data-turnfilter="all">All Turns</button>
+      <button class="sec-refresh" id="btnRefreshTurns"><i class="fas fa-sync-alt"></i> Refresh</button>
+    </div>
+  </div>
+  <div class="turn-board stagger" id="turnBoard"></div>
+</section>
+
+<section class="section" id="sec-inspections">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-clipboard-check" style="color:var(--accent)"></i> Unit Inspections</div><div class="section-subtitle">Reports API v2 — unit_inspection.json &bull; Last 180 days + units with no inspection date</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search inspections…" id="inspSearch"></div>
+      <button class="sec-refresh" id="btnRefreshInsp"><i class="fas fa-sync-alt"></i> Refresh</button>
+    </div>
+  </div>
+  <div class="table-wrap"><table class="wo-table"><thead><tr>
+    <th>Property</th><th>Unit</th><th>Last Inspection</th><th>Tenant</th><th>Move-in</th><th>Move-out</th><th>Status</th>
+  </tr></thead><tbody id="inspBody"></tbody></table></div>
+</section>
+
+<section class="section" id="sec-vendors">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-hard-hat" style="color:var(--accent)"></i> Vendor Compliance Tracker</div><div class="section-subtitle">CompliantStatus synced from Database API — LiabilityInsuranceExpiration monitored</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search vendors…" id="vendorSearch"></div>
+      <button class="sec-refresh" id="btnRefreshVendors"><i class="fas fa-sync-alt"></i> Refresh</button>
+    </div>
+  </div>
+  <div class="vendor-grid stagger" id="vendorGrid"></div>
+</section>
+
+<section class="section" id="sec-reconciliation">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-balance-scale" style="color:var(--accent)"></i> Bill &rarr; Work Order Reconciliation</div><div class="section-subtitle">Database API v0 &bull; Bills loaded on-demand to save API calls &bull; Cross-module matching engine</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="action-btn primary" id="btnLoadBills"><i class="fas fa-download"></i> Load Bills</button>
+    </div>
+  </div>
+  <div class="stagger" id="reconList"></div>
+</section>
+
+<section class="section" id="sec-templates">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-envelope-open-text" style="color:var(--accent)"></i> Communication Templates</div><div class="section-subtitle">Auto-fill with API attributes — postCreate Work Order Note / Tenant Note / Owner Note</div></div>
+    <button class="action-btn primary" id="btnNewTemplate"><i class="fas fa-plus"></i> New Template</button>
+  </div>
+  <div class="template-grid stagger" id="templateGrid"></div>
+</section>
+
+<section class="section" id="sec-errors">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-exclamation-triangle" style="color:var(--accent)"></i> API Error Log &amp; Retry Queue</div><div class="section-subtitle">Exponential backoff for 533 &bull; Retry-After for 429 &bull; Semantic validation for 422</div></div>
+    <button class="action-btn" id="btnClearErrors"><i class="fas fa-trash"></i> Clear Resolved</button>
+  </div>
+  <div class="error-log stagger" id="errorLog"></div>
+</section>
+
+</div>
+
+<!-- Progress Dock — non-blocking corner indicator -->
+<div class="progress-dock hidden" id="progressDock">
+  <div class="progress-dock-title"><span id="progTitle">Loading data…</span><button class="close-prog" id="progClose">&times;</button></div>
+  <div class="progress-dock-status" id="progStatus">Initializing…</div>
+  <div class="progress-bar-track"><div class="progress-bar-fill" id="progBar" style="width:0%"></div></div>
+  <div class="progress-dock-steps" id="progSteps"></div>
+</div>
+
+</div><!-- /appShell -->
+
+<!-- Work Order Detail Modal (expanded) -->
+<div class="modal-overlay" id="woModal">
+  <div class="modal" style="max-width:780px">
+    <div class="modal-head">
+      <h3 id="woModalTitle">Work Order Detail</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="flag-toggle-btn" id="woModalFlag" title="Flag for follow-up"><i class="fas fa-flag"></i></button>
+        <button class="modal-close" id="woModalClose">&times;</button>
+      </div>
+    </div>
+    <div class="modal-body" id="woModalBody"></div>
+    <div class="modal-footer"><button class="action-btn" id="woModalCloseBtn">Close</button><button class="action-btn primary" id="woModalSave">Save Changes</button></div>
+  </div>
+</div>
+
+<!-- New Work Order Modal -->
+<div class="modal-overlay" id="newWOModal">
+  <div class="modal">
+    <div class="modal-head"><h3>Create Work Order</h3><button class="modal-close" id="newWOModalClose">&times;</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Property</label><select class="form-select" id="nwoProperty"><option value="">Loading properties…</option></select></div>
+      <div class="form-group"><label class="form-label">Unit</label><input class="form-input" placeholder="e.g. Unit 204" id="nwoUnit"></div>
+      <div class="form-group"><label class="form-label">Priority</label><select class="form-select" id="nwoPriority"><option>Normal</option><option>Urgent</option><option>Low</option></select></div>
+      <div class="form-group"><label class="form-label">Description</label><textarea class="form-textarea" placeholder="Describe the maintenance issue…" id="nwoDesc"></textarea></div>
+      <div class="form-group"><label class="form-label">Assign Vendor</label><select class="form-select" id="nwoVendor"><option value="">Loading vendors…</option></select></div>
+    </div>
+    <div class="modal-footer"><button class="action-btn" id="newWOCancelBtn">Cancel</button><button class="action-btn primary" id="btnCreateWO"><i class="fas fa-plus"></i> Create</button></div>
+  </div>
+</div>
+
+<!-- Lock Confirmation Modal -->
+<div class="modal-overlay" id="lockModal">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-head"><h3><i class="fas fa-lock" style="color:var(--danger);margin-right:8px"></i> Lock Vault</h3><button class="modal-close" id="lockModalClose">&times;</button></div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-secondary);line-height:1.6">This will wipe all decrypted credentials from memory and return you to the unlock screen. Any unsaved work will persist but API connectivity will be lost.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="action-btn" id="lockCancelBtn">Cancel</button>
+      <button class="action-btn primary" style="background:var(--danger);border-color:var(--danger)" id="lockConfirmBtn"><i class="fas fa-lock"></i> Lock Now</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notification Toast -->
+<div id="toast" style="display:none;position:fixed;bottom:20px;right:20px;z-index:300;background:var(--bg-card);border:1px solid var(--accent);border-radius:var(--radius);padding:12px 20px;font-size:13px;color:var(--text-primary);box-shadow:var(--shadow);animation:fadeIn 0.2s ease;">
+  <span id="toastMsg"></span>
+</div>
+
+<script>
+/* __JS_PLACEHOLDER__ */
+</script>
+</body>
+</html>
