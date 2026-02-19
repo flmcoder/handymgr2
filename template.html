@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Maintenance Cockpit — AppFolio Integration</title>
+<title>HandyManager — Maintenance Cockpit</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -15,10 +15,8 @@
 <!-- ==================== VAULT UNLOCK SCREEN ==================== -->
 <div id="vaultScreen">
   <div class="vault-box">
-    <div class="vault-icon"><i class="fas fa-shield-alt"></i></div>
-    <div class="vault-title">Credential Vault</div>
-    <div class="vault-subtitle">
-      Your API keys are AES-256-GCM encrypted.<br>
+    <img src="https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938" alt="HandyManager" class="vault-logo">
+    <div class="vault-subtitle" style="margin-top:4px">
       Enter your passphrase and AppFolio subdomain to connect.
     </div>
     <div class="vault-input-wrap">
@@ -26,9 +24,9 @@
       <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
     </div>
     <div class="vault-input-wrap">
-      <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off">
+      <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off" value="flraz">
     </div>
-    <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">yourco</span>.appfolio.com</code></div>
+    <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
     <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> CORS Proxy <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
     <div class="vault-advanced-panel" id="advancedPanel">
       <label class="vault-proxy-label">Proxy Relay URL</label>
@@ -40,12 +38,11 @@
         <span style="color:var(--success)"><i class="fas fa-check-circle"></i> Your proxy is already deployed and pre-configured.</span>
       </div>
     </div>
-    <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-lock-open"></i> Decrypt &amp; Connect</button>
+    <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
     <div class="vault-error" id="vaultError"></div>
     <div class="vault-footer">
-      <i class="fas fa-info-circle"></i> AES-256-GCM &bull; PBKDF2 150k iterations &bull; Memory-only decryption<br>
-      <i class="fas fa-clock"></i> Auto-saves &amp; locks after 60 minutes of inactivity<br>
-      <i class="fas fa-shield-alt"></i> First connect: click <strong style="color:var(--accent)">"Allow"</strong> on CSP popup &bull; Proxy via <a href="https://www.val.town" target="_blank" style="color:var(--accent)">Val Town</a> (credentials hardcoded server-side)
+      <i class="fas fa-shield-alt"></i> Encrypted vault &bull; Memory-only decryption<br>
+      <i class="fas fa-clock"></i> Auto-saves &amp; locks after 60 min inactivity
     </div>
   </div>
 </div>
@@ -56,7 +53,7 @@
 <!-- Top Bar -->
 <div class="topbar">
   <div class="topbar-left">
-    <div class="topbar-logo"><i class="fas fa-cogs"></i> MAINT:COCKPIT</div>
+    <div class="topbar-logo"><img src="https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938" alt="HandyManager" class="topbar-logo-img"></div>
     <div class="topbar-divider"></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
   </div>
@@ -90,15 +87,18 @@
 <!-- Main Content -->
 <div class="main-content">
 
-<!-- CORS Banner -->
+<!-- CORS Banner — collapsible -->
 <div class="cors-banner" id="corsBanner">
-  <strong><i class="fas fa-exclamation-triangle"></i> Connection Error</strong><br>
-  <span id="corsMsg">The request was blocked.</span><br><br>
-  <strong>How to fix:</strong><br>
-  <strong style="color:var(--accent)">A) CSP Blocked?</strong> Click <strong>"Allow additional resources"</strong> popup at the top of the page → page reloads → re-enter credentials.<br>
-  <strong style="color:var(--accent)">B) 401/404 Errors?</strong> Deploy the v3 proxy code from the vault screen. It has your AppFolio credentials hardcoded server-side — no headers for platforms to strip.<br>
-  &nbsp;&nbsp;&nbsp;→ <strong>Solution:</strong> Lock vault → expand CORS Proxy → copy v3 code → paste into Val Town → save → reconnect.<br>
-  <span id="corsDetail" style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);display:block;margin-top:6px"></span>
+  <div class="cors-banner-header" id="corsBannerToggle" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+    <span><strong><i class="fas fa-exclamation-triangle"></i> Connection Error</strong> — <span id="corsMsg" style="font-weight:normal;font-size:12px">The request was blocked.</span></span>
+    <i class="fas fa-chevron-down cors-toggle-icon" style="font-size:10px;transition:transform 0.2s"></i>
+  </div>
+  <div class="cors-banner-body" id="corsBannerBody" style="display:none;margin-top:10px;font-size:12px;">
+    <strong>How to fix:</strong><br>
+    <strong style="color:var(--accent)">A) CSP Blocked?</strong> Click <strong>"Allow additional resources"</strong> popup at top of page.<br>
+    <strong style="color:var(--accent)">B) 401/404?</strong> Redeploy proxy with correct credentials.<br>
+    <span id="corsDetail" style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);display:block;margin-top:6px"></span>
+  </div>
 </div>
 
 <section class="section active" id="sec-dashboard">
@@ -122,7 +122,13 @@
     </div>
   </div>
   <div class="table-wrapper">
-    <div class="table-header"><div class="table-title"><i class="fas fa-bolt" style="color:var(--accent)"></i> Recent Activity Feed</div><button class="sec-refresh" id="btnRefreshDash"><i class="fas fa-sync-alt"></i> Refresh</button></div>
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-bolt" style="color:var(--accent)"></i> Recent Activity Feed</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="action-btn" id="btnWebhookConfig" title="Configure HTTP POST webhook"><i class="fas fa-plug"></i> Webhook</button>
+        <button class="sec-refresh" id="btnRefreshDash"><i class="fas fa-sync-alt"></i> Refresh</button>
+      </div>
+    </div>
     <div class="activity-filters">
       <button class="activity-filter-btn active" data-actfilter="all">All</button>
       <button class="activity-filter-btn" data-actfilter="work_order">Work Orders</button>
@@ -148,6 +154,7 @@
     <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
     <select id="woPropertyFilter"><option value="">All Properties</option></select>
     <select id="woGroupFilter"><option value="">All Groups</option></select>
+    <button class="action-btn" id="btnLoadGroups" title="Load property groups from v0 API"><i class="fas fa-layer-group"></i> Load Groups</button>
     <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
     <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
     <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
@@ -164,6 +171,7 @@
       <div class="section-subtitle">Work orders marked "Work Done" — Friday-to-Friday pay period</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="payrollGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <button class="action-btn" id="payrollPrev"><i class="fas fa-chevron-left"></i> Prev</button>
       <span class="payroll-range-label" id="payrollRange">—</span>
       <button class="action-btn" id="payrollNext">Next <i class="fas fa-chevron-right"></i></button>
@@ -171,7 +179,7 @@
   </div>
   <div class="kpi-grid stagger" style="margin-bottom:16px">
     <div class="kpi-card green"><div class="kpi-label">Work Done This Period</div><div class="kpi-value" id="payrollCount">—</div><div class="kpi-sub" id="payrollCountSub">Loading…</div></div>
-    <div class="kpi-card amber"><div class="kpi-label">Total Amount</div><div class="kpi-value" id="payrollTotal">—</div><div class="kpi-sub" id="payrollTotalSub">Loading…</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">Total Labor</div><div class="kpi-value" id="payrollTotal">—</div><div class="kpi-sub" id="payrollTotalSub">Loading…</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Vendors Active</div><div class="kpi-value" id="payrollVendors">—</div><div class="kpi-sub" id="payrollVendorsSub">Loading…</div></div>
     <div class="kpi-card purple"><div class="kpi-label">Properties Touched</div><div class="kpi-value" id="payrollProps">—</div><div class="kpi-sub" id="payrollPropsSub">Loading…</div></div>
   </div>
@@ -259,6 +267,46 @@
 </div>
 
 </div><!-- /appShell -->
+
+<!-- Webhook Config Modal -->
+<div class="modal-overlay" id="webhookModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-head"><h3><i class="fas fa-plug" style="color:var(--accent);margin-right:8px"></i> Webhook Configuration</h3><button class="modal-close" id="webhookModalClose">&times;</button></div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6">Push real-time events into the activity feed via <strong>HTTP POST</strong>. Use <strong>Make.com</strong>, <strong>Zapier</strong>, or any automation tool to send JSON payloads to the webhook URL below.</p>
+      <div class="form-group">
+        <label class="form-label">Webhook Endpoint (POST)</label>
+        <div style="display:flex;gap:6px">
+          <input class="form-input" id="webhookUrl" readonly style="font-family:var(--font-mono);font-size:12px;flex:1;background:var(--bg-input)">
+          <button class="action-btn" id="btnCopyWebhook" title="Copy URL"><i class="fas fa-copy"></i></button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Webhook Events (<span id="webhookEventCount">0</span> stored)</label>
+        <div id="webhookEventList" style="max-height:140px;overflow-y:auto;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);padding:8px;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono)">No events yet</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Polling Interval</label>
+        <select class="form-select" id="webhookPollInterval">
+          <option value="0">Disabled</option>
+          <option value="30">Every 30 seconds</option>
+          <option value="60" selected>Every 60 seconds</option>
+          <option value="300">Every 5 minutes</option>
+        </select>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);line-height:1.6;margin-top:8px">
+        <strong>Make.com:</strong> HTTP module → POST to webhook URL above<br>
+        <strong>Zapier / n8n:</strong> Webhook action → POST JSON to URL above<br>
+        <strong>cURL:</strong> <code>curl -X POST [URL] -H "Content-Type: application/json" -d '{"type":"...","title":"...","body":"..."}'</code><br>
+        <strong>Payload format:</strong> <code>{"type":"wo_update","title":"...","body":"...","priority":"normal"}</code>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="action-btn" id="btnWebhookPoll"><i class="fas fa-sync-alt"></i> Poll Now</button>
+      <button class="action-btn" id="webhookModalCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
 
 <!-- Work Order Detail Modal (expanded) -->
 <div class="modal-overlay" id="woModal">
