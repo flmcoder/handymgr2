@@ -1396,15 +1396,62 @@ async function fetchInspections() {
 async function fetchPropertyGroups() {
   try {
     setApiStatus('loading', 'Loading property groups\u2026');
-    var data = await proxyAction('property_groups');
-    var results = data.results || data.data || [];
-    PROPERTY_GROUPS = results.map(function(g) {
+    var rawResults = null;
+
+    // ---- Method 1: dedicated ?action=property_groups endpoint ----
+    try {
+      console.log('[GROUPS] Trying proxyAction property_groups\u2026');
+      var data = await proxyAction('property_groups');
+      rawResults = data.results || data.data || [];
+      console.log('[GROUPS] proxyAction OK \u2014 ' + rawResults.length + ' groups');
+      if (rawResults.length > 0) {
+        console.log('[GROUPS] First group: ' + JSON.stringify(rawResults[0]).substring(0, 300));
+      }
+    } catch (e1) {
+      var e1msg = e1.message || String(e1);
+      console.log('[GROUPS] proxyAction FAILED: ' + e1msg);
+      logApiError(0, 'Groups (action): ' + e1msg, 'retry');
+
+      // ---- Method 2: raw proxy path pass-through ----
+      try {
+        console.log('[GROUPS] Trying raw proxy path fallback\u2026');
+        // URL-encode brackets for maximum compatibility
+        var rawPath = '/api/v0/property_groups'
+          + '?filters%5BLastUpdatedAtFrom%5D=1970-01-01T00%3A00%3A00Z'
+          + '&page%5Bsize%5D=1000';
+        var rawUrl = resolveUrl(rawPath);
+        console.log('[GROUPS] Raw fallback URL: ' + rawUrl);
+        var rawRes = await fetchWithTimeout(rawUrl, { headers: { 'Accept': 'application/json' } }, 45000);
+        if (!rawRes.ok) {
+          var errText = '';
+          try { errText = await rawRes.text(); } catch (te) { /* empty */ }
+          throw new Error('HTTP ' + rawRes.status + ': ' + errText.substring(0, 300));
+        }
+        var rawJson = await rawRes.json();
+        rawResults = rawJson.data || rawJson.results || (Array.isArray(rawJson) ? rawJson : []);
+        console.log('[GROUPS] Raw fallback OK \u2014 ' + rawResults.length + ' groups');
+      } catch (e2) {
+        console.log('[GROUPS] Raw fallback FAILED: ' + (e2.message || e2));
+        logApiError(0, 'Groups (raw fallback): ' + (e2.message || ''), 'queued');
+        throw e2; // give up
+      }
+    }
+
+    if (!rawResults || rawResults.length === 0) {
+      console.log('[GROUPS] No results returned from either method');
+      PROPERTY_GROUPS = [];
+      return false;
+    }
+
+    // Map results to standard format
+    PROPERTY_GROUPS = rawResults.map(function(g) {
       return {
         id: g.Id || g.id || '',
         name: g.Name || g.name || '',
         properties: g.PropertyIds || g.Properties || g.properties || g.property_ids || []
       };
     });
+
     // Build a lookup: property ID -> group name
     PROPERTY_GROUPS.forEach(function(g) {
       if (Array.isArray(g.properties)) {
@@ -1418,9 +1465,14 @@ async function fetchPropertyGroups() {
         });
       }
     });
+
+    // Immediately populate group filter dropdowns
+    populateGroupFilters();
+    console.log('[GROUPS] Loaded ' + PROPERTY_GROUPS.length + ' property groups');
     return true;
   } catch (err) {
-    console.log('fetchPropertyGroups error: ' + (err.message || err));
+    console.log('[GROUPS] FINAL ERROR: ' + (err.message || err));
+    logApiError(0, 'Property Groups failed: ' + (err.message || 'Unknown'), 'queued');
     PROPERTY_GROUPS = [];
     return false;
   }
@@ -3441,12 +3493,16 @@ function wireUpUI() {
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading\u2026';
       try {
-        await fetchPropertyGroups();
-        populateGroupFilters();
-        renderAll();
-        showToast('Loaded ' + PROPERTY_GROUPS.length + ' property groups');
+        var ok = await fetchPropertyGroups();
+        if (ok && PROPERTY_GROUPS.length > 0) {
+          populateGroupFilters();
+          renderAll();
+          showToast('Loaded ' + PROPERTY_GROUPS.length + ' property groups');
+        } else {
+          showToast('Groups returned 0 results \u2014 check Error Log tab for details');
+        }
       } catch (err) {
-        showToast('Failed to load groups: ' + (err.message || err));
+        showToast('Groups failed: ' + (err.message || err) + ' \u2014 see Error Log');
       } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-layer-group"></i> Load Groups';
