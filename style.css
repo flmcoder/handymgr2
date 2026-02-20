@@ -861,3 +861,152 @@ body {
 .wo-table tbody tr:hover { background: var(--bg-card-hover); }
 .wo-table tbody tr:last-child { border-bottom: none; }
 .wo-table td { padding: 10px 14px; vertical-align: middle; }
+
+/* ===================== Turn Pipeline ===================== */
+.pipe-stage-legend {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; margin-bottom: 2px;
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;
+}
+.pipe-legend-label { min-width: 140px; font-weight: 700; }
+.pipe-legend-stages {
+  flex: 1; display: flex; justify-content: space-between; align-items: center;
+  max-width: 420px; padding: 0 8px;
+}
+.pipe-legend-dot { text-align: center; width: 36px; }
+.turn-pipeline { display: flex; flex-direction: column; }
+
+/* Individual pipeline card */
+.pipe-card {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-top: none;
+  cursor: pointer; transition: var(--transition);
+}
+.pipe-card:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+.pipe-card:hover { background: var(--bg-card-hover); }
+.pipe-card.stalled { border-left: 3px solid var(--danger); }
+.pipe-card.on-track { border-left: 3px solid var(--success); }
+.pipe-card.waiting { border-left: 3px solid var(--warning); }
+
+/* Card left: unit info */
+.pipe-card-unit {
+  min-width: 140px; max-width: 160px;
+}
+.pipe-card-unit-name {
+  font-family: var(--font-mono); font-weight: 700; font-size: 13px;
+  color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pipe-card-prop {
+  font-size: 11px; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Card center: stage dots */
+.pipe-card-stages {
+  flex: 1; display: flex; justify-content: space-between; align-items: center;
+  max-width: 420px; padding: 0 8px; position: relative;
+}
+.pipe-card-stages::before {
+  content: ''; position: absolute; top: 50%; left: 20px; right: 20px;
+  height: 2px; background: var(--border); z-index: 0;
+}
+.pipe-dot {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; z-index: 1; position: relative;
+  border: 2px solid var(--border); background: var(--bg-card);
+  transition: var(--transition);
+}
+.pipe-dot.done {
+  background: var(--success); border-color: var(--success); color: #fff;
+}
+.pipe-dot.active {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  animation: pulse-dot 2s infinite;
+}
+.pipe-dot.warn {
+  background: var(--warning); border-color: var(--warning); color: #fff;
+}
+.pipe-dot.error {
+  background: var(--danger); border-color: var(--danger); color: #fff;
+}
+.pipe-dot.skip {
+  background: var(--bg-input); border-color: var(--text-muted); color: var(--text-muted);
+  border-style: dashed;
+}
+
+/* Card right: status */
+.pipe-card-status {
+  min-width: 140px; text-align: right;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+}
+.pipe-card-elapsed {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+}
+.pipe-card-cost {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+}
+
+/* Expanded detail panel */
+.pipe-detail {
+  display: none; padding: 0 14px 14px 14px;
+  background: var(--bg-card); border: 1px solid var(--border); border-top: none;
+  animation: fadeIn 0.2s ease;
+}
+.pipe-detail.show { display: block; }
+
+.pipe-detail-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  padding-top: 12px; border-top: 1px solid var(--border);
+}
+@media (max-width: 768px) { .pipe-detail-grid { grid-template-columns: 1fr; } }
+
+/* Stage timeline inside detail */
+.pipe-timeline { list-style: none; padding: 0; margin: 0; }
+.pipe-timeline li {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.pipe-timeline li:last-child { border-bottom: none; }
+.pipe-tl-dot {
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; margin-top: 1px;
+}
+.pipe-tl-dot.done { background: var(--success-dim); color: var(--success); }
+.pipe-tl-dot.active { background: var(--accent-dim); color: var(--accent); }
+.pipe-tl-dot.pending { background: var(--bg-input); color: var(--text-muted); }
+.pipe-tl-label { font-weight: 600; color: var(--text-primary); }
+.pipe-tl-date { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+.pipe-tl-note { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+/* WO list inside turn detail */
+.pipe-wo-list { display: flex; flex-direction: column; gap: 6px; }
+.pipe-wo-item {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 10px; font-size: 12px;
+}
+.pipe-wo-id { font-family: var(--font-mono); font-weight: 700; color: var(--accent); }
+
+/* Action buttons in detail */
+.pipe-actions {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* Responsive pipeline */
+@media (max-width: 768px) {
+  .pipe-stage-legend { display: none; }
+  .pipe-card { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .pipe-card-unit { min-width: unset; max-width: unset; }
+  .pipe-card-stages { max-width: 100%; width: 100%; }
+  .pipe-card-status { align-items: flex-start; flex-direction: row; gap: 10px; }
+  .pipe-legend-stages { max-width: unset; }
+}

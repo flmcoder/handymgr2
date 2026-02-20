@@ -387,7 +387,7 @@ function lockVault() {
   vaultTimeoutId = null;
   vaultCountdownId = null;
   appInitialized = false;
-  WORK_ORDERS = []; VENDORS = []; BILLS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; API_ERRORS = [];
+  WORK_ORDERS = []; VENDORS = []; BILLS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; API_ERRORS = [];
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
   // Note: IndexedDB cache is NOT cleared on lock — data persists for next unlock
   updateCacheBadge('offline');
@@ -2101,107 +2101,546 @@ function showWODetail(id) {
   openModal('woModal');
 }
 
+/* =================================================================
+   TURN PIPELINE — Stage Tracking Engine
+   Correlates: Turns (v2) + Work Orders + Inspections + Webhook Events
+   Stages: MO → INS → WO → REQ → EST → ASN → DONE
+   ================================================================= */
+var TURN_RECORDS = []; // persisted stage overrides from proxy blob
+var TURN_PIPE_DATA = []; // computed pipeline entries
+var currentTurnPipeFilter = 'active';
+var currentTurnPipeGroup = '';
+
+// Stage definitions
+var PIPE_STAGES = [
+  { key: 'moveout',   label: 'MO',   icon: 'fa-sign-out-alt', title: 'Move-Out' },
+  { key: 'inspection',label: 'INS',  icon: 'fa-clipboard-check', title: 'Inspection' },
+  { key: 'wo_created', label: 'WO',  icon: 'fa-wrench', title: 'WO Created' },
+  { key: 'est_requested', label: 'REQ', icon: 'fa-file-invoice', title: 'Estimate Requested' },
+  { key: 'est_received', label: 'EST', icon: 'fa-file-invoice-dollar', title: 'Estimate Received' },
+  { key: 'assigned',  label: 'ASN',  icon: 'fa-user-check', title: 'Assigned' },
+  { key: 'work_done', label: 'DONE', icon: 'fa-check-circle', title: 'Work Done' }
+];
+
+// Fetch persisted turn records from proxy
+async function fetchTurnRecords() {
+  try {
+    var data = await proxyAction('turn_records');
+    if (data && Array.isArray(data.records)) TURN_RECORDS = data.records;
+  } catch (err) {
+    console.log('Turn records fetch error: ' + (err.message || err));
+  }
+}
+
+// Save a turn record stage to proxy
+async function saveTurnRecordStage(turnId, stage, stageData) {
+  try {
+    var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
+    var url = API_PROXY + sep + 'action=turn_record_stage';
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: turnId, stage: stage, data: stageData })
+    });
+  } catch (err) {
+    console.log('Save stage error: ' + (err.message || err));
+  }
+}
+
+// Save full turn record to proxy
+async function saveTurnRecord(record) {
+  try {
+    var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
+    var url = API_PROXY + sep + 'action=turn_records';
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(record)
+    });
+  } catch (err) {
+    console.log('Save turn record error: ' + (err.message || err));
+  }
+}
+
+// ---- Auto-correlation engine ----
+// Builds a unified pipeline entry for each turn by matching WOs + inspections
+function buildTurnPipeline() {
+  TURN_PIPE_DATA = [];
+  var today = new Date();
+
+  TURNS.forEach(function(turn) {
+    var turnKey = String(turn.propertyId || '') + '-' + String(turn.unitId || '') + '-' + (turn.moveOut || '');
+    if (!turnKey || turnKey === '--') turnKey = turn.unitTurnId || (turn.unit + '|' + turn.property);
+
+    // Find matching WOs: same unit + property, type includes "turn", or created after move-out
+    var moveOutDate = turn.moveOut ? new Date(turn.moveOut) : null;
+    var matchingWOs = WORK_ORDERS.filter(function(wo) {
+      // Match by unit + property name
+      var unitMatch = wo.unit && turn.unit && wo.unit.toLowerCase() === turn.unit.toLowerCase();
+      var propMatch = wo.propertyName && turn.property && wo.propertyName.toLowerCase() === turn.property.toLowerCase();
+      if (!unitMatch || !propMatch) return false;
+      // Prefer WOs created around or after move-out
+      if (moveOutDate && wo.created) {
+        var woDt = new Date(wo.created);
+        var daysDiff = (woDt - moveOutDate) / 86400000;
+        if (daysDiff < -30) return false; // WO too old
+      }
+      return true;
+    });
+
+    // Find matching inspection
+    var matchingInsp = INSPECTIONS.find(function(insp) {
+      var unitMatch = insp.unit && turn.unit && insp.unit.toLowerCase() === turn.unit.toLowerCase();
+      var propMatch = insp.propertyName && turn.property && insp.propertyName.toLowerCase() === turn.property.toLowerCase();
+      return unitMatch && propMatch;
+    });
+
+    // Determine stages from data
+    var stages = {};
+
+    // Stage 1: Move-Out — always true if turn exists
+    stages.moveout = { done: !!turn.moveOut, date: turn.moveOut || null };
+
+    // Stage 2: Inspection — check if inspection happened after move-out
+    var inspDone = false;
+    var inspDate = null;
+    if (matchingInsp && matchingInsp.lastInspection) {
+      inspDate = matchingInsp.lastInspection;
+      if (moveOutDate) {
+        inspDone = new Date(inspDate) >= moveOutDate;
+      } else {
+        inspDone = true;
+      }
+    }
+    stages.inspection = { done: inspDone, date: inspDate };
+
+    // Stage 3-7: Derive from WO statuses
+    var hasWO = matchingWOs.length > 0;
+    var woStatuses = matchingWOs.map(function(w) { return w.status; });
+    var woCreatedDate = hasWO ? matchingWOs[0].created : null;
+
+    var hasEstReq = woStatuses.some(function(s) { return s === 'Estimate Requested'; });
+    var hasEstimated = woStatuses.some(function(s) { return s === 'Estimated'; });
+    var hasAssigned = woStatuses.some(function(s) { return s === 'Assigned' || s === 'Scheduled'; });
+    var hasWorkDone = woStatuses.some(function(s) {
+      return s === 'Work Done' || s === 'Work Completed' || s === 'Ready to Bill' || s === 'Completed';
+    });
+
+    // Progressive stages — later stages imply earlier ones
+    stages.wo_created = { done: hasWO, date: woCreatedDate, woIds: matchingWOs.map(function(w) { return w.id; }) };
+    stages.est_requested = { done: hasEstReq || hasEstimated || hasAssigned || hasWorkDone, date: null };
+    stages.est_received = { done: hasEstimated || hasAssigned || hasWorkDone, date: null, vendors: [] };
+    stages.assigned = { done: hasAssigned || hasWorkDone, date: null };
+    stages.work_done = { done: hasWorkDone || !!turn.turnEnd, date: turn.turnEnd || null };
+
+    // Merge with persisted overrides from TURN_RECORDS
+    var savedRec = TURN_RECORDS.find(function(r) { return r.id === turnKey; });
+    if (savedRec && savedRec.stages) {
+      PIPE_STAGES.forEach(function(ps) {
+        var saved = savedRec.stages[ps.key];
+        if (saved) {
+          // Saved override takes precedence for manual confirmations
+          if (saved.done) stages[ps.key].done = true;
+          if (saved.date && !stages[ps.key].date) stages[ps.key].date = saved.date;
+          if (saved.notes) stages[ps.key].notes = saved.notes;
+          if (saved.vendors) stages[ps.key].vendors = saved.vendors;
+        }
+      });
+    }
+
+    // Merge webhook events matching this turn
+    var webhookMatches = WEBHOOK_EVENTS.filter(function(wh) {
+      var t = (wh.title || '').toLowerCase();
+      var b = (wh.body || '').toLowerCase();
+      var uLow = (turn.unit || '').toLowerCase();
+      var pLow = (turn.property || '').toLowerCase();
+      return uLow && pLow && (t.indexOf(uLow) !== -1 || b.indexOf(uLow) !== -1) && (t.indexOf(pLow) !== -1 || b.indexOf(pLow) !== -1);
+    });
+
+    // Compute current stage index (highest completed)
+    var currentStageIdx = -1;
+    PIPE_STAGES.forEach(function(ps, i) {
+      if (stages[ps.key] && stages[ps.key].done) currentStageIdx = i;
+    });
+
+    // Elapsed days
+    var elapsed = moveOutDate ? daysBetween(moveOutDate, today) : 0;
+    var target = turn.targetDays || 30;
+    var isStalled = elapsed > 7 && currentStageIdx >= 0 && currentStageIdx < PIPE_STAGES.length - 1;
+    var isCompleted = !!turn.turnEnd || (stages.work_done && stages.work_done.done);
+
+    // Parse cost
+    var costNum = 0;
+    if (turn.totalBilled) {
+      costNum = parseFloat(String(turn.totalBilled).replace(/[^0-9.\-]/g, '')) || 0;
+    }
+
+    TURN_PIPE_DATA.push({
+      id: turnKey,
+      turn: turn,
+      unit: turn.unit,
+      property: turn.property,
+      propertyId: turn.propertyId,
+      unitId: turn.unitId,
+      moveOut: turn.moveOut,
+      stages: stages,
+      currentStageIdx: currentStageIdx,
+      matchingWOs: matchingWOs,
+      matchingInsp: matchingInsp,
+      webhookEvents: webhookMatches,
+      elapsed: elapsed,
+      target: target,
+      isStalled: isStalled && !isCompleted,
+      isCompleted: isCompleted,
+      costNum: costNum,
+      totalBilled: turn.totalBilled || '$0',
+      savedRecord: savedRec || null
+    });
+  });
+
+  // Sort: active first (by elapsed desc), then completed
+  TURN_PIPE_DATA.sort(function(a, b) {
+    if (a.isCompleted !== b.isCompleted) return a.isCompleted ? 1 : -1;
+    return b.elapsed - a.elapsed;
+  });
+}
+
 function renderTurnBoard() {
-  var container = $('#turnBoard');
+  buildTurnPipeline();
+  renderTurnPipelineUI();
+  renderTurnKPIs();
+}
+
+function renderTurnKPIs() {
+  var active = TURN_PIPE_DATA.filter(function(p) { return !p.isCompleted; });
+  var awaitEst = active.filter(function(p) {
+    return p.stages.wo_created.done && !p.stages.est_received.done;
+  });
+  var totalBilled = 0;
+  active.forEach(function(p) { totalBilled += p.costNum; });
+  var avgDays = 0;
+  if (active.length > 0) {
+    var totalDays = 0;
+    active.forEach(function(p) { totalDays += p.elapsed; });
+    avgDays = Math.round(totalDays / active.length);
+  }
+
+  var e = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+  e('kpiActiveTurns', active.length);
+  e('kpiActiveTurnsSub', active.length === 0 ? 'No active turns' : active.length + ' units in pipeline');
+  e('kpiAvgTurnDays', avgDays > 0 ? avgDays + 'd' : '\u2014');
+  e('kpiAvgTurnSub', avgDays > 0 ? 'avg days elapsed' : 'no active turns');
+  e('kpiAwaitEst', awaitEst.length);
+  e('kpiAwaitEstSub', awaitEst.length + ' turns pending vendor bids');
+  e('kpiTurnBilled', currency(totalBilled));
+  e('kpiTurnBilledSub', 'active turns combined');
+
+  var tb = $('#turnBadge');
+  if (tb) tb.textContent = active.length;
+
+  // Populate property group dropdown
+  var groupSel = $('#turnPipeGroup');
+  if (groupSel && groupSel.options.length <= 1) {
+    var props = {};
+    TURN_PIPE_DATA.forEach(function(p) { if (p.property) props[p.property] = true; });
+    Object.keys(props).sort().forEach(function(name) {
+      var opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      groupSel.appendChild(opt);
+    });
+  }
+}
+
+function renderTurnPipelineUI() {
+  var container = $('#turnPipeline');
+  if (!container) return;
+
   if (TURNS.length === 0) {
     container.innerHTML = emptyHtml('fa-exchange-alt', 'No turn data available. Try refreshing.');
     return;
   }
 
-  // Group turns — "in progress" have no turn_end_date yet
-  var active = TURNS.filter(function(t) { return !t.turnEnd; });
-  var completed = TURNS.filter(function(t) { return !!t.turnEnd; });
+  var filter = currentTurnPipeFilter;
+  var group = currentTurnPipeGroup;
+  var search = ($('#turnPipeSearch') ? $('#turnPipeSearch').value : '').toLowerCase();
 
-  var html = '';
-
-  // Active / In-progress turns
-  html += '<div><div class="turn-col-header">In-Progress Turns <span class="count">' + active.length + '</span></div>';
-  if (active.length === 0) {
-    html += '<div style="padding:16px;color:var(--text-muted);font-size:12px">No in-progress turns</div>';
-  }
-  active.forEach(function(t) {
-    var daysSinceMoveOut = t.moveOut ? daysBetween(t.moveOut, new Date()) : 0;
-    var target = t.targetDays || 30;
-    var bc = daysSinceMoveOut < 14 ? 'var(--success)' : daysSinceMoveOut < target ? 'var(--warning)' : 'var(--danger)';
-    var prog = Math.min(100, Math.round((daysSinceMoveOut / target) * 100));
-    html += '<div class="turn-card"><div class="turn-card-top"><div><div class="turn-unit">' + escapeHtml(t.unit) + '</div><div class="turn-property">' + escapeHtml(t.property) + '</div></div>';
-    html += '<div class="turn-cost">' + escapeHtml(t.totalBilled) + '</div></div>';
-    html += '<div class="turn-meta">';
-    if (t.moveOut) { html += '<span><i class="fas fa-calendar-minus"></i> Move-out: ' + formatDate(t.moveOut) + '</span>'; }
-    if (t.expectedMoveIn) { html += '<span><i class="fas fa-calendar-plus"></i> Expected: ' + formatDate(t.expectedMoveIn) + '</span>'; }
-    html += '<span><i class="fas fa-clock"></i> ' + daysSinceMoveOut + 'd elapsed (target: ' + target + 'd)</span>';
-    if (t.referenceUser) { html += '<span><i class="fas fa-user"></i> ' + escapeHtml(t.referenceUser) + '</span>'; }
-    html += '</div>';
-    html += '<div class="turn-progress"><div class="turn-progress-bar" style="width:' + prog + '%;background:' + bc + '"></div></div>';
-    if (t.notes) { html += '<div style="font-size:11px;color:var(--text-muted);margin-top:6px;font-style:italic"><i class="fas fa-sticky-note"></i> ' + escapeHtml(t.notes.substring(0, 120)) + '</div>'; }
-    html += '</div>';
-  });
-  html += '</div>';
-
-  // Completed turns (only when filter is 'all')
-  if (completed.length > 0 && currentTurnFilter === 'all') {
-    html += '<div><div class="turn-col-header">Completed Turns <span class="count">' + completed.length + '</span></div>';
-    completed.slice(0, 15).forEach(function(t) {
-      var overUnder = t.targetDays ? (t.totalDays - t.targetDays) : 0;
-      var badge = overUnder <= 0 ? '<span class="tag compliant">On time</span>' : '<span class="tag non-compliant">+' + overUnder + 'd over</span>';
-      html += '<div class="turn-card" style="opacity:0.75"><div class="turn-card-top"><div><div class="turn-unit">' + escapeHtml(t.unit) + '</div><div class="turn-property">' + escapeHtml(t.property) + '</div></div>';
-      html += badge + '</div>';
-      html += '<div class="turn-meta">';
-      if (t.moveOut) { html += '<span><i class="fas fa-calendar-minus"></i> Out: ' + formatDate(t.moveOut) + '</span>'; }
-      if (t.turnEnd) { html += '<span><i class="fas fa-calendar-check"></i> End: ' + formatDate(t.turnEnd) + '</span>'; }
-      html += '<span><i class="fas fa-clock"></i> ' + (t.totalDays || 0) + ' days total</span>';
-      html += '<span><i class="fas fa-dollar-sign"></i> Billed: ' + escapeHtml(t.totalBilled) + '</span>';
-      html += '</div></div>';
-    });
-    html += '</div>';
-  }
-
-  container.innerHTML = html;
-  var tb = $('#turnBadge');
-  if (tb) { tb.textContent = active.length; }
-}
-
-function renderInspections(search) {
-  var body = $('#inspBody');
-  if (!body) return;
-  var filtered = INSPECTIONS.filter(function(r) {
-    if (!search) return true;
-    var s = search.toLowerCase();
-    return (r.propertyName || '').toLowerCase().indexOf(s) !== -1
-      || (r.unit || '').toLowerCase().indexOf(s) !== -1
-      || (r.tenant || '').toLowerCase().indexOf(s) !== -1;
+  var filtered = TURN_PIPE_DATA.filter(function(p) {
+    if (filter === 'active' && p.isCompleted) return false;
+    if (filter === 'completed' && !p.isCompleted) return false;
+    if (filter === 'stalled' && (!p.isStalled || p.isCompleted)) return false;
+    if (group && p.property !== group) return false;
+    if (search) {
+      var hay = (p.unit + ' ' + p.property).toLowerCase();
+      if (hay.indexOf(search) === -1) return false;
+    }
+    return true;
   });
 
   if (filtered.length === 0) {
-    body.innerHTML = '<tr><td colspan="7">' + emptyHtml('fa-clipboard-check', INSPECTIONS.length === 0 ? 'No inspection data. Try refreshing.' : 'No inspections match your search') + '</td></tr>';
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">' +
+      '<i class="fas fa-filter" style="font-size:20px;display:block;margin-bottom:8px"></i>No turns match current filter</div>';
     return;
   }
 
-  var today = new Date();
   var html = '';
-  filtered.forEach(function(r) {
+  filtered.forEach(function(p, idx) {
+    var cardClass = p.isCompleted ? '' : p.isStalled ? 'stalled' : p.elapsed < 14 ? 'on-track' : 'waiting';
+    html += '<div class="pipe-card ' + cardClass + '" data-pipeidx="' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
+
+    // Left: unit info
+    html += '<div class="pipe-card-unit"><div class="pipe-card-unit-name">' + escapeHtml(p.unit) + '</div>';
+    html += '<div class="pipe-card-prop">' + escapeHtml(p.property) + '</div></div>';
+
+    // Center: stage dots
+    html += '<div class="pipe-card-stages">';
+    PIPE_STAGES.forEach(function(ps, si) {
+      var stage = p.stages[ps.key] || {};
+      var dotClass = '';
+      if (stage.done) {
+        dotClass = 'done';
+      } else if (si === p.currentStageIdx + 1) {
+        dotClass = p.isStalled ? 'warn' : 'active';
+      }
+      html += '<div class="pipe-dot ' + dotClass + '" title="' + escapeHtml(ps.title) + (stage.date ? ' — ' + formatDate(stage.date) : '') + '">';
+      html += '<i class="fas ' + ps.icon + '"></i></div>';
+    });
+    html += '</div>';
+
+    // Right: status
+    html += '<div class="pipe-card-status">';
+    if (p.isCompleted) {
+      html += '<span class="pipe-card-elapsed" style="color:var(--success)">' + (p.turn.totalDays || p.elapsed) + 'd</span>';
+      html += '<span class="pipe-card-cost">' + escapeHtml(p.totalBilled) + ' &bull; Complete</span>';
+    } else {
+      var eColor = p.elapsed > p.target ? 'var(--danger)' : p.elapsed > 14 ? 'var(--warning)' : 'var(--text-primary)';
+      html += '<span class="pipe-card-elapsed" style="color:' + eColor + '">' + p.elapsed + 'd</span>';
+      var nextStage = p.currentStageIdx < PIPE_STAGES.length - 1 ? PIPE_STAGES[p.currentStageIdx + 1] : null;
+      html += '<span class="pipe-card-cost">' + escapeHtml(p.totalBilled);
+      if (nextStage) html += ' &bull; Next: ' + nextStage.label;
+      html += '</span>';
+    }
+    html += '</div>';
+
+    html += '</div>'; // end pipe-card
+
+    // Detail panel (hidden by default)
+    html += '<div class="pipe-detail" id="pipeDetail_' + idx + '">';
+    html += '<div class="pipe-detail-grid">';
+
+    // Left column: stage timeline
+    html += '<div>';
+    html += '<div class="detail-section-title"><i class="fas fa-stream"></i> Stage Timeline</div>';
+    html += '<ul class="pipe-timeline">';
+    PIPE_STAGES.forEach(function(ps) {
+      var stage = p.stages[ps.key] || {};
+      var dotCls = stage.done ? 'done' : 'pending';
+      html += '<li><div class="pipe-tl-dot ' + dotCls + '"><i class="fas ' + (stage.done ? 'fa-check' : 'fa-circle') + '"></i></div>';
+      html += '<div><div class="pipe-tl-label">' + escapeHtml(ps.title) + '</div>';
+      if (stage.date) html += '<div class="pipe-tl-date">' + formatDate(stage.date) + '</div>';
+      if (stage.notes) html += '<div class="pipe-tl-note">' + escapeHtml(stage.notes) + '</div>';
+      if (ps.key === 'wo_created' && stage.woIds && stage.woIds.length > 0) {
+        html += '<div class="pipe-tl-note">WOs: ' + stage.woIds.map(function(id) { return '#' + id; }).join(', ') + '</div>';
+      }
+      if (ps.key === 'est_received' && stage.vendors && stage.vendors.length > 0) {
+        html += '<div class="pipe-tl-note">Vendors: ' + stage.vendors.map(function(v) { return escapeHtml(v); }).join(', ') + '</div>';
+      }
+      html += '</div></li>';
+    });
+    html += '</ul></div>';
+
+    // Right column: associated data
+    html += '<div>';
+
+    // Matched Work Orders
+    html += '<div class="detail-section-title"><i class="fas fa-wrench"></i> Linked Work Orders (' + p.matchingWOs.length + ')</div>';
+    if (p.matchingWOs.length > 0) {
+      html += '<div class="pipe-wo-list">';
+      p.matchingWOs.forEach(function(wo) {
+        html += '<div class="pipe-wo-item"><div><span class="pipe-wo-id">#' + wo.id + '</span> <span class="tag ' + String(wo.status).toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(wo.status) + '</span></div>';
+        html += '<div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml((wo.description || '').substring(0, 60)) + '</div></div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div style="font-size:12px;color:var(--text-muted);padding:8px 0">No linked work orders found</div>';
+    }
+
+    // Turn details
+    html += '<div class="detail-section-title" style="margin-top:12px"><i class="fas fa-info-circle"></i> Turn Details</div>';
+    html += '<div class="detail-grid">';
+    html += '<div class="detail-row"><div class="detail-row-label">Move-Out</div><div class="detail-row-value">' + (p.moveOut ? formatDate(p.moveOut) : '\u2014') + '</div></div>';
+    html += '<div class="detail-row"><div class="detail-row-label">Expected Move-In</div><div class="detail-row-value">' + (p.turn.expectedMoveIn ? formatDate(p.turn.expectedMoveIn) : '\u2014') + '</div></div>';
+    html += '<div class="detail-row"><div class="detail-row-label">Target Days</div><div class="detail-row-value">' + (p.target || '\u2014') + '</div></div>';
+    html += '<div class="detail-row"><div class="detail-row-label">Total Billed</div><div class="detail-row-value">' + escapeHtml(p.totalBilled) + '</div></div>';
+    html += '<div class="detail-row"><div class="detail-row-label">Labor</div><div class="detail-row-value">' + escapeHtml(p.turn.laborCost) + '</div></div>';
+    html += '<div class="detail-row"><div class="detail-row-label">Reference</div><div class="detail-row-value">' + escapeHtml(p.turn.referenceUser || '\u2014') + '</div></div>';
+    html += '</div>';
+
+    // Webhook events
+    if (p.webhookEvents.length > 0) {
+      html += '<div class="detail-section-title" style="margin-top:12px"><i class="fas fa-plug"></i> Webhook Events (' + p.webhookEvents.length + ')</div>';
+      p.webhookEvents.slice(0, 5).forEach(function(wh) {
+        html += '<div style="font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)">';
+        html += '<span style="color:var(--text-muted)">' + timeAgo(wh.ts) + '</span> ';
+        html += '<strong>' + escapeHtml(wh.title) + '</strong>';
+        if (wh.body) html += ' — ' + escapeHtml(wh.body.substring(0, 80));
+        html += '</div>';
+      });
+    }
+
+    html += '</div>'; // end right col
+    html += '</div>'; // end detail-grid
+
+    // Actions
+    html += '<div class="pipe-actions">';
+    var nextIdx = p.currentStageIdx + 1;
+    if (nextIdx < PIPE_STAGES.length && !p.isCompleted) {
+      html += '<button class="action-btn primary" data-advance="' + escapeHtml(p.id) + '" data-stage="' + PIPE_STAGES[nextIdx].key + '"><i class="fas fa-arrow-right"></i> Confirm ' + PIPE_STAGES[nextIdx].title + '</button>';
+    }
+    html += '<button class="action-btn" onclick="this.closest(\'.pipe-detail\').classList.remove(\'show\')"><i class="fas fa-times"></i> Close</button>';
+    html += '</div>';
+
+    html += '</div>'; // end pipe-detail
+  });
+
+  container.innerHTML = html;
+
+  // Wire up card click → toggle detail
+  container.querySelectorAll('.pipe-card').forEach(function(card) {
+    card.addEventListener('click', function() {
+      var idx = this.getAttribute('data-pipeidx');
+      var detail = document.getElementById('pipeDetail_' + idx);
+      if (detail) {
+        var isOpen = detail.classList.contains('show');
+        // Close all
+        container.querySelectorAll('.pipe-detail').forEach(function(d) { d.classList.remove('show'); });
+        if (!isOpen) detail.classList.add('show');
+      }
+    });
+  });
+
+  // Wire up "Confirm stage" buttons
+  container.querySelectorAll('[data-advance]').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var turnId = this.getAttribute('data-advance');
+      var stage = this.getAttribute('data-stage');
+      confirmTurnStage(turnId, stage);
+    });
+  });
+}
+
+// Manual stage advancement
+async function confirmTurnStage(turnId, stageKey) {
+  var stageData = { done: true, date: new Date().toISOString(), manual: true };
+  await saveTurnRecordStage(turnId, stageKey, stageData);
+
+  // Update local record
+  var rec = TURN_RECORDS.find(function(r) { return r.id === turnId; });
+  if (!rec) {
+    rec = { id: turnId, stages: {} };
+    TURN_RECORDS.push(rec);
+  }
+  if (!rec.stages) rec.stages = {};
+  rec.stages[stageKey] = stageData;
+
+  // Re-render
+  renderTurnBoard();
+  var stageLabel = PIPE_STAGES.find(function(s) { return s.key === stageKey; });
+  showToast('Stage confirmed: ' + (stageLabel ? stageLabel.title : stageKey));
+}
+
+/* =================================================================
+   INSPECTIONS — Enhanced with KPIs + Turn-linking
+   ================================================================= */
+function renderInspections(search) {
+  var body = $('#inspBody');
+  if (!body) return;
+
+  var statusFilter = $('#inspStatusFilter') ? $('#inspStatusFilter').value : 'all';
+  var today = new Date();
+
+  // Classify each inspection
+  var classified = INSPECTIONS.map(function(r) {
     var lastDate = r.lastInspection ? new Date(r.lastInspection) : null;
     var daysSince = lastDate ? daysBetween(lastDate, today) : 999;
     var overdue = !lastDate || daysSince > 365;
-    var warning = !overdue && daysSince > 270;
-    var statusTag = overdue
+    var dueSoon = !overdue && daysSince > 270;
+    // Check if linked to an active turn
+    var linkedTurn = TURN_PIPE_DATA.find(function(tp) {
+      return !tp.isCompleted &&
+        tp.unit && r.unit && tp.unit.toLowerCase() === r.unit.toLowerCase() &&
+        tp.property && r.propertyName && tp.property.toLowerCase() === r.propertyName.toLowerCase();
+    });
+    return {
+      r: r,
+      daysSince: daysSince,
+      overdue: overdue,
+      dueSoon: dueSoon,
+      current: !overdue && !dueSoon,
+      linkedTurn: linkedTurn || null,
+      status: overdue ? 'overdue' : dueSoon ? 'due_soon' : 'current'
+    };
+  });
+
+  // KPI counts
+  var overdueCount = classified.filter(function(c) { return c.overdue; }).length;
+  var dueSoonCount = classified.filter(function(c) { return c.dueSoon; }).length;
+  var currentCount = classified.filter(function(c) { return c.current; }).length;
+  var turnLinkedCount = classified.filter(function(c) { return c.linkedTurn; }).length;
+
+  var e = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+  e('kpiInspOverdue', overdueCount);
+  e('kpiInspDueSoon', dueSoonCount);
+  e('kpiInspCurrent', currentCount);
+  e('kpiInspTurnLinked', turnLinkedCount);
+
+  // Filter
+  var filtered = classified.filter(function(c) {
+    if (statusFilter === 'overdue' && !c.overdue) return false;
+    if (statusFilter === 'due_soon' && !c.dueSoon) return false;
+    if (statusFilter === 'current' && !c.current) return false;
+    if (statusFilter === 'turn_linked' && !c.linkedTurn) return false;
+    if (search) {
+      var s = search.toLowerCase();
+      return (c.r.propertyName || '').toLowerCase().indexOf(s) !== -1
+        || (c.r.unit || '').toLowerCase().indexOf(s) !== -1
+        || (c.r.tenant || '').toLowerCase().indexOf(s) !== -1;
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    body.innerHTML = '<tr><td colspan="8">' + emptyHtml('fa-clipboard-check', INSPECTIONS.length === 0 ? 'No inspection data. Try refreshing.' : 'No inspections match filter') + '</td></tr>';
+    return;
+  }
+
+  var html = '';
+  filtered.forEach(function(c) {
+    var r = c.r;
+    var statusTag = c.overdue
       ? '<span class="tag non-compliant">Overdue</span>'
-      : warning
+      : c.dueSoon
         ? '<span class="tag" style="background:var(--warning-dim);color:var(--warning)">Due soon</span>'
         : '<span class="tag compliant">Current</span>';
-    html += '<tr' + (overdue ? ' style="background:var(--danger-dim)"' : '') + '>';
+    var turnTag = c.linkedTurn
+      ? '<span class="tag assigned" title="Linked to active turn"><i class="fas fa-exchange-alt" style="font-size:8px"></i> ' + escapeHtml(c.linkedTurn.unit) + '</span>'
+      : '<span style="color:var(--text-muted)">\u2014</span>';
+    html += '<tr' + (c.overdue ? ' style="background:var(--danger-dim)"' : '') + '>';
     html += '<td>' + escapeHtml(r.propertyName) + '</td>';
     html += '<td>' + escapeHtml(r.unit) + '</td>';
-    html += '<td style="font-family:var(--font-mono)">' + (r.lastInspection ? formatDate(r.lastInspection) + ' <span style="color:var(--text-muted);font-size:10px">(' + daysSince + 'd ago)</span>' : '<span style="color:var(--danger)">Never</span>') + '</td>';
-    html += '<td>' + escapeHtml(r.tenant || '—') + '</td>';
-    html += '<td style="font-family:var(--font-mono)">' + (r.moveIn ? formatDate(r.moveIn) : '—') + '</td>';
-    html += '<td style="font-family:var(--font-mono)">' + (r.moveOut ? formatDate(r.moveOut) : '—') + '</td>';
+    html += '<td style="font-family:var(--font-mono)">' + (r.lastInspection ? formatDate(r.lastInspection) + ' <span style="color:var(--text-muted);font-size:10px">(' + c.daysSince + 'd ago)</span>' : '<span style="color:var(--danger)">Never</span>') + '</td>';
+    html += '<td>' + escapeHtml(r.tenant || '\u2014') + '</td>';
+    html += '<td style="font-family:var(--font-mono)">' + (r.moveIn ? formatDate(r.moveIn) : '\u2014') + '</td>';
+    html += '<td style="font-family:var(--font-mono)">' + (r.moveOut ? formatDate(r.moveOut) : '\u2014') + '</td>';
     html += '<td>' + statusTag + '</td>';
+    html += '<td>' + turnTag + '</td>';
     html += '</tr>';
   });
   body.innerHTML = html;
+
   var ib = $('#inspBadge');
-  if (ib) { ib.textContent = INSPECTIONS.filter(function(r) { return !r.lastInspection || daysBetween(new Date(r.lastInspection), today) > 365; }).length; }
+  if (ib) ib.textContent = overdueCount;
 }
 
 function renderVendors(search) {
@@ -2430,15 +2869,31 @@ function wireUpUI() {
     $('#payrollNext').addEventListener('click', function() { PAYROLL_WEEK_OFFSET++; renderPayroll(); });
   }
 
-  // Turn filter buttons
-  $$('[data-turnfilter]').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      $$('[data-turnfilter]').forEach(function(b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      currentTurnFilter = btn.getAttribute('data-turnfilter');
-      renderTurnBoard();
+  // Turn pipeline controls
+  if ($('#turnPipeFilter')) {
+    $('#turnPipeFilter').addEventListener('change', function() {
+      currentTurnPipeFilter = this.value;
+      renderTurnPipelineUI();
     });
-  });
+  }
+  if ($('#turnPipeGroup')) {
+    $('#turnPipeGroup').addEventListener('change', function() {
+      currentTurnPipeGroup = this.value;
+      renderTurnPipelineUI();
+    });
+  }
+  if ($('#turnPipeSearch')) {
+    $('#turnPipeSearch').addEventListener('input', function() {
+      renderTurnPipelineUI();
+    });
+  }
+
+  // Inspection status filter
+  if ($('#inspStatusFilter')) {
+    $('#inspStatusFilter').addEventListener('change', function() {
+      renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+    });
+  }
 
   // Clickable KPI cards
   $$('.kpi-clickable[data-kpi]').forEach(function(card) {
@@ -2842,7 +3297,7 @@ async function initApp() {
 async function fetchAllLive() {
   var anySuccess = false;
   updateCacheBadge('loading');
-  var steps = ['Work Orders', 'Properties', 'Vendors', 'Turns', 'Inspections', 'Groups', 'Tasks'];
+  var steps = ['Work Orders', 'Properties', 'Vendors', 'Turns', 'Inspections', 'Groups', 'Tasks', 'Turn Tracker'];
   showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
 
   try {
@@ -2896,6 +3351,14 @@ async function fetchAllLive() {
     try { taskOk = await fetchRecentTasks(); } catch (e) { /* logged */ }
     updateProgress(6, taskOk ? 'done' : 'error', taskOk ? RECENT_TASKS.length + ' tasks' : 'Tasks skipped');
     if (taskOk) { renderActivityFeed(); }
+
+    // Step 7: Turn Tracker records (proxy blob — persisted stage overrides)
+    updateProgress(7, 'active', 'Loading turn tracker\u2026');
+    var trkOk = false;
+    try { await fetchTurnRecords(); trkOk = true; } catch (e) { /* logged */ }
+    updateProgress(7, trkOk ? 'done' : 'error', trkOk ? TURN_RECORDS.length + ' tracked' : 'Tracker skipped');
+    // Re-render turns + inspections with full correlation data
+    if (turnOk || inspOk) { renderTurnBoard(); renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); }
 
     anySuccess = woOk || propOk || vendOk || turnOk || inspOk;
   } catch (e) {

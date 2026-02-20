@@ -195,27 +195,82 @@
 </section>
 
 <section class="section" id="sec-turnboard">
-  <div class="section-header">
-    <div><div class="section-title"><i class="fas fa-exchange-alt" style="color:var(--accent)"></i> Turn Board</div><div class="section-subtitle">Reports API v2 — unit_turn_detail.json &bull; Tracks move-out → turn-end cycle with labor &amp; billing costs</div></div>
+  <!-- Turn Pipeline KPIs -->
+  <div class="kpi-grid" id="turnKpis">
+    <div class="kpi-card amber"><div class="kpi-label">Active Turns</div><div class="kpi-value" id="kpiActiveTurns">0</div><div class="kpi-sub" id="kpiActiveTurnsSub">Loading…</div></div>
+    <div class="kpi-card red"><div class="kpi-label">Avg Days</div><div class="kpi-value" id="kpiAvgTurnDays">—</div><div class="kpi-sub" id="kpiAvgTurnSub">elapsed on active turns</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Awaiting Estimates</div><div class="kpi-value" id="kpiAwaitEst">0</div><div class="kpi-sub" id="kpiAwaitEstSub">turns pending vendor bids</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Total Billed</div><div class="kpi-value" id="kpiTurnBilled">$0</div><div class="kpi-sub" id="kpiTurnBilledSub">active turns combined</div></div>
+  </div>
+
+  <!-- Stage Legend + Controls -->
+  <div class="section-header" style="margin-top:4px">
+    <div>
+      <div class="section-title"><i class="fas fa-exchange-alt" style="color:var(--accent)"></i> Turn Pipeline</div>
+      <div class="section-subtitle">Auto-correlated from Turns + Work Orders + Inspections &bull; Webhook events fill gaps</div>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <button class="filter-btn active" data-turnfilter="open">Open Only</button>
-      <button class="filter-btn" data-turnfilter="all">All Turns</button>
+      <select class="form-select" id="turnPipeFilter" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
+        <option value="active">Active Turns</option>
+        <option value="stalled">Stalled (7d+)</option>
+        <option value="all">All Turns</option>
+        <option value="completed">Completed</option>
+      </select>
+      <select class="form-select" id="turnPipeGroup" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
+        <option value="">All Properties</option>
+      </select>
+      <div class="search-box" style="width:180px"><i class="fas fa-search"></i><input type="text" placeholder="Search turns…" id="turnPipeSearch"></div>
       <button class="sec-refresh" id="btnRefreshTurns"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
-  <div class="turn-board stagger" id="turnBoard"></div>
+
+  <!-- Stage Header Bar -->
+  <div class="pipe-stage-legend" id="pipelineStageLegend">
+    <div class="pipe-legend-label">Unit</div>
+    <div class="pipe-legend-stages">
+      <span class="pipe-legend-dot" title="Move-Out">MO</span>
+      <span class="pipe-legend-dot" title="Inspection">INS</span>
+      <span class="pipe-legend-dot" title="WO Created">WO</span>
+      <span class="pipe-legend-dot" title="Estimate Requested">REQ</span>
+      <span class="pipe-legend-dot" title="Estimate Received">EST</span>
+      <span class="pipe-legend-dot" title="Assigned">ASN</span>
+      <span class="pipe-legend-dot" title="Work Done">DONE</span>
+    </div>
+    <div class="pipe-legend-label" style="text-align:right">Status</div>
+  </div>
+
+  <!-- Turn Pipeline Cards (JS rendered) -->
+  <div id="turnPipeline" class="turn-pipeline"></div>
 </section>
 
 <section class="section" id="sec-inspections">
-  <div class="section-header">
-    <div><div class="section-title"><i class="fas fa-clipboard-check" style="color:var(--accent)"></i> Unit Inspections</div><div class="section-subtitle">Reports API v2 — unit_inspection.json &bull; Last 180 days + units with no inspection date</div></div>
+  <!-- Inspection KPIs -->
+  <div class="kpi-grid" id="inspKpis">
+    <div class="kpi-card red"><div class="kpi-label">Overdue</div><div class="kpi-value" id="kpiInspOverdue">0</div><div class="kpi-sub">inspections past due</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">Due Soon</div><div class="kpi-value" id="kpiInspDueSoon">0</div><div class="kpi-sub">due within 90 days</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Current</div><div class="kpi-value" id="kpiInspCurrent">0</div><div class="kpi-sub">up to date</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Turn-Linked</div><div class="kpi-value" id="kpiInspTurnLinked">0</div><div class="kpi-sub">inspections tied to active turns</div></div>
+  </div>
+
+  <div class="section-header" style="margin-top:4px">
+    <div>
+      <div class="section-title"><i class="fas fa-clipboard-check" style="color:var(--accent)"></i> Unit Inspections</div>
+      <div class="section-subtitle">Reports API v2 — unit_inspection.json &bull; Linked to Turn Pipeline when matching {unitId + propId}</div>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <select class="form-select" id="inspStatusFilter" style="font-size:12px;padding:5px 10px;min-width:120px;font-family:var(--font-mono)">
+        <option value="all">All</option>
+        <option value="overdue">Overdue</option>
+        <option value="due_soon">Due Soon</option>
+        <option value="current">Current</option>
+        <option value="turn_linked">Turn-Linked</option>
+      </select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search inspections…" id="inspSearch"></div>
       <button class="sec-refresh" id="btnRefreshInsp"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
   <div class="table-wrap"><table class="wo-table"><thead><tr>
-    <th>Property</th><th>Unit</th><th>Last Inspection</th><th>Tenant</th><th>Move-in</th><th>Move-out</th><th>Status</th>
+    <th>Property</th><th>Unit</th><th>Last Inspection</th><th>Tenant</th><th>Move-in</th><th>Move-out</th><th>Status</th><th>Turn</th>
   </tr></thead><tbody id="inspBody"></tbody></table></div>
 </section>
 
