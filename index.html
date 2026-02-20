@@ -2649,11 +2649,11 @@ async function fetchProperties() {
   }
 }
 
-// Turns: Proxy v6 ?action=turns — 90-day window, In Progress only by default
+// Turns: Proxy v6 ?action=turns — 60-day window, In Progress only by default
 async function fetchTurns() {
   try {
-    setApiStatus('loading', 'Loading turns (In Progress, 90d)\u2026');
-    var data = await proxyAction('turns', { days: 90, status: 'In Progress' });
+    setApiStatus('loading', 'Loading turns (In Progress, 60d)\u2026');
+    var data = await proxyAction('turns', { days: 60, status: 'In Progress' });
     var results = data.results || [];
     TURNS = results.map(function(t) {
       var moveOut = t.move_out_date || '';
@@ -3375,7 +3375,7 @@ function getFilteredWOs() {
     // Search
     if (search) {
       var s = search.toLowerCase();
-      var haystack = [String(wo.id), wo.description, wo.propertyName, wo.vendorName, wo.unit, wo.tenant || '', wo.assignedUser || ''].join(' ').toLowerCase();
+      var haystack = [String(wo.id), String(wo.description || ''), String(wo.propertyName || ''), String(wo.vendorName || ''), String(wo.unit || ''), String(wo.tenant || ''), String(wo.assignedUser || '')].join(' ').toLowerCase();
       return haystack.indexOf(s) !== -1;
     }
     return true;
@@ -3739,8 +3739,8 @@ function buildTurnPipeline() {
     var wos = [];
     // From Reports API work orders (WORK_ORDERS)
     WORK_ORDERS.forEach(function(wo) {
-      var unitMatch = wo.unit && unit && wo.unit.toLowerCase() === unit.toLowerCase();
-      var propMatch = wo.propertyName && property && wo.propertyName.toLowerCase() === property.toLowerCase();
+      var unitMatch = wo.unit && unit && String(wo.unit).toLowerCase() === String(unit).toLowerCase();
+      var propMatch = wo.propertyName && property && String(wo.propertyName).toLowerCase() === String(property).toLowerCase();
       if (!unitMatch || !propMatch) return;
       if (moveOutDate && wo.created) {
         var daysDiff = (new Date(wo.created) - moveOutDate) / 86400000;
@@ -3771,8 +3771,8 @@ function buildTurnPipeline() {
   // Helper: find matching inspection
   function findMatchingInsp(unit, property) {
     return INSPECTIONS.find(function(insp) {
-      return insp.unit && unit && insp.unit.toLowerCase() === unit.toLowerCase() &&
-             insp.propertyName && property && insp.propertyName.toLowerCase() === property.toLowerCase();
+      return insp.unit && unit && String(insp.unit).toLowerCase() === String(unit).toLowerCase() &&
+             insp.propertyName && property && String(insp.propertyName).toLowerCase() === String(property).toLowerCase();
     });
   }
 
@@ -3938,9 +3938,22 @@ function buildTurnPipeline() {
 }
 
 function renderTurnBoard() {
-  buildTurnPipeline();
-  renderTurnPipelineUI();
-  renderTurnKPIs();
+  try {
+    buildTurnPipeline();
+  } catch (e) {
+    console.log('buildTurnPipeline error: ' + (e.message || e));
+    TURN_PIPE_DATA = [];
+  }
+  try {
+    renderTurnPipelineUI();
+  } catch (e) {
+    console.log('renderTurnPipelineUI error: ' + (e.message || e));
+  }
+  try {
+    renderTurnKPIs();
+  } catch (e) {
+    console.log('renderTurnKPIs error: ' + (e.message || e));
+  }
 }
 
 function renderTurnKPIs() {
@@ -4225,8 +4238,8 @@ function renderInspections(search) {
     // Check if linked to an active turn
     var linkedTurn = TURN_PIPE_DATA.find(function(tp) {
       return !tp.isCompleted &&
-        tp.unit && r.unit && tp.unit.toLowerCase() === r.unit.toLowerCase() &&
-        tp.property && r.propertyName && tp.property.toLowerCase() === r.propertyName.toLowerCase();
+        tp.unit && r.unit && String(tp.unit).toLowerCase() === String(r.unit).toLowerCase() &&
+        tp.property && r.propertyName && String(tp.property).toLowerCase() === String(r.propertyName).toLowerCase();
     });
     return {
       r: r,
@@ -4346,8 +4359,8 @@ function renderReconciliation() {
   unlinked.forEach(function(bill) {
     // Match heuristic: vendor name + property match
     var matches = WORK_ORDERS.filter(function(wo) {
-      var vendorMatch = bill.vendorName && wo.vendorName && bill.vendorName.toLowerCase() === wo.vendorName.toLowerCase();
-      var propMatch = bill.propertyName && wo.propertyName && bill.propertyName.toLowerCase() === wo.propertyName.toLowerCase();
+      var vendorMatch = bill.vendorName && wo.vendorName && String(bill.vendorName).toLowerCase() === String(wo.vendorName).toLowerCase();
+      var propMatch = bill.propertyName && wo.propertyName && String(bill.propertyName).toLowerCase() === String(wo.propertyName).toLowerCase();
       return (vendorMatch || propMatch) && wo.status !== 'Completed' && wo.status !== 'Canceled';
     });
     var confidence = matches.length > 0 ? 'high' : 'low';
@@ -4460,16 +4473,22 @@ function populateDropdowns() {
    RENDER ALL — convenience wrapper
    ================================================================= */
 function renderAll() {
-  renderWorkOrders();
-  renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-  renderTurnBoard();
-  renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
-  renderPayroll();
-  renderMoveOuts();
-  if (BILLS.length > 0) { renderReconciliation(); }
-  renderDashboardKPIs();
-  renderActivityFeed();
-  populateDropdowns();
+  // Each render is wrapped in try/catch so one crash doesn't kill the others
+  var fns = [
+    function() { renderWorkOrders(); },
+    function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); },
+    function() { renderTurnBoard(); },
+    function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
+    function() { renderPayroll(); },
+    function() { renderMoveOuts(); },
+    function() { if (BILLS.length > 0) { renderReconciliation(); } },
+    function() { renderDashboardKPIs(); },
+    function() { renderActivityFeed(); },
+    function() { populateDropdowns(); }
+  ];
+  fns.forEach(function(fn) {
+    try { fn(); } catch (e) { console.log('renderAll sub-error: ' + (e.message || e)); }
+  });
 }
 
 /* =================================================================
@@ -4996,10 +5015,11 @@ async function fetchAllLive() {
     updateProgress(2, vendOk ? 'done' : 'error', vendOk ? VENDORS.length + ' vendors' : 'Vendors failed');
     if (vendOk) { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); populateDropdowns(); }
 
-    // Step 3: Turns — In Progress only, 90-day window (proxy v6 — Reports API)
+    // Step 3: Turns — In Progress only, 60-day window (proxy v6 — Reports API)
+    // Short timeout (20s) — turns are supplementary; pipeline works from WOs + move-outs too
     updateProgress(3, 'active', 'Fetching in-progress turns\u2026');
-    var turnOk = await withStepTimeout(function() { return fetchTurns(); }, 45000);
-    updateProgress(3, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns failed');
+    var turnOk = await withStepTimeout(function() { return fetchTurns(); }, 20000);
+    updateProgress(3, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns skipped (timeout)');
     if (turnOk) { renderTurnBoard(); renderActivityFeed(); }
 
     // Step 4: Upcoming Move-Outs — tenant directory, Notice tenants (proxy v6 — Reports API)
@@ -5010,7 +5030,7 @@ async function fetchAllLive() {
 
     // Step 5: Turn Work Orders — DB API v0, Unit Turn type only (real-time status)
     updateProgress(5, 'active', 'Fetching turn work orders\u2026');
-    var twoOk = await withStepTimeout(fetchTurnWorkOrders, 45000);
+    var twoOk = await withStepTimeout(fetchTurnWorkOrders, 20000);
     updateProgress(5, twoOk ? 'done' : 'error', twoOk ? TURN_WORK_ORDERS.length + ' turn WOs' : 'Turn WOs skipped');
     if (twoOk) { renderTurnBoard(); }
 
