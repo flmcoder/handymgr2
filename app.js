@@ -2533,16 +2533,25 @@ function renderTurnPipelineUI() {
 // Manual stage advancement
 async function confirmTurnStage(turnId, stageKey) {
   var stageData = { done: true, date: new Date().toISOString(), manual: true };
-  await saveTurnRecordStage(turnId, stageKey, stageData);
 
-  // Update local record
+  // Update local record first
   var rec = TURN_RECORDS.find(function(r) { return r.id === turnId; });
   if (!rec) {
     rec = { id: turnId, stages: {} };
     TURN_RECORDS.push(rec);
+    // Create the record on the server first so stage update doesn't 404
+    await saveTurnRecord(rec);
   }
   if (!rec.stages) rec.stages = {};
   rec.stages[stageKey] = stageData;
+
+  // Persist stage to proxy
+  try {
+    await saveTurnRecordStage(turnId, stageKey, stageData);
+  } catch (err) {
+    // If stage update fails (e.g. 404), save full record as fallback
+    await saveTurnRecord(rec);
+  }
 
   // Re-render
   renderTurnBoard();
@@ -3185,11 +3194,11 @@ async function initApp() {
   await loadFlags();
 
   // Show skeleton loading states
-  $('#kanbanBoard').innerHTML = loadingHtml('Checking cache\u2026');
-  $('#vendorGrid').innerHTML = loadingHtml('Checking cache\u2026');
-  $('#turnBoard').innerHTML = loadingHtml('Checking cache\u2026');
-  $('#inspBody').innerHTML = '<tr><td colspan="7">' + loadingHtml('Checking cache\u2026') + '</td></tr>';
-  $('#reconList').innerHTML = emptyHtml('fa-download', 'Bills load on demand \u2014 use the Load Bills button');
+  if ($('#kanbanBoard')) $('#kanbanBoard').innerHTML = loadingHtml('Checking cache\u2026');
+  if ($('#vendorGrid')) $('#vendorGrid').innerHTML = loadingHtml('Checking cache\u2026');
+  if ($('#turnPipeline')) $('#turnPipeline').innerHTML = loadingHtml('Checking cache\u2026');
+  if ($('#inspBody')) $('#inspBody').innerHTML = '<tr><td colspan="8">' + loadingHtml('Checking cache\u2026') + '</td></tr>';
+  if ($('#reconList')) $('#reconList').innerHTML = emptyHtml('fa-download', 'Bills load on demand \u2014 use the Load Bills button');
   renderTemplates();
   renderErrorLog();
   wireUpUI();
@@ -3242,7 +3251,7 @@ async function initApp() {
   // ================================================================
   setApiStatus('loading', 'Connecting to AppFolio\u2026');
   if (!cacheLoaded) {
-    $('#kanbanBoard').innerHTML = loadingHtml('Testing API connection\u2026');
+    if ($('#kanbanBoard')) $('#kanbanBoard').innerHTML = loadingHtml('Testing API connection\u2026');
   }
 
   // ================================================================
@@ -3254,9 +3263,12 @@ async function initApp() {
     var pingData = await proxyAction('ping');
 
     if (!pingData.ok) {
-      logApiError(pingData.status || 0, 'Pre-flight: Proxy ping failed \u2014 AppFolio returned ' + (pingData.status || 'error'), 'resolved');
-      showCorsError('Pre-flight ping failed (status ' + (pingData.status || '?') + '). Verify proxy has correct credentials.');
-      setApiStatus('error', 'Auth Failed (' + (pingData.status || '?') + ')');
+      var dbSt = (pingData.db_api && pingData.db_api.status) || pingData.status || 0;
+      var rptSt = (pingData.reports_api && pingData.reports_api.status) || 0;
+      var detail = 'DB:' + dbSt + ' Reports:' + rptSt;
+      logApiError(dbSt, 'Pre-flight: Proxy ping failed \u2014 ' + detail, 'resolved');
+      showCorsError('Pre-flight ping failed (' + detail + '). Verify proxy has correct credentials and both domains are accessible.');
+      setApiStatus('error', 'Auth Failed (' + detail + ')');
       if (!cacheLoaded) {
         await loadStaleCache();
         renderAll();
@@ -3264,7 +3276,7 @@ async function initApp() {
       updateCacheBadge(cacheLoaded ? 'cached' : 'offline', null, true);
       return;
     }
-    setApiStatus('loading', 'Proxy v4 OK (' + pingData.latency_ms + 'ms) \u2014 loading data\u2026');
+    setApiStatus('loading', 'Proxy OK (' + pingData.latency_ms + 'ms) \u2014 loading data\u2026');
   } catch (preErr) {
     var peMsg = preErr.message || 'Connection failed';
     var isCsp = peMsg.indexOf('Content Security Policy') !== -1 || peMsg.indexOf('CSP') !== -1 || peMsg.indexOf('Refused to connect') !== -1 || preErr.name === 'TypeError';
