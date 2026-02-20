@@ -892,6 +892,8 @@ body {
 .pipe-card.stalled { border-left: 3px solid var(--danger); }
 .pipe-card.on-track { border-left: 3px solid var(--success); }
 .pipe-card.waiting { border-left: 3px solid var(--warning); }
+.pipe-card.upcoming { border-left: 3px solid #60a5fa; background: rgba(96,165,250,0.04); }
+.dark .pipe-card.upcoming { background: rgba(96,165,250,0.08); }
 
 /* Card left: unit info */
 .pipe-card-unit {
@@ -1000,6 +1002,20 @@ body {
   display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px;
   border-top: 1px solid var(--border);
 }
+
+/* Item detail card (generic modal) */
+.detail-section-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--accent); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+}
+.detail-section-title i { margin-right: 5px; font-size: 10px; }
+.detail-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 4px 0; }
+.detail-row-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; min-width: 110px; }
+.detail-row-value { font-size: 12px; color: var(--text-primary); text-align: right; flex: 1; font-family: var(--font-mono); word-break: break-word; }
+
+/* Clickable rows */
+.payroll-row:hover, .insp-row:hover { background: var(--bg-hover) !important; transition: background 0.15s; }
+.vendor-card[data-vendorid]:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); transition: border-color 0.15s, box-shadow 0.15s; }
 
 /* Responsive pipeline */
 @media (max-width: 768px) {

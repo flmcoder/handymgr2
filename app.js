@@ -47,6 +47,107 @@ function openModal(id) { document.getElementById(id).classList.add('show'); }
 function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 function loadingHtml(msg) { return '<div class="loading-overlay"><i class="fas fa-circle-notch"></i><p>' + escapeHtml(msg) + '</p></div>'; }
 function emptyHtml(icon, msg) { return '<div class="empty-state"><i class="fas ' + icon + '"></i><p>' + escapeHtml(msg) + '</p></div>'; }
+
+// ---- AppFolio deep link builder ----
+// Builds URLs to view resources directly in AppFolio
+function appfolioUrl(type, id) {
+  if (!id) return '';
+  var base = API_VHOST ? 'https://' + API_VHOST + '.appfolio.com' : '';
+  if (!base) return '';
+  switch (type) {
+    case 'work_order': return base + '/tasks/work_orders/' + encodeURIComponent(id);
+    case 'vendor': return base + '/vendor_details?vendor_id=' + encodeURIComponent(id);
+    case 'property': return base + '/property_details?property_id=' + encodeURIComponent(id);
+    case 'bill': return base + '/bills/' + encodeURIComponent(id);
+    case 'unit_turn': return base + '/tasks/unit_turns/' + encodeURIComponent(id);
+    case 'inspection': return base + '/tasks/unit_inspections/' + encodeURIComponent(id);
+    case 'tenant': return base + '/tenant_details?occupancy_id=' + encodeURIComponent(id);
+    default: return base + '/' + type + '/' + encodeURIComponent(id);
+  }
+}
+
+// ---- Shared group filter logic ----
+// Checks if a property (by ID or name) belongs to the given group
+function isInPropertyGroup(propertyId, propertyName, groupName) {
+  if (!groupName) return true; // no filter = show all
+  // Check property.group (set by fetchPropertyGroups)
+  var prop = PROPERTIES.find(function(p) {
+    return p.name === propertyName || String(p.id) === String(propertyId);
+  });
+  if (prop && prop.group) return prop.group === groupName;
+  if (prop && prop.portfolio) return prop.portfolio === groupName;
+  // Direct check against PROPERTY_GROUPS
+  return PROPERTY_GROUPS.some(function(g) {
+    return g.name === groupName && Array.isArray(g.properties) && g.properties.some(function(pid) {
+      return String(pid) === String(propertyId);
+    });
+  });
+}
+
+// Populates ALL group filter dropdowns across every tab
+function populateGroupFilters() {
+  var selectors = [
+    '#woGroupFilter', '#payrollGroupFilter', '#dashGroupFilter',
+    '#inspGroupFilter', '#vendorGroupFilter', '#reconGroupFilter',
+    '#turnGroupFilter'
+  ];
+  selectors.forEach(function(sel) {
+    var el = document.querySelector(sel);
+    if (!el) return;
+    var current = el.value; // preserve current selection
+    // Clear existing options except the first (All Groups)
+    while (el.options.length > 1) el.remove(1);
+    if (PROPERTY_GROUPS.length > 0) {
+      PROPERTY_GROUPS.forEach(function(g) {
+        if (!g.name) return;
+        var opt = document.createElement('option');
+        opt.value = g.name; opt.textContent = g.name;
+        el.appendChild(opt);
+      });
+    } else {
+      // Fallback: use portfolio field from PROPERTIES
+      var grps = {};
+      PROPERTIES.forEach(function(p) { if (p.portfolio) grps[p.portfolio] = true; });
+      Object.keys(grps).sort().forEach(function(g) {
+        var opt = document.createElement('option');
+        opt.value = g; opt.textContent = g;
+        el.appendChild(opt);
+      });
+    }
+    // Restore previous selection if still valid
+    if (current) {
+      for (var i = 0; i < el.options.length; i++) {
+        if (el.options[i].value === current) { el.value = current; break; }
+      }
+    }
+  });
+}
+
+// ---- Generic Item Detail Card ----
+function showItemDetail(title, fields, afLink) {
+  var modal = document.getElementById('itemDetailModal');
+  if (!modal) return;
+  document.getElementById('itemDetailTitle').textContent = title;
+  var html = '';
+  fields.forEach(function(f) {
+    if (f.section) {
+      html += '<div class="detail-section-title" style="margin-top:' + (html ? '14px' : '0') + '"><i class="fas ' + (f.icon || 'fa-info-circle') + '"></i> ' + escapeHtml(f.section) + '</div>';
+      return;
+    }
+    html += '<div class="detail-row" style="margin-bottom:8px"><div class="detail-row-label">' + escapeHtml(f.label) + '</div><div class="detail-row-value">' + (f.html || escapeHtml(String(f.value || '\u2014'))) + '</div></div>';
+  });
+  document.getElementById('itemDetailBody').innerHTML = html;
+  var linkBtn = document.getElementById('itemDetailLink');
+  if (linkBtn) {
+    if (afLink) {
+      linkBtn.href = afLink;
+      linkBtn.style.display = '';
+    } else {
+      linkBtn.style.display = 'none';
+    }
+  }
+  openModal('itemDetailModal');
+}
 function skeletonRows(n) {
   var h = '';
   for (var i = 0; i < n; i++) {
@@ -427,9 +528,20 @@ function getAuthHeader() { return API_CREDS ? API_CREDS.a : null; }
 function getDevId() { return API_CREDS ? API_CREDS.d : null; }
 function getDirectBaseUrl() { return API_VHOST ? 'https://' + API_VHOST + '.appfolio.com' : null; }
 
-// ---- Proxy v4 action endpoint caller ----
+// ---- Timeout helper ----
+// Wraps a promise with an AbortController-based timeout (defaults 45s)
+function fetchWithTimeout(url, opts, timeoutMs) {
+  timeoutMs = timeoutMs || 45000;
+  var controller = new AbortController();
+  var timer = setTimeout(function() { controller.abort(); }, timeoutMs);
+  var fetchOpts = Object.assign({}, opts || {}, { signal: controller.signal });
+  return fetch(url, fetchOpts).finally(function() { clearTimeout(timer); });
+}
+
+// ---- Proxy v6 action endpoint caller ----
 // Makes ONE request to proxy like ?action=work_orders&days=180
 // Proxy does all pagination server-side and returns complete dataset
+// Includes 45-second timeout — never hangs forever
 async function proxyAction(action, params) {
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
@@ -439,7 +551,17 @@ async function proxyAction(action, params) {
       url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
     });
   }
-  var res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  var res;
+  try {
+    res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
+  } catch (abortErr) {
+    if (abortErr.name === 'AbortError') {
+      var tmsg = 'Proxy action=' + action + ' timed out after 45s';
+      logApiError(0, tmsg, 'queued');
+      throw new Error(tmsg);
+    }
+    throw abortErr;
+  }
   if (!res.ok) {
     var errBody = '';
     try { errBody = await res.text(); } catch (e) { /* empty */ }
@@ -589,7 +711,7 @@ async function apiFetch(path, options) {
   var maxRetries = 3;
   for (var attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      var res = await rateLimiter.enqueue(function() { return fetch(url, opts); });
+      var res = await rateLimiter.enqueue(function() { return fetchWithTimeout(url, opts, 30000); });
 
       // --- Retryable errors (429 rate limit, 533 DB unavailable) ---
       if (res.status === 429) {
@@ -607,14 +729,14 @@ async function apiFetch(path, options) {
 
       // --- Non-retryable errors (throw immediately, no retry) ---
       if (res.status === 401) {
-        logApiError(401, 'Unauthorized — proxy may have wrong credentials or old code. Redeploy v3 proxy from vault screen.', 'resolved');
-        showCorsError('401 Unauthorized — AppFolio rejected the credentials. Make sure the proxy has the correct API key and developer ID hardcoded, and that you deployed the v3 proxy code from the vault screen.');
-        throw new Error('401: Unauthorized — proxy strips auth headers');
+        logApiError(401, 'Unauthorized — proxy may have wrong credentials. Verify the v6 proxy has correct Client ID, Secret, and Developer ID.', 'resolved');
+        showCorsError('401 Unauthorized — AppFolio rejected the credentials. Verify your v6 proxy has the correct Client ID, Client Secret, and Developer ID hardcoded.');
+        throw new Error('401: Unauthorized — check proxy credentials');
       }
       if (res.status === 404) {
-        logApiError(404, 'Not Found — AppFolio returned 404. Verify proxy has correct credentials and v3 code. URL: ' + path, 'resolved');
-        showCorsError('404 Not Found — AppFolio returns 404 without valid credentials. Make sure you deployed the v3 proxy code with correct credentials hardcoded.');
-        throw new Error('404: Not Found — proxy likely strips auth');
+        logApiError(404, 'Not Found — endpoint does not exist or credentials are invalid. URL: ' + path, 'resolved');
+        showCorsError('404 Not Found — The endpoint may not exist or credentials may be rejected. Verify your v6 proxy configuration.');
+        throw new Error('404: Not Found — ' + path);
       }
       if (res.status === 422) {
         var body422 = await res.text();
@@ -644,6 +766,11 @@ async function apiFetch(path, options) {
 
       return await res.json();
     } catch (err) {
+      // Timeout errors — abort immediately, no retry
+      if (err.name === 'AbortError') {
+        logApiError(0, 'Request timed out (30s): ' + path, 'queued');
+        throw new Error('Request timed out: ' + path);
+      }
       // Network errors (CORS, CSP, DNS, SSL, connection refused)
       if (err.name === 'TypeError') {
         var netMsg = err.message || 'Network request failed';
@@ -769,7 +896,7 @@ function showCorsError(detail) {
     if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--warning)">SSL Certificate Error.</strong> Your proxy\'s SSL certificate may not be provisioned yet. New Val Town endpoints can take <strong>1-2 minutes</strong> for SSL to activate. Wait and try again, or verify the proxy URL is correct.'; }
     setApiStatus('error', 'SSL Error — Wait & Retry');
   } else if (isAuthStripped) {
-    if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--danger)">AppFolio rejected credentials.</strong> Make sure you deployed the <strong>v4 proxy code</strong> with correct API key and developer ID hardcoded inside. Visit your proxy URL in a browser \u2014 you should see a JSON response with <code>"proxy": "v4"</code>.'; }
+    if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--danger)">AppFolio rejected credentials.</strong> Make sure you deployed the <strong>v6 proxy code</strong> with correct Client ID, Secret, and Developer ID hardcoded inside. Visit your proxy URL in a browser \u2014 you should see a JSON response with <code>"proxy": "v6"</code>.'; }
     setApiStatus('error', 'Auth Stripped by Proxy');
   } else if (API_PROXY) {
     if (msgEl) { msgEl.textContent = 'The proxy (' + API_PROXY.substring(0, 50) + ') failed. It may be down, rate-limited, or CSP-blocked.'; }
@@ -811,6 +938,8 @@ var BILLS = [];
 var PROPERTIES = [];
 var PROPERTY_GROUPS = [];
 var TURNS = [];
+var UPCOMING_MOVEOUTS = []; // from tenant_directory — tenants on notice
+var TURN_WORK_ORDERS = []; // from DB API — unit turn WOs with real-time status
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
 var _webhookPollTimer = null;
@@ -1023,7 +1152,7 @@ function hideProgress() {
    DATA FETCHING — Smart filtered API calls (180-day window)
    ================================================================= */
 
-// Work Orders: Proxy v4 ?action=work_orders — server-side pagination, one request
+// Work Orders: Proxy v6 ?action=work_orders — server-side pagination, one request
 // Open statuses: 0=New, 1=EstReq, 2=Estimated, 9=Assigned, 3=Scheduled,
 //   6=Waiting, 8=WorkDone, 12=ReadyToBill
 // Excludes: 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill
@@ -1073,7 +1202,7 @@ async function fetchWorkOrders() {
   }
 }
 
-// Vendors: Proxy v4 ?action=vendors — server-side pagination, one request
+// Vendors: Proxy v6 ?action=vendors — server-side pagination, one request
 async function fetchVendors() {
   try {
     setApiStatus('loading', 'Loading vendors (server-side)\u2026');
@@ -1110,7 +1239,7 @@ async function fetchVendors() {
   }
 }
 
-// Bills: Proxy v4 ?action=bills — server-side pagination, one request
+// Bills: Proxy v6 ?action=bills — server-side pagination, one request
 var MAX_BILL_RECORDS = 200;
 async function fetchBills() {
   try {
@@ -1157,7 +1286,7 @@ async function fetchBills() {
   }
 }
 
-// Properties: Proxy v4 ?action=properties — server-side pagination, one request
+// Properties: Proxy v6 ?action=properties — server-side pagination, one request
 async function fetchProperties() {
   try {
     setApiStatus('loading', 'Loading properties (server-side)\u2026');
@@ -1191,11 +1320,11 @@ async function fetchProperties() {
   }
 }
 
-// Turns: Proxy v4 ?action=turns — server-side pagination, one request
+// Turns: Proxy v6 ?action=turns — 60-day window, In Progress only by default
 async function fetchTurns() {
   try {
-    setApiStatus('loading', 'Loading turns (server-side)\u2026');
-    var data = await proxyAction('turns', { days: DATA_WINDOW_DAYS });
+    setApiStatus('loading', 'Loading turns (In Progress, 60d)\u2026');
+    var data = await proxyAction('turns', { days: 60, status: 'In Progress' });
     var results = data.results || [];
     TURNS = results.map(function(t) {
       var moveOut = t.move_out_date || '';
@@ -1233,7 +1362,7 @@ async function fetchTurns() {
   }
 }
 
-// Inspections: Proxy v4 ?action=inspections — server-side pagination, one request
+// Inspections: Proxy v6 ?action=inspections — server-side pagination, one request
 var INSPECTIONS = [];
 async function fetchInspections() {
   try {
@@ -1262,16 +1391,18 @@ async function fetchInspections() {
   }
 }
 
-// Property Groups: Database API v0 /api/v0/property_groups — for WO group filter
+// Property Groups: Proxy v6 ?action=property_groups — DB API v0
+// DB API returns { data: [ { Id, Name, PropertyIds, Type, LastUpdatedAt } ] }
 async function fetchPropertyGroups() {
   try {
     setApiStatus('loading', 'Loading property groups\u2026');
-    var results = await fetchAllPages('/api/v0/property_groups');
+    var data = await proxyAction('property_groups');
+    var results = data.results || data.data || [];
     PROPERTY_GROUPS = results.map(function(g) {
       return {
         id: g.Id || g.id || '',
         name: g.Name || g.name || '',
-        properties: g.Properties || g.properties || []
+        properties: g.PropertyIds || g.Properties || g.properties || g.property_ids || []
       };
     });
     // Build a lookup: property ID -> group name
@@ -1279,23 +1410,28 @@ async function fetchPropertyGroups() {
       if (Array.isArray(g.properties)) {
         g.properties.forEach(function(pid) {
           // Tag the matching PROPERTIES entry with its group
-          var prop = PROPERTIES.find(function(p) { return String(p.id) === String(pid); });
+          // DB API uses UUIDs, Reports API uses numeric IDs — match both
+          var prop = PROPERTIES.find(function(p) {
+            return String(p.id) === String(pid) || String(p.uuid) === String(pid);
+          });
           if (prop) { prop.group = g.name; }
         });
       }
     });
     return true;
   } catch (err) {
+    console.log('fetchPropertyGroups error: ' + (err.message || err));
     PROPERTY_GROUPS = [];
     return false;
   }
 }
 
-// Recent Tasks: Database API v0 /api/v0/tasks — for real-time activity feed
+// Recent Tasks: Proxy v6 ?action=recent_tasks — server-side pagination via DB API v0
 async function fetchRecentTasks() {
   try {
     setApiStatus('loading', 'Loading recent tasks\u2026');
-    var results = await fetchAllPages('/api/v0/tasks?page[size]=50', 50);
+    var data = await proxyAction('recent_tasks');
+    var results = data.results || data.data || [];
     RECENT_TASKS = results.map(function(t) {
       return {
         id: t.Id || t.id || '',
@@ -1321,7 +1457,74 @@ async function fetchRecentTasks() {
     });
     return true;
   } catch (err) {
+    console.log('fetchRecentTasks error: ' + (err.message || err));
     RECENT_TASKS = [];
+    return false;
+  }
+}
+
+// Upcoming Move-Outs: Proxy v6 ?action=upcoming_moveouts — tenant directory
+// Returns tenants on notice or current with move_out dates in the window
+async function fetchUpcomingMoveouts() {
+  try {
+    setApiStatus('loading', 'Loading upcoming move-outs\u2026');
+    var data = await proxyAction('upcoming_moveouts', { days: 60 });
+    var results = data.results || data.data || [];
+    UPCOMING_MOVEOUTS = results.map(function(t) {
+      return {
+        property: t.property || t.property_name || '',
+        propertyId: t.property_id || 0,
+        unit: t.unit || '',
+        unitId: t.unit_id || 0,
+        tenant: t.tenant || '',
+        status: t.status || '',
+        moveOut: t.move_out || '',
+        moveIn: t.move_in || '',
+        phone: t.phone_numbers || '',
+        email: t.emails || '',
+        rent: t.rent || '',
+        occupancyId: t.occupancy_id || ''
+      };
+    });
+    return true;
+  } catch (err) {
+    console.log('fetchUpcomingMoveouts error: ' + (err.message || err));
+    UPCOMING_MOVEOUTS = [];
+    return false;
+  }
+}
+
+// Turn Work Orders: Proxy v6 ?action=turn_work_orders — DB API v0
+// Real-time WO status for unit turn WOs (more current than Reports API)
+async function fetchTurnWorkOrders() {
+  try {
+    setApiStatus('loading', 'Loading turn work orders\u2026');
+    var data = await proxyAction('turn_work_orders', { days: 90 });
+    var results = data.results || data.data || [];
+    TURN_WORK_ORDERS = results.map(function(wo) {
+      return {
+        id: wo.Id || wo.id || '',
+        unitId: wo.UnitId || wo.unit_id || '',
+        propertyId: wo.PropertyId || wo.property_id || '',
+        status: wo.Status || wo.status || '',
+        type: wo.Type || wo.type || '',
+        priority: wo.Priority || wo.priority || '',
+        description: wo.JobDescription || wo.Description || wo.description || '',
+        vendorId: wo.VendorId || wo.vendor_id || '',
+        vendorTrade: wo.VendorTrade || '',
+        createdAt: wo.CreatedAt || wo.created_at || '',
+        lastUpdated: wo.LastUpdatedAt || wo.last_updated_at || '',
+        workCompletedOn: wo.WorkCompletedOn || wo.work_completed_on || '',
+        scheduledStart: wo.ScheduledStart || wo.scheduled_start || '',
+        assignedUsers: wo.AssignedUsers || [],
+        woNumber: wo.WorkOrderNumber || wo.work_order_number || '',
+        link: wo.Link || ''
+      };
+    });
+    return true;
+  } catch (err) {
+    console.log('fetchTurnWorkOrders error: ' + (err.message || err));
+    TURN_WORK_ORDERS = [];
     return false;
   }
 }
@@ -1433,15 +1636,36 @@ function getUpcomingMoveOuts() {
   var cutoff = new Date();
   cutoff.setDate(cutoff.getDate() + 60);
   var results = [];
+  var seen = {};
+
+  // Primary: use UPCOMING_MOVEOUTS from tenant directory (most accurate)
+  UPCOMING_MOVEOUTS.forEach(function(mo) {
+    if (!mo.moveOut) return;
+    var moDate = new Date(mo.moveOut);
+    if (isNaN(moDate.getTime())) return;
+    if (moDate >= today && moDate <= cutoff) {
+      var key = (mo.property || '') + '|' + (mo.unit || '');
+      if (seen[key]) return;
+      seen[key] = true;
+      var daysLeft = Math.round((moDate - today) / 86400000);
+      results.push({ property: mo.property, unit: mo.unit, tenant: mo.tenant, moveOut: mo.moveOut, daysLeft: daysLeft, phone: mo.phone || '', rent: mo.rent || '' });
+    }
+  });
+
+  // Fallback: also check inspections for move-outs not in UPCOMING_MOVEOUTS
   INSPECTIONS.forEach(function(r) {
     if (!r.moveOut) return;
     var moDate = new Date(r.moveOut);
     if (isNaN(moDate.getTime())) return;
     if (moDate >= today && moDate <= cutoff) {
+      var key = (r.propertyName || '') + '|' + (r.unit || '');
+      if (seen[key]) return;
+      seen[key] = true;
       var daysLeft = Math.round((moDate - today) / 86400000);
       results.push({ property: r.propertyName, unit: r.unit, tenant: r.tenant, moveOut: r.moveOut, daysLeft: daysLeft });
     }
   });
+
   results.sort(function(a, b) { return a.daysLeft - b.daysLeft; });
   return results;
 }
@@ -1484,53 +1708,23 @@ function getPayrollWeek(offset) {
   return { start: startDate, end: endDate };
 }
 
-var currentPayrollGroup = '';
+// Payroll uses shared currentPropertyGroup (global group filter across all tabs)
 
 function renderPayroll() {
   var period = getPayrollWeek(PAYROLL_WEEK_OFFSET);
   var rangeEl = $('#payrollRange');
   if (rangeEl) rangeEl.textContent = formatDate(period.start) + ' \u2014 ' + formatDate(period.end);
 
-  // Populate payroll group dropdown
+  // Sync payroll group dropdown with global filter
   var pgSel = $('#payrollGroupFilter');
-  if (pgSel && pgSel.options.length <= 1) {
-    if (PROPERTY_GROUPS.length > 0) {
-      PROPERTY_GROUPS.forEach(function(g) {
-        if (!g.name) return;
-        var opt = document.createElement('option');
-        opt.value = g.name; opt.textContent = g.name;
-        pgSel.appendChild(opt);
-      });
-    } else {
-      var grps = {};
-      PROPERTIES.forEach(function(p) { if (p.portfolio) grps[p.portfolio] = true; });
-      Object.keys(grps).sort().forEach(function(g) {
-        var opt = document.createElement('option');
-        opt.value = g; opt.textContent = g;
-        pgSel.appendChild(opt);
-      });
-    }
-  }
+  if (pgSel && pgSel.value !== currentPropertyGroup) pgSel.value = currentPropertyGroup;
 
   var workDone = WORK_ORDERS.filter(function(wo) {
     if (wo.status !== 'Work Done' && wo.status !== 'Ready to Bill') return false;
     var cd = wo.workCompletedOn ? new Date(wo.workCompletedOn) : (wo.completedOn ? new Date(wo.completedOn) : null);
     if (!cd) return false;
     if (cd < period.start || cd > period.end) return false;
-    // Apply property group filter
-    if (currentPayrollGroup) {
-      var prop = PROPERTIES.find(function(p) { return p.name === wo.propertyName || String(p.id) === String(wo.propertyId); });
-      if (prop && prop.group) {
-        if (prop.group !== currentPayrollGroup) return false;
-      } else if (prop && prop.portfolio) {
-        if (prop.portfolio !== currentPayrollGroup) return false;
-      } else {
-        var inGroup = PROPERTY_GROUPS.some(function(g) {
-          return g.name === currentPayrollGroup && Array.isArray(g.properties) && g.properties.some(function(pid) { return String(pid) === String(wo.propertyId); });
-        });
-        if (!inGroup) return false;
-      }
-    }
+    if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return false;
     return true;
   });
 
@@ -1568,8 +1762,9 @@ function renderPayroll() {
   var html = '';
   workDone.forEach(function(wo) {
     var flagged = isWOFlagged(wo.id);
-    html += '<tr' + (flagged ? ' style="background:var(--warning-dim)"' : '') + '>';
-    html += '<td style="font-family:var(--font-mono);color:var(--accent)">#' + escapeHtml(String(wo.id)) + '</td>';
+    var afUrl = appfolioUrl('work_order', wo.uuid);
+    html += '<tr class="payroll-row" data-woid="' + escapeHtml(String(wo.id)) + '" data-wouuid="' + escapeHtml(String(wo.uuid)) + '" style="cursor:pointer;' + (flagged ? 'background:var(--warning-dim)' : '') + '">';
+    html += '<td style="font-family:var(--font-mono);color:var(--accent)">#' + escapeHtml(String(wo.id)) + (afUrl ? ' <i class="fas fa-external-link-alt" style="font-size:9px;opacity:0.5"></i>' : '') + '</td>';
     html += '<td>' + escapeHtml(wo.propertyName) + '</td>';
     html += '<td>' + escapeHtml(wo.unit) + '</td>';
     html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(wo.description) + '</td>';
@@ -1580,6 +1775,31 @@ function renderPayroll() {
     html += '</tr>';
   });
   body.innerHTML = html;
+
+  // Click row to show detail card
+  body.querySelectorAll('.payroll-row').forEach(function(row) {
+    row.addEventListener('click', function(e) {
+      if (e.target.closest('[data-flagwo]')) return; // don't open detail on flag click
+      var woid = this.getAttribute('data-woid');
+      var wo = WORK_ORDERS.find(function(w) { return String(w.id) === woid; });
+      if (!wo) return;
+      showItemDetail('Payroll \u2014 WO #' + wo.id, [
+        { section: 'Work Order', icon: 'fa-wrench' },
+        { label: 'WO Number', value: '#' + wo.id },
+        { label: 'Property', value: wo.propertyName },
+        { label: 'Unit', value: wo.unit },
+        { label: 'Description', value: wo.description },
+        { label: 'Vendor', value: wo.vendorName || '\u2014' },
+        { label: 'Status', value: wo.status },
+        { label: 'Priority', value: wo.priority },
+        { section: 'Payroll', icon: 'fa-money-check-alt' },
+        { label: 'Completed', value: formatDate(wo.workCompletedOn || wo.completedOn) },
+        { label: 'Amount', value: wo.amount ? currency(parseFloat(wo.amount)) : '\u2014' },
+        { label: 'Tenant', value: wo.tenant || '\u2014' },
+        { label: 'Assigned To', value: wo.assignedUser || '\u2014' }
+      ], appfolioUrl('work_order', wo.uuid));
+    });
+  });
 
   body.querySelectorAll('[data-flagwo]').forEach(function(btn) {
     btn.addEventListener('click', async function(e) {
@@ -1593,14 +1813,24 @@ function renderPayroll() {
 }
 
 function renderDashboardKPIs() {
+  // Sync dashboard group filter
+  var dashGrpSel = $('#dashGroupFilter');
+  if (dashGrpSel && dashGrpSel.value !== currentPropertyGroup) dashGrpSel.value = currentPropertyGroup;
+
   var openWOs = WORK_ORDERS.filter(function(w) {
-    return w.status !== 'Completed' && w.status !== 'Canceled';
+    if (w.status === 'Completed' || w.status === 'Canceled') return false;
+    if (!isInPropertyGroup(w.propertyId, w.propertyName, currentPropertyGroup)) return false;
+    return true;
   });
   var urgentWOs = WORK_ORDERS.filter(function(w) {
-    return (w.priority === 'Urgent' || w.priority === 'Emergency') && w.status !== 'Completed' && w.status !== 'Canceled';
+    if (!((w.priority === 'Urgent' || w.priority === 'Emergency') && w.status !== 'Completed' && w.status !== 'Canceled')) return false;
+    if (!isInPropertyGroup(w.propertyId, w.propertyName, currentPropertyGroup)) return false;
+    return true;
   });
   var activeTurns = TURNS.filter(function(t) {
-    return !t.turnEnd;
+    if (t.turnEnd) return false;
+    if (!isInPropertyGroup(t.propertyId, t.property, currentPropertyGroup)) return false;
+    return true;
   });
 
   var moveOuts = getUpcomingMoveOuts();
@@ -1801,28 +2031,14 @@ function getFilteredWOs() {
     if (currentWOType && wo.type !== currentWOType) return false;
     // Property dropdown
     if (currentWOProperty && wo.propertyName !== currentWOProperty) return false;
-    // Property group filter — check PROPERTY_GROUPS (v0 API) or fall back to portfolio
-    if (currentPropertyGroup) {
-      // First try PROPERTY_GROUPS lookup (group field set by fetchPropertyGroups)
-      var prop = PROPERTIES.find(function(p) { return p.name === wo.propertyName || String(p.id) === String(wo.propertyId); });
-      if (prop && prop.group) {
-        if (prop.group !== currentPropertyGroup) return false;
-      } else if (prop && prop.portfolio) {
-        if (prop.portfolio !== currentPropertyGroup) return false;
-      } else {
-        // Check PROPERTY_GROUPS directly by property ID
-        var inGroup = PROPERTY_GROUPS.some(function(g) {
-          return g.name === currentPropertyGroup && Array.isArray(g.properties) && g.properties.some(function(pid) { return String(pid) === String(wo.propertyId); });
-        });
-        if (!inGroup) return false;
-      }
-    }
+    // Property group filter — shared helper
+    if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return false;
     // Flagged filter
     if (currentWOFilter === 'flagged' && !isWOFlagged(wo.id)) return false;
     // Search
     if (search) {
       var s = search.toLowerCase();
-      var haystack = [String(wo.id), wo.description, wo.propertyName, wo.vendorName, wo.unit, wo.tenant || '', wo.assignedUser || ''].join(' ').toLowerCase();
+      var haystack = [String(wo.id), String(wo.description || ''), String(wo.propertyName || ''), String(wo.vendorName || ''), String(wo.unit || ''), String(wo.tenant || ''), String(wo.assignedUser || '')].join(' ').toLowerCase();
       return haystack.indexOf(s) !== -1;
     }
     return true;
@@ -1846,27 +2062,9 @@ function renderWorkOrders() {
     });
   }
 
-  // Populate group dropdown from PROPERTY_GROUPS (v0 API) or fall back to portfolio
+  // Group dropdown populated by populateGroupFilters() — just sync value
   var grpSel = $('#woGroupFilter');
-  if (grpSel && grpSel.options.length <= 1) {
-    if (PROPERTY_GROUPS.length > 0) {
-      PROPERTY_GROUPS.forEach(function(g) {
-        if (!g.name) return;
-        var opt = document.createElement('option');
-        opt.value = g.name; opt.textContent = g.name;
-        grpSel.appendChild(opt);
-      });
-    } else {
-      // Fallback: use portfolio field from PROPERTIES
-      var groups2 = {};
-      PROPERTIES.forEach(function(p) { if (p.portfolio) groups2[p.portfolio] = true; });
-      Object.keys(groups2).sort().forEach(function(g) {
-        var opt = document.createElement('option');
-        opt.value = g; opt.textContent = g;
-        grpSel.appendChild(opt);
-      });
-    }
-  }
+  if (grpSel && grpSel.value !== currentPropertyGroup) grpSel.value = currentPropertyGroup;
 
   if (WORK_ORDERS.length === 0) {
     board.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-inbox" style="font-size:36px;display:block;margin-bottom:12px;color:var(--border)"></i>No work orders loaded. Connect to API or import a cache file.</div>';
@@ -1957,7 +2155,8 @@ function renderWorkOrders() {
 function showWODetail(id) {
   var wo = WORK_ORDERS.find(function(w) { return String(w.id) === String(id); });
   if (!wo) return;
-  $('#woModalTitle').textContent = '#' + wo.id + ' \u2014 ' + wo.propertyName + ' ' + wo.unit;
+  var woAfUrl = appfolioUrl('work_order', wo.uuid);
+  $('#woModalTitle').innerHTML = '#' + escapeHtml(String(wo.id)) + ' \u2014 ' + escapeHtml(wo.propertyName) + ' ' + escapeHtml(wo.unit) + (woAfUrl ? ' <a href="' + escapeHtml(woAfUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:var(--accent);margin-left:8px;text-decoration:none" title="View in AppFolio"><i class="fas fa-external-link-alt"></i></a>' : '');
 
   // Flag button state
   var flagBtn = $('#woModalFlag');
@@ -2111,15 +2310,17 @@ var TURN_PIPE_DATA = []; // computed pipeline entries
 var currentTurnPipeFilter = 'active';
 var currentTurnPipeGroup = '';
 
-// Stage definitions
+// Stage definitions — Hybrid Turn Pipeline phases
+// Upcoming = pre-turn (tenant gave notice), then MO → INS → WO → REQ → EST → ASN → DONE
 var PIPE_STAGES = [
-  { key: 'moveout',   label: 'MO',   icon: 'fa-sign-out-alt', title: 'Move-Out' },
-  { key: 'inspection',label: 'INS',  icon: 'fa-clipboard-check', title: 'Inspection' },
-  { key: 'wo_created', label: 'WO',  icon: 'fa-wrench', title: 'WO Created' },
-  { key: 'est_requested', label: 'REQ', icon: 'fa-file-invoice', title: 'Estimate Requested' },
-  { key: 'est_received', label: 'EST', icon: 'fa-file-invoice-dollar', title: 'Estimate Received' },
-  { key: 'assigned',  label: 'ASN',  icon: 'fa-user-check', title: 'Assigned' },
-  { key: 'work_done', label: 'DONE', icon: 'fa-check-circle', title: 'Work Done' }
+  { key: 'upcoming',    label: 'UPC',  icon: 'fa-calendar-alt', title: 'Upcoming' },
+  { key: 'moveout',     label: 'MO',   icon: 'fa-sign-out-alt', title: 'Move-Out' },
+  { key: 'inspection',  label: 'INS',  icon: 'fa-clipboard-check', title: 'Inspection' },
+  { key: 'wo_created',  label: 'WO',   icon: 'fa-wrench', title: 'WO Created' },
+  { key: 'est_requested', label: 'REQ', icon: 'fa-file-invoice', title: 'Bidding' },
+  { key: 'est_received', label: 'EST', icon: 'fa-file-invoice-dollar', title: 'Estimated' },
+  { key: 'assigned',    label: 'ASN',  icon: 'fa-user-check', title: 'Approved' },
+  { key: 'work_done',   label: 'DONE', icon: 'fa-check-circle', title: 'Work Done' }
 ];
 
 // Fetch persisted turn records from proxy
@@ -2164,42 +2365,74 @@ async function saveTurnRecord(record) {
 
 // ---- Auto-correlation engine ----
 // Builds a unified pipeline entry for each turn by matching WOs + inspections
+// ---- Hybrid Turn Pipeline Builder ----
+// Combines: unit_turn_detail report (TURNS) + upcoming moveouts (UPCOMING_MOVEOUTS)
+//           + work orders (WORK_ORDERS + TURN_WORK_ORDERS) + inspections + webhook events
+//           + persisted state from TURN_RECORDS blob
 function buildTurnPipeline() {
   TURN_PIPE_DATA = [];
   var today = new Date();
+  var seenKeys = {};
 
-  TURNS.forEach(function(turn) {
-    var turnKey = String(turn.propertyId || '') + '-' + String(turn.unitId || '') + '-' + (turn.moveOut || '');
-    if (!turnKey || turnKey === '--') turnKey = turn.unitTurnId || (turn.unit + '|' + turn.property);
+  // Helper: create a composite key for deduplication
+  function makeKey(propId, unitId, moveOut) {
+    var k = String(propId || '') + '-' + String(unitId || '') + '-' + (moveOut || '');
+    return k === '--' ? null : k;
+  }
 
-    // Find matching WOs: same unit + property, type includes "turn", or created after move-out
-    var moveOutDate = turn.moveOut ? new Date(turn.moveOut) : null;
-    var matchingWOs = WORK_ORDERS.filter(function(wo) {
-      // Match by unit + property name
-      var unitMatch = wo.unit && turn.unit && wo.unit.toLowerCase() === turn.unit.toLowerCase();
-      var propMatch = wo.propertyName && turn.property && wo.propertyName.toLowerCase() === turn.property.toLowerCase();
-      if (!unitMatch || !propMatch) return false;
-      // Prefer WOs created around or after move-out
+  // Helper: find matching WOs for a unit+property pair (from both Reports + DB API data)
+  function findMatchingWOs(unit, property, propId, unitId, moveOutDate) {
+    var wos = [];
+    // From Reports API work orders (WORK_ORDERS)
+    WORK_ORDERS.forEach(function(wo) {
+      var unitMatch = wo.unit && unit && String(wo.unit).toLowerCase() === String(unit).toLowerCase();
+      var propMatch = wo.propertyName && property && String(wo.propertyName).toLowerCase() === String(property).toLowerCase();
+      if (!unitMatch || !propMatch) return;
       if (moveOutDate && wo.created) {
-        var woDt = new Date(wo.created);
-        var daysDiff = (woDt - moveOutDate) / 86400000;
-        if (daysDiff < -30) return false; // WO too old
+        var daysDiff = (new Date(wo.created) - moveOutDate) / 86400000;
+        if (daysDiff < -30) return;
       }
-      return true;
+      wos.push({ source: 'reports', id: wo.id, status: wo.status, description: wo.description || '',
+        created: wo.created, vendor: wo.vendor || '', unit: wo.unit, property: wo.propertyName, priority: wo.priority });
     });
-
-    // Find matching inspection
-    var matchingInsp = INSPECTIONS.find(function(insp) {
-      var unitMatch = insp.unit && turn.unit && insp.unit.toLowerCase() === turn.unit.toLowerCase();
-      var propMatch = insp.propertyName && turn.property && insp.propertyName.toLowerCase() === turn.property.toLowerCase();
-      return unitMatch && propMatch;
+    // From DB API turn work orders (TURN_WORK_ORDERS) — more current status
+    TURN_WORK_ORDERS.forEach(function(wo) {
+      var idMatch = (unitId && wo.unitId && String(wo.unitId) === String(unitId)) ||
+                    (propId && wo.propertyId && String(wo.propertyId) === String(propId));
+      if (!idMatch) return;
+      // Skip if already found from Reports
+      var dupe = wos.find(function(w) { return String(w.id) === String(wo.id) || String(w.id) === String(wo.woNumber); });
+      if (dupe) {
+        // DB API has more current status — update it
+        dupe.status = wo.status;
+        dupe.dbApiId = wo.id;
+        return;
+      }
+      wos.push({ source: 'db_api', id: wo.woNumber || wo.id, dbApiId: wo.id, status: wo.status,
+        description: wo.description || '', created: wo.createdAt, vendor: wo.vendorTrade || '', priority: wo.priority });
     });
+    return wos;
+  }
 
-    // Determine stages from data
+  // Helper: find matching inspection
+  function findMatchingInsp(unit, property) {
+    return INSPECTIONS.find(function(insp) {
+      return insp.unit && unit && String(insp.unit).toLowerCase() === String(unit).toLowerCase() &&
+             insp.propertyName && property && String(insp.propertyName).toLowerCase() === String(property).toLowerCase();
+    });
+  }
+
+  // Helper: derive stages from available data
+  function deriveStages(moveOut, matchingWOs, matchingInsp, isUpcoming) {
     var stages = {};
+    var moveOutDate = moveOut ? new Date(moveOut) : null;
 
-    // Stage 1: Move-Out — always true if turn exists
-    stages.moveout = { done: !!turn.moveOut, date: turn.moveOut || null };
+    // Stage 0: Upcoming — tenant gave notice, move-out in the future
+    stages.upcoming = { done: true, date: moveOut || null };
+
+    // Stage 1: Move-Out — has the tenant actually moved out?
+    var movedOut = moveOutDate ? moveOutDate <= today : false;
+    stages.moveout = { done: movedOut, date: movedOut ? moveOut : null };
 
     // Stage 2: Inspection — check if inspection happened after move-out
     var inspDone = false;
@@ -2209,7 +2442,7 @@ function buildTurnPipeline() {
       if (moveOutDate) {
         inspDone = new Date(inspDate) >= moveOutDate;
       } else {
-        inspDone = true;
+        inspDone = !!inspDate;
       }
     }
     stages.inspection = { done: inspDone, date: inspDate };
@@ -2226,20 +2459,40 @@ function buildTurnPipeline() {
       return s === 'Work Done' || s === 'Work Completed' || s === 'Ready to Bill' || s === 'Completed';
     });
 
-    // Progressive stages — later stages imply earlier ones
+    // Progressive — later stages imply earlier ones
     stages.wo_created = { done: hasWO, date: woCreatedDate, woIds: matchingWOs.map(function(w) { return w.id; }) };
     stages.est_requested = { done: hasEstReq || hasEstimated || hasAssigned || hasWorkDone, date: null };
     stages.est_received = { done: hasEstimated || hasAssigned || hasWorkDone, date: null, vendors: [] };
     stages.assigned = { done: hasAssigned || hasWorkDone, date: null };
-    stages.work_done = { done: hasWorkDone || !!turn.turnEnd, date: turn.turnEnd || null };
+    stages.work_done = { done: hasWorkDone, date: null };
 
-    // Merge with persisted overrides from TURN_RECORDS
-    var savedRec = TURN_RECORDS.find(function(r) { return r.id === turnKey; });
+    return stages;
+  }
+
+  // Helper: build a pipeline entry
+  function addEntry(key, unit, property, propId, unitId, moveOut, turnData, moveoutTenant) {
+    if (!key || seenKeys[key]) return;
+    seenKeys[key] = true;
+
+    var moveOutDate = moveOut ? new Date(moveOut) : null;
+    var isUpcoming = moveOutDate ? moveOutDate > today : false;
+    var matchingWOs = findMatchingWOs(unit, property, propId, unitId, moveOutDate);
+    var matchingInsp = findMatchingInsp(unit, property);
+    var stages = deriveStages(moveOut, matchingWOs, matchingInsp, isUpcoming);
+
+    // If this is from unit_turn_detail and has a turnEnd, mark work_done
+    if (turnData && turnData.turnEnd) {
+      stages.work_done.done = true;
+      stages.work_done.date = turnData.turnEnd;
+    }
+
+    // Merge persisted overrides from TURN_RECORDS
+    var savedRec = TURN_RECORDS.find(function(r) { return r.id === key; });
     if (savedRec && savedRec.stages) {
       PIPE_STAGES.forEach(function(ps) {
         var saved = savedRec.stages[ps.key];
         if (saved) {
-          // Saved override takes precedence for manual confirmations
+          if (!stages[ps.key]) stages[ps.key] = {};
           if (saved.done) stages[ps.key].done = true;
           if (saved.date && !stages[ps.key].date) stages[ps.key].date = saved.date;
           if (saved.notes) stages[ps.key].notes = saved.notes;
@@ -2248,12 +2501,12 @@ function buildTurnPipeline() {
       });
     }
 
-    // Merge webhook events matching this turn
+    // Find webhook events matching this turn
     var webhookMatches = WEBHOOK_EVENTS.filter(function(wh) {
       var t = (wh.title || '').toLowerCase();
       var b = (wh.body || '').toLowerCase();
-      var uLow = (turn.unit || '').toLowerCase();
-      var pLow = (turn.property || '').toLowerCase();
+      var uLow = (unit || '').toLowerCase();
+      var pLow = (property || '').toLowerCase();
       return uLow && pLow && (t.indexOf(uLow) !== -1 || b.indexOf(uLow) !== -1) && (t.indexOf(pLow) !== -1 || b.indexOf(pLow) !== -1);
     });
 
@@ -2263,26 +2516,35 @@ function buildTurnPipeline() {
       if (stages[ps.key] && stages[ps.key].done) currentStageIdx = i;
     });
 
-    // Elapsed days
-    var elapsed = moveOutDate ? daysBetween(moveOutDate, today) : 0;
-    var target = turn.targetDays || 30;
-    var isStalled = elapsed > 7 && currentStageIdx >= 0 && currentStageIdx < PIPE_STAGES.length - 1;
-    var isCompleted = !!turn.turnEnd || (stages.work_done && stages.work_done.done);
+    // Elapsed days since move-out (or days until move-out for upcoming)
+    var elapsed = 0;
+    if (moveOutDate) {
+      if (isUpcoming) {
+        elapsed = -daysBetween(today, moveOutDate); // negative = days until
+      } else {
+        elapsed = daysBetween(moveOutDate, today);
+      }
+    }
+    var target = (turnData && turnData.targetDays) || 30;
+    var isStalled = !isUpcoming && elapsed > 7 && currentStageIdx >= 1 && currentStageIdx < PIPE_STAGES.length - 1;
+    var isCompleted = (turnData && !!turnData.turnEnd) || (stages.work_done && stages.work_done.done);
 
     // Parse cost
     var costNum = 0;
-    if (turn.totalBilled) {
-      costNum = parseFloat(String(turn.totalBilled).replace(/[^0-9.\-]/g, '')) || 0;
+    if (turnData && turnData.totalBilled) {
+      costNum = parseFloat(String(turnData.totalBilled).replace(/[^0-9.\-]/g, '')) || 0;
     }
 
     TURN_PIPE_DATA.push({
-      id: turnKey,
-      turn: turn,
-      unit: turn.unit,
-      property: turn.property,
-      propertyId: turn.propertyId,
-      unitId: turn.unitId,
-      moveOut: turn.moveOut,
+      id: key,
+      turn: turnData || null,
+      unit: unit,
+      property: property,
+      propertyId: propId,
+      unitId: unitId,
+      moveOut: moveOut,
+      tenant: moveoutTenant || '',
+      isUpcoming: isUpcoming,
       stages: stages,
       currentStageIdx: currentStageIdx,
       matchingWOs: matchingWOs,
@@ -2293,41 +2555,71 @@ function buildTurnPipeline() {
       isStalled: isStalled && !isCompleted,
       isCompleted: isCompleted,
       costNum: costNum,
-      totalBilled: turn.totalBilled || '$0',
+      totalBilled: (turnData && turnData.totalBilled) || '$0',
       savedRecord: savedRec || null
     });
+  }
+
+  // PASS 1: Add all turns from unit_turn_detail report
+  TURNS.forEach(function(turn) {
+    var key = makeKey(turn.propertyId, turn.unitId, turn.moveOut) ||
+              turn.unitTurnId || (turn.unit + '|' + turn.property);
+    addEntry(key, turn.unit, turn.property, turn.propertyId, turn.unitId, turn.moveOut, turn, '');
   });
 
-  // Sort: active first (by elapsed desc), then completed
+  // PASS 2: Add upcoming move-outs not already in pipeline (the "Upcoming" phase)
+  UPCOMING_MOVEOUTS.forEach(function(mo) {
+    var key = makeKey(mo.propertyId, mo.unitId, mo.moveOut);
+    if (!key || seenKeys[key]) return;
+    addEntry(key, mo.unit, mo.property, mo.propertyId, mo.unitId, mo.moveOut, null, mo.tenant);
+  });
+
+  // Sort: upcoming first (by days-until), then active (by elapsed desc), then completed
   TURN_PIPE_DATA.sort(function(a, b) {
     if (a.isCompleted !== b.isCompleted) return a.isCompleted ? 1 : -1;
-    return b.elapsed - a.elapsed;
+    if (a.isUpcoming !== b.isUpcoming) return a.isUpcoming ? -1 : 1;
+    if (a.isUpcoming && b.isUpcoming) return a.elapsed - b.elapsed; // days-until ascending
+    return b.elapsed - a.elapsed; // elapsed descending for active
   });
 }
 
 function renderTurnBoard() {
-  buildTurnPipeline();
-  renderTurnPipelineUI();
-  renderTurnKPIs();
+  try {
+    buildTurnPipeline();
+  } catch (e) {
+    console.log('buildTurnPipeline error: ' + (e.message || e));
+    TURN_PIPE_DATA = [];
+  }
+  try {
+    renderTurnPipelineUI();
+  } catch (e) {
+    console.log('renderTurnPipelineUI error: ' + (e.message || e));
+  }
+  try {
+    renderTurnKPIs();
+  } catch (e) {
+    console.log('renderTurnKPIs error: ' + (e.message || e));
+  }
 }
 
 function renderTurnKPIs() {
-  var active = TURN_PIPE_DATA.filter(function(p) { return !p.isCompleted; });
+  var active = TURN_PIPE_DATA.filter(function(p) { return !p.isCompleted && !p.isUpcoming; });
+  var upcoming = TURN_PIPE_DATA.filter(function(p) { return p.isUpcoming; });
   var awaitEst = active.filter(function(p) {
-    return p.stages.wo_created.done && !p.stages.est_received.done;
+    return p.stages.wo_created && p.stages.wo_created.done && p.stages.est_received && !p.stages.est_received.done;
   });
   var totalBilled = 0;
   active.forEach(function(p) { totalBilled += p.costNum; });
   var avgDays = 0;
   if (active.length > 0) {
     var totalDays = 0;
-    active.forEach(function(p) { totalDays += p.elapsed; });
+    active.forEach(function(p) { totalDays += Math.abs(p.elapsed); });
     avgDays = Math.round(totalDays / active.length);
   }
 
   var e = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
   e('kpiActiveTurns', active.length);
-  e('kpiActiveTurnsSub', active.length === 0 ? 'No active turns' : active.length + ' units in pipeline');
+  e('kpiActiveTurnsSub', active.length + ' active' + (upcoming.length > 0 ? ', ' + upcoming.length + ' upcoming' : ''));
   e('kpiAvgTurnDays', avgDays > 0 ? avgDays + 'd' : '\u2014');
   e('kpiAvgTurnSub', avgDays > 0 ? 'avg days elapsed' : 'no active turns');
   e('kpiAwaitEst', awaitEst.length);
@@ -2336,7 +2628,7 @@ function renderTurnKPIs() {
   e('kpiTurnBilledSub', 'active turns combined');
 
   var tb = $('#turnBadge');
-  if (tb) tb.textContent = active.length;
+  if (tb) tb.textContent = active.length + upcoming.length;
 
   // Populate property group dropdown
   var groupSel = $('#turnPipeGroup');
@@ -2356,8 +2648,8 @@ function renderTurnPipelineUI() {
   var container = $('#turnPipeline');
   if (!container) return;
 
-  if (TURNS.length === 0) {
-    container.innerHTML = emptyHtml('fa-exchange-alt', 'No turn data available. Try refreshing.');
+  if (TURNS.length === 0 && UPCOMING_MOVEOUTS.length === 0) {
+    container.innerHTML = emptyHtml('fa-exchange-alt', 'No turn or move-out data loaded yet. Data may still be syncing — check progress above, or try Refresh.');
     return;
   }
 
@@ -2365,13 +2657,20 @@ function renderTurnPipelineUI() {
   var group = currentTurnPipeGroup;
   var search = ($('#turnPipeSearch') ? $('#turnPipeSearch').value : '').toLowerCase();
 
+  // Sync group filter dropdown
+  var turnGrpSel = $('#turnGroupFilter');
+  if (turnGrpSel && turnGrpSel.value !== currentPropertyGroup) turnGrpSel.value = currentPropertyGroup;
+
   var filtered = TURN_PIPE_DATA.filter(function(p) {
     if (filter === 'active' && p.isCompleted) return false;
     if (filter === 'completed' && !p.isCompleted) return false;
     if (filter === 'stalled' && (!p.isStalled || p.isCompleted)) return false;
+    if (filter === 'upcoming' && !p.isUpcoming) return false;
     if (group && p.property !== group) return false;
+    // Property group filter (global)
+    if (!isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup)) return false;
     if (search) {
-      var hay = (p.unit + ' ' + p.property).toLowerCase();
+      var hay = (p.unit + ' ' + p.property + ' ' + (p.tenant || '')).toLowerCase();
       if (hay.indexOf(search) === -1) return false;
     }
     return true;
@@ -2385,12 +2684,14 @@ function renderTurnPipelineUI() {
 
   var html = '';
   filtered.forEach(function(p, idx) {
-    var cardClass = p.isCompleted ? '' : p.isStalled ? 'stalled' : p.elapsed < 14 ? 'on-track' : 'waiting';
+    var cardClass = p.isCompleted ? '' : p.isUpcoming ? 'upcoming' : p.isStalled ? 'stalled' : p.elapsed < 14 ? 'on-track' : 'waiting';
     html += '<div class="pipe-card ' + cardClass + '" data-pipeidx="' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
 
     // Left: unit info
-    html += '<div class="pipe-card-unit"><div class="pipe-card-unit-name">' + escapeHtml(p.unit) + '</div>';
-    html += '<div class="pipe-card-prop">' + escapeHtml(p.property) + '</div></div>';
+    html += '<div class="pipe-card-unit"><div class="pipe-card-unit-name">' + escapeHtml(p.unit || 'Unit') + '</div>';
+    html += '<div class="pipe-card-prop">' + escapeHtml(p.property) + '</div>';
+    if (p.tenant) html += '<div class="pipe-card-prop" style="font-size:10px;color:var(--accent)">' + escapeHtml(p.tenant) + '</div>';
+    html += '</div>';
 
     // Center: stage dots
     html += '<div class="pipe-card-stages">';
@@ -2410,8 +2711,13 @@ function renderTurnPipelineUI() {
     // Right: status
     html += '<div class="pipe-card-status">';
     if (p.isCompleted) {
-      html += '<span class="pipe-card-elapsed" style="color:var(--success)">' + (p.turn.totalDays || p.elapsed) + 'd</span>';
+      var completeDays = (p.turn && p.turn.totalDays) || p.elapsed;
+      html += '<span class="pipe-card-elapsed" style="color:var(--success)">' + completeDays + 'd</span>';
       html += '<span class="pipe-card-cost">' + escapeHtml(p.totalBilled) + ' &bull; Complete</span>';
+    } else if (p.isUpcoming) {
+      var daysUntil = Math.abs(p.elapsed);
+      html += '<span class="pipe-card-elapsed" style="color:var(--info,#60a5fa)">' + daysUntil + 'd</span>';
+      html += '<span class="pipe-card-cost">Move-out: ' + formatDate(p.moveOut) + '</span>';
     } else {
       var eColor = p.elapsed > p.target ? 'var(--danger)' : p.elapsed > 14 ? 'var(--warning)' : 'var(--text-primary)';
       html += '<span class="pipe-card-elapsed" style="color:' + eColor + '">' + p.elapsed + 'd</span>';
@@ -2457,7 +2763,10 @@ function renderTurnPipelineUI() {
     if (p.matchingWOs.length > 0) {
       html += '<div class="pipe-wo-list">';
       p.matchingWOs.forEach(function(wo) {
-        html += '<div class="pipe-wo-item"><div><span class="pipe-wo-id">#' + wo.id + '</span> <span class="tag ' + String(wo.status).toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(wo.status) + '</span></div>';
+        var woLink = appfolioUrl('work_order', wo.uuid || wo.link);
+        html += '<div class="pipe-wo-item"><div><span class="pipe-wo-id">#' + wo.id + '</span> <span class="tag ' + String(wo.status).toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(wo.status) + '</span>';
+        if (woLink) html += ' <a href="' + escapeHtml(woLink) + '" target="_blank" rel="noopener noreferrer" style="font-size:9px;color:var(--accent);text-decoration:none" title="View WO in AppFolio" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i></a>';
+        html += '</div>';
         html += '<div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml((wo.description || '').substring(0, 60)) + '</div></div>';
       });
       html += '</div>';
@@ -2469,11 +2778,17 @@ function renderTurnPipelineUI() {
     html += '<div class="detail-section-title" style="margin-top:12px"><i class="fas fa-info-circle"></i> Turn Details</div>';
     html += '<div class="detail-grid">';
     html += '<div class="detail-row"><div class="detail-row-label">Move-Out</div><div class="detail-row-value">' + (p.moveOut ? formatDate(p.moveOut) : '\u2014') + '</div></div>';
-    html += '<div class="detail-row"><div class="detail-row-label">Expected Move-In</div><div class="detail-row-value">' + (p.turn.expectedMoveIn ? formatDate(p.turn.expectedMoveIn) : '\u2014') + '</div></div>';
-    html += '<div class="detail-row"><div class="detail-row-label">Target Days</div><div class="detail-row-value">' + (p.target || '\u2014') + '</div></div>';
-    html += '<div class="detail-row"><div class="detail-row-label">Total Billed</div><div class="detail-row-value">' + escapeHtml(p.totalBilled) + '</div></div>';
-    html += '<div class="detail-row"><div class="detail-row-label">Labor</div><div class="detail-row-value">' + escapeHtml(p.turn.laborCost) + '</div></div>';
-    html += '<div class="detail-row"><div class="detail-row-label">Reference</div><div class="detail-row-value">' + escapeHtml(p.turn.referenceUser || '\u2014') + '</div></div>';
+    if (p.tenant) html += '<div class="detail-row"><div class="detail-row-label">Tenant</div><div class="detail-row-value">' + escapeHtml(p.tenant) + '</div></div>';
+    if (p.turn) {
+      html += '<div class="detail-row"><div class="detail-row-label">Expected Move-In</div><div class="detail-row-value">' + (p.turn.expectedMoveIn ? formatDate(p.turn.expectedMoveIn) : '\u2014') + '</div></div>';
+      html += '<div class="detail-row"><div class="detail-row-label">Target Days</div><div class="detail-row-value">' + (p.target || '\u2014') + '</div></div>';
+      html += '<div class="detail-row"><div class="detail-row-label">Total Billed</div><div class="detail-row-value">' + escapeHtml(p.totalBilled) + '</div></div>';
+      html += '<div class="detail-row"><div class="detail-row-label">Labor</div><div class="detail-row-value">' + escapeHtml(p.turn.laborCost || '$0') + '</div></div>';
+      html += '<div class="detail-row"><div class="detail-row-label">Reference</div><div class="detail-row-value">' + escapeHtml(p.turn.referenceUser || '\u2014') + '</div></div>';
+    } else {
+      html += '<div class="detail-row"><div class="detail-row-label">Status</div><div class="detail-row-value" style="color:var(--info,#60a5fa)">Upcoming — awaiting move-out</div></div>';
+      html += '<div class="detail-row"><div class="detail-row-label">Days Until</div><div class="detail-row-value">' + Math.abs(p.elapsed) + ' days</div></div>';
+    }
     html += '</div>';
 
     // Webhook events
@@ -2496,6 +2811,11 @@ function renderTurnPipelineUI() {
     var nextIdx = p.currentStageIdx + 1;
     if (nextIdx < PIPE_STAGES.length && !p.isCompleted) {
       html += '<button class="action-btn primary" data-advance="' + escapeHtml(p.id) + '" data-stage="' + PIPE_STAGES[nextIdx].key + '"><i class="fas fa-arrow-right"></i> Confirm ' + PIPE_STAGES[nextIdx].title + '</button>';
+    }
+    // AppFolio deep link — use turn ID if available, else property link
+    var turnAfUrl = p.turn ? appfolioUrl('unit_turn', p.turn.turnId || p.turn.id) : appfolioUrl('property', p.propertyId);
+    if (turnAfUrl) {
+      html += '<a class="action-btn" href="' + escapeHtml(turnAfUrl) + '" target="_blank" rel="noopener noreferrer" style="text-decoration:none" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i> View in AppFolio</a>';
     }
     html += '<button class="action-btn" onclick="this.closest(\'.pipe-detail\').classList.remove(\'show\')"><i class="fas fa-times"></i> Close</button>';
     html += '</div>';
@@ -2578,8 +2898,8 @@ function renderInspections(search) {
     // Check if linked to an active turn
     var linkedTurn = TURN_PIPE_DATA.find(function(tp) {
       return !tp.isCompleted &&
-        tp.unit && r.unit && tp.unit.toLowerCase() === r.unit.toLowerCase() &&
-        tp.property && r.propertyName && tp.property.toLowerCase() === r.propertyName.toLowerCase();
+        tp.unit && r.unit && String(tp.unit).toLowerCase() === String(r.unit).toLowerCase() &&
+        tp.property && r.propertyName && String(tp.property).toLowerCase() === String(r.propertyName).toLowerCase();
     });
     return {
       r: r,
@@ -2604,12 +2924,18 @@ function renderInspections(search) {
   e('kpiInspCurrent', currentCount);
   e('kpiInspTurnLinked', turnLinkedCount);
 
+  // Sync group filter dropdown
+  var inspGrpSel = $('#inspGroupFilter');
+  if (inspGrpSel && inspGrpSel.value !== currentPropertyGroup) inspGrpSel.value = currentPropertyGroup;
+
   // Filter
   var filtered = classified.filter(function(c) {
     if (statusFilter === 'overdue' && !c.overdue) return false;
     if (statusFilter === 'due_soon' && !c.dueSoon) return false;
     if (statusFilter === 'current' && !c.current) return false;
     if (statusFilter === 'turn_linked' && !c.linkedTurn) return false;
+    // Property group filter
+    if (!isInPropertyGroup(c.r.propertyId, c.r.propertyName, currentPropertyGroup)) return false;
     if (search) {
       var s = search.toLowerCase();
       return (c.r.propertyName || '').toLowerCase().indexOf(s) !== -1
@@ -2625,7 +2951,7 @@ function renderInspections(search) {
   }
 
   var html = '';
-  filtered.forEach(function(c) {
+  filtered.forEach(function(c, idx) {
     var r = c.r;
     var statusTag = c.overdue
       ? '<span class="tag non-compliant">Overdue</span>'
@@ -2635,8 +2961,8 @@ function renderInspections(search) {
     var turnTag = c.linkedTurn
       ? '<span class="tag assigned" title="Linked to active turn"><i class="fas fa-exchange-alt" style="font-size:8px"></i> ' + escapeHtml(c.linkedTurn.unit) + '</span>'
       : '<span style="color:var(--text-muted)">\u2014</span>';
-    html += '<tr' + (c.overdue ? ' style="background:var(--danger-dim)"' : '') + '>';
-    html += '<td>' + escapeHtml(r.propertyName) + '</td>';
+    html += '<tr class="insp-row" data-inspidx="' + idx + '" style="cursor:pointer;' + (c.overdue ? 'background:var(--danger-dim)' : '') + '">';
+    html += '<td>' + escapeHtml(r.propertyName) + ' <i class="fas fa-external-link-alt" style="font-size:8px;opacity:0.4"></i></td>';
     html += '<td>' + escapeHtml(r.unit) + '</td>';
     html += '<td style="font-family:var(--font-mono)">' + (r.lastInspection ? formatDate(r.lastInspection) + ' <span style="color:var(--text-muted);font-size:10px">(' + c.daysSince + 'd ago)</span>' : '<span style="color:var(--danger)">Never</span>') + '</td>';
     html += '<td>' + escapeHtml(r.tenant || '\u2014') + '</td>';
@@ -2648,13 +2974,54 @@ function renderInspections(search) {
   });
   body.innerHTML = html;
 
+  // Click inspection row to show detail
+  body.querySelectorAll('.insp-row').forEach(function(row) {
+    row.addEventListener('click', function() {
+      var idx = parseInt(this.getAttribute('data-inspidx'), 10);
+      var c = filtered[idx];
+      if (!c) return;
+      var r = c.r;
+      var afLink = appfolioUrl('property', r.propertyId);
+      showItemDetail('Inspection \u2014 ' + r.propertyName + ' ' + r.unit, [
+        { section: 'Inspection Details', icon: 'fa-clipboard-check' },
+        { label: 'Property', value: r.propertyName },
+        { label: 'Unit', value: r.unit },
+        { label: 'Last Inspection', value: r.lastInspection ? formatDate(r.lastInspection) + ' (' + c.daysSince + ' days ago)' : 'Never' },
+        { label: 'Status', value: c.overdue ? 'OVERDUE' : c.dueSoon ? 'Due Soon' : 'Current' },
+        { section: 'Tenant', icon: 'fa-user' },
+        { label: 'Tenant', value: r.tenant || '\u2014' },
+        { label: 'Move-In', value: r.moveIn ? formatDate(r.moveIn) : '\u2014' },
+        { label: 'Move-Out', value: r.moveOut ? formatDate(r.moveOut) : '\u2014' },
+        { label: 'Tags', value: r.tags || '\u2014' }
+      ], afLink);
+    });
+  });
+
   var ib = $('#inspBadge');
   if (ib) ib.textContent = overdueCount;
 }
 
 function renderVendors(search) {
   var container = $('#vendorGrid');
+
+  // Sync group filter dropdown
+  var vendGrpSel = $('#vendorGroupFilter');
+  if (vendGrpSel && vendGrpSel.value !== currentPropertyGroup) vendGrpSel.value = currentPropertyGroup;
+
+  // Note: Vendors don't have a direct property association for group filtering,
+  // but we can filter by checking which vendors have WOs in the group
+  var vendorsInGroup = null;
+  if (currentPropertyGroup) {
+    vendorsInGroup = {};
+    WORK_ORDERS.forEach(function(wo) {
+      if (isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup) && wo.vendorName) {
+        vendorsInGroup[wo.vendorName.toLowerCase()] = true;
+      }
+    });
+  }
+
   var filtered = VENDORS.filter(function(v) {
+    if (vendorsInGroup && !vendorsInGroup[(v.name || '').toLowerCase()]) return false;
     if (!search) return true;
     var s = search.toLowerCase();
     return (v.name || '').toLowerCase().indexOf(s) !== -1 || (v.email || '').toLowerCase().indexOf(s) !== -1;
@@ -2673,7 +3040,9 @@ function renderVendors(search) {
     var due = ed ? daysBetween(today, ed) : 999;
     var wrn = !exp && due <= 60;
     var cc = exp ? 'expired' : wrn ? 'warn' : '';
-    html += '<div class="vendor-card ' + cc + '"><div class="vendor-name">' + escapeHtml(v.name) + '</div>';
+    var afUrl = appfolioUrl('vendor', v.id);
+    html += '<div class="vendor-card ' + cc + '" data-vendorid="' + escapeHtml(String(v.id)) + '" style="cursor:pointer">';
+    html += '<div class="vendor-name">' + escapeHtml(v.name) + (afUrl ? ' <a href="' + escapeHtml(afUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--accent);text-decoration:none" title="View in AppFolio" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i></a>' : '') + '</div>';
     html += '<div class="vendor-id"><i class="fas fa-fingerprint"></i> ID: ' + escapeHtml(String(v.id)) + '</div>';
     html += '<div class="vendor-row"><span>Compliance</span>' + (v.compliant ? '<span class="tag compliant">Compliant</span>' : '<span class="tag non-compliant">' + escapeHtml(v.compliantStatus) + '</span>') + '</div>';
     if (v.insurance) {
@@ -2684,11 +3053,46 @@ function renderVendors(search) {
     html += '</div>';
   });
   container.innerHTML = html;
+
+  // Click vendor card to show detail
+  container.querySelectorAll('.vendor-card').forEach(function(card) {
+    card.addEventListener('click', function() {
+      var vid = this.getAttribute('data-vendorid');
+      var v = VENDORS.find(function(vn) { return String(vn.id) === vid; });
+      if (!v) return;
+      showItemDetail('Vendor \u2014 ' + v.name, [
+        { section: 'Vendor Info', icon: 'fa-hard-hat' },
+        { label: 'Name', value: v.name },
+        { label: 'ID', value: String(v.id) },
+        { label: 'Type', value: v.vendorType || '\u2014' },
+        { label: 'Trades', value: v.trades || '\u2014' },
+        { section: 'Contact', icon: 'fa-phone' },
+        { label: 'Phone', value: v.phone || '\u2014' },
+        { label: 'Email', value: v.email || '\u2014' },
+        { label: 'Address', value: v.address || '\u2014' },
+        { section: 'Compliance', icon: 'fa-shield-alt' },
+        { label: 'Status', value: v.compliant ? 'Compliant' : (v.compliantStatus || 'Unknown') },
+        { label: 'Liability Ins. Exp.', value: v.insurance || '\u2014' },
+        { label: 'Auto Ins. Exp.', value: v.autoInsurance || '\u2014' },
+        { label: 'Workers Comp Exp.', value: v.workersComp || '\u2014' },
+        { label: 'Do Not Use', value: v.doNotUse ? 'YES' : 'No' }
+      ], appfolioUrl('vendor', v.id));
+    });
+  });
 }
 
 function renderReconciliation() {
   var container = $('#reconList');
-  var unlinked = BILLS.filter(function(b) { return !b.workOrderId; });
+
+  // Sync group filter dropdown
+  var reconGrpSel = $('#reconGroupFilter');
+  if (reconGrpSel && reconGrpSel.value !== currentPropertyGroup) reconGrpSel.value = currentPropertyGroup;
+
+  var unlinked = BILLS.filter(function(b) {
+    if (b.workOrderId) return false;
+    if (!isInPropertyGroup(b.propertyId, b.propertyName, currentPropertyGroup)) return false;
+    return true;
+  });
 
   if (unlinked.length === 0) {
     container.innerHTML = emptyHtml('fa-balance-scale', BILLS.length === 0 ? 'No bills loaded' : 'All bills are linked to work orders!');
@@ -2699,15 +3103,16 @@ function renderReconciliation() {
   unlinked.forEach(function(bill) {
     // Match heuristic: vendor name + property match
     var matches = WORK_ORDERS.filter(function(wo) {
-      var vendorMatch = bill.vendorName && wo.vendorName && bill.vendorName.toLowerCase() === wo.vendorName.toLowerCase();
-      var propMatch = bill.propertyName && wo.propertyName && bill.propertyName.toLowerCase() === wo.propertyName.toLowerCase();
+      var vendorMatch = bill.vendorName && wo.vendorName && String(bill.vendorName).toLowerCase() === String(wo.vendorName).toLowerCase();
+      var propMatch = bill.propertyName && wo.propertyName && String(bill.propertyName).toLowerCase() === String(wo.propertyName).toLowerCase();
       return (vendorMatch || propMatch) && wo.status !== 'Completed' && wo.status !== 'Canceled';
     });
     var confidence = matches.length > 0 ? 'high' : 'low';
     var matchWO = matches.length > 0 ? matches[0] : null;
     if (matchWO && Math.abs(parseFloat(matchWO.amount || 0) - bill.amount) > 200) { confidence = 'medium'; }
 
-    html += '<div class="recon-card"><div class="recon-card-header"><div style="font-family:var(--font-mono);font-weight:600;font-size:14px">' + escapeHtml(String(bill.id || bill.reference)) + '</div><span class="recon-match ' + confidence + '">' + confidence + ' confidence</span></div>';
+    var billAfUrl = appfolioUrl('bill', bill.id);
+    html += '<div class="recon-card"><div class="recon-card-header"><div style="font-family:var(--font-mono);font-weight:600;font-size:14px">' + escapeHtml(String(bill.id || bill.reference)) + (billAfUrl ? ' <a href="' + escapeHtml(billAfUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--accent);text-decoration:none" title="View bill in AppFolio"><i class="fas fa-external-link-alt"></i></a>' : '') + '</div><span class="recon-match ' + confidence + '">' + confidence + ' confidence</span></div>';
     html += '<div class="recon-detail"><div class="recon-side"><div class="recon-side-label"><i class="fas fa-file-invoice-dollar"></i> Bill</div>';
     html += '<div class="recon-field"><strong>Vendor:</strong> ' + escapeHtml(bill.vendorName) + '</div>';
     html += '<div class="recon-field"><strong>Property:</strong> ' + escapeHtml(bill.propertyName) + '</div>';
@@ -2784,45 +3189,58 @@ function renderErrorLog() {
 }
 
 function populateDropdowns() {
-  // Properties dropdown
+  // Properties dropdown for New WO modal
   var propSelect = $('#nwoProperty');
-  propSelect.innerHTML = '<option value="">— Select Property —</option>';
-  PROPERTIES.forEach(function(p) {
-    propSelect.innerHTML += '<option value="' + escapeHtml(String(p.id)) + '">' + escapeHtml(p.name) + (p.address ? ' \u2014 ' + escapeHtml(p.address) : '') + '</option>';
-  });
-  // Also add properties extracted from work orders if API didn't return properties
-  if (PROPERTIES.length === 0) {
-    var seen = {};
-    WORK_ORDERS.forEach(function(wo) {
-      if (wo.propertyName && !seen[wo.propertyName]) {
-        seen[wo.propertyName] = true;
-        propSelect.innerHTML += '<option value="' + escapeHtml(wo.propertyName) + '">' + escapeHtml(wo.propertyName) + '</option>';
-      }
+  if (propSelect) {
+    propSelect.innerHTML = '<option value="">— Select Property —</option>';
+    PROPERTIES.forEach(function(p) {
+      propSelect.innerHTML += '<option value="' + escapeHtml(String(p.id)) + '">' + escapeHtml(p.name) + (p.address ? ' \u2014 ' + escapeHtml(p.address) : '') + '</option>';
+    });
+    // Also add properties extracted from work orders if API didn't return properties
+    if (PROPERTIES.length === 0) {
+      var seen = {};
+      WORK_ORDERS.forEach(function(wo) {
+        if (wo.propertyName && !seen[wo.propertyName]) {
+          seen[wo.propertyName] = true;
+          propSelect.innerHTML += '<option value="' + escapeHtml(wo.propertyName) + '">' + escapeHtml(wo.propertyName) + '</option>';
+        }
+      });
+    }
+  }
+
+  // Vendors dropdown for New WO modal
+  var vendSelect = $('#nwoVendor');
+  if (vendSelect) {
+    vendSelect.innerHTML = '<option value="">— Select Vendor —</option>';
+    VENDORS.forEach(function(v) {
+      vendSelect.innerHTML += '<option value="' + escapeHtml(String(v.id)) + '">' + escapeHtml(v.name) + '</option>';
     });
   }
 
-  // Vendors dropdown
-  var vendSelect = $('#nwoVendor');
-  vendSelect.innerHTML = '<option value="">— Select Vendor —</option>';
-  VENDORS.forEach(function(v) {
-    vendSelect.innerHTML += '<option value="' + escapeHtml(String(v.id)) + '">' + escapeHtml(v.name) + '</option>';
-  });
+  // Populate ALL group filter dropdowns across every tab
+  populateGroupFilters();
 }
 
 /* =================================================================
    RENDER ALL — convenience wrapper
    ================================================================= */
 function renderAll() {
-  renderWorkOrders();
-  renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-  renderTurnBoard();
-  renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
-  renderPayroll();
-  renderMoveOuts();
-  if (BILLS.length > 0) { renderReconciliation(); }
-  renderDashboardKPIs();
-  renderActivityFeed();
-  populateDropdowns();
+  // Each render is wrapped in try/catch so one crash doesn't kill the others
+  var fns = [
+    function() { renderWorkOrders(); },
+    function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); },
+    function() { renderTurnBoard(); },
+    function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
+    function() { renderPayroll(); },
+    function() { renderMoveOuts(); },
+    function() { if (BILLS.length > 0) { renderReconciliation(); } },
+    function() { renderDashboardKPIs(); },
+    function() { renderActivityFeed(); },
+    function() { populateDropdowns(); }
+  ];
+  fns.forEach(function(fn) {
+    try { fn(); } catch (e) { console.log('renderAll sub-error: ' + (e.message || e)); }
+  });
 }
 
 /* =================================================================
@@ -2866,9 +3284,7 @@ function wireUpUI() {
   if ($('#woPropertyFilter')) {
     $('#woPropertyFilter').addEventListener('change', function() { currentWOProperty = this.value; renderWorkOrders(); });
   }
-  if ($('#woGroupFilter')) {
-    $('#woGroupFilter').addEventListener('change', function() { currentPropertyGroup = this.value; renderWorkOrders(); });
-  }
+  // WO group filter wired below with global sync
 
   // Payroll navigation
   if ($('#payrollPrev')) {
@@ -2951,6 +3367,14 @@ function wireUpUI() {
     });
   });
 
+  // Item Detail modal close
+  if ($('#itemDetailClose')) {
+    $('#itemDetailClose').addEventListener('click', function() { closeModal('itemDetailModal'); });
+  }
+  if ($('#itemDetailCloseBtn')) {
+    $('#itemDetailCloseBtn').addEventListener('click', function() { closeModal('itemDetailModal'); });
+  }
+
   // Manual bills load button
   if ($('#btnLoadBills')) {
     $('#btnLoadBills').addEventListener('click', async function() {
@@ -3018,9 +3442,8 @@ function wireUpUI() {
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading\u2026';
       try {
         await fetchPropertyGroups();
-        populateDropdowns();
-        renderWorkOrders();
-        renderPayroll();
+        populateGroupFilters();
+        renderAll();
         showToast('Loaded ' + PROPERTY_GROUPS.length + ' property groups');
       } catch (err) {
         showToast('Failed to load groups: ' + (err.message || err));
@@ -3031,11 +3454,54 @@ function wireUpUI() {
     });
   }
 
-  // Payroll group filter
-  if ($('#payrollGroupFilter')) {
-    $('#payrollGroupFilter').addEventListener('change', function() {
-      currentPayrollGroup = this.value;
-      renderPayroll();
+  // ---- Global property group filter ----
+  // All group filter dropdowns share the same currentPropertyGroup variable
+  // Change on one tab propagates to all tabs on next render
+  var groupFilterIds = [
+    '#payrollGroupFilter', '#dashGroupFilter', '#inspGroupFilter',
+    '#vendorGroupFilter', '#reconGroupFilter', '#turnGroupFilter'
+  ];
+  groupFilterIds.forEach(function(sel) {
+    var el = document.querySelector(sel);
+    if (el) {
+      el.addEventListener('change', function() {
+        currentPropertyGroup = this.value;
+        // Sync all group filter dropdowns
+        groupFilterIds.concat(['#woGroupFilter']).forEach(function(s) {
+          var otherEl = document.querySelector(s);
+          if (otherEl && otherEl.value !== currentPropertyGroup) otherEl.value = currentPropertyGroup;
+        });
+        // Re-render all sections that use the group filter
+        try { renderWorkOrders(); } catch (e) { /* */ }
+        try { renderPayroll(); } catch (e) { /* */ }
+        try { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); } catch (e) { /* */ }
+        try { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); } catch (e) { /* */ }
+        try { renderReconciliation(); } catch (e) { /* */ }
+        try { renderTurnPipelineUI(); } catch (e) { /* */ }
+        try { renderDashboardKPIs(); } catch (e) { /* */ }
+      });
+    }
+  });
+
+  // WO group filter also syncs globally
+  if ($('#woGroupFilter')) {
+    // Remove existing listener (was set above) and re-add with global sync
+    var woGrp = $('#woGroupFilter');
+    var newWoGrp = woGrp.cloneNode(true);
+    woGrp.parentNode.replaceChild(newWoGrp, woGrp);
+    newWoGrp.addEventListener('change', function() {
+      currentPropertyGroup = this.value;
+      groupFilterIds.forEach(function(s) {
+        var otherEl = document.querySelector(s);
+        if (otherEl && otherEl.value !== currentPropertyGroup) otherEl.value = currentPropertyGroup;
+      });
+      try { renderWorkOrders(); } catch (e) { /* */ }
+      try { renderPayroll(); } catch (e) { /* */ }
+      try { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); } catch (e) { /* */ }
+      try { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); } catch (e) { /* */ }
+      try { renderReconciliation(); } catch (e) { /* */ }
+      try { renderTurnPipelineUI(); } catch (e) { /* */ }
+      try { renderDashboardKPIs(); } catch (e) { /* */ }
     });
   }
 
@@ -3255,7 +3721,7 @@ async function initApp() {
   }
 
   // ================================================================
-  // STEP 2: Pre-flight = Proxy v4 ?action=ping
+  // STEP 2: Pre-flight = Proxy v6 ?action=ping
   //         Tests proxy connectivity + AppFolio auth in one shot
   // ================================================================
   try {
@@ -3297,80 +3763,105 @@ async function initApp() {
   }
 
   // ================================================================
-  // STEP 3: Full data fetch via proxy v4 action endpoints
+  // STEP 3: Full data fetch via proxy v6 action endpoints
   //         Each action does server-side pagination — ONE request per dataset
   // ================================================================
   await fetchAllLive();
 }
 
-// Fetch all data via Proxy v4 action endpoints — ONE request per dataset
+// ---- Step-level timeout wrapper ----
+// Wraps a fetch function with a timeout so no single step can block forever
+function withStepTimeout(fn, timeoutMs) {
+  timeoutMs = timeoutMs || 60000; // default 60s per step
+  return new Promise(function(resolve) {
+    var done = false;
+    var timer = setTimeout(function() {
+      if (!done) { done = true; resolve(false); }
+    }, timeoutMs);
+    fn().then(function(result) {
+      if (!done) { done = true; clearTimeout(timer); resolve(result); }
+    }).catch(function() {
+      if (!done) { done = true; clearTimeout(timer); resolve(false); }
+    });
+  });
+}
+
+// Fetch all data via Proxy v6 action endpoints — ONE request per dataset
 // Each ?action= call does server-side pagination and returns complete results
 // Bills excluded from auto-load — user loads manually on Reconciliation tab
+// Every step has a 60-second timeout — NOTHING hangs forever
 async function fetchAllLive() {
   var anySuccess = false;
   updateCacheBadge('loading');
-  var steps = ['Work Orders', 'Properties', 'Vendors', 'Turns', 'Inspections', 'Groups', 'Tasks', 'Turn Tracker'];
+  var steps = ['Work Orders', 'Properties', 'Vendors', 'Turns', 'Move-Outs', 'Turn WOs', 'Inspections', 'Groups', 'Tasks', 'Turn Tracker'];
   showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
 
   try {
-    // Step 0: Work Orders \u2014 PRIMARY (Reports API, 5000/page, open only)
-    // Step 0: Work Orders (proxy v4 server-side pagination)
+    // Step 0: Work Orders (proxy v6 — Reports API)
     updateProgress(0, 'active', 'Fetching work orders\u2026');
-    var woOk = false;
-    try { woOk = await fetchWorkOrders(); } catch (e) { /* logged */ }
+    var woOk = await withStepTimeout(fetchWorkOrders, 60000);
     updateProgress(0, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
-    // Progressive: render WOs + dashboard immediately
     if (woOk) { renderWorkOrders(); renderDashboardKPIs(); renderActivityFeed(); }
 
-    // Step 1: Properties (proxy v4 server-side pagination)
+    // Step 1: Properties (proxy v6 — Reports API)
     updateProgress(1, 'active', 'Fetching properties\u2026');
-    var propOk = false;
-    try { propOk = await fetchProperties(); } catch (e) { /* logged */ }
+    var propOk = await withStepTimeout(fetchProperties, 60000);
     updateProgress(1, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
     if (propOk) { populateDropdowns(); renderWorkOrders(); }
 
-    // Step 2: Vendors (proxy v4 server-side pagination)
+    // Step 2: Vendors (proxy v6 — Reports API)
     updateProgress(2, 'active', 'Fetching vendors\u2026');
-    var vendOk = false;
-    try { vendOk = await fetchVendors(); } catch (e) { /* logged */ }
+    var vendOk = await withStepTimeout(fetchVendors, 60000);
     updateProgress(2, vendOk ? 'done' : 'error', vendOk ? VENDORS.length + ' vendors' : 'Vendors failed');
     if (vendOk) { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); populateDropdowns(); }
 
-    // Step 3: Turns (proxy v4 server-side pagination)
-    updateProgress(3, 'active', 'Fetching turns\u2026');
-    var turnOk = false;
-    try { turnOk = await fetchTurns(); } catch (e) { /* logged */ }
-    updateProgress(3, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns failed');
+    // Step 3: Turns — In Progress only, 60-day window (proxy v6 — Reports API)
+    // Short timeout (20s) — turns are supplementary; pipeline works from WOs + move-outs too
+    updateProgress(3, 'active', 'Fetching in-progress turns\u2026');
+    var turnOk = await withStepTimeout(function() { return fetchTurns(); }, 20000);
+    updateProgress(3, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns skipped (timeout)');
     if (turnOk) { renderTurnBoard(); renderActivityFeed(); }
 
-    // Step 4: Inspections (proxy v4 server-side pagination)
-    updateProgress(4, 'active', 'Fetching inspections\u2026');
-    var inspOk = false;
-    try { inspOk = await fetchInspections(); } catch (e) { /* logged */ }
-    updateProgress(4, inspOk ? 'done' : 'error', inspOk ? INSPECTIONS.length + ' inspections' : 'Inspections failed');
+    // Step 4: Upcoming Move-Outs — tenant directory, Notice tenants (proxy v6 — Reports API)
+    updateProgress(4, 'active', 'Fetching upcoming move-outs\u2026');
+    var moOk = await withStepTimeout(fetchUpcomingMoveouts, 45000);
+    updateProgress(4, moOk ? 'done' : 'error', moOk ? UPCOMING_MOVEOUTS.length + ' upcoming' : 'Move-outs skipped');
+    if (moOk) { renderTurnBoard(); renderDashboardKPIs(); }
+
+    // Step 5: Turn Work Orders — DB API v0, Unit Turn type only (real-time status)
+    updateProgress(5, 'active', 'Fetching turn work orders\u2026');
+    var twoOk = await withStepTimeout(fetchTurnWorkOrders, 20000);
+    updateProgress(5, twoOk ? 'done' : 'error', twoOk ? TURN_WORK_ORDERS.length + ' turn WOs' : 'Turn WOs skipped');
+    if (twoOk) { renderTurnBoard(); }
+
+    // Step 6: Inspections (proxy v6 — Reports API)
+    updateProgress(6, 'active', 'Fetching inspections\u2026');
+    var inspOk = await withStepTimeout(fetchInspections, 60000);
+    updateProgress(6, inspOk ? 'done' : 'error', inspOk ? INSPECTIONS.length + ' inspections' : 'Inspections failed');
     if (inspOk) { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); renderActivityFeed(); }
 
-    // Step 5: Property Groups (Database API v0 — for group filter dropdown)
-    updateProgress(5, 'active', 'Fetching property groups\u2026');
-    var grpOk = false;
-    try { grpOk = await fetchPropertyGroups(); } catch (e) { /* logged */ }
-    updateProgress(5, grpOk ? 'done' : 'error', grpOk ? PROPERTY_GROUPS.length + ' groups' : 'Groups skipped');
-    if (grpOk) { renderWorkOrders(); }
+    // Step 7: Property Groups (proxy v6 — DB API v0)
+    updateProgress(7, 'active', 'Fetching property groups\u2026');
+    var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
+    updateProgress(7, grpOk ? 'done' : 'error', grpOk ? PROPERTY_GROUPS.length + ' groups' : 'Groups skipped');
+    if (grpOk) { populateDropdowns(); renderWorkOrders(); }
 
-    // Step 6: Recent Tasks (Database API v0 — for activity feed)
-    updateProgress(6, 'active', 'Fetching recent tasks\u2026');
-    var taskOk = false;
-    try { taskOk = await fetchRecentTasks(); } catch (e) { /* logged */ }
-    updateProgress(6, taskOk ? 'done' : 'error', taskOk ? RECENT_TASKS.length + ' tasks' : 'Tasks skipped');
+    // Step 8: Recent Tasks (proxy v6 — DB API v0)
+    updateProgress(8, 'active', 'Fetching recent tasks\u2026');
+    var taskOk = await withStepTimeout(fetchRecentTasks, 45000);
+    updateProgress(8, taskOk ? 'done' : 'error', taskOk ? RECENT_TASKS.length + ' tasks' : 'Tasks skipped');
     if (taskOk) { renderActivityFeed(); }
 
-    // Step 7: Turn Tracker records (proxy blob — persisted stage overrides)
-    updateProgress(7, 'active', 'Loading turn tracker\u2026');
-    var trkOk = false;
-    try { await fetchTurnRecords(); trkOk = true; } catch (e) { /* logged */ }
-    updateProgress(7, trkOk ? 'done' : 'error', trkOk ? TURN_RECORDS.length + ' tracked' : 'Tracker skipped');
-    // Re-render turns + inspections with full correlation data
-    if (turnOk || inspOk) { renderTurnBoard(); renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); }
+    // Step 9: Turn Tracker records (proxy blob — persisted stage overrides)
+    updateProgress(9, 'active', 'Loading turn tracker\u2026');
+    var trkOk = await withStepTimeout(function() {
+      return fetchTurnRecords().then(function() { return true; });
+    }, 30000);
+    updateProgress(9, trkOk ? 'done' : 'error', trkOk ? TURN_RECORDS.length + ' tracked' : 'Tracker skipped');
+
+    // Final re-render: turns + inspections with all available correlated data
+    renderTurnBoard();
+    renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
 
     anySuccess = woOk || propOk || vendOk || turnOk || inspOk;
   } catch (e) {

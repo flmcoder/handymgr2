@@ -102,6 +102,9 @@
 </div>
 
 <section class="section active" id="sec-dashboard">
+  <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+    <select id="dashGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:140px"><option value="">All Groups</option></select>
+  </div>
   <div class="kpi-grid stagger">
     <div class="kpi-card amber kpi-clickable" data-kpi="open"><div class="kpi-label">Open Work Orders</div><div class="kpi-value" id="kpiOpen">—</div><div class="kpi-sub" id="kpiOpenSub">Loading…</div></div>
     <div class="kpi-card red kpi-clickable" data-kpi="urgent"><div class="kpi-label">Urgent / Critical</div><div class="kpi-value" id="kpiUrgent">—</div><div class="kpi-sub" id="kpiUrgentSub">Loading…</div></div>
@@ -207,18 +210,20 @@
   <div class="section-header" style="margin-top:4px">
     <div>
       <div class="section-title"><i class="fas fa-exchange-alt" style="color:var(--accent)"></i> Turn Pipeline</div>
-      <div class="section-subtitle">Auto-correlated from Turns + Work Orders + Inspections &bull; Webhook events fill gaps</div>
+      <div class="section-subtitle">Hybrid pipeline — Tenant Directory + Unit Turns + Work Orders + Inspections &bull; Webhook events fill gaps</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <select class="form-select" id="turnPipeFilter" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
         <option value="active">Active Turns</option>
+        <option value="upcoming">Upcoming Move-Outs</option>
         <option value="stalled">Stalled (7d+)</option>
-        <option value="all">All Turns</option>
+        <option value="all">All Pipeline</option>
         <option value="completed">Completed</option>
       </select>
       <select class="form-select" id="turnPipeGroup" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
         <option value="">All Properties</option>
       </select>
+      <select id="turnGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <div class="search-box" style="width:180px"><i class="fas fa-search"></i><input type="text" placeholder="Search turns…" id="turnPipeSearch"></div>
       <button class="sec-refresh" id="btnRefreshTurns"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
@@ -228,12 +233,13 @@
   <div class="pipe-stage-legend" id="pipelineStageLegend">
     <div class="pipe-legend-label">Unit</div>
     <div class="pipe-legend-stages">
+      <span class="pipe-legend-dot" title="Upcoming (Notice Given)">UPC</span>
       <span class="pipe-legend-dot" title="Move-Out">MO</span>
       <span class="pipe-legend-dot" title="Inspection">INS</span>
       <span class="pipe-legend-dot" title="WO Created">WO</span>
-      <span class="pipe-legend-dot" title="Estimate Requested">REQ</span>
-      <span class="pipe-legend-dot" title="Estimate Received">EST</span>
-      <span class="pipe-legend-dot" title="Assigned">ASN</span>
+      <span class="pipe-legend-dot" title="Bidding (Estimate Requested)">REQ</span>
+      <span class="pipe-legend-dot" title="Estimated (Bid Received)">EST</span>
+      <span class="pipe-legend-dot" title="Approved / Assigned">ASN</span>
       <span class="pipe-legend-dot" title="Work Done">DONE</span>
     </div>
     <div class="pipe-legend-label" style="text-align:right">Status</div>
@@ -265,6 +271,7 @@
         <option value="current">Current</option>
         <option value="turn_linked">Turn-Linked</option>
       </select>
+      <select id="inspGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search inspections…" id="inspSearch"></div>
       <button class="sec-refresh" id="btnRefreshInsp"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
@@ -278,6 +285,7 @@
   <div class="section-header">
     <div><div class="section-title"><i class="fas fa-hard-hat" style="color:var(--accent)"></i> Vendor Compliance Tracker</div><div class="section-subtitle">CompliantStatus synced from Database API — LiabilityInsuranceExpiration monitored</div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <select id="vendorGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search vendors…" id="vendorSearch"></div>
       <button class="sec-refresh" id="btnRefreshVendors"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
@@ -289,6 +297,7 @@
   <div class="section-header">
     <div><div class="section-title"><i class="fas fa-balance-scale" style="color:var(--accent)"></i> Bill &rarr; Work Order Reconciliation</div><div class="section-subtitle">Database API v0 &bull; Bills loaded on-demand to save API calls &bull; Cross-module matching engine</div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <select id="reconGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <button class="action-btn primary" id="btnLoadBills"><i class="fas fa-download"></i> Load Bills</button>
     </div>
   </div>
@@ -403,6 +412,23 @@
     <div class="modal-footer">
       <button class="action-btn" id="lockCancelBtn">Cancel</button>
       <button class="action-btn primary" style="background:var(--danger);border-color:var(--danger)" id="lockConfirmBtn"><i class="fas fa-lock"></i> Lock Now</button>
+    </div>
+  </div>
+</div>
+
+<!-- Item Detail Modal (generic — used by payroll, inspections, vendors, etc.) -->
+<div class="modal-overlay" id="itemDetailModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-head">
+      <h3 id="itemDetailTitle">Item Detail</h3>
+      <button class="modal-close" id="itemDetailClose">&times;</button>
+    </div>
+    <div class="modal-body" id="itemDetailBody"></div>
+    <div class="modal-footer">
+      <a class="action-btn primary" id="itemDetailLink" href="#" target="_blank" rel="noopener noreferrer" style="text-decoration:none">
+        <i class="fas fa-external-link-alt"></i> View in AppFolio
+      </a>
+      <button class="action-btn" id="itemDetailCloseBtn">Close</button>
     </div>
   </div>
 </div>
