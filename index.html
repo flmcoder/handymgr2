@@ -901,6 +901,8 @@ body {
 .pipe-card.stalled { border-left: 3px solid var(--danger); }
 .pipe-card.on-track { border-left: 3px solid var(--success); }
 .pipe-card.waiting { border-left: 3px solid var(--warning); }
+.pipe-card.upcoming { border-left: 3px solid #60a5fa; background: rgba(96,165,250,0.04); }
+.dark .pipe-card.upcoming { background: rgba(96,165,250,0.08); }
 
 /* Card left: unit info */
 .pipe-card-unit {
@@ -1218,13 +1220,14 @@ body {
   <div class="section-header" style="margin-top:4px">
     <div>
       <div class="section-title"><i class="fas fa-exchange-alt" style="color:var(--accent)"></i> Turn Pipeline</div>
-      <div class="section-subtitle">Auto-correlated from Turns + Work Orders + Inspections &bull; Webhook events fill gaps</div>
+      <div class="section-subtitle">Hybrid pipeline — Tenant Directory + Unit Turns + Work Orders + Inspections &bull; Webhook events fill gaps</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <select class="form-select" id="turnPipeFilter" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
         <option value="active">Active Turns</option>
+        <option value="upcoming">Upcoming Move-Outs</option>
         <option value="stalled">Stalled (7d+)</option>
-        <option value="all">All Turns</option>
+        <option value="all">All Pipeline</option>
         <option value="completed">Completed</option>
       </select>
       <select class="form-select" id="turnPipeGroup" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
@@ -1239,12 +1242,13 @@ body {
   <div class="pipe-stage-legend" id="pipelineStageLegend">
     <div class="pipe-legend-label">Unit</div>
     <div class="pipe-legend-stages">
+      <span class="pipe-legend-dot" title="Upcoming (Notice Given)">UPC</span>
       <span class="pipe-legend-dot" title="Move-Out">MO</span>
       <span class="pipe-legend-dot" title="Inspection">INS</span>
       <span class="pipe-legend-dot" title="WO Created">WO</span>
-      <span class="pipe-legend-dot" title="Estimate Requested">REQ</span>
-      <span class="pipe-legend-dot" title="Estimate Received">EST</span>
-      <span class="pipe-legend-dot" title="Assigned">ASN</span>
+      <span class="pipe-legend-dot" title="Bidding (Estimate Requested)">REQ</span>
+      <span class="pipe-legend-dot" title="Estimated (Bid Received)">EST</span>
+      <span class="pipe-legend-dot" title="Approved / Assigned">ASN</span>
       <span class="pipe-legend-dot" title="Work Done">DONE</span>
     </div>
     <div class="pipe-legend-label" style="text-align:right">Status</div>
@@ -2263,6 +2267,8 @@ var BILLS = [];
 var PROPERTIES = [];
 var PROPERTY_GROUPS = [];
 var TURNS = [];
+var UPCOMING_MOVEOUTS = []; // from tenant_directory — tenants on notice
+var TURN_WORK_ORDERS = []; // from DB API — unit turn WOs with real-time status
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
 var _webhookPollTimer = null;
@@ -2643,11 +2649,11 @@ async function fetchProperties() {
   }
 }
 
-// Turns: Proxy v6 ?action=turns — server-side pagination, one request
+// Turns: Proxy v6 ?action=turns — 90-day window, In Progress only by default
 async function fetchTurns() {
   try {
-    setApiStatus('loading', 'Loading turns (server-side)\u2026');
-    var data = await proxyAction('turns', { days: DATA_WINDOW_DAYS });
+    setApiStatus('loading', 'Loading turns (In Progress, 90d)\u2026');
+    var data = await proxyAction('turns', { days: 90, status: 'In Progress' });
     var results = data.results || [];
     TURNS = results.map(function(t) {
       var moveOut = t.move_out_date || '';
@@ -2714,7 +2720,8 @@ async function fetchInspections() {
   }
 }
 
-// Property Groups: Proxy v6 ?action=property_groups — server-side pagination via DB API v0
+// Property Groups: Proxy v6 ?action=property_groups — DB API v0
+// DB API returns { data: [ { Id, Name, PropertyIds, Type, LastUpdatedAt } ] }
 async function fetchPropertyGroups() {
   try {
     setApiStatus('loading', 'Loading property groups\u2026');
@@ -2724,7 +2731,7 @@ async function fetchPropertyGroups() {
       return {
         id: g.Id || g.id || '',
         name: g.Name || g.name || '',
-        properties: g.Properties || g.properties || g.property_ids || []
+        properties: g.PropertyIds || g.Properties || g.properties || g.property_ids || []
       };
     });
     // Build a lookup: property ID -> group name
@@ -2732,7 +2739,10 @@ async function fetchPropertyGroups() {
       if (Array.isArray(g.properties)) {
         g.properties.forEach(function(pid) {
           // Tag the matching PROPERTIES entry with its group
-          var prop = PROPERTIES.find(function(p) { return String(p.id) === String(pid); });
+          // DB API uses UUIDs, Reports API uses numeric IDs — match both
+          var prop = PROPERTIES.find(function(p) {
+            return String(p.id) === String(pid) || String(p.uuid) === String(pid);
+          });
           if (prop) { prop.group = g.name; }
         });
       }
@@ -2778,6 +2788,72 @@ async function fetchRecentTasks() {
   } catch (err) {
     console.log('fetchRecentTasks error: ' + (err.message || err));
     RECENT_TASKS = [];
+    return false;
+  }
+}
+
+// Upcoming Move-Outs: Proxy v6 ?action=upcoming_moveouts — tenant directory
+// Returns tenants on notice or current with move_out dates in the window
+async function fetchUpcomingMoveouts() {
+  try {
+    setApiStatus('loading', 'Loading upcoming move-outs\u2026');
+    var data = await proxyAction('upcoming_moveouts', { days: 60 });
+    var results = data.results || data.data || [];
+    UPCOMING_MOVEOUTS = results.map(function(t) {
+      return {
+        property: t.property || t.property_name || '',
+        propertyId: t.property_id || 0,
+        unit: t.unit || '',
+        unitId: t.unit_id || 0,
+        tenant: t.tenant || '',
+        status: t.status || '',
+        moveOut: t.move_out || '',
+        moveIn: t.move_in || '',
+        phone: t.phone_numbers || '',
+        email: t.emails || '',
+        rent: t.rent || '',
+        occupancyId: t.occupancy_id || ''
+      };
+    });
+    return true;
+  } catch (err) {
+    console.log('fetchUpcomingMoveouts error: ' + (err.message || err));
+    UPCOMING_MOVEOUTS = [];
+    return false;
+  }
+}
+
+// Turn Work Orders: Proxy v6 ?action=turn_work_orders — DB API v0
+// Real-time WO status for unit turn WOs (more current than Reports API)
+async function fetchTurnWorkOrders() {
+  try {
+    setApiStatus('loading', 'Loading turn work orders\u2026');
+    var data = await proxyAction('turn_work_orders', { days: 90 });
+    var results = data.results || data.data || [];
+    TURN_WORK_ORDERS = results.map(function(wo) {
+      return {
+        id: wo.Id || wo.id || '',
+        unitId: wo.UnitId || wo.unit_id || '',
+        propertyId: wo.PropertyId || wo.property_id || '',
+        status: wo.Status || wo.status || '',
+        type: wo.Type || wo.type || '',
+        priority: wo.Priority || wo.priority || '',
+        description: wo.JobDescription || wo.Description || wo.description || '',
+        vendorId: wo.VendorId || wo.vendor_id || '',
+        vendorTrade: wo.VendorTrade || '',
+        createdAt: wo.CreatedAt || wo.created_at || '',
+        lastUpdated: wo.LastUpdatedAt || wo.last_updated_at || '',
+        workCompletedOn: wo.WorkCompletedOn || wo.work_completed_on || '',
+        scheduledStart: wo.ScheduledStart || wo.scheduled_start || '',
+        assignedUsers: wo.AssignedUsers || [],
+        woNumber: wo.WorkOrderNumber || wo.work_order_number || '',
+        link: wo.Link || ''
+      };
+    });
+    return true;
+  } catch (err) {
+    console.log('fetchTurnWorkOrders error: ' + (err.message || err));
+    TURN_WORK_ORDERS = [];
     return false;
   }
 }
@@ -2889,15 +2965,36 @@ function getUpcomingMoveOuts() {
   var cutoff = new Date();
   cutoff.setDate(cutoff.getDate() + 60);
   var results = [];
+  var seen = {};
+
+  // Primary: use UPCOMING_MOVEOUTS from tenant directory (most accurate)
+  UPCOMING_MOVEOUTS.forEach(function(mo) {
+    if (!mo.moveOut) return;
+    var moDate = new Date(mo.moveOut);
+    if (isNaN(moDate.getTime())) return;
+    if (moDate >= today && moDate <= cutoff) {
+      var key = (mo.property || '') + '|' + (mo.unit || '');
+      if (seen[key]) return;
+      seen[key] = true;
+      var daysLeft = Math.round((moDate - today) / 86400000);
+      results.push({ property: mo.property, unit: mo.unit, tenant: mo.tenant, moveOut: mo.moveOut, daysLeft: daysLeft, phone: mo.phone || '', rent: mo.rent || '' });
+    }
+  });
+
+  // Fallback: also check inspections for move-outs not in UPCOMING_MOVEOUTS
   INSPECTIONS.forEach(function(r) {
     if (!r.moveOut) return;
     var moDate = new Date(r.moveOut);
     if (isNaN(moDate.getTime())) return;
     if (moDate >= today && moDate <= cutoff) {
+      var key = (r.propertyName || '') + '|' + (r.unit || '');
+      if (seen[key]) return;
+      seen[key] = true;
       var daysLeft = Math.round((moDate - today) / 86400000);
       results.push({ property: r.propertyName, unit: r.unit, tenant: r.tenant, moveOut: r.moveOut, daysLeft: daysLeft });
     }
   });
+
   results.sort(function(a, b) { return a.daysLeft - b.daysLeft; });
   return results;
 }
@@ -3567,15 +3664,17 @@ var TURN_PIPE_DATA = []; // computed pipeline entries
 var currentTurnPipeFilter = 'active';
 var currentTurnPipeGroup = '';
 
-// Stage definitions
+// Stage definitions — Hybrid Turn Pipeline phases
+// Upcoming = pre-turn (tenant gave notice), then MO → INS → WO → REQ → EST → ASN → DONE
 var PIPE_STAGES = [
-  { key: 'moveout',   label: 'MO',   icon: 'fa-sign-out-alt', title: 'Move-Out' },
-  { key: 'inspection',label: 'INS',  icon: 'fa-clipboard-check', title: 'Inspection' },
-  { key: 'wo_created', label: 'WO',  icon: 'fa-wrench', title: 'WO Created' },
-  { key: 'est_requested', label: 'REQ', icon: 'fa-file-invoice', title: 'Estimate Requested' },
-  { key: 'est_received', label: 'EST', icon: 'fa-file-invoice-dollar', title: 'Estimate Received' },
-  { key: 'assigned',  label: 'ASN',  icon: 'fa-user-check', title: 'Assigned' },
-  { key: 'work_done', label: 'DONE', icon: 'fa-check-circle', title: 'Work Done' }
+  { key: 'upcoming',    label: 'UPC',  icon: 'fa-calendar-alt', title: 'Upcoming' },
+  { key: 'moveout',     label: 'MO',   icon: 'fa-sign-out-alt', title: 'Move-Out' },
+  { key: 'inspection',  label: 'INS',  icon: 'fa-clipboard-check', title: 'Inspection' },
+  { key: 'wo_created',  label: 'WO',   icon: 'fa-wrench', title: 'WO Created' },
+  { key: 'est_requested', label: 'REQ', icon: 'fa-file-invoice', title: 'Bidding' },
+  { key: 'est_received', label: 'EST', icon: 'fa-file-invoice-dollar', title: 'Estimated' },
+  { key: 'assigned',    label: 'ASN',  icon: 'fa-user-check', title: 'Approved' },
+  { key: 'work_done',   label: 'DONE', icon: 'fa-check-circle', title: 'Work Done' }
 ];
 
 // Fetch persisted turn records from proxy
@@ -3620,42 +3719,74 @@ async function saveTurnRecord(record) {
 
 // ---- Auto-correlation engine ----
 // Builds a unified pipeline entry for each turn by matching WOs + inspections
+// ---- Hybrid Turn Pipeline Builder ----
+// Combines: unit_turn_detail report (TURNS) + upcoming moveouts (UPCOMING_MOVEOUTS)
+//           + work orders (WORK_ORDERS + TURN_WORK_ORDERS) + inspections + webhook events
+//           + persisted state from TURN_RECORDS blob
 function buildTurnPipeline() {
   TURN_PIPE_DATA = [];
   var today = new Date();
+  var seenKeys = {};
 
-  TURNS.forEach(function(turn) {
-    var turnKey = String(turn.propertyId || '') + '-' + String(turn.unitId || '') + '-' + (turn.moveOut || '');
-    if (!turnKey || turnKey === '--') turnKey = turn.unitTurnId || (turn.unit + '|' + turn.property);
+  // Helper: create a composite key for deduplication
+  function makeKey(propId, unitId, moveOut) {
+    var k = String(propId || '') + '-' + String(unitId || '') + '-' + (moveOut || '');
+    return k === '--' ? null : k;
+  }
 
-    // Find matching WOs: same unit + property, type includes "turn", or created after move-out
-    var moveOutDate = turn.moveOut ? new Date(turn.moveOut) : null;
-    var matchingWOs = WORK_ORDERS.filter(function(wo) {
-      // Match by unit + property name
-      var unitMatch = wo.unit && turn.unit && wo.unit.toLowerCase() === turn.unit.toLowerCase();
-      var propMatch = wo.propertyName && turn.property && wo.propertyName.toLowerCase() === turn.property.toLowerCase();
-      if (!unitMatch || !propMatch) return false;
-      // Prefer WOs created around or after move-out
+  // Helper: find matching WOs for a unit+property pair (from both Reports + DB API data)
+  function findMatchingWOs(unit, property, propId, unitId, moveOutDate) {
+    var wos = [];
+    // From Reports API work orders (WORK_ORDERS)
+    WORK_ORDERS.forEach(function(wo) {
+      var unitMatch = wo.unit && unit && wo.unit.toLowerCase() === unit.toLowerCase();
+      var propMatch = wo.propertyName && property && wo.propertyName.toLowerCase() === property.toLowerCase();
+      if (!unitMatch || !propMatch) return;
       if (moveOutDate && wo.created) {
-        var woDt = new Date(wo.created);
-        var daysDiff = (woDt - moveOutDate) / 86400000;
-        if (daysDiff < -30) return false; // WO too old
+        var daysDiff = (new Date(wo.created) - moveOutDate) / 86400000;
+        if (daysDiff < -30) return;
       }
-      return true;
+      wos.push({ source: 'reports', id: wo.id, status: wo.status, description: wo.description || '',
+        created: wo.created, vendor: wo.vendor || '', unit: wo.unit, property: wo.propertyName, priority: wo.priority });
     });
-
-    // Find matching inspection
-    var matchingInsp = INSPECTIONS.find(function(insp) {
-      var unitMatch = insp.unit && turn.unit && insp.unit.toLowerCase() === turn.unit.toLowerCase();
-      var propMatch = insp.propertyName && turn.property && insp.propertyName.toLowerCase() === turn.property.toLowerCase();
-      return unitMatch && propMatch;
+    // From DB API turn work orders (TURN_WORK_ORDERS) — more current status
+    TURN_WORK_ORDERS.forEach(function(wo) {
+      var idMatch = (unitId && wo.unitId && String(wo.unitId) === String(unitId)) ||
+                    (propId && wo.propertyId && String(wo.propertyId) === String(propId));
+      if (!idMatch) return;
+      // Skip if already found from Reports
+      var dupe = wos.find(function(w) { return String(w.id) === String(wo.id) || String(w.id) === String(wo.woNumber); });
+      if (dupe) {
+        // DB API has more current status — update it
+        dupe.status = wo.status;
+        dupe.dbApiId = wo.id;
+        return;
+      }
+      wos.push({ source: 'db_api', id: wo.woNumber || wo.id, dbApiId: wo.id, status: wo.status,
+        description: wo.description || '', created: wo.createdAt, vendor: wo.vendorTrade || '', priority: wo.priority });
     });
+    return wos;
+  }
 
-    // Determine stages from data
+  // Helper: find matching inspection
+  function findMatchingInsp(unit, property) {
+    return INSPECTIONS.find(function(insp) {
+      return insp.unit && unit && insp.unit.toLowerCase() === unit.toLowerCase() &&
+             insp.propertyName && property && insp.propertyName.toLowerCase() === property.toLowerCase();
+    });
+  }
+
+  // Helper: derive stages from available data
+  function deriveStages(moveOut, matchingWOs, matchingInsp, isUpcoming) {
     var stages = {};
+    var moveOutDate = moveOut ? new Date(moveOut) : null;
 
-    // Stage 1: Move-Out — always true if turn exists
-    stages.moveout = { done: !!turn.moveOut, date: turn.moveOut || null };
+    // Stage 0: Upcoming — tenant gave notice, move-out in the future
+    stages.upcoming = { done: true, date: moveOut || null };
+
+    // Stage 1: Move-Out — has the tenant actually moved out?
+    var movedOut = moveOutDate ? moveOutDate <= today : false;
+    stages.moveout = { done: movedOut, date: movedOut ? moveOut : null };
 
     // Stage 2: Inspection — check if inspection happened after move-out
     var inspDone = false;
@@ -3665,7 +3796,7 @@ function buildTurnPipeline() {
       if (moveOutDate) {
         inspDone = new Date(inspDate) >= moveOutDate;
       } else {
-        inspDone = true;
+        inspDone = !!inspDate;
       }
     }
     stages.inspection = { done: inspDone, date: inspDate };
@@ -3682,20 +3813,40 @@ function buildTurnPipeline() {
       return s === 'Work Done' || s === 'Work Completed' || s === 'Ready to Bill' || s === 'Completed';
     });
 
-    // Progressive stages — later stages imply earlier ones
+    // Progressive — later stages imply earlier ones
     stages.wo_created = { done: hasWO, date: woCreatedDate, woIds: matchingWOs.map(function(w) { return w.id; }) };
     stages.est_requested = { done: hasEstReq || hasEstimated || hasAssigned || hasWorkDone, date: null };
     stages.est_received = { done: hasEstimated || hasAssigned || hasWorkDone, date: null, vendors: [] };
     stages.assigned = { done: hasAssigned || hasWorkDone, date: null };
-    stages.work_done = { done: hasWorkDone || !!turn.turnEnd, date: turn.turnEnd || null };
+    stages.work_done = { done: hasWorkDone, date: null };
 
-    // Merge with persisted overrides from TURN_RECORDS
-    var savedRec = TURN_RECORDS.find(function(r) { return r.id === turnKey; });
+    return stages;
+  }
+
+  // Helper: build a pipeline entry
+  function addEntry(key, unit, property, propId, unitId, moveOut, turnData, moveoutTenant) {
+    if (!key || seenKeys[key]) return;
+    seenKeys[key] = true;
+
+    var moveOutDate = moveOut ? new Date(moveOut) : null;
+    var isUpcoming = moveOutDate ? moveOutDate > today : false;
+    var matchingWOs = findMatchingWOs(unit, property, propId, unitId, moveOutDate);
+    var matchingInsp = findMatchingInsp(unit, property);
+    var stages = deriveStages(moveOut, matchingWOs, matchingInsp, isUpcoming);
+
+    // If this is from unit_turn_detail and has a turnEnd, mark work_done
+    if (turnData && turnData.turnEnd) {
+      stages.work_done.done = true;
+      stages.work_done.date = turnData.turnEnd;
+    }
+
+    // Merge persisted overrides from TURN_RECORDS
+    var savedRec = TURN_RECORDS.find(function(r) { return r.id === key; });
     if (savedRec && savedRec.stages) {
       PIPE_STAGES.forEach(function(ps) {
         var saved = savedRec.stages[ps.key];
         if (saved) {
-          // Saved override takes precedence for manual confirmations
+          if (!stages[ps.key]) stages[ps.key] = {};
           if (saved.done) stages[ps.key].done = true;
           if (saved.date && !stages[ps.key].date) stages[ps.key].date = saved.date;
           if (saved.notes) stages[ps.key].notes = saved.notes;
@@ -3704,12 +3855,12 @@ function buildTurnPipeline() {
       });
     }
 
-    // Merge webhook events matching this turn
+    // Find webhook events matching this turn
     var webhookMatches = WEBHOOK_EVENTS.filter(function(wh) {
       var t = (wh.title || '').toLowerCase();
       var b = (wh.body || '').toLowerCase();
-      var uLow = (turn.unit || '').toLowerCase();
-      var pLow = (turn.property || '').toLowerCase();
+      var uLow = (unit || '').toLowerCase();
+      var pLow = (property || '').toLowerCase();
       return uLow && pLow && (t.indexOf(uLow) !== -1 || b.indexOf(uLow) !== -1) && (t.indexOf(pLow) !== -1 || b.indexOf(pLow) !== -1);
     });
 
@@ -3719,26 +3870,35 @@ function buildTurnPipeline() {
       if (stages[ps.key] && stages[ps.key].done) currentStageIdx = i;
     });
 
-    // Elapsed days
-    var elapsed = moveOutDate ? daysBetween(moveOutDate, today) : 0;
-    var target = turn.targetDays || 30;
-    var isStalled = elapsed > 7 && currentStageIdx >= 0 && currentStageIdx < PIPE_STAGES.length - 1;
-    var isCompleted = !!turn.turnEnd || (stages.work_done && stages.work_done.done);
+    // Elapsed days since move-out (or days until move-out for upcoming)
+    var elapsed = 0;
+    if (moveOutDate) {
+      if (isUpcoming) {
+        elapsed = -daysBetween(today, moveOutDate); // negative = days until
+      } else {
+        elapsed = daysBetween(moveOutDate, today);
+      }
+    }
+    var target = (turnData && turnData.targetDays) || 30;
+    var isStalled = !isUpcoming && elapsed > 7 && currentStageIdx >= 1 && currentStageIdx < PIPE_STAGES.length - 1;
+    var isCompleted = (turnData && !!turnData.turnEnd) || (stages.work_done && stages.work_done.done);
 
     // Parse cost
     var costNum = 0;
-    if (turn.totalBilled) {
-      costNum = parseFloat(String(turn.totalBilled).replace(/[^0-9.\-]/g, '')) || 0;
+    if (turnData && turnData.totalBilled) {
+      costNum = parseFloat(String(turnData.totalBilled).replace(/[^0-9.\-]/g, '')) || 0;
     }
 
     TURN_PIPE_DATA.push({
-      id: turnKey,
-      turn: turn,
-      unit: turn.unit,
-      property: turn.property,
-      propertyId: turn.propertyId,
-      unitId: turn.unitId,
-      moveOut: turn.moveOut,
+      id: key,
+      turn: turnData || null,
+      unit: unit,
+      property: property,
+      propertyId: propId,
+      unitId: unitId,
+      moveOut: moveOut,
+      tenant: moveoutTenant || '',
+      isUpcoming: isUpcoming,
       stages: stages,
       currentStageIdx: currentStageIdx,
       matchingWOs: matchingWOs,
@@ -3749,15 +3909,31 @@ function buildTurnPipeline() {
       isStalled: isStalled && !isCompleted,
       isCompleted: isCompleted,
       costNum: costNum,
-      totalBilled: turn.totalBilled || '$0',
+      totalBilled: (turnData && turnData.totalBilled) || '$0',
       savedRecord: savedRec || null
     });
+  }
+
+  // PASS 1: Add all turns from unit_turn_detail report
+  TURNS.forEach(function(turn) {
+    var key = makeKey(turn.propertyId, turn.unitId, turn.moveOut) ||
+              turn.unitTurnId || (turn.unit + '|' + turn.property);
+    addEntry(key, turn.unit, turn.property, turn.propertyId, turn.unitId, turn.moveOut, turn, '');
   });
 
-  // Sort: active first (by elapsed desc), then completed
+  // PASS 2: Add upcoming move-outs not already in pipeline (the "Upcoming" phase)
+  UPCOMING_MOVEOUTS.forEach(function(mo) {
+    var key = makeKey(mo.propertyId, mo.unitId, mo.moveOut);
+    if (!key || seenKeys[key]) return;
+    addEntry(key, mo.unit, mo.property, mo.propertyId, mo.unitId, mo.moveOut, null, mo.tenant);
+  });
+
+  // Sort: upcoming first (by days-until), then active (by elapsed desc), then completed
   TURN_PIPE_DATA.sort(function(a, b) {
     if (a.isCompleted !== b.isCompleted) return a.isCompleted ? 1 : -1;
-    return b.elapsed - a.elapsed;
+    if (a.isUpcoming !== b.isUpcoming) return a.isUpcoming ? -1 : 1;
+    if (a.isUpcoming && b.isUpcoming) return a.elapsed - b.elapsed; // days-until ascending
+    return b.elapsed - a.elapsed; // elapsed descending for active
   });
 }
 
@@ -3768,22 +3944,23 @@ function renderTurnBoard() {
 }
 
 function renderTurnKPIs() {
-  var active = TURN_PIPE_DATA.filter(function(p) { return !p.isCompleted; });
+  var active = TURN_PIPE_DATA.filter(function(p) { return !p.isCompleted && !p.isUpcoming; });
+  var upcoming = TURN_PIPE_DATA.filter(function(p) { return p.isUpcoming; });
   var awaitEst = active.filter(function(p) {
-    return p.stages.wo_created.done && !p.stages.est_received.done;
+    return p.stages.wo_created && p.stages.wo_created.done && p.stages.est_received && !p.stages.est_received.done;
   });
   var totalBilled = 0;
   active.forEach(function(p) { totalBilled += p.costNum; });
   var avgDays = 0;
   if (active.length > 0) {
     var totalDays = 0;
-    active.forEach(function(p) { totalDays += p.elapsed; });
+    active.forEach(function(p) { totalDays += Math.abs(p.elapsed); });
     avgDays = Math.round(totalDays / active.length);
   }
 
   var e = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
   e('kpiActiveTurns', active.length);
-  e('kpiActiveTurnsSub', active.length === 0 ? 'No active turns' : active.length + ' units in pipeline');
+  e('kpiActiveTurnsSub', active.length + ' active' + (upcoming.length > 0 ? ', ' + upcoming.length + ' upcoming' : ''));
   e('kpiAvgTurnDays', avgDays > 0 ? avgDays + 'd' : '\u2014');
   e('kpiAvgTurnSub', avgDays > 0 ? 'avg days elapsed' : 'no active turns');
   e('kpiAwaitEst', awaitEst.length);
@@ -3792,7 +3969,7 @@ function renderTurnKPIs() {
   e('kpiTurnBilledSub', 'active turns combined');
 
   var tb = $('#turnBadge');
-  if (tb) tb.textContent = active.length;
+  if (tb) tb.textContent = active.length + upcoming.length;
 
   // Populate property group dropdown
   var groupSel = $('#turnPipeGroup');
@@ -3812,8 +3989,8 @@ function renderTurnPipelineUI() {
   var container = $('#turnPipeline');
   if (!container) return;
 
-  if (TURNS.length === 0) {
-    container.innerHTML = emptyHtml('fa-exchange-alt', 'No turn data loaded yet. Data may still be syncing — check progress above, or try Refresh.');
+  if (TURNS.length === 0 && UPCOMING_MOVEOUTS.length === 0) {
+    container.innerHTML = emptyHtml('fa-exchange-alt', 'No turn or move-out data loaded yet. Data may still be syncing — check progress above, or try Refresh.');
     return;
   }
 
@@ -3825,9 +4002,10 @@ function renderTurnPipelineUI() {
     if (filter === 'active' && p.isCompleted) return false;
     if (filter === 'completed' && !p.isCompleted) return false;
     if (filter === 'stalled' && (!p.isStalled || p.isCompleted)) return false;
+    if (filter === 'upcoming' && !p.isUpcoming) return false;
     if (group && p.property !== group) return false;
     if (search) {
-      var hay = (p.unit + ' ' + p.property).toLowerCase();
+      var hay = (p.unit + ' ' + p.property + ' ' + (p.tenant || '')).toLowerCase();
       if (hay.indexOf(search) === -1) return false;
     }
     return true;
@@ -3841,12 +4019,14 @@ function renderTurnPipelineUI() {
 
   var html = '';
   filtered.forEach(function(p, idx) {
-    var cardClass = p.isCompleted ? '' : p.isStalled ? 'stalled' : p.elapsed < 14 ? 'on-track' : 'waiting';
+    var cardClass = p.isCompleted ? '' : p.isUpcoming ? 'upcoming' : p.isStalled ? 'stalled' : p.elapsed < 14 ? 'on-track' : 'waiting';
     html += '<div class="pipe-card ' + cardClass + '" data-pipeidx="' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
 
     // Left: unit info
-    html += '<div class="pipe-card-unit"><div class="pipe-card-unit-name">' + escapeHtml(p.unit) + '</div>';
-    html += '<div class="pipe-card-prop">' + escapeHtml(p.property) + '</div></div>';
+    html += '<div class="pipe-card-unit"><div class="pipe-card-unit-name">' + escapeHtml(p.unit || 'Unit') + '</div>';
+    html += '<div class="pipe-card-prop">' + escapeHtml(p.property) + '</div>';
+    if (p.tenant) html += '<div class="pipe-card-prop" style="font-size:10px;color:var(--accent)">' + escapeHtml(p.tenant) + '</div>';
+    html += '</div>';
 
     // Center: stage dots
     html += '<div class="pipe-card-stages">';
@@ -3866,8 +4046,13 @@ function renderTurnPipelineUI() {
     // Right: status
     html += '<div class="pipe-card-status">';
     if (p.isCompleted) {
-      html += '<span class="pipe-card-elapsed" style="color:var(--success)">' + (p.turn.totalDays || p.elapsed) + 'd</span>';
+      var completeDays = (p.turn && p.turn.totalDays) || p.elapsed;
+      html += '<span class="pipe-card-elapsed" style="color:var(--success)">' + completeDays + 'd</span>';
       html += '<span class="pipe-card-cost">' + escapeHtml(p.totalBilled) + ' &bull; Complete</span>';
+    } else if (p.isUpcoming) {
+      var daysUntil = Math.abs(p.elapsed);
+      html += '<span class="pipe-card-elapsed" style="color:var(--info,#60a5fa)">' + daysUntil + 'd</span>';
+      html += '<span class="pipe-card-cost">Move-out: ' + formatDate(p.moveOut) + '</span>';
     } else {
       var eColor = p.elapsed > p.target ? 'var(--danger)' : p.elapsed > 14 ? 'var(--warning)' : 'var(--text-primary)';
       html += '<span class="pipe-card-elapsed" style="color:' + eColor + '">' + p.elapsed + 'd</span>';
@@ -3925,11 +4110,17 @@ function renderTurnPipelineUI() {
     html += '<div class="detail-section-title" style="margin-top:12px"><i class="fas fa-info-circle"></i> Turn Details</div>';
     html += '<div class="detail-grid">';
     html += '<div class="detail-row"><div class="detail-row-label">Move-Out</div><div class="detail-row-value">' + (p.moveOut ? formatDate(p.moveOut) : '\u2014') + '</div></div>';
-    html += '<div class="detail-row"><div class="detail-row-label">Expected Move-In</div><div class="detail-row-value">' + (p.turn.expectedMoveIn ? formatDate(p.turn.expectedMoveIn) : '\u2014') + '</div></div>';
-    html += '<div class="detail-row"><div class="detail-row-label">Target Days</div><div class="detail-row-value">' + (p.target || '\u2014') + '</div></div>';
-    html += '<div class="detail-row"><div class="detail-row-label">Total Billed</div><div class="detail-row-value">' + escapeHtml(p.totalBilled) + '</div></div>';
-    html += '<div class="detail-row"><div class="detail-row-label">Labor</div><div class="detail-row-value">' + escapeHtml(p.turn.laborCost) + '</div></div>';
-    html += '<div class="detail-row"><div class="detail-row-label">Reference</div><div class="detail-row-value">' + escapeHtml(p.turn.referenceUser || '\u2014') + '</div></div>';
+    if (p.tenant) html += '<div class="detail-row"><div class="detail-row-label">Tenant</div><div class="detail-row-value">' + escapeHtml(p.tenant) + '</div></div>';
+    if (p.turn) {
+      html += '<div class="detail-row"><div class="detail-row-label">Expected Move-In</div><div class="detail-row-value">' + (p.turn.expectedMoveIn ? formatDate(p.turn.expectedMoveIn) : '\u2014') + '</div></div>';
+      html += '<div class="detail-row"><div class="detail-row-label">Target Days</div><div class="detail-row-value">' + (p.target || '\u2014') + '</div></div>';
+      html += '<div class="detail-row"><div class="detail-row-label">Total Billed</div><div class="detail-row-value">' + escapeHtml(p.totalBilled) + '</div></div>';
+      html += '<div class="detail-row"><div class="detail-row-label">Labor</div><div class="detail-row-value">' + escapeHtml(p.turn.laborCost || '$0') + '</div></div>';
+      html += '<div class="detail-row"><div class="detail-row-label">Reference</div><div class="detail-row-value">' + escapeHtml(p.turn.referenceUser || '\u2014') + '</div></div>';
+    } else {
+      html += '<div class="detail-row"><div class="detail-row-label">Status</div><div class="detail-row-value" style="color:var(--info,#60a5fa)">Upcoming — awaiting move-out</div></div>';
+      html += '<div class="detail-row"><div class="detail-row-label">Days Until</div><div class="detail-row-value">' + Math.abs(p.elapsed) + ' days</div></div>';
+    }
     html += '</div>';
 
     // Webhook events
@@ -4783,60 +4974,72 @@ function withStepTimeout(fn, timeoutMs) {
 async function fetchAllLive() {
   var anySuccess = false;
   updateCacheBadge('loading');
-  var steps = ['Work Orders', 'Properties', 'Vendors', 'Turns', 'Inspections', 'Groups', 'Tasks', 'Turn Tracker'];
+  var steps = ['Work Orders', 'Properties', 'Vendors', 'Turns', 'Move-Outs', 'Turn WOs', 'Inspections', 'Groups', 'Tasks', 'Turn Tracker'];
   showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
 
   try {
-    // Step 0: Work Orders (proxy v6 server-side pagination)
+    // Step 0: Work Orders (proxy v6 — Reports API)
     updateProgress(0, 'active', 'Fetching work orders\u2026');
     var woOk = await withStepTimeout(fetchWorkOrders, 60000);
     updateProgress(0, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
     if (woOk) { renderWorkOrders(); renderDashboardKPIs(); renderActivityFeed(); }
 
-    // Step 1: Properties (proxy v6 server-side pagination)
+    // Step 1: Properties (proxy v6 — Reports API)
     updateProgress(1, 'active', 'Fetching properties\u2026');
     var propOk = await withStepTimeout(fetchProperties, 60000);
     updateProgress(1, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
     if (propOk) { populateDropdowns(); renderWorkOrders(); }
 
-    // Step 2: Vendors (proxy v6 server-side pagination)
+    // Step 2: Vendors (proxy v6 — Reports API)
     updateProgress(2, 'active', 'Fetching vendors\u2026');
     var vendOk = await withStepTimeout(fetchVendors, 60000);
     updateProgress(2, vendOk ? 'done' : 'error', vendOk ? VENDORS.length + ' vendors' : 'Vendors failed');
     if (vendOk) { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); populateDropdowns(); }
 
-    // Step 3: Turns (proxy v6 server-side pagination)
-    updateProgress(3, 'active', 'Fetching turns\u2026');
-    var turnOk = await withStepTimeout(fetchTurns, 60000);
+    // Step 3: Turns — In Progress only, 90-day window (proxy v6 — Reports API)
+    updateProgress(3, 'active', 'Fetching in-progress turns\u2026');
+    var turnOk = await withStepTimeout(function() { return fetchTurns(); }, 45000);
     updateProgress(3, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns failed');
     if (turnOk) { renderTurnBoard(); renderActivityFeed(); }
 
-    // Step 4: Inspections (proxy v6 server-side pagination)
-    updateProgress(4, 'active', 'Fetching inspections\u2026');
+    // Step 4: Upcoming Move-Outs — tenant directory, Notice tenants (proxy v6 — Reports API)
+    updateProgress(4, 'active', 'Fetching upcoming move-outs\u2026');
+    var moOk = await withStepTimeout(fetchUpcomingMoveouts, 45000);
+    updateProgress(4, moOk ? 'done' : 'error', moOk ? UPCOMING_MOVEOUTS.length + ' upcoming' : 'Move-outs skipped');
+    if (moOk) { renderTurnBoard(); renderDashboardKPIs(); }
+
+    // Step 5: Turn Work Orders — DB API v0, Unit Turn type only (real-time status)
+    updateProgress(5, 'active', 'Fetching turn work orders\u2026');
+    var twoOk = await withStepTimeout(fetchTurnWorkOrders, 45000);
+    updateProgress(5, twoOk ? 'done' : 'error', twoOk ? TURN_WORK_ORDERS.length + ' turn WOs' : 'Turn WOs skipped');
+    if (twoOk) { renderTurnBoard(); }
+
+    // Step 6: Inspections (proxy v6 — Reports API)
+    updateProgress(6, 'active', 'Fetching inspections\u2026');
     var inspOk = await withStepTimeout(fetchInspections, 60000);
-    updateProgress(4, inspOk ? 'done' : 'error', inspOk ? INSPECTIONS.length + ' inspections' : 'Inspections failed');
+    updateProgress(6, inspOk ? 'done' : 'error', inspOk ? INSPECTIONS.length + ' inspections' : 'Inspections failed');
     if (inspOk) { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); renderActivityFeed(); }
 
-    // Step 5: Property Groups (proxy v6 ?action=property_groups — DB API v0)
-    updateProgress(5, 'active', 'Fetching property groups\u2026');
+    // Step 7: Property Groups (proxy v6 — DB API v0)
+    updateProgress(7, 'active', 'Fetching property groups\u2026');
     var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
-    updateProgress(5, grpOk ? 'done' : 'error', grpOk ? PROPERTY_GROUPS.length + ' groups' : 'Groups skipped');
+    updateProgress(7, grpOk ? 'done' : 'error', grpOk ? PROPERTY_GROUPS.length + ' groups' : 'Groups skipped');
     if (grpOk) { populateDropdowns(); renderWorkOrders(); }
 
-    // Step 6: Recent Tasks (proxy v6 ?action=recent_tasks — DB API v0)
-    updateProgress(6, 'active', 'Fetching recent tasks\u2026');
+    // Step 8: Recent Tasks (proxy v6 — DB API v0)
+    updateProgress(8, 'active', 'Fetching recent tasks\u2026');
     var taskOk = await withStepTimeout(fetchRecentTasks, 45000);
-    updateProgress(6, taskOk ? 'done' : 'error', taskOk ? RECENT_TASKS.length + ' tasks' : 'Tasks skipped');
+    updateProgress(8, taskOk ? 'done' : 'error', taskOk ? RECENT_TASKS.length + ' tasks' : 'Tasks skipped');
     if (taskOk) { renderActivityFeed(); }
 
-    // Step 7: Turn Tracker records (proxy blob — persisted stage overrides)
-    updateProgress(7, 'active', 'Loading turn tracker\u2026');
+    // Step 9: Turn Tracker records (proxy blob — persisted stage overrides)
+    updateProgress(9, 'active', 'Loading turn tracker\u2026');
     var trkOk = await withStepTimeout(function() {
       return fetchTurnRecords().then(function() { return true; });
     }, 30000);
-    updateProgress(7, trkOk ? 'done' : 'error', trkOk ? TURN_RECORDS.length + ' tracked' : 'Tracker skipped');
+    updateProgress(9, trkOk ? 'done' : 'error', trkOk ? TURN_RECORDS.length + ' tracked' : 'Tracker skipped');
 
-    // Always re-render turns + inspections with whatever data we have
+    // Final re-render: turns + inspections with all available correlated data
     renderTurnBoard();
     renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
 
