@@ -79,7 +79,6 @@
   <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
   <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
   <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
-  <button class="nav-tab" data-tab="reconciliation"><i class="fas fa-balance-scale"></i> Reconciliation</button>
   <button class="nav-tab" data-tab="templates"><i class="fas fa-envelope-open-text"></i> Templates</button>
   <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
 </nav>
@@ -291,17 +290,6 @@
     </div>
   </div>
   <div class="vendor-grid stagger" id="vendorGrid"></div>
-</section>
-
-<section class="section" id="sec-reconciliation">
-  <div class="section-header">
-    <div><div class="section-title"><i class="fas fa-balance-scale" style="color:var(--accent)"></i> Bill &rarr; Work Order Reconciliation</div><div class="section-subtitle">Database API v0 &bull; Bills loaded on-demand to save API calls &bull; Cross-module matching engine</div></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <select id="reconGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
-      <button class="action-btn primary" id="btnLoadBills"><i class="fas fa-download"></i> Load Bills</button>
-    </div>
-  </div>
-  <div class="stagger" id="reconList"></div>
 </section>
 
 <section class="section" id="sec-templates">

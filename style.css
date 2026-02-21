@@ -539,21 +539,7 @@ body {
 .turn-progress { margin-top: 8px; height: 4px; background: var(--bg-input); border-radius: 2px; overflow: hidden; }
 .turn-progress-bar { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
 
-/* Reconciliation */
-.recon-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; margin-bottom: 12px; transition: var(--transition); }
-.recon-card:hover { border-color: var(--accent); }
-.recon-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
-.recon-match { font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px; text-transform: uppercase; }
-.recon-match.high { background: var(--success-dim); color: var(--success); }
-.recon-match.medium { background: var(--warning-dim); color: var(--warning); }
-.recon-match.low { background: var(--danger-dim); color: var(--danger); }
-.recon-detail { display: grid; grid-template-columns: 1fr 40px 1fr; gap: 10px; align-items: center; }
-.recon-side { background: var(--bg-input); border-radius: var(--radius); padding: 12px; }
-.recon-side-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-.recon-arrow { display: flex; justify-content: center; align-items: center; color: var(--accent); font-size: 18px; }
-.recon-field { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
-.recon-field strong { color: var(--text-primary); font-weight: 600; }
-.recon-actions { display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end; }
+/* Reconciliation — removed (billing stripped to lighten payload) */
 
 /* Template */
 .template-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
@@ -699,8 +685,6 @@ body {
   .main-content { padding: 12px; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .kpi-value { font-size: 22px; }
-  .recon-detail { grid-template-columns: 1fr; }
-  .recon-arrow { transform: rotate(90deg); }
   .search-box { width: 160px; }
   .nav-tabs { padding: 0 8px; }
   .nav-tab { padding: 10px 10px; font-size: 11px; }
@@ -1003,15 +987,19 @@ body {
   border-top: 1px solid var(--border);
 }
 
-/* Item detail card (generic modal) */
-.detail-section-title {
+/* Item detail card (generic modal) — scoped to avoid overriding WO detail styles */
+#itemDetailBody .detail-section-title {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--accent); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
 }
-.detail-section-title i { margin-right: 5px; font-size: 10px; }
-.detail-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 4px 0; }
-.detail-row-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; min-width: 110px; }
-.detail-row-value { font-size: 12px; color: var(--text-primary); text-align: right; flex: 1; font-family: var(--font-mono); word-break: break-word; }
+#itemDetailBody .detail-section-title i { margin-right: 5px; font-size: 10px; }
+#itemDetailBody .detail-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 4px 0; flex-direction: row; }
+#itemDetailBody .detail-row-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; min-width: 110px; }
+#itemDetailBody .detail-row-value { font-size: 12px; color: var(--text-primary); text-align: right; flex: 1; font-family: var(--font-mono); word-break: break-word; }
+/* Turn pipeline detail also uses row layout */
+.pipe-detail .detail-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 4px 0; flex-direction: row; }
+.pipe-detail .detail-row-label { min-width: 110px; }
+.pipe-detail .detail-row-value { text-align: right; flex: 1; }
 
 /* Clickable rows */
 .payroll-row:hover, .insp-row:hover { background: var(--bg-hover) !important; transition: background 0.15s; }
