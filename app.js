@@ -1415,10 +1415,10 @@ async function fetchPropertyGroups() {
       // ---- Method 2: raw proxy path pass-through ----
       try {
         console.log('[GROUPS] Trying raw proxy path fallback\u2026');
-        // URL-encode brackets for maximum compatibility
+        // Same URL pattern as turn_work_orders: raw brackets, encoded date
         var rawPath = '/api/v0/property_groups'
-          + '?filters%5BLastUpdatedAtFrom%5D=1970-01-01T00%3A00%3A00Z'
-          + '&page%5Bsize%5D=1000';
+          + '?filters[LastUpdatedAtFrom]=' + encodeURIComponent('1970-01-01T00:00:00Z')
+          + '&page[size]=1000';
         var rawUrl = resolveUrl(rawPath);
         console.log('[GROUPS] Raw fallback URL: ' + rawUrl);
         var rawRes = await fetchWithTimeout(rawUrl, { headers: { 'Accept': 'application/json' } }, 45000);
