@@ -70,23 +70,13 @@ function appfolioUrl(type, id) {
 // Checks if a property (by ID or name) belongs to the given group
 function isInPropertyGroup(propertyId, propertyName, groupName) {
   if (!groupName) return true; // no filter = show all
-  // Check property.group tag (set by fetchPropertyGroups name-matching)
+  // Check property.group (set by fetchPropertyGroups)
   var prop = PROPERTIES.find(function(p) {
     return p.name === propertyName || String(p.id) === String(propertyId);
   });
   if (prop && prop.group) return prop.group === groupName;
   if (prop && prop.portfolio) return prop.portfolio === groupName;
-  // Fallback: check group's resolvedNames (name-based, bridging UUID/numeric gap)
-  if (propertyName) {
-    var nameLower = String(propertyName).toLowerCase();
-    var nameMatch = PROPERTY_GROUPS.some(function(g) {
-      return g.name === groupName && Array.isArray(g.resolvedNames) && g.resolvedNames.some(function(rn) {
-        return String(rn).toLowerCase() === nameLower;
-      });
-    });
-    if (nameMatch) return true;
-  }
-  // Last resort: direct UUID/ID check (works if IDs happen to match)
+  // Direct check against PROPERTY_GROUPS
   return PROPERTY_GROUPS.some(function(g) {
     return g.name === groupName && Array.isArray(g.properties) && g.properties.some(function(pid) {
       return String(pid) === String(propertyId);
@@ -263,12 +253,12 @@ async function saveAllToCache() {
       cacheSet('work_orders', WORK_ORDERS),
       cacheSet('vendors', VENDORS),
       cacheSet('properties', PROPERTIES),
+      cacheSet('bills', BILLS),
       cacheSet('turns', TURNS),
-      cacheSet('inspections', INSPECTIONS),
-      cacheSet('webhooks', WEBHOOK_EVENTS)
+      cacheSet('inspections', INSPECTIONS)
     ]);
     updateCacheBadge('live', Date.now());
-    console.log('Cache saved: WO=' + WORK_ORDERS.length + ' V=' + VENDORS.length + ' P=' + PROPERTIES.length + ' T=' + TURNS.length + ' I=' + INSPECTIONS.length);
+    console.log('Cache saved: WO=' + WORK_ORDERS.length + ' V=' + VENDORS.length + ' P=' + PROPERTIES.length + ' B=' + BILLS.length + ' T=' + TURNS.length + ' I=' + INSPECTIONS.length);
   } catch (e) {
     console.log('Cache save failed: ' + (e.message || e));
   }
@@ -281,10 +271,11 @@ function exportCacheToJSON() {
       work_orders: WORK_ORDERS.length,
       vendors: VENDORS.length,
       properties: PROPERTIES.length,
+      bills: BILLS.length,
       turns: TURNS.length,
       inspections: INSPECTIONS.length
     };
-    var total = counts.work_orders + counts.vendors + counts.properties + counts.turns + counts.inspections;
+    var total = counts.work_orders + counts.vendors + counts.properties + counts.bills + counts.turns + counts.inspections;
     if (total === 0) {
       showToast('Nothing to export \u2014 load data from API first');
       return;
@@ -299,6 +290,7 @@ function exportCacheToJSON() {
       work_orders: WORK_ORDERS,
       vendors: VENDORS,
       properties: PROPERTIES,
+      bills: BILLS,
       turns: TURNS,
       inspections: INSPECTIONS
     };
@@ -341,14 +333,15 @@ async function importCacheFromJSON(file) {
     WORK_ORDERS = extractArr('work_orders');
     VENDORS = extractArr('vendors');
     PROPERTIES = extractArr('properties');
+    BILLS = extractArr('bills');
     TURNS = extractArr('turns');
     INSPECTIONS = extractArr('inspections');
-    var total = WORK_ORDERS.length + VENDORS.length + PROPERTIES.length + TURNS.length + INSPECTIONS.length;
+    var total = WORK_ORDERS.length + VENDORS.length + PROPERTIES.length + BILLS.length + TURNS.length + INSPECTIONS.length;
     // Persist to IndexedDB for future sessions
     await saveAllToCache();
     updateCacheBadge('cached', Date.now(), false);
     renderAll();
-    showToast('Imported ' + total + ' records \u2014 WO:' + WORK_ORDERS.length + ' V:' + VENDORS.length + ' P:' + PROPERTIES.length + ' T:' + TURNS.length + ' I:' + INSPECTIONS.length);
+    showToast('Imported ' + total + ' records \u2014 WO:' + WORK_ORDERS.length + ' V:' + VENDORS.length + ' P:' + PROPERTIES.length + ' B:' + BILLS.length + ' T:' + TURNS.length + ' I:' + INSPECTIONS.length);
   } catch (e) {
     showToast('Import failed: ' + (e.message || e));
   }
@@ -495,8 +488,7 @@ function lockVault() {
   vaultTimeoutId = null;
   vaultCountdownId = null;
   appInitialized = false;
-  WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; API_ERRORS = [];
-  _vendorsLazyLoaded = false; _inspLazyLoaded = false;
+  WORK_ORDERS = []; VENDORS = []; BILLS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; API_ERRORS = [];
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
   // Note: IndexedDB cache is NOT cleared on lock — data persists for next unlock
   updateCacheBadge('offline');
@@ -942,6 +934,7 @@ function logApiError(code, msg, action) {
    ================================================================= */
 var WORK_ORDERS = [];
 var VENDORS = [];
+var BILLS = [];
 var PROPERTIES = [];
 var PROPERTY_GROUPS = [];
 var TURNS = [];
@@ -950,8 +943,6 @@ var TURN_WORK_ORDERS = []; // from DB API — unit turn WOs with real-time statu
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
 var _webhookPollTimer = null;
-var _vendorsLazyLoaded = false; // lazy-load flag — vendors fetched on tab click
-var _inspLazyLoaded = false;   // lazy-load flag — inspections fetched on tab click
 var appInitialized = false;
 var WO_FLAGS = {};
 var WO_DETAIL_CACHE = {};
@@ -1172,35 +1163,35 @@ async function fetchWorkOrders() {
     var results = data.results || [];
     WORK_ORDERS = results.map(function(r) {
       return {
-        id: r.work_order_number || r.WorkOrderNumber || r.service_request_number || '',
-        uuid: r.work_order_id || r.Id || '',
-        propertyId: r.property_id || r.PropertyId || '',
-        propertyName: r.property_name || r.property || r.PropertyName || '',
+        id: r.work_order_number || r.service_request_number || '',
+        uuid: r.work_order_id || '',
+        propertyId: r.property_id || '',
+        propertyName: r.property_name || r.property || '',
         propertyAddress: ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
-        unitId: r.unit_id || r.UnitId || '',
-        unit: r.unit_name || r.UnitName || r.unit_id || '',
-        priority: r.priority || r.Priority || 'Normal',
-        status: r.status || r.Status || 'New',
-        description: r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
-        vendorName: r.vendor || r.VendorName || '',
-        vendorId: r.vendor_id || r.VendorId || '',
-        vendorTrade: r.vendor_trade || r.VendorTrade || '',
-        created: r.created_at || r.CreatedAt || '',
-        updated: r.completed_on || r.CompletedOn || r.created_at || r.CreatedAt || '',
-        completedOn: r.completed_on || r.CompletedOn || '',
-        workCompletedOn: r.work_completed_on || r.WorkCompletedOn || '',
-        scheduledStart: r.scheduled_start || r.ScheduledStart || '',
-        scheduledEnd: r.scheduled_end || r.ScheduledEnd || '',
-        type: r.work_order_type || r.Type || '',
-        amount: r.amount || r.Amount || '',
-        tenant: r.primary_tenant || r.PrimaryTenant || '',
-        tenantEmail: r.primary_tenant_email || r.PrimaryTenantEmail || '',
-        tenantPhone: r.primary_tenant_phone_number || r.PrimaryTenantPhoneNumber || '',
-        createdBy: r.created_by || r.CreatedBy || '',
-        assignedUser: r.assigned_user || r.AssignedUser || r.AssignedTo || '',
-        statusNotes: r.status_notes || r.StatusNotes || '',
-        maintenanceLimit: r.maintenance_limit || r.MaintenanceLimit || '',
-        link: r.Link || r.link || ''
+        unitId: r.unit_id || '',
+        unit: r.unit_name || r.unit_id || '',
+        priority: r.priority || 'Normal',
+        status: r.status || 'New',
+        description: r.job_description || r.service_request_description || '',
+        vendorName: r.vendor || '',
+        vendorId: r.vendor_id || '',
+        vendorTrade: r.vendor_trade || '',
+        created: r.created_at || '',
+        updated: r.completed_on || r.created_at || '',
+        completedOn: r.completed_on || '',
+        workCompletedOn: r.work_completed_on || '',
+        scheduledStart: r.scheduled_start || '',
+        scheduledEnd: r.scheduled_end || '',
+        type: r.work_order_type || '',
+        amount: r.amount || '',
+        tenant: r.primary_tenant || '',
+        tenantEmail: r.primary_tenant_email || '',
+        tenantPhone: r.primary_tenant_phone_number || '',
+        createdBy: r.created_by || '',
+        assignedUser: r.assigned_user || '',
+        statusNotes: r.status_notes || '',
+        maintenanceLimit: r.maintenance_limit || '',
+        link: ''
       };
     });
     setApiStatus('loading', 'Work orders: ' + WORK_ORDERS.length + ' loaded');
@@ -1244,6 +1235,53 @@ async function fetchVendors() {
     return true;
   } catch (err) {
     VENDORS = [];
+    return false;
+  }
+}
+
+// Bills: Proxy v6 ?action=bills — server-side pagination, one request
+var MAX_BILL_RECORDS = 200;
+async function fetchBills() {
+  try {
+    setApiStatus('loading', 'Loading bills (server-side)\u2026');
+    var data = await proxyAction('bills', { days: DATA_WINDOW_DAYS, max: MAX_BILL_RECORDS });
+    var results = data.results || [];
+    BILLS = results.map(function(b) {
+      var vendName = '';
+      if (b.VendorId) {
+        var vend = VENDORS.find(function(v) { return v.id === b.VendorId; });
+        if (vend) { vendName = vend.name; }
+      }
+      var propName = '';
+      var propAddr = '';
+      var propId = b.PropertyId || '';
+      if (!propId && b.LineItems && b.LineItems.length > 0 && b.LineItems[0].PropertyId) {
+        propId = b.LineItems[0].PropertyId;
+      }
+      if (propId) {
+        var prop = PROPERTIES.find(function(p) { return p.id === propId; });
+        if (prop) { propName = prop.name; propAddr = prop.address; }
+      }
+      return {
+        id: b.Id || '',
+        vendorName: vendName,
+        vendorId: b.VendorId || '',
+        propertyName: propName,
+        propertyId: propId,
+        propertyAddress: propAddr,
+        amount: parseFloat(b.TotalAmount || '0') || 0,
+        approvalStatus: b.ApprovalStatus || '',
+        reference: b.Reference || '',
+        description: b.Description || b.CheckMemo || '',
+        dueDate: b.DueDate || '',
+        invoiceDate: b.InvoiceDate || '',
+        workOrderId: b.WorkOrderId || null,
+        lineItems: b.LineItems || []
+      };
+    });
+    return true;
+  } catch (err) {
+    BILLS = [];
     return false;
   }
 }
@@ -1358,46 +1396,85 @@ async function fetchInspections() {
 async function fetchPropertyGroups() {
   try {
     setApiStatus('loading', 'Loading property groups\u2026');
-    var data = await proxyAction('property_groups');
-    var results = data.results || data.data || [];
-    var uuidMap = data.property_uuid_map || {};
+    var rawResults = null;
 
-    PROPERTY_GROUPS = results.map(function(g) {
+    // ---- Method 1: dedicated ?action=property_groups endpoint ----
+    try {
+      console.log('[GROUPS] Trying proxyAction property_groups\u2026');
+      var data = await proxyAction('property_groups');
+      rawResults = data.results || data.data || [];
+      console.log('[GROUPS] proxyAction OK \u2014 ' + rawResults.length + ' groups');
+      if (rawResults.length > 0) {
+        console.log('[GROUPS] First group: ' + JSON.stringify(rawResults[0]).substring(0, 300));
+      }
+    } catch (e1) {
+      var e1msg = e1.message || String(e1);
+      console.log('[GROUPS] proxyAction FAILED: ' + e1msg);
+      logApiError(0, 'Groups (action): ' + e1msg, 'retry');
+
+      // ---- Method 2: raw proxy path pass-through ----
+      try {
+        console.log('[GROUPS] Trying raw proxy path fallback\u2026');
+        // Do NOT pre-encode the date — resolveUrl() encodes the entire path via
+        // encodeURIComponent(apiPath), so pre-encoding causes double-encoding
+        // (%3A becomes %253A). Pass the raw URL and let resolveUrl handle it.
+        var rawPath = '/api/v0/property_groups'
+          + '?filters[LastUpdatedAtFrom]=1970-01-01T00:00:00Z'
+          + '&page[size]=1000';
+        var rawUrl = resolveUrl(rawPath);
+        console.log('[GROUPS] Raw fallback URL: ' + rawUrl);
+        var rawRes = await fetchWithTimeout(rawUrl, { headers: { 'Accept': 'application/json' } }, 45000);
+        if (!rawRes.ok) {
+          var errText = '';
+          try { errText = await rawRes.text(); } catch (te) { /* empty */ }
+          throw new Error('HTTP ' + rawRes.status + ': ' + errText.substring(0, 300));
+        }
+        var rawJson = await rawRes.json();
+        rawResults = rawJson.data || rawJson.results || (Array.isArray(rawJson) ? rawJson : []);
+        console.log('[GROUPS] Raw fallback OK \u2014 ' + rawResults.length + ' groups');
+      } catch (e2) {
+        console.log('[GROUPS] Raw fallback FAILED: ' + (e2.message || e2));
+        logApiError(0, 'Groups (raw fallback): ' + (e2.message || ''), 'queued');
+        throw e2; // give up
+      }
+    }
+
+    if (!rawResults || rawResults.length === 0) {
+      console.log('[GROUPS] No results returned from either method');
+      PROPERTY_GROUPS = [];
+      return false;
+    }
+
+    // Map results to standard format
+    PROPERTY_GROUPS = rawResults.map(function(g) {
       return {
         id: g.Id || g.id || '',
         name: g.Name || g.name || '',
-        properties: g.PropertyIds || g.Properties || g.properties || g.property_ids || [],
-        propertyNames: g.PropertyNames || [],
-        resolvedNames: []
+        properties: g.PropertyIds || g.Properties || g.properties || g.property_ids || []
       };
     });
 
-    // Build lookup: group \u2192 property names
-    // DB API uses UUIDs, Reports API uses numeric IDs \u2014 bridge via name matching
+    // Build a lookup: property ID -> group name
     PROPERTY_GROUPS.forEach(function(g) {
-      var resolvedNames = (g.propertyNames || []).slice();
-      // Also resolve via uuid map from proxy
-      if (Array.isArray(g.properties) && uuidMap) {
+      if (Array.isArray(g.properties)) {
         g.properties.forEach(function(pid) {
-          var mapped = uuidMap[pid];
-          var mName = mapped ? (typeof mapped === 'string' ? mapped : mapped.name || '') : '';
-          if (mName && resolvedNames.indexOf(mName) === -1) resolvedNames.push(mName);
+          // Tag the matching PROPERTIES entry with its group
+          // DB API uses UUIDs, Reports API uses numeric IDs — match both
+          var prop = PROPERTIES.find(function(p) {
+            return String(p.id) === String(pid) || String(p.uuid) === String(pid);
+          });
+          if (prop) { prop.group = g.name; }
         });
       }
-      g.resolvedNames = resolvedNames;
-
-      // Tag matching PROPERTIES entries with this group name
-      resolvedNames.forEach(function(pname) {
-        if (!pname) return;
-        var prop = PROPERTIES.find(function(p) {
-          return (p.name || '').toLowerCase() === String(pname).toLowerCase();
-        });
-        if (prop) { prop.group = g.name; }
-      });
     });
+
+    // Immediately populate group filter dropdowns
+    populateGroupFilters();
+    console.log('[GROUPS] Loaded ' + PROPERTY_GROUPS.length + ' property groups');
     return true;
   } catch (err) {
-    console.log('fetchPropertyGroups error: ' + (err.message || err));
+    console.log('[GROUPS] FINAL ERROR: ' + (err.message || err));
+    logApiError(0, 'Property Groups failed: ' + (err.message || 'Unknown'), 'queued');
     PROPERTY_GROUPS = [];
     return false;
   }
@@ -1567,163 +1644,14 @@ function renderWebhookEventList() {
   el.innerHTML = html;
 }
 
-/* =================================================================
-   WEBHOOK ORGANIZER ENGINE — processWebhookEvent()
-   Transforms passive webhook log into active data processor:
-   • Matches WO IDs in event body via regex
-   • Auto-updates WO status / priority in WORK_ORDERS
-   • Auto-flags urgent items
-   • Advances turn pipeline stages in TURN_PIPE_DATA
-   ================================================================= */
-function processWebhookEvent(evt) {
-  if (!evt || !evt.body) return;
-  var body = String(evt.body);
-  var title = String(evt.title || '');
-  var combined = title + ' ' + body;
-  var changed = false;
-
-  // 1. Extract WO number(s) from event body — matches common patterns like WO#12345, WO-12345, work_order 12345
-  var woMatches = combined.match(/(?:WO[#\-:\s]?|work.?order[#\-:\s]?)(\d{3,})/gi) || [];
-  var woNumbers = woMatches.map(function(m) {
-    var digits = m.match(/(\d{3,})/);
-    return digits ? digits[1] : null;
-  }).filter(Boolean);
-
-  // Also try UUID patterns for DB API links
-  var uuidMatches = combined.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || [];
-
-  // 2. Detect status keywords in event
-  var statusKeywords = {
-    'completed': 'Completed',
-    'complete': 'Completed',
-    'closed': 'Completed',
-    'in progress': 'In Progress',
-    'in-progress': 'In Progress',
-    'started': 'In Progress',
-    'assigned': 'Assigned',
-    'approved': 'Approved',
-    'on hold': 'On Hold',
-    'canceled': 'Canceled',
-    'cancelled': 'Canceled',
-    'estimate received': 'Estimate Received',
-    'estimate requested': 'Estimate Requested',
-    'bid received': 'Estimate Received',
-    'bid requested': 'Estimate Requested',
-    'new': 'New'
-  };
-
-  var detectedStatus = null;
-  var combinedLower = combined.toLowerCase();
-  Object.keys(statusKeywords).forEach(function(kw) {
-    if (combinedLower.indexOf(kw) !== -1) {
-      detectedStatus = statusKeywords[kw];
-    }
-  });
-
-  // 3. Detect priority escalation
-  var isUrgent = /\b(urgent|emergency|critical|asap|immediate)\b/i.test(combined);
-  if (isUrgent && evt.priority !== 'urgent') {
-    evt.priority = 'urgent';
-  }
-
-  // 4. Match and update WORK_ORDERS
-  woNumbers.forEach(function(woNum) {
-    var wo = WORK_ORDERS.find(function(w) { return String(w.id) === woNum; });
-    if (!wo) return;
-
-    // Update status if detected
-    if (detectedStatus && wo.status !== detectedStatus) {
-      wo.status = detectedStatus;
-      changed = true;
-    }
-
-    // Flag urgent WOs
-    if (isUrgent) {
-      wo.priority = 'Urgent';
-      if (!WO_FLAGS[wo.id]) WO_FLAGS[wo.id] = {};
-      WO_FLAGS[wo.id].urgent = true;
-      WO_FLAGS[wo.id].urgentTs = evt.ts || new Date().toISOString();
-      changed = true;
-    }
-
-    // Append webhook note to statusNotes
-    var note = '[Webhook ' + (evt.ts ? timeAgo(evt.ts) : 'now') + '] ' + title;
-    if (wo.statusNotes) {
-      wo.statusNotes = note + ' | ' + wo.statusNotes;
-    } else {
-      wo.statusNotes = note;
-    }
-  });
-
-  // 5. Match UUIDs against TURN_WORK_ORDERS and advance pipeline
-  uuidMatches.forEach(function(uuid) {
-    var tWo = TURN_WORK_ORDERS.find(function(tw) { return tw.id === uuid; });
-    if (!tWo) return;
-
-    // If status detected, update DB-API-sourced WO too
-    if (detectedStatus && tWo.status !== detectedStatus) {
-      tWo.status = detectedStatus;
-      changed = true;
-    }
-  });
-
-  // 6. Advance TURN_PIPE_DATA stages based on status changes
-  if (detectedStatus && TURN_PIPE_DATA.length > 0) {
-    var stageMap = {
-      'New': 'wo_created',
-      'Estimate Requested': 'est_requested',
-      'Estimate Received': 'est_received',
-      'Approved': 'assigned',
-      'Assigned': 'assigned',
-      'In Progress': 'assigned',
-      'Completed': 'work_done'
-    };
-    var targetStage = stageMap[detectedStatus];
-    if (targetStage) {
-      woNumbers.forEach(function(woNum) {
-        TURN_PIPE_DATA.forEach(function(p) {
-          // Match by WO numbers in the pipeline entry
-          var pipeWos = p.workOrders || [];
-          var hasWo = pipeWos.some(function(pw) { return String(pw.id || pw.woNumber) === woNum; });
-          if (hasWo) {
-            var targetIdx = PIPE_STAGES.findIndex(function(ps) { return ps.key === targetStage; });
-            if (targetIdx > -1 && targetIdx > p.currentStageIdx) {
-              p.currentStageIdx = targetIdx;
-              p.currentStage = PIPE_STAGES[targetIdx].key;
-              changed = true;
-            }
-          }
-        });
-      });
-    }
-  }
-
-  return changed;
-}
-
 function setupWebhookAutoPoll(intervalSec) {
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
   if (intervalSec > 0) {
     _webhookPollTimer = setInterval(async function() {
-      var prevCount = WEBHOOK_EVENTS.length;
       var ok = await pollWebhookEvents();
       if (ok && WEBHOOK_EVENTS.length > 0) {
-        // Process only NEW events through the organizer engine
-        var newEvents = WEBHOOK_EVENTS.slice(0, WEBHOOK_EVENTS.length - prevCount);
-        var anyChanged = false;
-        newEvents.forEach(function(evt) {
-          var didChange = processWebhookEvent(evt);
-          if (didChange) anyChanged = true;
-        });
         renderWebhookEventList();
         renderActivityFeed();
-        // If organizer engine modified WO/pipeline data, re-render affected views
-        if (anyChanged) {
-          renderWorkOrders();
-          renderTurnBoard();
-          renderDashboardKPIs();
-          showToast('\u26a1 Webhook updated ' + newEvents.length + ' event(s)');
-        }
       }
     }, intervalSec * 1000);
   }
@@ -1742,33 +1670,13 @@ async function fetchPropertyDetail(propId) {
   } catch (e) { return null; }
 }
 
-// Resolve a WO's DB API UUID — needed because Reports API returns numeric IDs
-// while DB API v0 endpoints require UUIDs
-function resolveWODbUuid(wo) {
-  if (!wo) return '';
-  // 1. Check if wo already has a DB API link (contains UUID in path)
-  if (wo.link) {
-    var linkMatch = String(wo.link).match(/work_orders\/([0-9a-f\-]{36})/i);
-    if (linkMatch) return linkMatch[1];
-  }
-  // 2. Look up matching DB API work order by WO number
-  if (wo.id) {
-    var dbWo = TURN_WORK_ORDERS.find(function(tw) {
-      return String(tw.woNumber) === String(wo.id);
-    });
-    if (dbWo && dbWo.id) return dbWo.id;
-  }
-  // 3. Fallback: use wo.uuid (may be numeric — DB API may reject it)
-  return wo.uuid || '';
-}
-
-async function fetchWONotes(woIdOrUuid) {
-  if (!woIdOrUuid) return [];
-  if (WO_DETAIL_CACHE['notes_' + woIdOrUuid]) return WO_DETAIL_CACHE['notes_' + woIdOrUuid];
+async function fetchWONotes(uuid) {
+  if (!uuid) return [];
+  if (WO_DETAIL_CACHE['notes_' + uuid]) return WO_DETAIL_CACHE['notes_' + uuid];
   try {
-    var data = await apiFetch('/api/v0/work_orders/' + woIdOrUuid + '/notes');
+    var data = await apiFetch('/api/v0/work_orders/' + uuid + '/notes');
     var notes = (data && data.data) ? data.data : (Array.isArray(data) ? data : []);
-    WO_DETAIL_CACHE['notes_' + woIdOrUuid] = notes;
+    WO_DETAIL_CACHE['notes_' + uuid] = notes;
     return notes;
   } catch (e) { return []; }
 }
@@ -2301,8 +2209,7 @@ function renderWorkOrders() {
 function showWODetail(id) {
   var wo = WORK_ORDERS.find(function(w) { return String(w.id) === String(id); });
   if (!wo) return;
-  var woDbUuid = resolveWODbUuid(wo);
-  var woAfUrl = appfolioUrl('work_order', wo.uuid || wo.id);
+  var woAfUrl = appfolioUrl('work_order', wo.uuid);
   $('#woModalTitle').innerHTML = '#' + escapeHtml(String(wo.id)) + ' \u2014 ' + escapeHtml(wo.propertyName) + ' ' + escapeHtml(wo.unit) + (woAfUrl ? ' <a href="' + escapeHtml(woAfUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:var(--accent);margin-left:8px;text-decoration:none" title="View in AppFolio"><i class="fas fa-external-link-alt"></i></a>' : '');
 
   // Flag button state
@@ -2393,8 +2300,8 @@ function showWODetail(id) {
     if (smEl) smEl.textContent = '\u2014';
   }
 
-  // Async: fetch notes (use resolved DB API UUID for /api/v0/ endpoint)
-  fetchWONotes(woDbUuid).then(function(notes) {
+  // Async: fetch notes
+  fetchWONotes(wo.uuid).then(function(notes) {
     var nl = document.getElementById('detailNotesList');
     if (!nl) return;
     if (!notes || notes.length === 0) {
@@ -2416,8 +2323,7 @@ function showWODetail(id) {
 
     try {
       if (newStatus !== wo.status || newPriority !== wo.priority) {
-        if (!woDbUuid) { showToast('Cannot update: no DB API UUID for this WO'); return; }
-        await apiFetch('/api/v0/work_orders/' + woDbUuid, {
+        await apiFetch('/api/v0/work_orders/' + wo.uuid, {
           method: 'PATCH',
           body: JSON.stringify({ Status: newStatus, Priority: newPriority })
         });
@@ -2425,14 +2331,13 @@ function showWODetail(id) {
         wo.priority = newPriority;
       }
       if (note) {
-        if (!woDbUuid) { showToast('Cannot add note: no DB API UUID for this WO'); return; }
         try {
-          await apiFetch('/api/v0/work_orders/' + woDbUuid + '/notes', {
+          await apiFetch('/api/v0/work_orders/' + wo.uuid + '/notes', {
             method: 'POST',
             body: JSON.stringify({ Content: note })
           });
           // Clear notes cache so next open re-fetches
-          delete WO_DETAIL_CACHE['notes_' + woDbUuid];
+          delete WO_DETAIL_CACHE['notes_' + wo.uuid];
         } catch (noteErr) {
           showToast('Note failed: ' + noteErr.message);
         }
@@ -2545,14 +2450,10 @@ function buildTurnPipeline() {
         created: wo.created, vendor: wo.vendor || '', unit: wo.unit, property: wo.propertyName, priority: wo.priority });
     });
     // From DB API turn work orders (TURN_WORK_ORDERS) — more current status
-    // DB API uses UUIDs while Reports API uses numeric IDs, so also try WO number match
     TURN_WORK_ORDERS.forEach(function(wo) {
-      // Match by UUID IDs (same API domain)
       var idMatch = (unitId && wo.unitId && String(wo.unitId) === String(unitId)) ||
                     (propId && wo.propertyId && String(wo.propertyId) === String(propId));
-      // Also match by WO number if already found from Reports API
-      var woNumMatch = wo.woNumber && wos.some(function(w) { return String(w.id) === String(wo.woNumber); });
-      if (!idMatch && !woNumMatch) return;
+      if (!idMatch) return;
       // Skip if already found from Reports
       var dupe = wos.find(function(w) { return String(w.id) === String(wo.id) || String(w.id) === String(wo.woNumber); });
       if (dupe) {
@@ -2916,9 +2817,7 @@ function renderTurnPipelineUI() {
     if (p.matchingWOs.length > 0) {
       html += '<div class="pipe-wo-list">';
       p.matchingWOs.forEach(function(wo) {
-        // Prefer DB API Link field (direct AppFolio URL), fall back to constructed URL
-        var dbWo = wo.dbApiId ? TURN_WORK_ORDERS.find(function(tw) { return tw.id === wo.dbApiId; }) : null;
-        var woLink = (dbWo && dbWo.link) ? dbWo.link : appfolioUrl('work_order', wo.id);
+        var woLink = appfolioUrl('work_order', wo.uuid || wo.link);
         html += '<div class="pipe-wo-item"><div><span class="pipe-wo-id">#' + wo.id + '</span> <span class="tag ' + String(wo.status).toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(wo.status) + '</span>';
         if (woLink) html += ' <a href="' + escapeHtml(woLink) + '" target="_blank" rel="noopener noreferrer" style="font-size:9px;color:var(--accent);text-decoration:none" title="View WO in AppFolio" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i></a>';
         html += '</div>';
@@ -2967,8 +2866,8 @@ function renderTurnPipelineUI() {
     if (nextIdx < PIPE_STAGES.length && !p.isCompleted) {
       html += '<button class="action-btn primary" data-advance="' + escapeHtml(p.id) + '" data-stage="' + PIPE_STAGES[nextIdx].key + '"><i class="fas fa-arrow-right"></i> Confirm ' + PIPE_STAGES[nextIdx].title + '</button>';
     }
-    // AppFolio deep link — use unitTurnId if available, else property link
-    var turnAfUrl = p.turn ? appfolioUrl('unit_turn', p.turn.unitTurnId) : appfolioUrl('property', p.propertyId);
+    // AppFolio deep link — use turn ID if available, else property link
+    var turnAfUrl = p.turn ? appfolioUrl('unit_turn', p.turn.turnId || p.turn.id) : appfolioUrl('property', p.propertyId);
     if (turnAfUrl) {
       html += '<a class="action-btn" href="' + escapeHtml(turnAfUrl) + '" target="_blank" rel="noopener noreferrer" style="text-decoration:none" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i> View in AppFolio</a>';
     }
@@ -3236,7 +3135,79 @@ function renderVendors(search) {
   });
 }
 
-/* renderReconciliation — Removed (billing stripped to lighten payload) */
+function renderReconciliation() {
+  var container = $('#reconList');
+
+  // Sync group filter dropdown
+  var reconGrpSel = $('#reconGroupFilter');
+  if (reconGrpSel && reconGrpSel.value !== currentPropertyGroup) reconGrpSel.value = currentPropertyGroup;
+
+  var unlinked = BILLS.filter(function(b) {
+    if (b.workOrderId) return false;
+    if (!isInPropertyGroup(b.propertyId, b.propertyName, currentPropertyGroup)) return false;
+    return true;
+  });
+
+  if (unlinked.length === 0) {
+    container.innerHTML = emptyHtml('fa-balance-scale', BILLS.length === 0 ? 'No bills loaded' : 'All bills are linked to work orders!');
+    return;
+  }
+
+  var html = '';
+  unlinked.forEach(function(bill) {
+    // Match heuristic: vendor name + property match
+    var matches = WORK_ORDERS.filter(function(wo) {
+      var vendorMatch = bill.vendorName && wo.vendorName && String(bill.vendorName).toLowerCase() === String(wo.vendorName).toLowerCase();
+      var propMatch = bill.propertyName && wo.propertyName && String(bill.propertyName).toLowerCase() === String(wo.propertyName).toLowerCase();
+      return (vendorMatch || propMatch) && wo.status !== 'Completed' && wo.status !== 'Canceled';
+    });
+    var confidence = matches.length > 0 ? 'high' : 'low';
+    var matchWO = matches.length > 0 ? matches[0] : null;
+    if (matchWO && Math.abs(parseFloat(matchWO.amount || 0) - bill.amount) > 200) { confidence = 'medium'; }
+
+    var billAfUrl = appfolioUrl('bill', bill.id);
+    html += '<div class="recon-card"><div class="recon-card-header"><div style="font-family:var(--font-mono);font-weight:600;font-size:14px">' + escapeHtml(String(bill.id || bill.reference)) + (billAfUrl ? ' <a href="' + escapeHtml(billAfUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--accent);text-decoration:none" title="View bill in AppFolio"><i class="fas fa-external-link-alt"></i></a>' : '') + '</div><span class="recon-match ' + confidence + '">' + confidence + ' confidence</span></div>';
+    html += '<div class="recon-detail"><div class="recon-side"><div class="recon-side-label"><i class="fas fa-file-invoice-dollar"></i> Bill</div>';
+    html += '<div class="recon-field"><strong>Vendor:</strong> ' + escapeHtml(bill.vendorName) + '</div>';
+    html += '<div class="recon-field"><strong>Property:</strong> ' + escapeHtml(bill.propertyName) + '</div>';
+    html += '<div class="recon-field"><strong>Amount:</strong> ' + currency(bill.amount) + '</div>';
+    html += '<div class="recon-field"><strong>Ref:</strong> ' + escapeHtml(bill.reference) + '</div>';
+    html += '<div class="recon-field"><strong>Status:</strong> <span class="tag ' + (bill.approvalStatus === 'Approved' ? 'approved' : bill.approvalStatus === 'On Hold' ? 'paid' : 'pending-tag') + '">' + escapeHtml(bill.approvalStatus || 'N/A') + '</span></div></div>';
+    html += '<div class="recon-arrow"><i class="fas fa-long-arrow-alt-right"></i></div>';
+    html += '<div class="recon-side"><div class="recon-side-label"><i class="fas fa-wrench"></i> Work Order Match</div>';
+    if (matchWO) {
+      html += '<div class="recon-field"><strong>ID:</strong> <span style="color:var(--accent)">' + escapeHtml(String(matchWO.id)) + '</span></div>';
+      html += '<div class="recon-field"><strong>Unit:</strong> ' + escapeHtml(matchWO.unit) + '</div>';
+      html += '<div class="recon-field"><strong>Est. Cost:</strong> ' + currency(parseFloat(matchWO.amount || 0)) + '</div>';
+      html += '<div class="recon-field"><strong>Status:</strong> <span class="tag ' + String(matchWO.status).toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(matchWO.status) + '</span></div>';
+    } else {
+      html += '<div style="color:var(--text-muted);font-size:12px;padding:10px 0"><i class="fas fa-question-circle"></i> No matching work order found</div>';
+    }
+    html += '</div></div>';
+    html += '<div class="recon-actions">';
+    if (matchWO) {
+      html += '<button class="action-btn" data-dismiss="' + escapeHtml(String(bill.id)) + '"><i class="fas fa-times"></i> Dismiss</button>';
+      html += '<button class="action-btn primary" data-link="' + escapeHtml(String(bill.id)) + '|' + escapeHtml(String(matchWO.id)) + '"><i class="fas fa-link"></i> Link</button>';
+    } else {
+      html += '<button class="action-btn" data-flag="' + escapeHtml(String(bill.id)) + '"><i class="fas fa-flag"></i> Flag for Review</button>';
+    }
+    html += '</div></div>';
+  });
+  container.innerHTML = html;
+
+  container.querySelectorAll('[data-dismiss]').forEach(function(btn) {
+    btn.addEventListener('click', function() { showToast('Dismissed suggestion for ' + this.getAttribute('data-dismiss')); });
+  });
+  container.querySelectorAll('[data-link]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var parts = this.getAttribute('data-link').split('|');
+      showToast('Linked ' + parts[0] + ' \u2192 ' + parts[1]);
+    });
+  });
+  container.querySelectorAll('[data-flag]').forEach(function(btn) {
+    btn.addEventListener('click', function() { showToast('Flagged ' + this.getAttribute('data-flag') + ' for manual review'); });
+  });
+}
 
 function renderTemplates() {
   var container = $('#templateGrid');
@@ -3316,6 +3287,7 @@ function renderAll() {
     function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
     function() { renderPayroll(); },
     function() { renderMoveOuts(); },
+    function() { if (BILLS.length > 0) { renderReconciliation(); } },
     function() { renderDashboardKPIs(); },
     function() { renderActivityFeed(); },
     function() { populateDropdowns(); }
@@ -3334,47 +3306,14 @@ function wireUpUI() {
   if (_uiWired) return;
   _uiWired = true;
 
-  // Navigation tabs (with lazy loading for Vendors & Inspections)
+  // Navigation tabs
   $$('.nav-tab').forEach(function(tab) {
-    tab.addEventListener('click', async function() {
+    tab.addEventListener('click', function() {
       $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
       $$('.section').forEach(function(s) { s.classList.remove('active'); });
-      var tabName = tab.getAttribute('data-tab');
-      var sec = document.getElementById('sec-' + tabName);
+      var sec = document.getElementById('sec-' + tab.getAttribute('data-tab'));
       if (sec) sec.classList.add('active');
-
-      // Lazy-load Vendors on first tab click
-      if (tabName === 'vendors' && !_vendorsLazyLoaded && VENDORS.length === 0) {
-        _vendorsLazyLoaded = true;
-        var vendGrid = $('#vendorGrid');
-        if (vendGrid) vendGrid.innerHTML = loadingHtml('Loading vendors\u2026');
-        try {
-          var ok = await fetchVendors();
-          if (ok) {
-            renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-            populateDropdowns();
-            await saveAllToCache();
-            showToast('Vendors loaded \u2014 ' + VENDORS.length);
-          }
-        } catch (e) { showToast('Vendor load failed: ' + (e.message || e)); }
-      }
-
-      // Lazy-load Inspections on first tab click
-      if (tabName === 'inspections' && !_inspLazyLoaded && INSPECTIONS.length === 0) {
-        _inspLazyLoaded = true;
-        var inspList = $('#inspList');
-        if (inspList) inspList.innerHTML = loadingHtml('Loading inspections\u2026');
-        try {
-          var ok = await fetchInspections();
-          if (ok) {
-            renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
-            renderActivityFeed();
-            await saveAllToCache();
-            showToast('Inspections loaded \u2014 ' + INSPECTIONS.length);
-          }
-        } catch (e) { showToast('Inspection load failed: ' + (e.message || e)); }
-      }
     });
   });
 
@@ -3490,7 +3429,26 @@ function wireUpUI() {
     $('#itemDetailCloseBtn').addEventListener('click', function() { closeModal('itemDetailModal'); });
   }
 
-  /* btnLoadBills removed — billing stripped */
+  // Manual bills load button
+  if ($('#btnLoadBills')) {
+    $('#btnLoadBills').addEventListener('click', async function() {
+      var btn = this;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading Bills\u2026';
+      try {
+        await fetchBills();
+        renderReconciliation();
+        renderDashboardKPIs();
+        await saveAllToCache();
+        showToast('Bills loaded \u2014 ' + BILLS.length + ' bills');
+      } catch (err) {
+        showToast('Failed to load bills: ' + (err.message || err));
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-download"></i> Load Bills';
+      }
+    });
+  }
   $('#vendorSearch').addEventListener('input', function() { renderVendors(this.value); });
   $('#btnNewWO').addEventListener('click', function() { openModal('newWOModal'); });
   $('#btnNewTemplate').addEventListener('click', function() { showToast('Template editor \u2014 define trigger, variables, and body'); });
@@ -3537,12 +3495,16 @@ function wireUpUI() {
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading\u2026';
       try {
-        await fetchPropertyGroups();
-        populateGroupFilters();
-        renderAll();
-        showToast('Loaded ' + PROPERTY_GROUPS.length + ' property groups');
+        var ok = await fetchPropertyGroups();
+        if (ok && PROPERTY_GROUPS.length > 0) {
+          populateGroupFilters();
+          renderAll();
+          showToast('Loaded ' + PROPERTY_GROUPS.length + ' property groups');
+        } else {
+          showToast('Groups returned 0 results \u2014 check Error Log tab for details');
+        }
       } catch (err) {
-        showToast('Failed to load groups: ' + (err.message || err));
+        showToast('Groups failed: ' + (err.message || err) + ' \u2014 see Error Log');
       } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-layer-group"></i> Load Groups';
@@ -3572,6 +3534,7 @@ function wireUpUI() {
         try { renderPayroll(); } catch (e) { /* */ }
         try { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); } catch (e) { /* */ }
         try { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); } catch (e) { /* */ }
+        try { renderReconciliation(); } catch (e) { /* */ }
         try { renderTurnPipelineUI(); } catch (e) { /* */ }
         try { renderDashboardKPIs(); } catch (e) { /* */ }
       });
@@ -3594,6 +3557,7 @@ function wireUpUI() {
       try { renderPayroll(); } catch (e) { /* */ }
       try { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); } catch (e) { /* */ }
       try { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); } catch (e) { /* */ }
+      try { renderReconciliation(); } catch (e) { /* */ }
       try { renderTurnPipelineUI(); } catch (e) { /* */ }
       try { renderDashboardKPIs(); } catch (e) { /* */ }
     });
@@ -3773,12 +3737,14 @@ async function initApp() {
       var fresh = isCacheFresh(cachedWO);
       var cachedVendors = await cacheGet('vendors');
       var cachedProps = await cacheGet('properties');
+      var cachedBills = await cacheGet('bills');
       var cachedTurns = await cacheGet('turns');
       var cachedInsp = await cacheGet('inspections');
 
       WORK_ORDERS = cachedWO.data;
       VENDORS = (cachedVendors && cachedVendors.data) ? cachedVendors.data : [];
       PROPERTIES = (cachedProps && cachedProps.data) ? cachedProps.data : [];
+      BILLS = (cachedBills && cachedBills.data) ? cachedBills.data : [];
       TURNS = (cachedTurns && cachedTurns.data) ? cachedTurns.data : [];
       INSPECTIONS = (cachedInsp && cachedInsp.data) ? cachedInsp.data : [];
 
@@ -3880,12 +3846,12 @@ function withStepTimeout(fn, timeoutMs) {
 
 // Fetch all data via Proxy v6 action endpoints — ONE request per dataset
 // Each ?action= call does server-side pagination and returns complete results
+// Bills excluded from auto-load — user loads manually on Reconciliation tab
 // Every step has a 60-second timeout — NOTHING hangs forever
 async function fetchAllLive() {
   var anySuccess = false;
   updateCacheBadge('loading');
-  // Vendors & Inspections lazy-loaded on tab click — removed from initial sync
-  var steps = ['Work Orders', 'Properties', 'Turns', 'Move-Outs', 'Turn WOs', 'Groups', 'Tasks', 'Turn Tracker'];
+  var steps = ['Work Orders', 'Properties', 'Vendors', 'Turns', 'Move-Outs', 'Turn WOs', 'Inspections', 'Groups', 'Tasks', 'Turn Tracker'];
   showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
 
   try {
@@ -3901,48 +3867,61 @@ async function fetchAllLive() {
     updateProgress(1, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
     if (propOk) { populateDropdowns(); renderWorkOrders(); }
 
-    // Step 2: Turns — In Progress only, 60-day window (proxy v6 — Reports API)
+    // Step 2: Vendors (proxy v6 — Reports API)
+    updateProgress(2, 'active', 'Fetching vendors\u2026');
+    var vendOk = await withStepTimeout(fetchVendors, 60000);
+    updateProgress(2, vendOk ? 'done' : 'error', vendOk ? VENDORS.length + ' vendors' : 'Vendors failed');
+    if (vendOk) { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); populateDropdowns(); }
+
+    // Step 3: Turns — In Progress only, 60-day window (proxy v6 — Reports API)
     // Short timeout (20s) — turns are supplementary; pipeline works from WOs + move-outs too
-    updateProgress(2, 'active', 'Fetching in-progress turns\u2026');
+    updateProgress(3, 'active', 'Fetching in-progress turns\u2026');
     var turnOk = await withStepTimeout(function() { return fetchTurns(); }, 20000);
-    updateProgress(2, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns skipped (timeout)');
+    updateProgress(3, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns skipped (timeout)');
     if (turnOk) { renderTurnBoard(); renderActivityFeed(); }
 
-    // Step 3: Upcoming Move-Outs — tenant directory, Notice tenants (proxy v6 — Reports API)
-    updateProgress(3, 'active', 'Fetching upcoming move-outs\u2026');
+    // Step 4: Upcoming Move-Outs — tenant directory, Notice tenants (proxy v6 — Reports API)
+    updateProgress(4, 'active', 'Fetching upcoming move-outs\u2026');
     var moOk = await withStepTimeout(fetchUpcomingMoveouts, 45000);
-    updateProgress(3, moOk ? 'done' : 'error', moOk ? UPCOMING_MOVEOUTS.length + ' upcoming' : 'Move-outs skipped');
+    updateProgress(4, moOk ? 'done' : 'error', moOk ? UPCOMING_MOVEOUTS.length + ' upcoming' : 'Move-outs skipped');
     if (moOk) { renderTurnBoard(); renderDashboardKPIs(); }
 
-    // Step 4: Turn Work Orders — DB API v0, Unit Turn type only (real-time status)
-    updateProgress(4, 'active', 'Fetching turn work orders\u2026');
+    // Step 5: Turn Work Orders — DB API v0, Unit Turn type only (real-time status)
+    updateProgress(5, 'active', 'Fetching turn work orders\u2026');
     var twoOk = await withStepTimeout(fetchTurnWorkOrders, 20000);
-    updateProgress(4, twoOk ? 'done' : 'error', twoOk ? TURN_WORK_ORDERS.length + ' turn WOs' : 'Turn WOs skipped');
+    updateProgress(5, twoOk ? 'done' : 'error', twoOk ? TURN_WORK_ORDERS.length + ' turn WOs' : 'Turn WOs skipped');
     if (twoOk) { renderTurnBoard(); }
 
-    // Step 5: Property Groups (proxy v6 — DB API v0)
-    updateProgress(5, 'active', 'Fetching property groups\u2026');
-    var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
-    updateProgress(5, grpOk ? 'done' : 'error', grpOk ? PROPERTY_GROUPS.length + ' groups' : 'Groups skipped');
-    if (grpOk) { populateDropdowns(); renderWorkOrders(); }
+    // Step 6: Inspections (proxy v6 — Reports API)
+    updateProgress(6, 'active', 'Fetching inspections\u2026');
+    var inspOk = await withStepTimeout(fetchInspections, 60000);
+    updateProgress(6, inspOk ? 'done' : 'error', inspOk ? INSPECTIONS.length + ' inspections' : 'Inspections failed');
+    if (inspOk) { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); renderActivityFeed(); }
 
-    // Step 6: Recent Tasks (proxy v6 — DB API v0)
-    updateProgress(6, 'active', 'Fetching recent tasks\u2026');
+    // Step 7: Property Groups (proxy v6 — DB API v0)
+    updateProgress(7, 'active', 'Fetching property groups\u2026');
+    var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
+    updateProgress(7, grpOk ? 'done' : 'error', grpOk ? PROPERTY_GROUPS.length + ' groups' : 'Groups skipped');
+    if (grpOk) { populateGroupFilters(); renderWorkOrders(); }
+
+    // Step 8: Recent Tasks (proxy v6 — DB API v0)
+    updateProgress(8, 'active', 'Fetching recent tasks\u2026');
     var taskOk = await withStepTimeout(fetchRecentTasks, 45000);
-    updateProgress(6, taskOk ? 'done' : 'error', taskOk ? RECENT_TASKS.length + ' tasks' : 'Tasks skipped');
+    updateProgress(8, taskOk ? 'done' : 'error', taskOk ? RECENT_TASKS.length + ' tasks' : 'Tasks skipped');
     if (taskOk) { renderActivityFeed(); }
 
-    // Step 7: Turn Tracker records (proxy blob — persisted stage overrides)
-    updateProgress(7, 'active', 'Loading turn tracker\u2026');
+    // Step 9: Turn Tracker records (proxy blob — persisted stage overrides)
+    updateProgress(9, 'active', 'Loading turn tracker\u2026');
     var trkOk = await withStepTimeout(function() {
       return fetchTurnRecords().then(function() { return true; });
     }, 30000);
-    updateProgress(7, trkOk ? 'done' : 'error', trkOk ? TURN_RECORDS.length + ' tracked' : 'Tracker skipped');
+    updateProgress(9, trkOk ? 'done' : 'error', trkOk ? TURN_RECORDS.length + ' tracked' : 'Tracker skipped');
 
-    // Final re-render: turns with all available correlated data
+    // Final re-render: turns + inspections with all available correlated data
     renderTurnBoard();
+    renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
 
-    anySuccess = woOk || propOk || turnOk;
+    anySuccess = woOk || propOk || vendOk || turnOk || inspOk;
   } catch (e) {
     // individual errors already logged
   }
@@ -3951,7 +3930,7 @@ async function fetchAllLive() {
   renderAll();
 
   if (anySuccess) {
-    var summary = 'WO:' + WORK_ORDERS.length + ' P:' + PROPERTIES.length + ' T:' + TURNS.length + ' (V/I lazy)';
+    var summary = 'WO:' + WORK_ORDERS.length + ' V:' + VENDORS.length + ' P:' + PROPERTIES.length + ' T:' + TURNS.length + ' I:' + INSPECTIONS.length;
     setApiStatus('', 'Connected \u2014 ' + summary);
     $('#apiStatus').className = 'topbar-status';
     await saveAllToCache();
@@ -3980,11 +3959,13 @@ async function loadStaleCache() {
     if (cachedWO && Array.isArray(cachedWO.data) && cachedWO.data.length > 0) {
       var cachedVendors = await cacheGet('vendors');
       var cachedProps = await cacheGet('properties');
+      var cachedBills = await cacheGet('bills');
       var cachedTurns = await cacheGet('turns');
       var cachedInsp = await cacheGet('inspections');
       WORK_ORDERS = cachedWO.data;
       VENDORS = (cachedVendors && cachedVendors.data) ? cachedVendors.data : [];
       PROPERTIES = (cachedProps && cachedProps.data) ? cachedProps.data : [];
+      BILLS = (cachedBills && cachedBills.data) ? cachedBills.data : [];
       TURNS = (cachedTurns && cachedTurns.data) ? cachedTurns.data : [];
       INSPECTIONS = (cachedInsp && cachedInsp.data) ? cachedInsp.data : [];
       updateCacheBadge('cached', cachedWO.timestamp, true);
