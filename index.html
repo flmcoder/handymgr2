@@ -2883,9 +2883,11 @@ async function fetchPropertyGroups() {
       // ---- Method 2: raw proxy path pass-through ----
       try {
         console.log('[GROUPS] Trying raw proxy path fallback\u2026');
-        // Same URL pattern as turn_work_orders: raw brackets, encoded date
+        // Do NOT pre-encode the date — resolveUrl() encodes the entire path via
+        // encodeURIComponent(apiPath), so pre-encoding causes double-encoding
+        // (%3A becomes %253A). Pass the raw URL and let resolveUrl handle it.
         var rawPath = '/api/v0/property_groups'
-          + '?filters[LastUpdatedAtFrom]=' + encodeURIComponent('1970-01-01T00:00:00Z')
+          + '?filters[LastUpdatedAtFrom]=1970-01-01T00:00:00Z'
           + '&page[size]=1000';
         var rawUrl = resolveUrl(rawPath);
         console.log('[GROUPS] Raw fallback URL: ' + rawUrl);
