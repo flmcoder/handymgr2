@@ -591,6 +591,7 @@ function lockVault() {
   vaultCountdownId = null;
   appInitialized = false;
   WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; API_ERRORS = [];
+  detailCacheClear();
   _vendorsLazyLoaded = false; _inspLazyLoaded = false;
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
   // Note: IndexedDB cache is NOT cleared on lock — data persists for next unlock
@@ -641,7 +642,7 @@ function fetchWithTimeout(url, opts, timeoutMs) {
   return fetch(url, fetchOpts).finally(function() { clearTimeout(timer); });
 }
 
-// ---- Proxy v6 action endpoint caller ----
+// ---- Proxy v7 action endpoint caller ----
 // Makes ONE request to proxy like ?action=work_orders&days=180
 // Proxy does all pagination server-side and returns complete dataset
 // Includes 45-second timeout — never hangs forever
@@ -832,7 +833,7 @@ async function apiFetch(path, options) {
 
       // --- Non-retryable errors (throw immediately, no retry) ---
       if (res.status === 401) {
-        logApiError(401, 'Unauthorized — proxy may have wrong credentials. Verify the v6 proxy has correct Client ID, Secret, and Developer ID.', 'resolved');
+        logApiError(401, 'Unauthorized — proxy may have wrong credentials. Verify the v7 proxy has correct Client ID, Secret, and Developer ID.', 'resolved');
         showCorsError('401 Unauthorized — AppFolio rejected the credentials. Verify your v6 proxy has the correct Client ID, Client Secret, and Developer ID hardcoded.');
         throw new Error('401: Unauthorized — check proxy credentials');
       }
@@ -999,7 +1000,7 @@ function showCorsError(detail) {
     if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--warning)">SSL Certificate Error.</strong> Your proxy\'s SSL certificate may not be provisioned yet. New Val Town endpoints can take <strong>1-2 minutes</strong> for SSL to activate. Wait and try again, or verify the proxy URL is correct.'; }
     setApiStatus('error', 'SSL Error — Wait & Retry');
   } else if (isAuthStripped) {
-    if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--danger)">AppFolio rejected credentials.</strong> Make sure you deployed the <strong>v6 proxy code</strong> with correct Client ID, Secret, and Developer ID hardcoded inside. Visit your proxy URL in a browser \u2014 you should see a JSON response with <code>"proxy": "v6"</code>.'; }
+    if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--danger)">AppFolio rejected credentials.</strong> Make sure you deployed the <strong>v7 proxy code</strong> with correct Client ID, Secret, and Developer ID hardcoded inside. Visit your proxy URL in a browser \u2014 you should see a JSON response with <code>"proxy": "v6"</code>.'; }
     setApiStatus('error', 'Auth Stripped by Proxy');
   } else if (API_PROXY) {
     if (msgEl) { msgEl.textContent = 'The proxy (' + API_PROXY.substring(0, 50) + ') failed. It may be down, rate-limited, or CSP-blocked.'; }
@@ -1051,9 +1052,40 @@ var _whLazyLoaded = false;     // lazy-load flag — webhook data loaded on tab 
 var appInitialized = false;
 var WO_FLAGS = {};
 var WO_DETAIL_CACHE = {};
+var WO_DETAIL_CACHE_KEYS = []; // LRU order tracker
+var WO_DETAIL_CACHE_MAX = 50;  // max cached entries
 var PAYROLL_WEEK_OFFSET = 0;
 var currentPropertyGroup = '';
 var currentTurnFilter = 'open';
+
+/* =================================================================
+   LRU Detail Cache helpers — bounded at WO_DETAIL_CACHE_MAX entries
+   ================================================================= */
+function detailCacheGet(key) {
+  if (!(key in WO_DETAIL_CACHE)) return undefined;
+  // Move to end (most recent)
+  var idx = WO_DETAIL_CACHE_KEYS.indexOf(key);
+  if (idx > -1) WO_DETAIL_CACHE_KEYS.splice(idx, 1);
+  WO_DETAIL_CACHE_KEYS.push(key);
+  return WO_DETAIL_CACHE[key];
+}
+function detailCacheSet(key, value) {
+  if (key in WO_DETAIL_CACHE) {
+    var idx = WO_DETAIL_CACHE_KEYS.indexOf(key);
+    if (idx > -1) WO_DETAIL_CACHE_KEYS.splice(idx, 1);
+  }
+  WO_DETAIL_CACHE_KEYS.push(key);
+  WO_DETAIL_CACHE[key] = value;
+  // Evict oldest if over limit
+  while (WO_DETAIL_CACHE_KEYS.length > WO_DETAIL_CACHE_MAX) {
+    var evict = WO_DETAIL_CACHE_KEYS.shift();
+    delete WO_DETAIL_CACHE[evict];
+  }
+}
+function detailCacheClear() {
+  WO_DETAIL_CACHE = {};
+  WO_DETAIL_CACHE_KEYS = [];
+}
 
 /* =================================================================
    VAULT UI
@@ -1257,7 +1289,7 @@ function hideProgress() {
    DATA FETCHING — Smart filtered API calls (180-day window)
    ================================================================= */
 
-// Work Orders: Proxy v6 ?action=work_orders — server-side pagination, one request
+// Work Orders: Proxy v7 ?action=work_orders — server-side pagination, one request
 // Open statuses: 0=New, 1=EstReq, 2=Estimated, 9=Assigned, 3=Scheduled,
 //   6=Waiting, 8=WorkDone, 12=ReadyToBill
 // Excludes: 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill
@@ -1307,7 +1339,7 @@ async function fetchWorkOrders() {
   }
 }
 
-// Vendors: Proxy v6 ?action=vendors — server-side pagination, one request
+// Vendors: Proxy v7 ?action=vendors — server-side pagination, one request
 async function fetchVendors() {
   try {
     setApiStatus('loading', 'Loading vendors (server-side)\u2026');
@@ -1344,7 +1376,7 @@ async function fetchVendors() {
   }
 }
 
-// Properties: Proxy v6 ?action=properties — server-side pagination, one request
+// Properties: Proxy v7 ?action=properties — server-side pagination, one request
 async function fetchProperties() {
   try {
     setApiStatus('loading', 'Loading properties (server-side)\u2026');
@@ -1378,7 +1410,7 @@ async function fetchProperties() {
   }
 }
 
-// Turns: Proxy v6 ?action=turns — 60-day window, In Progress only by default
+// Turns: Proxy v7 ?action=turns — 60-day window, In Progress only by default
 async function fetchTurns() {
   try {
     setApiStatus('loading', 'Loading turns (In Progress, 60d)\u2026');
@@ -1420,7 +1452,7 @@ async function fetchTurns() {
   }
 }
 
-// Inspections: Proxy v6 ?action=inspections — server-side pagination, one request
+// Inspections: Proxy v7 ?action=inspections — server-side pagination, one request
 var INSPECTIONS = [];
 var INSPECTION_FROM_YEAR = 2026; // default — only fetch inspections from this year onward
 async function fetchInspections() {
@@ -1450,7 +1482,7 @@ async function fetchInspections() {
   }
 }
 
-// Property Groups: Proxy v6 ?action=property_groups — DB API v0
+// Property Groups: Proxy v7 ?action=property_groups — DB API v0
 // DB API returns { data: [ { Id, Name, PropertyIds, Type, LastUpdatedAt } ] }
 // UUID→Name resolution via separate ?action=property_map (non-blocking)
 async function fetchPropertyGroups() {
@@ -1568,7 +1600,7 @@ async function resolvePropertyGroupNames() {
   }
 }
 
-// Recent Tasks: Proxy v6 ?action=recent_tasks — server-side pagination via DB API v0
+// Recent Tasks: Proxy v7 ?action=recent_tasks — server-side pagination via DB API v0
 async function fetchRecentTasks() {
   try {
     setApiStatus('loading', 'Loading recent tasks\u2026');
@@ -1605,7 +1637,7 @@ async function fetchRecentTasks() {
   }
 }
 
-// Upcoming Move-Outs: Proxy v6 ?action=upcoming_moveouts — tenant directory
+// Upcoming Move-Outs: Proxy v7 ?action=upcoming_moveouts — tenant directory
 // Returns tenants on notice or current with move_out dates in the window
 async function fetchUpcomingMoveouts() {
   try {
@@ -1636,7 +1668,7 @@ async function fetchUpcomingMoveouts() {
   }
 }
 
-// Turn Work Orders: Proxy v6 ?action=turn_work_orders — DB API v0
+// Turn Work Orders: Proxy v7 ?action=turn_work_orders — DB API v0
 // Real-time WO status for unit turn WOs (more current than Reports API)
 async function fetchTurnWorkOrders() {
   try {
@@ -1684,11 +1716,13 @@ async function pollWebhookEvents() {
       data.events.forEach(function(e) {
         var key = (e.ts || e.timestamp || '') + '|' + (e.title || '');
         if (!existing[key]) {
+          var evtBody = e.body || '';
+          if (evtBody.length > 500) evtBody = evtBody.substring(0, 500) + '\u2026';
           WEBHOOK_EVENTS.push({
             ts: e.ts || e.timestamp || new Date().toISOString(),
             type: e.type || 'webhook',
             title: e.title || 'Webhook Event',
-            body: e.body || '',
+            body: evtBody,
             priority: e.priority || 'normal',
             source: e.source || 'webhook'
           });
@@ -1802,16 +1836,7 @@ function renderWebhookDataTable(events) {
     html += '</div></td></tr>';
   });
   body.innerHTML = html;
-
-  // Expand/collapse handlers
-  body.querySelectorAll('[data-whexpand]').forEach(function(btn) {
-    btn.addEventListener('click', function(ev) {
-      ev.stopPropagation();
-      var whId = this.getAttribute('data-whexpand');
-      var detailRow = document.getElementById('whDetail_' + whId);
-      if (detailRow) detailRow.classList.toggle('hidden');
-    });
-  });
+  // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
 }
 
 function updateWhPagination() {
@@ -2078,10 +2103,11 @@ function setupWebhookAutoPoll(intervalSec) {
    ================================================================= */
 async function fetchPropertyDetail(propId) {
   if (!propId) return null;
-  if (WO_DETAIL_CACHE['prop_' + propId]) return WO_DETAIL_CACHE['prop_' + propId];
+  var cached = detailCacheGet('prop_' + propId);
+  if (cached) return cached;
   try {
     var data = await apiFetch('/api/v0/properties/' + propId);
-    WO_DETAIL_CACHE['prop_' + propId] = data;
+    detailCacheSet('prop_' + propId, data);
     return data;
   } catch (e) { return null; }
 }
@@ -2108,14 +2134,15 @@ function resolveWODbUuid(wo) {
 
 async function fetchWONotes(woIdOrUuid) {
   if (!woIdOrUuid) return [];
-  if (WO_DETAIL_CACHE['notes_' + woIdOrUuid]) return WO_DETAIL_CACHE['notes_' + woIdOrUuid];
+  var notesCached = detailCacheGet('notes_' + woIdOrUuid);
+  if (notesCached) return notesCached;
   try {
     // Use dedicated proxy action with v0 credentials (like property_groups)
     var data = await proxyAction('wo_notes', { wo_id: woIdOrUuid });
     var notes = (data && data.results) ? data.results :
                 (data && data.data) ? data.data :
                 (Array.isArray(data) ? data : []);
-    WO_DETAIL_CACHE['notes_' + woIdOrUuid] = notes;
+    detailCacheSet('notes_' + woIdOrUuid, notes);
     return notes;
   } catch (e) { return []; }
 }
@@ -2268,41 +2295,7 @@ function renderPayroll() {
     html += '</tr>';
   });
   body.innerHTML = html;
-
-  // Click row to show detail card
-  body.querySelectorAll('.payroll-row').forEach(function(row) {
-    row.addEventListener('click', function(e) {
-      if (e.target.closest('[data-flagwo]')) return; // don't open detail on flag click
-      var woid = this.getAttribute('data-woid');
-      var wo = WORK_ORDERS.find(function(w) { return String(w.id) === woid; });
-      if (!wo) return;
-      showItemDetail('Payroll \u2014 WO #' + wo.id, [
-        { section: 'Work Order', icon: 'fa-wrench' },
-        { label: 'WO Number', value: '#' + wo.id },
-        { label: 'Property', value: wo.propertyName },
-        { label: 'Unit', value: wo.unit },
-        { label: 'Description', value: wo.description },
-        { label: 'Vendor', value: wo.vendorName || '\u2014' },
-        { label: 'Status', value: wo.status },
-        { label: 'Priority', value: wo.priority },
-        { section: 'Payroll', icon: 'fa-money-check-alt' },
-        { label: 'Completed', value: formatDate(wo.workCompletedOn || wo.completedOn) },
-        { label: 'Amount', value: wo.amount ? currency(parseFloat(wo.amount)) : '\u2014' },
-        { label: 'Tenant', value: wo.tenant || '\u2014' },
-        { label: 'Assigned To', value: wo.assignedUser || '\u2014' }
-      ], appfolioUrl('work_order', wo.id || wo.uuid));
-    });
-  });
-
-  body.querySelectorAll('[data-flagwo]').forEach(function(btn) {
-    btn.addEventListener('click', async function(e) {
-      e.stopPropagation();
-      var wid = this.getAttribute('data-flagwo');
-      await toggleFlag(wid);
-      renderPayroll();
-      renderWorkOrders();
-    });
-  });
+  // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
 }
 
 function renderDashboardKPIs() {
@@ -2619,30 +2612,7 @@ function renderWorkOrders() {
 
   board.innerHTML = html;
   $('#woBadge').textContent = filtered.length || '0';
-
-  // Wire up card clicks → detail modal
-  board.querySelectorAll('.kanban-card').forEach(function(card) {
-    card.addEventListener('click', function() {
-      showWODetail(this.getAttribute('data-woid'));
-    });
-  });
-
-  // Wire up column header clicks → filter by status
-  board.querySelectorAll('.kanban-col-head').forEach(function(head) {
-    head.addEventListener('click', function() {
-      var status = this.getAttribute('data-status');
-      if (currentWOFilter === status) {
-        currentWOFilter = 'all'; // toggle off
-      } else {
-        currentWOFilter = status;
-      }
-      // Update filter buttons
-      $$('[data-filter]').forEach(function(b) {
-        b.classList.toggle('active', b.getAttribute('data-filter') === currentWOFilter);
-      });
-      renderWorkOrders();
-    });
-  });
+  // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
 }
 
 function showWODetail(id) {
@@ -2779,7 +2749,7 @@ function showWODetail(id) {
             body: JSON.stringify({ Content: note })
           });
           // Clear notes cache so next open re-fetches
-          delete WO_DETAIL_CACHE['notes_' + woDbUuid];
+          detailCacheSet('notes_' + woDbUuid, undefined);
         } catch (noteErr) {
           showToast('Note failed: ' + noteErr.message);
         }
@@ -2870,20 +2840,38 @@ function buildTurnPipeline() {
   var today = new Date();
   var seenKeys = {};
 
+  // ---- Pre-build lookup indexes for O(1) matching (avoids O(n*m) iteration) ----
+  // Index WORK_ORDERS by composite key: "unit_lower|prop_lower"
+  var _woByUnitProp = {};
+  WORK_ORDERS.forEach(function(wo) {
+    if (!wo.unit || !wo.propertyName) return;
+    var key = String(wo.unit).toLowerCase() + '|' + String(wo.propertyName).toLowerCase();
+    if (!_woByUnitProp[key]) _woByUnitProp[key] = [];
+    _woByUnitProp[key].push(wo);
+  });
+  // Index TURN_WORK_ORDERS by unitId + propertyId
+  var _turnWoByUnit = {};
+  var _turnWoByProp = {};
+  var _turnWoByNum = {};
+  TURN_WORK_ORDERS.forEach(function(wo) {
+    if (wo.unitId) { if (!_turnWoByUnit[wo.unitId]) _turnWoByUnit[wo.unitId] = []; _turnWoByUnit[wo.unitId].push(wo); }
+    if (wo.propertyId) { if (!_turnWoByProp[wo.propertyId]) _turnWoByProp[wo.propertyId] = []; _turnWoByProp[wo.propertyId].push(wo); }
+    if (wo.woNumber) _turnWoByNum[wo.woNumber] = wo;
+  });
+
   // Helper: create a composite key for deduplication
   function makeKey(propId, unitId, moveOut) {
     var k = String(propId || '') + '-' + String(unitId || '') + '-' + (moveOut || '');
     return k === '--' ? null : k;
   }
 
-  // Helper: find matching WOs for a unit+property pair (from both Reports + DB API data)
+  // Helper: find matching WOs for a unit+property pair using pre-built indexes
   function findMatchingWOs(unit, property, propId, unitId, moveOutDate) {
     var wos = [];
-    // From Reports API work orders (WORK_ORDERS)
-    WORK_ORDERS.forEach(function(wo) {
-      var unitMatch = wo.unit && unit && String(wo.unit).toLowerCase() === String(unit).toLowerCase();
-      var propMatch = wo.propertyName && property && String(wo.propertyName).toLowerCase() === String(property).toLowerCase();
-      if (!unitMatch || !propMatch) return;
+    // From Reports API work orders — O(1) lookup by composite key
+    var lookupKey = (unit && property) ? String(unit).toLowerCase() + '|' + String(property).toLowerCase() : null;
+    var reportsWOs = lookupKey ? (_woByUnitProp[lookupKey] || []) : [];
+    reportsWOs.forEach(function(wo) {
       if (moveOutDate && wo.created) {
         var daysDiff = (new Date(wo.created) - moveOutDate) / 86400000;
         if (daysDiff < -30) return;
@@ -2891,19 +2879,24 @@ function buildTurnPipeline() {
       wos.push({ source: 'reports', id: wo.id, status: wo.status, description: wo.description || '',
         created: wo.created, vendor: wo.vendor || '', unit: wo.unit, property: wo.propertyName, priority: wo.priority });
     });
-    // From DB API turn work orders (TURN_WORK_ORDERS) — more current status
-    // DB API uses UUIDs while Reports API uses numeric IDs, so also try WO number match
-    TURN_WORK_ORDERS.forEach(function(wo) {
-      // Match by UUID IDs (same API domain)
-      var idMatch = (unitId && wo.unitId && String(wo.unitId) === String(unitId)) ||
-                    (propId && wo.propertyId && String(wo.propertyId) === String(propId));
-      // Also match by WO number if already found from Reports API
-      var woNumMatch = wo.woNumber && wos.some(function(w) { return String(w.id) === String(wo.woNumber); });
-      if (!idMatch && !woNumMatch) return;
-      // Skip if already found from Reports
+    // From DB API turn work orders — O(1) lookup by unit/property ID
+    var dbCandidates = [];
+    if (unitId && _turnWoByUnit[unitId]) dbCandidates = dbCandidates.concat(_turnWoByUnit[unitId]);
+    if (propId && _turnWoByProp[propId]) {
+      _turnWoByProp[propId].forEach(function(tw) {
+        if (!dbCandidates.some(function(c) { return c.id === tw.id; })) dbCandidates.push(tw);
+      });
+    }
+    // Also check WO number matches
+    wos.forEach(function(w) {
+      if (w.id && _turnWoByNum[String(w.id)]) {
+        var tw = _turnWoByNum[String(w.id)];
+        if (!dbCandidates.some(function(c) { return c.id === tw.id; })) dbCandidates.push(tw);
+      }
+    });
+    dbCandidates.forEach(function(wo) {
       var dupe = wos.find(function(w) { return String(w.id) === String(wo.id) || String(w.id) === String(wo.woNumber); });
       if (dupe) {
-        // DB API has more current status — update it
         dupe.status = wo.status;
         dupe.dbApiId = wo.id;
         return;
@@ -3326,30 +3319,7 @@ function renderTurnPipelineUI() {
   });
 
   container.innerHTML = html;
-
-  // Wire up card click → toggle detail
-  container.querySelectorAll('.pipe-card').forEach(function(card) {
-    card.addEventListener('click', function() {
-      var idx = this.getAttribute('data-pipeidx');
-      var detail = document.getElementById('pipeDetail_' + idx);
-      if (detail) {
-        var isOpen = detail.classList.contains('show');
-        // Close all
-        container.querySelectorAll('.pipe-detail').forEach(function(d) { d.classList.remove('show'); });
-        if (!isOpen) detail.classList.add('show');
-      }
-    });
-  });
-
-  // Wire up "Confirm stage" buttons
-  container.querySelectorAll('[data-advance]').forEach(function(btn) {
-    btn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      var turnId = this.getAttribute('data-advance');
-      var stage = this.getAttribute('data-stage');
-      confirmTurnStage(turnId, stage);
-    });
-  });
+  // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
 }
 
 // Manual stage advancement
@@ -3361,6 +3331,8 @@ async function confirmTurnStage(turnId, stageKey) {
   if (!rec) {
     rec = { id: turnId, stages: {} };
     TURN_RECORDS.push(rec);
+    // Cap TURN_RECORDS at 500 to prevent unbounded growth
+    if (TURN_RECORDS.length > 500) TURN_RECORDS = TURN_RECORDS.slice(-500);
     // Create the record on the server first so stage update doesn't 404
     await saveTurnRecord(rec);
   }
@@ -3475,29 +3447,10 @@ function renderInspections(search) {
     html += '</tr>';
   });
   body.innerHTML = html;
+  // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
 
-  // Click inspection row to show detail
-  body.querySelectorAll('.insp-row').forEach(function(row) {
-    row.addEventListener('click', function() {
-      var idx = parseInt(this.getAttribute('data-inspidx'), 10);
-      var c = filtered[idx];
-      if (!c) return;
-      var r = c.r;
-      var afLink = appfolioUrl('property', r.propertyId);
-      showItemDetail('Inspection \u2014 ' + r.propertyName + ' ' + r.unit, [
-        { section: 'Inspection Details', icon: 'fa-clipboard-check' },
-        { label: 'Property', value: r.propertyName },
-        { label: 'Unit', value: r.unit },
-        { label: 'Last Inspection', value: r.lastInspection ? formatDate(r.lastInspection) + ' (' + c.daysSince + ' days ago)' : 'Never' },
-        { label: 'Status', value: c.overdue ? 'OVERDUE' : c.dueSoon ? 'Due Soon' : 'Current' },
-        { section: 'Tenant', icon: 'fa-user' },
-        { label: 'Tenant', value: r.tenant || '\u2014' },
-        { label: 'Move-In', value: r.moveIn ? formatDate(r.moveIn) : '\u2014' },
-        { label: 'Move-Out', value: r.moveOut ? formatDate(r.moveOut) : '\u2014' },
-        { label: 'Tags', value: r.tags || '\u2014' }
-      ], afLink);
-    });
-  });
+  // Store filtered data for delegation handler to access
+  body._filteredData = filtered;
 
   var ib = $('#inspBadge');
   if (ib) ib.textContent = overdueCount;
@@ -3614,65 +3567,7 @@ function renderVendors(search) {
     html += '</div>';
   });
   container.innerHTML = html;
-
-  // Bind compliance toggle clicks
-  container.querySelectorAll('.vendor-compliance-toggle').forEach(function(btn) {
-    btn.addEventListener('click', async function(e) {
-      e.stopPropagation();
-      var vid = this.getAttribute('data-vid');
-      var current = isVendorManuallyCompliant(vid);
-      var newVal;
-      if (current === null) { newVal = true; }       // no override → mark compliant
-      else if (current === true) { newVal = false; }  // was compliant → mark non-compliant
-      else { newVal = null; }                          // was non-compliant → clear override (back to API)
-      await saveVendorOverride(vid, { compliant: newVal });
-      renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-      var label = newVal === true ? 'Marked compliant (manual)' : newVal === false ? 'Marked non-compliant (manual)' : 'Reset to API value';
-      showToast(label);
-    });
-  });
-
-  // Bind category selectors
-  container.querySelectorAll('.vendor-cat-select').forEach(function(sel) {
-    sel.addEventListener('change', async function(e) {
-      e.stopPropagation();
-      var vid = this.getAttribute('data-vid');
-      await saveVendorOverride(vid, { category: this.value });
-      renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-      showToast('Category → ' + this.value);
-    });
-  });
-
-  // Click vendor card to show detail modal
-  container.querySelectorAll('.vendor-card').forEach(function(card) {
-    card.addEventListener('click', function() {
-      var vid = this.getAttribute('data-vendorid');
-      var v = VENDORS.find(function(vn) { return String(vn.id) === vid; });
-      if (!v) return;
-      var cRes = resolveVendorCompliance(v);
-      var vCat = getVendorCategory(v.id) || 'Uncategorized';
-      var compText = cRes.compliant ? 'Compliant' : (v.compliantStatus || 'Non-Compliant');
-      if (cRes.isManual) compText += ' (manual override)';
-      showItemDetail('Vendor \u2014 ' + v.name, [
-        { section: 'Vendor Info', icon: 'fa-hard-hat' },
-        { label: 'Name', value: v.name },
-        { label: 'ID', value: String(v.id) },
-        { label: 'Category', value: vCat },
-        { label: 'Type (API)', value: v.vendorType || '\u2014' },
-        { label: 'Trades', value: v.trades || '\u2014' },
-        { section: 'Contact', icon: 'fa-phone' },
-        { label: 'Phone', value: v.phone || '\u2014' },
-        { label: 'Email', value: v.email || '\u2014' },
-        { label: 'Address', value: v.address || '\u2014' },
-        { section: 'Compliance', icon: 'fa-shield-alt' },
-        { label: 'Status', value: compText },
-        { label: 'Liability Ins. Exp.', value: v.insurance || '\u2014' },
-        { label: 'Auto Ins. Exp.', value: v.autoInsurance || '\u2014' },
-        { label: 'Workers Comp Exp.', value: v.workersComp || '\u2014' },
-        { label: 'Do Not Use', value: v.doNotUse ? 'YES' : 'No' }
-      ], appfolioUrl('vendor', v.id));
-    });
-  });
+  // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
 }
 
 /* renderReconciliation — Removed (billing stripped to lighten payload) */
@@ -3690,8 +3585,7 @@ function renderTemplates() {
     html += '</div></div>';
   });
   container.innerHTML = html;
-  container.querySelectorAll('[data-tcopy]').forEach(function(btn) { btn.addEventListener('click', function() { showToast('Template copied to clipboard'); }); });
-  container.querySelectorAll('[data-tedit]').forEach(function(btn) { btn.addEventListener('click', function() { showToast('Edit mode \u2014 modify template variables'); }); });
+  // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
 }
 
 function renderErrorLog() {
@@ -3711,12 +3605,12 @@ function renderErrorLog() {
 }
 
 function populateDropdowns() {
-  // Properties dropdown for New WO modal
+  // Properties dropdown for New WO modal (build string first, assign once)
   var propSelect = $('#nwoProperty');
   if (propSelect) {
-    propSelect.innerHTML = '<option value="">— Select Property —</option>';
+    var propOpts = ['<option value="">— Select Property —</option>'];
     PROPERTIES.forEach(function(p) {
-      propSelect.innerHTML += '<option value="' + escapeHtml(String(p.id)) + '">' + escapeHtml(p.name) + (p.address ? ' \u2014 ' + escapeHtml(p.address) : '') + '</option>';
+      propOpts.push('<option value="' + escapeHtml(String(p.id)) + '">' + escapeHtml(p.name) + (p.address ? ' \u2014 ' + escapeHtml(p.address) : '') + '</option>');
     });
     // Also add properties extracted from work orders if API didn't return properties
     if (PROPERTIES.length === 0) {
@@ -3724,19 +3618,21 @@ function populateDropdowns() {
       WORK_ORDERS.forEach(function(wo) {
         if (wo.propertyName && !seen[wo.propertyName]) {
           seen[wo.propertyName] = true;
-          propSelect.innerHTML += '<option value="' + escapeHtml(wo.propertyName) + '">' + escapeHtml(wo.propertyName) + '</option>';
+          propOpts.push('<option value="' + escapeHtml(wo.propertyName) + '">' + escapeHtml(wo.propertyName) + '</option>');
         }
       });
     }
+    propSelect.innerHTML = propOpts.join('');
   }
 
-  // Vendors dropdown for New WO modal
+  // Vendors dropdown for New WO modal (build string first, assign once)
   var vendSelect = $('#nwoVendor');
   if (vendSelect) {
-    vendSelect.innerHTML = '<option value="">— Select Vendor —</option>';
+    var vendOpts = ['<option value="">— Select Vendor —</option>'];
     VENDORS.forEach(function(v) {
-      vendSelect.innerHTML += '<option value="' + escapeHtml(String(v.id)) + '">' + escapeHtml(v.name) + '</option>';
+      vendOpts.push('<option value="' + escapeHtml(String(v.id)) + '">' + escapeHtml(v.name) + '</option>');
     });
+    vendSelect.innerHTML = vendOpts.join('');
   }
 
   // Populate ALL group filter dropdowns across every tab
@@ -3773,6 +3669,203 @@ function wireUpUI() {
   if (_uiWired) return;
   _uiWired = true;
 
+  /* =================================================================
+     EVENT DELEGATION — Single listeners on parent containers
+     Replaces per-render querySelectorAll+addEventListener patterns.
+     Set up ONCE here; never re-attached on re-render.
+     ================================================================= */
+
+  // Kanban board — card clicks + column header clicks
+  (function() {
+    var board = $('#kanbanBoard');
+    if (board) board.addEventListener('click', function(e) {
+      var card = e.target.closest('.kanban-card');
+      if (card) { showWODetail(card.getAttribute('data-woid')); return; }
+      var head = e.target.closest('.kanban-col-head');
+      if (head) {
+        var status = head.getAttribute('data-status');
+        if (currentWOFilter === status) { currentWOFilter = 'all'; }
+        else { currentWOFilter = status; }
+        $$('[data-filter]').forEach(function(b) {
+          b.classList.toggle('active', b.getAttribute('data-filter') === currentWOFilter);
+        });
+        renderWorkOrders();
+      }
+    });
+  })();
+
+  // Payroll table — row clicks + flag toggles
+  (function() {
+    var payBody = $('#payrollBody');
+    if (payBody) payBody.addEventListener('click', function(e) {
+      var flagBtn = e.target.closest('[data-flagwo]');
+      if (flagBtn) {
+        e.stopPropagation();
+        var wid = flagBtn.getAttribute('data-flagwo');
+        toggleFlag(wid).then(function() { renderPayroll(); renderWorkOrders(); });
+        return;
+      }
+      var row = e.target.closest('.payroll-row');
+      if (row) {
+        var woid = row.getAttribute('data-woid');
+        var wo = WORK_ORDERS.find(function(w) { return String(w.id) === woid; });
+        if (!wo) return;
+        showItemDetail('Payroll \u2014 WO #' + wo.id, [
+          { section: 'Work Order', icon: 'fa-wrench' },
+          { label: 'WO Number', value: '#' + wo.id },
+          { label: 'Property', value: wo.propertyName },
+          { label: 'Unit', value: wo.unit },
+          { label: 'Description', value: wo.description },
+          { label: 'Vendor', value: wo.vendorName || '\u2014' },
+          { label: 'Status', value: wo.status },
+          { label: 'Priority', value: wo.priority },
+          { section: 'Payroll', icon: 'fa-money-check-alt' },
+          { label: 'Completed', value: formatDate(wo.workCompletedOn || wo.completedOn) },
+          { label: 'Amount', value: wo.amount ? currency(parseFloat(wo.amount)) : '\u2014' },
+          { label: 'Tenant', value: wo.tenant || '\u2014' },
+          { label: 'Assigned To', value: wo.assignedUser || '\u2014' }
+        ], appfolioUrl('work_order', wo.id || wo.uuid));
+      }
+    });
+  })();
+
+  // Turn pipeline — card clicks + stage advance buttons
+  (function() {
+    var pipeline = $('#turnPipeline');
+    if (pipeline) pipeline.addEventListener('click', function(e) {
+      var advBtn = e.target.closest('[data-advance]');
+      if (advBtn) {
+        e.stopPropagation();
+        confirmTurnStage(advBtn.getAttribute('data-advance'), advBtn.getAttribute('data-stage'));
+        return;
+      }
+      var card = e.target.closest('.pipe-card');
+      if (card) {
+        var idx = card.getAttribute('data-pipeidx');
+        var detail = document.getElementById('pipeDetail_' + idx);
+        if (detail) {
+          var isOpen = detail.classList.contains('show');
+          pipeline.querySelectorAll('.pipe-detail').forEach(function(d) { d.classList.remove('show'); });
+          if (!isOpen) detail.classList.add('show');
+        }
+      }
+    });
+  })();
+
+  // Inspection table — row clicks
+  (function() {
+    var inspBody = $('#inspBody');
+    if (inspBody) inspBody.addEventListener('click', function(e) {
+      var row = e.target.closest('.insp-row');
+      if (!row) return;
+      var idx = parseInt(row.getAttribute('data-inspidx'), 10);
+      var filtered = inspBody._filteredData;
+      if (!filtered || !filtered[idx]) return;
+      var c = filtered[idx];
+      var r = c.r;
+      showItemDetail('Inspection \u2014 ' + r.propertyName + ' ' + r.unit, [
+        { section: 'Inspection Details', icon: 'fa-clipboard-check' },
+        { label: 'Property', value: r.propertyName },
+        { label: 'Unit', value: r.unit },
+        { label: 'Last Inspection', value: r.lastInspection ? formatDate(r.lastInspection) + ' (' + c.daysSince + ' days ago)' : 'Never' },
+        { label: 'Status', value: c.overdue ? 'OVERDUE' : c.dueSoon ? 'Due Soon' : 'Current' },
+        { section: 'Tenant', icon: 'fa-user' },
+        { label: 'Tenant', value: r.tenant || '\u2014' },
+        { label: 'Move-In', value: r.moveIn ? formatDate(r.moveIn) : '\u2014' },
+        { label: 'Move-Out', value: r.moveOut ? formatDate(r.moveOut) : '\u2014' },
+        { label: 'Tags', value: r.tags || '\u2014' }
+      ], appfolioUrl('property', r.propertyId));
+    });
+  })();
+
+  // Vendor grid — card clicks, compliance toggles, category selects
+  (function() {
+    var vendGrid = $('#vendorGrid');
+    if (!vendGrid) return;
+    vendGrid.addEventListener('click', function(e) {
+      // Compliance toggle
+      var compBtn = e.target.closest('.vendor-compliance-toggle');
+      if (compBtn) {
+        e.stopPropagation();
+        var vid = compBtn.getAttribute('data-vid');
+        var current = isVendorManuallyCompliant(vid);
+        var newVal;
+        if (current === null) { newVal = true; }
+        else if (current === true) { newVal = false; }
+        else { newVal = null; }
+        saveVendorOverride(vid, { compliant: newVal }).then(function() {
+          renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+          var label = newVal === true ? 'Marked compliant (manual)' : newVal === false ? 'Marked non-compliant (manual)' : 'Reset to API value';
+          showToast(label);
+        });
+        return;
+      }
+      // Vendor card click (detail modal)
+      var card = e.target.closest('.vendor-card');
+      if (card && !e.target.closest('.vendor-cat-select')) {
+        var vid2 = card.getAttribute('data-vendorid');
+        var v = VENDORS.find(function(vn) { return String(vn.id) === vid2; });
+        if (!v) return;
+        var cRes = resolveVendorCompliance(v);
+        var vCat = getVendorCategory(v.id) || 'Uncategorized';
+        var compText = cRes.compliant ? 'Compliant' : (v.compliantStatus || 'Non-Compliant');
+        if (cRes.isManual) compText += ' (manual override)';
+        showItemDetail('Vendor \u2014 ' + v.name, [
+          { section: 'Vendor Info', icon: 'fa-hard-hat' },
+          { label: 'Name', value: v.name },
+          { label: 'ID', value: String(v.id) },
+          { label: 'Category', value: vCat },
+          { label: 'Type (API)', value: v.vendorType || '\u2014' },
+          { label: 'Trades', value: v.trades || '\u2014' },
+          { section: 'Contact', icon: 'fa-phone' },
+          { label: 'Phone', value: v.phone || '\u2014' },
+          { label: 'Email', value: v.email || '\u2014' },
+          { label: 'Address', value: v.address || '\u2014' },
+          { section: 'Compliance', icon: 'fa-shield-alt' },
+          { label: 'Status', value: compText },
+          { label: 'Liability Ins. Exp.', value: v.insurance || '\u2014' },
+          { label: 'Auto Ins. Exp.', value: v.autoInsurance || '\u2014' },
+          { label: 'Workers Comp Exp.', value: v.workersComp || '\u2014' },
+          { label: 'Do Not Use', value: v.doNotUse ? 'YES' : 'No' }
+        ], appfolioUrl('vendor', v.id));
+      }
+    });
+    vendGrid.addEventListener('change', function(e) {
+      var sel = e.target.closest('.vendor-cat-select');
+      if (sel) {
+        e.stopPropagation();
+        var vid = sel.getAttribute('data-vid');
+        saveVendorOverride(vid, { category: sel.value }).then(function() {
+          renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+          showToast('Category \u2192 ' + sel.value);
+        });
+      }
+    });
+  })();
+
+  // Webhook data table — expand/collapse buttons
+  (function() {
+    var whBody = $('#whDataBody');
+    if (whBody) whBody.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-whexpand]');
+      if (btn) {
+        e.stopPropagation();
+        var whId = btn.getAttribute('data-whexpand');
+        var detailRow = document.getElementById('whDetail_' + whId);
+        if (detailRow) detailRow.classList.toggle('hidden');
+      }
+    });
+  })();
+
+  // Template grid — copy + edit buttons
+  (function() {
+    var tGrid = $('#templateGrid');
+    if (tGrid) tGrid.addEventListener('click', function(e) {
+      if (e.target.closest('[data-tcopy]')) { showToast('Template copied to clipboard'); }
+      if (e.target.closest('[data-tedit]')) { showToast('Edit mode \u2014 modify template variables'); }
+    });
+  })();
+
   // Navigation tabs (with lazy loading for Vendors & Inspections)
   $$('.nav-tab').forEach(function(tab) {
     tab.addEventListener('click', async function() {
@@ -3782,6 +3875,36 @@ function wireUpUI() {
       var tabName = tab.getAttribute('data-tab');
       var sec = document.getElementById('sec-' + tabName);
       if (sec) sec.classList.add('active');
+
+      // DOM cleanup — free heavy inner HTML of deactivated tabs to reduce memory
+      // (they'll re-render when next activated)
+      var heavyTabs = {
+        workorders: '#kanbanBoard',
+        vendors: '#vendorGrid',
+        inspections: '#inspBody',
+        webhooks: '#whDataBody'
+      };
+      Object.keys(heavyTabs).forEach(function(tName) {
+        if (tName !== tabName) {
+          var el = document.querySelector(heavyTabs[tName]);
+          if (el && el.children.length > 200) {
+            el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)"><i class="fas fa-redo"></i> Tab paused \u2014 click to reload</div>';
+            el._needsRerender = true;
+          }
+        }
+      });
+      // Re-render if returning to a tab that was cleaned
+      var activeHeavy = heavyTabs[tabName];
+      if (activeHeavy) {
+        var el = document.querySelector(activeHeavy);
+        if (el && el._needsRerender) {
+          el._needsRerender = false;
+          if (tabName === 'workorders') renderWorkOrders();
+          else if (tabName === 'vendors') renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+          else if (tabName === 'inspections') renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+          else if (tabName === 'webhooks') loadWebhookData();
+        }
+      }
 
       // Lazy-load Vendors on first tab click
       if (tabName === 'vendors' && !_vendorsLazyLoaded && VENDORS.length === 0) {
@@ -4331,7 +4454,7 @@ async function initApp() {
   }
 
   // ================================================================
-  // STEP 2: Pre-flight = Proxy v6 ?action=ping
+  // STEP 2: Pre-flight = Proxy v7 ?action=ping
   //         Tests proxy connectivity + AppFolio auth in one shot
   // ================================================================
   try {
@@ -4373,7 +4496,7 @@ async function initApp() {
   }
 
   // ================================================================
-  // STEP 3: Full data fetch via proxy v6 action endpoints
+  // STEP 3: Full data fetch via proxy v7 action endpoints
   //         Each action does server-side pagination — ONE request per dataset
   // ================================================================
   await fetchAllLive();
@@ -4396,7 +4519,7 @@ function withStepTimeout(fn, timeoutMs) {
   });
 }
 
-// Fetch all data via Proxy v6 action endpoints — ONE request per dataset
+// Fetch all data via Proxy v7 action endpoints — ONE request per dataset
 // Each ?action= call does server-side pagination and returns complete results
 // Every step has a 60-second timeout — NOTHING hangs forever
 async function fetchAllLive() {
@@ -4407,26 +4530,26 @@ async function fetchAllLive() {
   showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
 
   try {
-    // Step 0: Work Orders (proxy v6 — Reports API)
+    // Step 0: Work Orders (proxy v7 — Reports API)
     updateProgress(0, 'active', 'Fetching work orders\u2026');
     var woOk = await withStepTimeout(fetchWorkOrders, 60000);
     updateProgress(0, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
     if (woOk) { renderWorkOrders(); renderDashboardKPIs(); renderActivityFeed(); }
 
-    // Step 1: Properties (proxy v6 — Reports API)
+    // Step 1: Properties (proxy v7 — Reports API)
     updateProgress(1, 'active', 'Fetching properties\u2026');
     var propOk = await withStepTimeout(fetchProperties, 60000);
     updateProgress(1, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
     if (propOk) { populateDropdowns(); renderWorkOrders(); }
 
-    // Step 2: Turns — In Progress only, 60-day window (proxy v6 — Reports API)
+    // Step 2: Turns — In Progress only, 60-day window (proxy v7 — Reports API)
     // Short timeout (20s) — turns are supplementary; pipeline works from WOs + move-outs too
     updateProgress(2, 'active', 'Fetching in-progress turns\u2026');
     var turnOk = await withStepTimeout(function() { return fetchTurns(); }, 20000);
     updateProgress(2, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns skipped (timeout)');
     if (turnOk) { renderTurnBoard(); renderActivityFeed(); }
 
-    // Step 3: Upcoming Move-Outs — tenant directory, Notice tenants (proxy v6 — Reports API)
+    // Step 3: Upcoming Move-Outs — tenant directory, Notice tenants (proxy v7 — Reports API)
     updateProgress(3, 'active', 'Fetching upcoming move-outs\u2026');
     var moOk = await withStepTimeout(fetchUpcomingMoveouts, 45000);
     updateProgress(3, moOk ? 'done' : 'error', moOk ? UPCOMING_MOVEOUTS.length + ' upcoming' : 'Move-outs skipped');
@@ -4438,13 +4561,13 @@ async function fetchAllLive() {
     updateProgress(4, twoOk ? 'done' : 'error', twoOk ? TURN_WORK_ORDERS.length + ' turn WOs' : 'Turn WOs skipped');
     if (twoOk) { renderTurnBoard(); }
 
-    // Step 5: Property Groups (proxy v6 — DB API v0)
+    // Step 5: Property Groups (proxy v7 — DB API v0)
     updateProgress(5, 'active', 'Fetching property groups\u2026');
     var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
     updateProgress(5, grpOk ? 'done' : 'error', grpOk ? PROPERTY_GROUPS.length + ' groups' : 'Groups skipped');
     if (grpOk) { populateDropdowns(); renderWorkOrders(); }
 
-    // Step 6: Recent Tasks (proxy v6 — DB API v0)
+    // Step 6: Recent Tasks (proxy v7 — DB API v0)
     updateProgress(6, 'active', 'Fetching recent tasks\u2026');
     var taskOk = await withStepTimeout(fetchRecentTasks, 45000);
     updateProgress(6, taskOk ? 'done' : 'error', taskOk ? RECENT_TASKS.length + ' tasks' : 'Tasks skipped');
