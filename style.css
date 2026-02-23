@@ -560,6 +560,21 @@ body {
 .vendor-id { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
 .vendor-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); padding: 4px 0; }
 .vendor-row + .vendor-row { border-top: 1px solid var(--border); }
+.vendor-category-badge { display:inline-block; font-size:10px; font-weight:600; letter-spacing:0.5px; text-transform:uppercase; padding:2px 8px; border-radius:10px; }
+.vendor-category-badge.cat-employee { background:rgba(59,130,246,0.15); color:#3b82f6; }
+.vendor-category-badge.cat-in-house-tech { background:rgba(16,185,129,0.15); color:#10b981; }
+.vendor-category-badge.cat-vendor { background:rgba(139,92,246,0.15); color:#8b5cf6; }
+.vendor-category-badge.cat-subcontractor { background:rgba(245,158,11,0.15); color:#f59e0b; }
+.vendor-category-badge.cat-utilities { background:rgba(14,165,233,0.15); color:#0ea5e9; }
+.vendor-category-badge.cat-hoa { background:rgba(244,63,94,0.15); color:#f43f5e; }
+.vendor-category-badge.cat-insurance { background:rgba(168,85,247,0.15); color:#a855f7; }
+.vendor-category-badge.cat-uncategorized { background:rgba(148,163,184,0.15); color:#94a3b8; }
+.vendor-compliance-toggle { display:inline-flex; align-items:center; gap:4px; font-size:11px; padding:3px 8px; border-radius:6px; border:1px solid var(--border); cursor:pointer; transition:var(--transition); background:transparent; color:var(--text-secondary); }
+.vendor-compliance-toggle:hover { border-color:var(--accent); }
+.vendor-compliance-toggle.is-compliant { border-color:var(--success); color:var(--success); background:rgba(16,185,129,0.08); }
+.vendor-compliance-toggle.is-manual { border-style:dashed; }
+.vendor-card.manual-compliant { border-left:3px solid var(--success); border-left-style:dashed; }
+.vendor-cat-select { font-family:var(--font-mono); font-size:11px; padding:2px 6px; border-radius:6px; border:1px solid var(--border); background:var(--bg-input); color:var(--text-primary); cursor:pointer; max-width:140px; }
 
 /* Error log */
 .error-log { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
@@ -1014,3 +1029,4 @@ body {
   .pipe-card-status { align-items: flex-start; flex-direction: row; gap: 10px; }
   .pipe-legend-stages { max-width: unset; }
 }
+

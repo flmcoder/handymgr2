@@ -79,6 +79,7 @@
   <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
   <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
   <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
+  <button class="nav-tab" data-tab="webhooks"><i class="fas fa-plug"></i> Webhooks <span class="badge" id="whBadge">—</span></button>
   <button class="nav-tab" data-tab="templates"><i class="fas fa-envelope-open-text"></i> Templates</button>
   <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
 </nav>
@@ -282,14 +283,80 @@
 
 <section class="section" id="sec-vendors">
   <div class="section-header">
-    <div><div class="section-title"><i class="fas fa-hard-hat" style="color:var(--accent)"></i> Vendor Compliance Tracker</div><div class="section-subtitle">CompliantStatus synced from Database API — LiabilityInsuranceExpiration monitored</div></div>
+    <div><div class="section-title"><i class="fas fa-hard-hat" style="color:var(--accent)"></i> Vendor Compliance Tracker</div><div class="section-subtitle">CompliantStatus synced from API — manual overrides persisted locally &bull; Categories saved per vendor</div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <select id="vendorCategoryFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px">
+        <option value="">All Categories</option>
+        <option value="Employee">Employee</option>
+        <option value="In-House Tech">In-House Tech</option>
+        <option value="Vendor">Vendor</option>
+        <option value="Subcontractor">Subcontractor</option>
+        <option value="Utilities">Utilities</option>
+        <option value="HOA">HOA</option>
+        <option value="Insurance">Insurance</option>
+        <option value="Uncategorized">Uncategorized</option>
+      </select>
+      <select id="vendorComplianceFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px">
+        <option value="">All Compliance</option>
+        <option value="compliant">Compliant</option>
+        <option value="non-compliant">Non-Compliant</option>
+        <option value="manual-compliant">Manually Compliant</option>
+      </select>
       <select id="vendorGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search vendors…" id="vendorSearch"></div>
       <button class="sec-refresh" id="btnRefreshVendors"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
   <div class="vendor-grid stagger" id="vendorGrid"></div>
+</section>
+
+<section class="section" id="sec-webhooks">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-plug" style="color:var(--accent)"></i> Webhook Data Review</div><div class="section-subtitle">SQLite datastore &bull; filter by type, source, date &bull; search across title &amp; body</div></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="action-btn" id="btnWhRefresh"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <button class="action-btn" id="btnWhMigrate" title="Migrate old blob data to SQLite"><i class="fas fa-database"></i> Migrate Blob</button>
+      <button class="action-btn" id="btnWhStats"><i class="fas fa-chart-bar"></i> Stats</button>
+    </div>
+  </div>
+  <!-- Filters row -->
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+    <input class="form-input" id="whSearch" placeholder="Search title/body\u2026" style="flex:1;min-width:140px;font-size:13px">
+    <select class="form-select" id="whTypeFilter" style="min-width:100px;font-size:13px"><option value="">All Types</option></select>
+    <select class="form-select" id="whSourceFilter" style="min-width:100px;font-size:13px"><option value="">All Sources</option></select>
+    <input class="form-input" type="date" id="whDateFrom" style="font-size:13px" title="From date">
+    <input class="form-input" type="date" id="whDateTo" style="font-size:13px" title="To date">
+  </div>
+  <!-- Stats bar (hidden by default) -->
+  <div id="whStatsPanel" class="hidden" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px">
+    <div style="font-weight:600;font-size:13px;color:var(--text-primary);margin-bottom:8px"><i class="fas fa-chart-bar" style="color:var(--accent);margin-right:6px"></i> Webhook Statistics</div>
+    <div id="whStatsContent" style="font-size:12px;color:var(--text-secondary)">Loading stats\u2026</div>
+  </div>
+  <!-- Data table -->
+  <div style="overflow-x:auto">
+    <table class="data-table" id="whDataTable">
+      <thead>
+        <tr>
+          <th style="width:40px">#</th>
+          <th style="width:150px">Timestamp</th>
+          <th style="width:90px">Type</th>
+          <th>Title</th>
+          <th style="width:90px">Priority</th>
+          <th style="width:90px">Source</th>
+          <th style="width:50px"></th>
+        </tr>
+      </thead>
+      <tbody id="whDataBody"></tbody>
+    </table>
+  </div>
+  <!-- Pagination -->
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;color:var(--text-muted)">
+    <span id="whPaginationInfo">No data</span>
+    <div style="display:flex;gap:6px">
+      <button class="action-btn" id="btnWhPrev" disabled><i class="fas fa-chevron-left"></i> Prev</button>
+      <button class="action-btn" id="btnWhNext" disabled>Next <i class="fas fa-chevron-right"></i></button>
+    </div>
+  </div>
 </section>
 
 <section class="section" id="sec-templates">
@@ -425,6 +492,7 @@
 <div id="toast" style="display:none;position:fixed;bottom:20px;right:20px;z-index:300;background:var(--bg-card);border:1px solid var(--accent);border-radius:var(--radius);padding:12px 20px;font-size:13px;color:var(--text-primary);box-shadow:var(--shadow);animation:fadeIn 0.2s ease;">
   <span id="toastMsg"></span>
 </div>
+
 
 <script>
 /* __JS_PLACEHOLDER__ */

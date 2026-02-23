@@ -569,6 +569,21 @@ body {
 .vendor-id { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
 .vendor-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); padding: 4px 0; }
 .vendor-row + .vendor-row { border-top: 1px solid var(--border); }
+.vendor-category-badge { display:inline-block; font-size:10px; font-weight:600; letter-spacing:0.5px; text-transform:uppercase; padding:2px 8px; border-radius:10px; }
+.vendor-category-badge.cat-employee { background:rgba(59,130,246,0.15); color:#3b82f6; }
+.vendor-category-badge.cat-in-house-tech { background:rgba(16,185,129,0.15); color:#10b981; }
+.vendor-category-badge.cat-vendor { background:rgba(139,92,246,0.15); color:#8b5cf6; }
+.vendor-category-badge.cat-subcontractor { background:rgba(245,158,11,0.15); color:#f59e0b; }
+.vendor-category-badge.cat-utilities { background:rgba(14,165,233,0.15); color:#0ea5e9; }
+.vendor-category-badge.cat-hoa { background:rgba(244,63,94,0.15); color:#f43f5e; }
+.vendor-category-badge.cat-insurance { background:rgba(168,85,247,0.15); color:#a855f7; }
+.vendor-category-badge.cat-uncategorized { background:rgba(148,163,184,0.15); color:#94a3b8; }
+.vendor-compliance-toggle { display:inline-flex; align-items:center; gap:4px; font-size:11px; padding:3px 8px; border-radius:6px; border:1px solid var(--border); cursor:pointer; transition:var(--transition); background:transparent; color:var(--text-secondary); }
+.vendor-compliance-toggle:hover { border-color:var(--accent); }
+.vendor-compliance-toggle.is-compliant { border-color:var(--success); color:var(--success); background:rgba(16,185,129,0.08); }
+.vendor-compliance-toggle.is-manual { border-style:dashed; }
+.vendor-card.manual-compliant { border-left:3px solid var(--success); border-left-style:dashed; }
+.vendor-cat-select { font-family:var(--font-mono); font-size:11px; padding:2px 6px; border-radius:6px; border:1px solid var(--border); background:var(--bg-input); color:var(--text-primary); cursor:pointer; max-width:140px; }
 
 /* Error log */
 .error-log { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
@@ -1095,6 +1110,7 @@ body {
   <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
   <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
   <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
+  <button class="nav-tab" data-tab="webhooks"><i class="fas fa-plug"></i> Webhooks <span class="badge" id="whBadge">—</span></button>
   <button class="nav-tab" data-tab="templates"><i class="fas fa-envelope-open-text"></i> Templates</button>
   <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
 </nav>
@@ -1298,14 +1314,80 @@ body {
 
 <section class="section" id="sec-vendors">
   <div class="section-header">
-    <div><div class="section-title"><i class="fas fa-hard-hat" style="color:var(--accent)"></i> Vendor Compliance Tracker</div><div class="section-subtitle">CompliantStatus synced from Database API — LiabilityInsuranceExpiration monitored</div></div>
+    <div><div class="section-title"><i class="fas fa-hard-hat" style="color:var(--accent)"></i> Vendor Compliance Tracker</div><div class="section-subtitle">CompliantStatus synced from API — manual overrides persisted locally &bull; Categories saved per vendor</div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <select id="vendorCategoryFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px">
+        <option value="">All Categories</option>
+        <option value="Employee">Employee</option>
+        <option value="In-House Tech">In-House Tech</option>
+        <option value="Vendor">Vendor</option>
+        <option value="Subcontractor">Subcontractor</option>
+        <option value="Utilities">Utilities</option>
+        <option value="HOA">HOA</option>
+        <option value="Insurance">Insurance</option>
+        <option value="Uncategorized">Uncategorized</option>
+      </select>
+      <select id="vendorComplianceFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px">
+        <option value="">All Compliance</option>
+        <option value="compliant">Compliant</option>
+        <option value="non-compliant">Non-Compliant</option>
+        <option value="manual-compliant">Manually Compliant</option>
+      </select>
       <select id="vendorGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search vendors…" id="vendorSearch"></div>
       <button class="sec-refresh" id="btnRefreshVendors"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
   <div class="vendor-grid stagger" id="vendorGrid"></div>
+</section>
+
+<section class="section" id="sec-webhooks">
+  <div class="section-header">
+    <div><div class="section-title"><i class="fas fa-plug" style="color:var(--accent)"></i> Webhook Data Review</div><div class="section-subtitle">SQLite datastore &bull; filter by type, source, date &bull; search across title &amp; body</div></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="action-btn" id="btnWhRefresh"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <button class="action-btn" id="btnWhMigrate" title="Migrate old blob data to SQLite"><i class="fas fa-database"></i> Migrate Blob</button>
+      <button class="action-btn" id="btnWhStats"><i class="fas fa-chart-bar"></i> Stats</button>
+    </div>
+  </div>
+  <!-- Filters row -->
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+    <input class="form-input" id="whSearch" placeholder="Search title/body\u2026" style="flex:1;min-width:140px;font-size:13px">
+    <select class="form-select" id="whTypeFilter" style="min-width:100px;font-size:13px"><option value="">All Types</option></select>
+    <select class="form-select" id="whSourceFilter" style="min-width:100px;font-size:13px"><option value="">All Sources</option></select>
+    <input class="form-input" type="date" id="whDateFrom" style="font-size:13px" title="From date">
+    <input class="form-input" type="date" id="whDateTo" style="font-size:13px" title="To date">
+  </div>
+  <!-- Stats bar (hidden by default) -->
+  <div id="whStatsPanel" class="hidden" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px">
+    <div style="font-weight:600;font-size:13px;color:var(--text-primary);margin-bottom:8px"><i class="fas fa-chart-bar" style="color:var(--accent);margin-right:6px"></i> Webhook Statistics</div>
+    <div id="whStatsContent" style="font-size:12px;color:var(--text-secondary)">Loading stats\u2026</div>
+  </div>
+  <!-- Data table -->
+  <div style="overflow-x:auto">
+    <table class="data-table" id="whDataTable">
+      <thead>
+        <tr>
+          <th style="width:40px">#</th>
+          <th style="width:150px">Timestamp</th>
+          <th style="width:90px">Type</th>
+          <th>Title</th>
+          <th style="width:90px">Priority</th>
+          <th style="width:90px">Source</th>
+          <th style="width:50px"></th>
+        </tr>
+      </thead>
+      <tbody id="whDataBody"></tbody>
+    </table>
+  </div>
+  <!-- Pagination -->
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;color:var(--text-muted)">
+    <span id="whPaginationInfo">No data</span>
+    <div style="display:flex;gap:6px">
+      <button class="action-btn" id="btnWhPrev" disabled><i class="fas fa-chevron-left"></i> Prev</button>
+      <button class="action-btn" id="btnWhNext" disabled>Next <i class="fas fa-chevron-right"></i></button>
+    </div>
+  </div>
 </section>
 
 <section class="section" id="sec-templates">
@@ -1495,15 +1577,25 @@ function emptyHtml(icon, msg) { return '<div class="empty-state"><i class="fas '
 
 // ---- AppFolio deep link builder ----
 // Builds URLs to view resources directly in AppFolio
+// Work orders: /maintenance/service_requests/{base_number}/
+//   "12345-1" → "12345" (strip hyphen suffix)
 function appfolioUrl(type, id) {
   if (!id) return '';
   var base = API_VHOST ? 'https://' + API_VHOST + '.appfolio.com' : '';
   if (!base) return '';
   switch (type) {
-    case 'work_order': return base + '/tasks/work_orders/' + encodeURIComponent(id);
+    case 'work_order':
+      var woNum = String(id);
+      // If a UUID was passed (long string), try to resolve to WO number
+      if (woNum.length > 20) {
+        var match = WORK_ORDERS.find(function(w) { return w.uuid === woNum; });
+        if (match && match.id) woNum = String(match.id);
+      }
+      // Strip hyphen suffix: "12345-1" → "12345"
+      woNum = woNum.replace(/-\d+$/, '');
+      return base + '/maintenance/service_requests/' + encodeURIComponent(woNum) + '/';
     case 'vendor': return base + '/vendor_details?vendor_id=' + encodeURIComponent(id);
     case 'property': return base + '/property_details?property_id=' + encodeURIComponent(id);
-    case 'bill': return base + '/bills/' + encodeURIComponent(id);
     case 'unit_turn': return base + '/tasks/unit_turns/' + encodeURIComponent(id);
     case 'inspection': return base + '/tasks/unit_inspections/' + encodeURIComponent(id);
     case 'tenant': return base + '/tenant_details?occupancy_id=' + encodeURIComponent(id);
@@ -1512,16 +1604,29 @@ function appfolioUrl(type, id) {
 }
 
 // ---- Shared group filter logic ----
-// Checks if a property (by ID or name) belongs to the given group
+// Checks if a property (by ID or name) belongs to the given group.
+// Multiple matching strategies to handle UUID/numeric ID mismatch and
+// cases where resolvePropertyGroupNames hasn't completed yet.
 function isInPropertyGroup(propertyId, propertyName, groupName) {
   if (!groupName) return true; // no filter = show all
-  // Check property.group tag (set by fetchPropertyGroups name-matching)
-  var prop = PROPERTIES.find(function(p) {
-    return p.name === propertyName || String(p.id) === String(propertyId);
-  });
+
+  // Find the property in PROPERTIES (Reports API data)
+  var prop = null;
+  if (propertyName || propertyId) {
+    prop = PROPERTIES.find(function(p) {
+      if (propertyName && p.name && p.name.toLowerCase() === String(propertyName).toLowerCase()) return true;
+      if (propertyId && String(p.id) === String(propertyId)) return true;
+      return false;
+    });
+  }
+
+  // Strategy 1: prop.group tag (set by resolvePropertyGroupNames UUID→Name mapping)
   if (prop && prop.group) return prop.group === groupName;
+
+  // Strategy 2: prop.portfolio field from Reports API (works without UUID map)
   if (prop && prop.portfolio) return prop.portfolio === groupName;
-  // Fallback: check group's resolvedNames (name-based, bridging UUID/numeric gap)
+
+  // Strategy 3: Check group's resolvedNames (populated by resolvePropertyGroupNames)
   if (propertyName) {
     var nameLower = String(propertyName).toLowerCase();
     var nameMatch = PROPERTY_GROUPS.some(function(g) {
@@ -1531,7 +1636,26 @@ function isInPropertyGroup(propertyId, propertyName, groupName) {
     });
     if (nameMatch) return true;
   }
-  // Last resort: direct UUID/ID check (works if IDs happen to match)
+
+  // Strategy 4: Portfolio-based group matching — find all properties with this
+  // portfolio name and check if ANY group maps to them. Handles case where
+  // dropdown shows DB API group names but properties have Reports API portfolio names.
+  if (prop && prop.portfolio && PROPERTY_GROUPS.length > 0) {
+    // Get all property names in the selected group
+    var grp = PROPERTY_GROUPS.find(function(g) { return g.name === groupName; });
+    if (grp && Array.isArray(grp.resolvedNames) && grp.resolvedNames.length > 0) {
+      var propInGroup = grp.resolvedNames.some(function(rn) {
+        return String(rn).toLowerCase() === (prop.name || '').toLowerCase();
+      });
+      if (propInGroup) return true;
+    }
+    // If the group has portfolioNames (built from PROPERTIES), check those
+    if (grp && Array.isArray(grp.portfolioNames)) {
+      return grp.portfolioNames.indexOf(prop.portfolio) !== -1;
+    }
+  }
+
+  // Strategy 5: Direct UUID/ID check (works if IDs happen to match)
   return PROPERTY_GROUPS.some(function(g) {
     return g.name === groupName && Array.isArray(g.properties) && g.properties.some(function(pid) {
       return String(pid) === String(propertyId);
@@ -1629,7 +1753,7 @@ function timeAgo(dateStr) {
    (localStorage/sessionStorage unavailable in Poe iframe)
    ================================================================= */
 var CACHE_DB_NAME = 'maint_cockpit_cache';
-var CACHE_DB_VERSION = 2;
+var CACHE_DB_VERSION = 3;
 var CACHE_STORE = 'api_data';
 var CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes — matches vault timeout
 var _cacheDb = null;
@@ -1646,6 +1770,9 @@ function openCacheDB() {
         }
         if (!db.objectStoreNames.contains('wo_flags')) {
           db.createObjectStore('wo_flags', { keyPath: 'woId' });
+        }
+        if (!db.objectStoreNames.contains('vendor_overrides')) {
+          db.createObjectStore('vendor_overrides', { keyPath: 'vendorId' });
         }
       };
       req.onsuccess = function(e) { _cacheDb = e.target.result; resolve(_cacheDb); };
@@ -1758,7 +1885,7 @@ function exportCacheToJSON() {
     document.body.removeChild(a);
     setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
     var sizeKB = Math.round(json.length / 1024);
-    showToast('Exported ' + total + ' records (' + sizeKB + ' KB) \u2014 WO:' + counts.work_orders + ' V:' + counts.vendors + ' P:' + counts.properties + ' B:' + counts.bills + ' T:' + counts.turns + ' I:' + counts.inspections);
+    showToast('Exported ' + total + ' records (' + sizeKB + ' KB) \u2014 WO:' + counts.work_orders + ' V:' + counts.vendors + ' P:' + counts.properties + ' T:' + counts.turns + ' I:' + counts.inspections);
   } catch (e) {
     showToast('Export failed: ' + (e.message || e));
   }
@@ -1864,6 +1991,56 @@ async function toggleFlag(woId) {
 function isWOFlagged(woId) { return !!WO_FLAGS[woId]; }
 
 /* =================================================================
+   VENDOR OVERRIDES — IndexedDB-persisted compliance + category
+   Stores: { vendorId, compliant (bool|null), category (string) }
+   null compliant = use API value; true/false = manual override
+   ================================================================= */
+var VENDOR_OVERRIDES = {};
+var VENDOR_CATEGORIES = ['Employee', 'In-House Tech', 'Vendor', 'Subcontractor', 'Utilities', 'HOA', 'Insurance', 'Uncategorized'];
+
+async function loadVendorOverrides() {
+  try {
+    var db = await openCacheDB();
+    return new Promise(function(resolve) {
+      var tx = db.transaction('vendor_overrides', 'readonly');
+      var store = tx.objectStore('vendor_overrides');
+      var req = store.getAll();
+      req.onsuccess = function() {
+        VENDOR_OVERRIDES = {};
+        (req.result || []).forEach(function(v) { VENDOR_OVERRIDES[v.vendorId] = v; });
+        resolve();
+      };
+      req.onerror = function() { resolve(); };
+    });
+  } catch (e) { /* IndexedDB unavailable */ }
+}
+
+async function saveVendorOverride(vendorId, overrides) {
+  var existing = VENDOR_OVERRIDES[vendorId] || { vendorId: vendorId };
+  VENDOR_OVERRIDES[vendorId] = Object.assign(existing, overrides, { ts: Date.now() });
+  try {
+    var db = await openCacheDB();
+    var tx = db.transaction('vendor_overrides', 'readwrite');
+    tx.objectStore('vendor_overrides').put(VENDOR_OVERRIDES[vendorId]);
+  } catch (e) { /* best-effort */ }
+}
+
+function getVendorOverride(vendorId) {
+  return VENDOR_OVERRIDES[vendorId] || null;
+}
+
+function getVendorCategory(vendorId) {
+  var ov = VENDOR_OVERRIDES[vendorId];
+  return (ov && ov.category) ? ov.category : '';
+}
+
+function isVendorManuallyCompliant(vendorId) {
+  var ov = VENDOR_OVERRIDES[vendorId];
+  if (!ov || ov.compliant === null || ov.compliant === undefined) return null; // no override
+  return ov.compliant;
+}
+
+/* =================================================================
    CREDENTIAL VAULT — AES-256-GCM + PBKDF2
    ================================================================= */
 var VAULT_BLOBS = [
@@ -1941,7 +2118,7 @@ function lockVault() {
   vaultCountdownId = null;
   appInitialized = false;
   WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; API_ERRORS = [];
-  _vendorsLazyLoaded = false; _inspLazyLoaded = false;
+  _vendorsLazyLoaded = false; _inspLazyLoaded = false; _whLazyLoaded = false;
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
   // Note: IndexedDB cache is NOT cleared on lock — data persists for next unlock
   updateCacheBadge('offline');
@@ -1991,7 +2168,7 @@ function fetchWithTimeout(url, opts, timeoutMs) {
   return fetch(url, fetchOpts).finally(function() { clearTimeout(timer); });
 }
 
-// ---- Proxy v6 action endpoint caller ----
+// ---- Proxy v7 action endpoint caller ----
 // Makes ONE request to proxy like ?action=work_orders&days=180
 // Proxy does all pagination server-side and returns complete dataset
 // Includes 45-second timeout — never hangs forever
@@ -2182,13 +2359,13 @@ async function apiFetch(path, options) {
 
       // --- Non-retryable errors (throw immediately, no retry) ---
       if (res.status === 401) {
-        logApiError(401, 'Unauthorized — proxy may have wrong credentials. Verify the v6 proxy has correct Client ID, Secret, and Developer ID.', 'resolved');
-        showCorsError('401 Unauthorized — AppFolio rejected the credentials. Verify your v6 proxy has the correct Client ID, Client Secret, and Developer ID hardcoded.');
+        logApiError(401, 'Unauthorized — proxy may have wrong credentials. Verify the v7 proxy has correct Client ID, Secret, and Developer ID.', 'resolved');
+        showCorsError('401 Unauthorized — AppFolio rejected the credentials. Verify your v7 proxy has the correct Client ID, Client Secret, and Developer ID hardcoded.');
         throw new Error('401: Unauthorized — check proxy credentials');
       }
       if (res.status === 404) {
         logApiError(404, 'Not Found — endpoint does not exist or credentials are invalid. URL: ' + path, 'resolved');
-        showCorsError('404 Not Found — The endpoint may not exist or credentials may be rejected. Verify your v6 proxy configuration.');
+        showCorsError('404 Not Found — The endpoint may not exist or credentials may be rejected. Verify your v7 proxy configuration.');
         throw new Error('404: Not Found — ' + path);
       }
       if (res.status === 422) {
@@ -2349,7 +2526,7 @@ function showCorsError(detail) {
     if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--warning)">SSL Certificate Error.</strong> Your proxy\'s SSL certificate may not be provisioned yet. New Val Town endpoints can take <strong>1-2 minutes</strong> for SSL to activate. Wait and try again, or verify the proxy URL is correct.'; }
     setApiStatus('error', 'SSL Error — Wait & Retry');
   } else if (isAuthStripped) {
-    if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--danger)">AppFolio rejected credentials.</strong> Make sure you deployed the <strong>v6 proxy code</strong> with correct Client ID, Secret, and Developer ID hardcoded inside. Visit your proxy URL in a browser \u2014 you should see a JSON response with <code>"proxy": "v6"</code>.'; }
+    if (msgEl) { msgEl.innerHTML = '<strong style="color:var(--danger)">AppFolio rejected credentials.</strong> Make sure you deployed the <strong>v7 proxy code</strong> with correct Client ID, Secret, and Developer ID hardcoded inside. Visit your proxy URL in a browser \u2014 you should see a JSON response with <code>"proxy": "v7"</code>.'; }
     setApiStatus('error', 'Auth Stripped by Proxy');
   } else if (API_PROXY) {
     if (msgEl) { msgEl.textContent = 'The proxy (' + API_PROXY.substring(0, 50) + ') failed. It may be down, rate-limited, or CSP-blocked.'; }
@@ -2397,6 +2574,7 @@ var WEBHOOK_EVENTS = [];
 var _webhookPollTimer = null;
 var _vendorsLazyLoaded = false; // lazy-load flag — vendors fetched on tab click
 var _inspLazyLoaded = false;   // lazy-load flag — inspections fetched on tab click
+var _whLazyLoaded = false;     // lazy-load flag — webhook data loaded on tab click
 var appInitialized = false;
 var WO_FLAGS = {};
 var WO_DETAIL_CACHE = {};
@@ -2606,7 +2784,7 @@ function hideProgress() {
    DATA FETCHING — Smart filtered API calls (180-day window)
    ================================================================= */
 
-// Work Orders: Proxy v6 ?action=work_orders — server-side pagination, one request
+// Work Orders: Proxy v7 ?action=work_orders — server-side pagination, one request
 // Open statuses: 0=New, 1=EstReq, 2=Estimated, 9=Assigned, 3=Scheduled,
 //   6=Waiting, 8=WorkDone, 12=ReadyToBill
 // Excludes: 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill
@@ -2656,7 +2834,7 @@ async function fetchWorkOrders() {
   }
 }
 
-// Vendors: Proxy v6 ?action=vendors — server-side pagination, one request
+// Vendors: Proxy v7 ?action=vendors — server-side pagination, one request
 async function fetchVendors() {
   try {
     setApiStatus('loading', 'Loading vendors (server-side)\u2026');
@@ -2693,7 +2871,7 @@ async function fetchVendors() {
   }
 }
 
-// Properties: Proxy v6 ?action=properties — server-side pagination, one request
+// Properties: Proxy v7 ?action=properties — server-side pagination, one request
 async function fetchProperties() {
   try {
     setApiStatus('loading', 'Loading properties (server-side)\u2026');
@@ -2727,7 +2905,7 @@ async function fetchProperties() {
   }
 }
 
-// Turns: Proxy v6 ?action=turns — 60-day window, In Progress only by default
+// Turns: Proxy v7 ?action=turns — 60-day window, In Progress only by default
 async function fetchTurns() {
   try {
     setApiStatus('loading', 'Loading turns (In Progress, 60d)\u2026');
@@ -2769,12 +2947,13 @@ async function fetchTurns() {
   }
 }
 
-// Inspections: Proxy v6 ?action=inspections — server-side pagination, one request
+// Inspections: Proxy v7 ?action=inspections — server-side pagination, one request
 var INSPECTIONS = [];
+var INSPECTION_FROM_YEAR = 2026; // default — only fetch inspections from this year onward
 async function fetchInspections() {
   try {
-    setApiStatus('loading', 'Loading inspections (server-side)\u2026');
-    var data = await proxyAction('inspections', { days: DATA_WINDOW_DAYS });
+    setApiStatus('loading', 'Loading inspections (' + INSPECTION_FROM_YEAR + '+)\u2026');
+    var data = await proxyAction('inspections', { from_date: INSPECTION_FROM_YEAR + '-01-01' });
     var results = data.results || [];
     INSPECTIONS = results.map(function(r) {
       return {
@@ -2798,30 +2977,48 @@ async function fetchInspections() {
   }
 }
 
-// Property Groups: Proxy v6 ?action=property_groups — DB API v0
+// Property Groups: Proxy v7 ?action=property_groups — DB API v0
 // DB API returns { data: [ { Id, Name, PropertyIds, Type, LastUpdatedAt } ] }
+// UUID→Name resolution via separate ?action=property_map (non-blocking)
 async function fetchPropertyGroups() {
   try {
     setApiStatus('loading', 'Loading property groups\u2026');
     var data = await proxyAction('property_groups');
     var results = data.results || data.data || [];
-    var uuidMap = data.property_uuid_map || {};
 
     PROPERTY_GROUPS = results.map(function(g) {
       return {
         id: g.Id || g.id || '',
         name: g.Name || g.name || '',
         properties: g.PropertyIds || g.Properties || g.properties || g.property_ids || [],
-        propertyNames: g.PropertyNames || [],
+        propertyNames: [],
         resolvedNames: []
       };
     });
 
-    // Build lookup: group \u2192 property names
-    // DB API uses UUIDs, Reports API uses numeric IDs \u2014 bridge via name matching
+    // Fetch UUID→Name map separately (non-blocking — groups work even if this fails)
+    resolvePropertyGroupNames();
+
+    return true;
+  } catch (err) {
+    console.log('fetchPropertyGroups error: ' + (err.message || err));
+    PROPERTY_GROUPS = [];
+    return false;
+  }
+}
+
+// Resolve UUID→Name mapping for property groups (called after groups load)
+// This is a separate call so property_groups never times out.
+// If the UUID map fails, falls back to portfolio-based matching from PROPERTIES.
+async function resolvePropertyGroupNames() {
+  var uuidMapOk = false;
+  // Step 1: Try UUID→Name resolution via property_map
+  try {
+    var mapData = await proxyAction('property_map');
+    var uuidMap = mapData.property_uuid_map || {};
+
     PROPERTY_GROUPS.forEach(function(g) {
-      var resolvedNames = (g.propertyNames || []).slice();
-      // Also resolve via uuid map from proxy
+      var resolvedNames = [];
       if (Array.isArray(g.properties) && uuidMap) {
         g.properties.forEach(function(pid) {
           var mapped = uuidMap[pid];
@@ -2830,6 +3027,7 @@ async function fetchPropertyGroups() {
         });
       }
       g.resolvedNames = resolvedNames;
+      g.propertyNames = resolvedNames;
 
       // Tag matching PROPERTIES entries with this group name
       resolvedNames.forEach(function(pname) {
@@ -2840,15 +3038,64 @@ async function fetchPropertyGroups() {
         if (prop) { prop.group = g.name; }
       });
     });
-    return true;
+    uuidMapOk = Object.keys(uuidMap).length > 0;
+    console.log('Property group UUID map resolved: ' + PROPERTY_GROUPS.length + ' groups, ' + Object.keys(uuidMap).length + ' properties mapped');
   } catch (err) {
-    console.log('fetchPropertyGroups error: ' + (err.message || err));
-    PROPERTY_GROUPS = [];
-    return false;
+    console.log('resolvePropertyGroupNames UUID map failed (will try portfolio fallback): ' + (err.message || err));
+  }
+
+  // Step 2: Portfolio fallback — always run to supplement UUID mapping.
+  // Uses the portfolio field from PROPERTIES (Reports API) to bridge groups.
+  // If a group's resolved property names match property names that have a portfolio,
+  // we tag the group with those portfolio names for Strategy 4 in isInPropertyGroup.
+  try {
+    PROPERTY_GROUPS.forEach(function(g) {
+      var portfolioSet = {};
+
+      // If UUID resolution worked, find portfolios for resolved properties
+      if (g.resolvedNames && g.resolvedNames.length > 0) {
+        g.resolvedNames.forEach(function(rn) {
+          var prop = PROPERTIES.find(function(p) {
+            return (p.name || '').toLowerCase() === String(rn).toLowerCase();
+          });
+          if (prop && prop.portfolio) portfolioSet[prop.portfolio] = true;
+          // Also tag prop.group if not already set
+          if (prop && !prop.group) prop.group = g.name;
+        });
+      }
+
+      // If UUID resolution didn't work, try matching group name to portfolio name directly
+      if (!uuidMapOk || (g.resolvedNames && g.resolvedNames.length === 0)) {
+        // Check if this group name matches any portfolio name in PROPERTIES
+        PROPERTIES.forEach(function(p) {
+          if (p.portfolio && p.portfolio === g.name) {
+            portfolioSet[p.portfolio] = true;
+            if (!p.group) p.group = g.name;
+          }
+        });
+      }
+
+      g.portfolioNames = Object.keys(portfolioSet);
+    });
+
+    // Also: for properties with a portfolio that matches a group name, tag them
+    PROPERTIES.forEach(function(p) {
+      if (p.portfolio && !p.group) {
+        var matchingGroup = PROPERTY_GROUPS.find(function(g) {
+          return g.name === p.portfolio;
+        });
+        if (matchingGroup) p.group = matchingGroup.name;
+      }
+    });
+
+    var tagged = PROPERTIES.filter(function(p) { return !!p.group; }).length;
+    console.log('Portfolio fallback complete: ' + tagged + '/' + PROPERTIES.length + ' properties tagged with groups');
+  } catch (err) {
+    console.log('Portfolio fallback error (non-fatal): ' + (err.message || err));
   }
 }
 
-// Recent Tasks: Proxy v6 ?action=recent_tasks — server-side pagination via DB API v0
+// Recent Tasks: Proxy v7 ?action=recent_tasks — server-side pagination via DB API v0
 async function fetchRecentTasks() {
   try {
     setApiStatus('loading', 'Loading recent tasks\u2026');
@@ -2885,7 +3132,7 @@ async function fetchRecentTasks() {
   }
 }
 
-// Upcoming Move-Outs: Proxy v6 ?action=upcoming_moveouts — tenant directory
+// Upcoming Move-Outs: Proxy v7 ?action=upcoming_moveouts — tenant directory
 // Returns tenants on notice or current with move_out dates in the window
 async function fetchUpcomingMoveouts() {
   try {
@@ -2916,7 +3163,7 @@ async function fetchUpcomingMoveouts() {
   }
 }
 
-// Turn Work Orders: Proxy v6 ?action=turn_work_orders — DB API v0
+// Turn Work Orders: Proxy v7 ?action=turn_work_orders — DB API v0
 // Real-time WO status for unit turn WOs (more current than Reports API)
 async function fetchTurnWorkOrders() {
   try {
@@ -3010,6 +3257,185 @@ function renderWebhookEventList() {
     html += '<div style="padding:4px 0;color:var(--text-muted);text-align:center">\u2026 and ' + (WEBHOOK_EVENTS.length - 20) + ' more</div>';
   }
   el.innerHTML = html;
+}
+
+/* =================================================================
+   WEBHOOK DATA REVIEW — SQLite-backed data table with filters
+   ================================================================= */
+var _whPage = 0;
+var _whPageSize = 50;
+var _whTotal = 0;
+var _whFilters = { search: '', type: '', source: '', from: '', to: '' };
+
+async function loadWebhookData() {
+  var body = $('#whDataBody');
+  if (!body) return;
+  body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fas fa-circle-notch fa-spin"></i> Loading webhook data\u2026</td></tr>';
+  try {
+    var params = {
+      limit: _whPageSize,
+      offset: _whPage * _whPageSize
+    };
+    if (_whFilters.search) params.search = _whFilters.search;
+    if (_whFilters.type) params.type = _whFilters.type;
+    if (_whFilters.from) params.from = _whFilters.from + 'T00:00:00Z';
+    if (_whFilters.to) params.to = _whFilters.to + 'T23:59:59Z';
+    // Source filter is client-side (proxy doesn't have source filter param — add if needed)
+    var data = await proxyAction('webhook_events', params);
+    _whTotal = data.total || 0;
+    var events = data.events || [];
+    // Update badge
+    var badge = $('#whBadge');
+    if (badge) badge.textContent = _whTotal || '\u2014';
+    renderWebhookDataTable(events);
+    updateWhPagination();
+    // Populate filter dropdowns from data (first load)
+    populateWhFilterDropdowns(events);
+  } catch (err) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--danger)">Failed to load: ' + escapeHtml(err.message || String(err)) + '</td></tr>';
+  }
+}
+
+function renderWebhookDataTable(events) {
+  var body = $('#whDataBody');
+  if (!body) return;
+  if (events.length === 0) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)">No webhook events found</td></tr>';
+    return;
+  }
+  var html = '';
+  events.forEach(function(e, idx) {
+    var isPri = e.priority === 'urgent' || e.priority === 'high';
+    var priClass = isPri ? 'color:var(--danger);font-weight:600' : 'color:var(--text-secondary)';
+    var rowNum = _whPage * _whPageSize + idx + 1;
+    html += '<tr class="wh-data-row" data-whid="' + (e.id || idx) + '" style="cursor:pointer">';
+    html += '<td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">' + rowNum + '</td>';
+    html += '<td style="font-family:var(--font-mono);font-size:11px;white-space:nowrap">' + escapeHtml(e.ts ? formatDate(e.ts) : '\u2014') + '</td>';
+    html += '<td><span class="tag wh-type-' + escapeHtml(String(e.type || 'webhook').replace(/[^a-z0-9_-]/gi, '')) + '">' + escapeHtml(e.type || 'webhook') + '</span></td>';
+    html += '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.title || '\u2014') + '</td>';
+    html += '<td style="' + priClass + '">' + escapeHtml(e.priority || 'normal') + '</td>';
+    html += '<td style="font-size:11px;color:var(--text-muted)">' + escapeHtml(e.source || '\u2014') + '</td>';
+    html += '<td><button class="action-btn" style="padding:2px 6px;font-size:10px" data-whexpand="' + (e.id || idx) + '" title="View raw"><i class="fas fa-eye"></i></button></td>';
+    html += '</tr>';
+    // Expandable detail row (hidden by default)
+    html += '<tr class="wh-detail-row hidden" id="whDetail_' + (e.id || idx) + '">';
+    html += '<td colspan="7" style="padding:10px 14px;background:var(--bg-input);border-bottom:2px solid var(--accent)">';
+    html += '<div style="font-size:11px;font-family:var(--font-mono);line-height:1.5">';
+    html += '<strong>Body:</strong> ' + escapeHtml(e.body || '(empty)') + '<br>';
+    if (e.raw) {
+      var rawStr = typeof e.raw === 'string' ? e.raw : JSON.stringify(e.raw);
+      html += '<strong>Raw JSON:</strong><pre style="margin:4px 0;padding:6px;background:var(--bg-tertiary);border-radius:4px;overflow-x:auto;max-height:120px;font-size:10px">' + escapeHtml(rawStr) + '</pre>';
+    }
+    html += '</div></td></tr>';
+  });
+  body.innerHTML = html;
+
+  // Expand/collapse handlers
+  body.querySelectorAll('[data-whexpand]').forEach(function(btn) {
+    btn.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      var whId = this.getAttribute('data-whexpand');
+      var detailRow = document.getElementById('whDetail_' + whId);
+      if (detailRow) detailRow.classList.toggle('hidden');
+    });
+  });
+}
+
+function updateWhPagination() {
+  var info = $('#whPaginationInfo');
+  var prevBtn = $('#btnWhPrev');
+  var nextBtn = $('#btnWhNext');
+  var start = _whPage * _whPageSize + 1;
+  var end = Math.min(start + _whPageSize - 1, _whTotal);
+  if (_whTotal === 0) { start = 0; end = 0; }
+  if (info) info.textContent = start + '\u2013' + end + ' of ' + _whTotal + ' events';
+  if (prevBtn) prevBtn.disabled = (_whPage === 0);
+  if (nextBtn) nextBtn.disabled = (end >= _whTotal);
+}
+
+function populateWhFilterDropdowns(events) {
+  var typeSelect = $('#whTypeFilter');
+  var sourceSelect = $('#whSourceFilter');
+  if (!typeSelect || !sourceSelect) return;
+  // Only populate if still at defaults (one option)
+  if (typeSelect.options.length <= 1) {
+    var types = {};
+    var sources = {};
+    events.forEach(function(e) {
+      if (e.type) types[e.type] = true;
+      if (e.source) sources[e.source] = true;
+    });
+    Object.keys(types).sort().forEach(function(t) {
+      var opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = t;
+      typeSelect.appendChild(opt);
+    });
+    Object.keys(sources).sort().forEach(function(s) {
+      var opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      sourceSelect.appendChild(opt);
+    });
+  }
+}
+
+async function loadWebhookStats() {
+  var panel = $('#whStatsPanel');
+  var content = $('#whStatsContent');
+  if (!panel || !content) return;
+  panel.classList.remove('hidden');
+  content.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Loading stats\u2026';
+  try {
+    var data = await proxyAction('webhook_stats');
+    var html = '<div style="display:flex;gap:20px;flex-wrap:wrap">';
+    html += '<div><strong style="font-size:18px;color:var(--accent)">' + (data.total || 0) + '</strong><div style="color:var(--text-muted)">Total Events</div></div>';
+    // By type
+    if (data.by_type && data.by_type.length > 0) {
+      html += '<div><strong>By Type:</strong><div style="margin-top:4px">';
+      data.by_type.forEach(function(t) {
+        html += '<span class="tag" style="margin:2px">' + escapeHtml(t.type) + ' <strong>' + t.count + '</strong></span> ';
+      });
+      html += '</div></div>';
+    }
+    // By source
+    if (data.by_source && data.by_source.length > 0) {
+      html += '<div><strong>By Source:</strong><div style="margin-top:4px">';
+      data.by_source.forEach(function(s) {
+        html += '<span class="tag" style="margin:2px">' + escapeHtml(s.source) + ' <strong>' + s.count + '</strong></span> ';
+      });
+      html += '</div></div>';
+    }
+    html += '</div>';
+    // By day (mini chart using bar divs)
+    if (data.by_day && data.by_day.length > 0) {
+      var maxCount = Math.max.apply(null, data.by_day.map(function(d) { return d.count; }));
+      html += '<div style="margin-top:10px"><strong>Last 30 Days:</strong>';
+      html += '<div style="display:flex;align-items:flex-end;gap:2px;height:60px;margin-top:6px">';
+      data.by_day.slice().reverse().forEach(function(d) {
+        var pct = maxCount > 0 ? Math.max(4, (d.count / maxCount) * 100) : 4;
+        html += '<div style="flex:1;background:var(--accent);border-radius:2px 2px 0 0;height:' + pct + '%;min-width:4px;opacity:0.8" title="' + escapeHtml(d.day) + ': ' + d.count + '"></div>';
+      });
+      html += '</div></div>';
+    }
+    content.innerHTML = html;
+  } catch (err) {
+    content.innerHTML = '<span style="color:var(--danger)">Failed: ' + escapeHtml(err.message || String(err)) + '</span>';
+  }
+}
+
+async function migrateWebhookBlob() {
+  var btn = $('#btnWhMigrate');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Migrating\u2026'; }
+  try {
+    var data = await proxyAction('webhook_migrate');
+    showToast('Migrated ' + (data.migrated || 0) + ' events from blob to SQLite');
+    loadWebhookData();
+  } catch (err) {
+    showToast('Migration failed: ' + (err.message || err));
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-database"></i> Migrate Blob'; }
+  }
 }
 
 /* =================================================================
@@ -3211,8 +3637,11 @@ async function fetchWONotes(woIdOrUuid) {
   if (!woIdOrUuid) return [];
   if (WO_DETAIL_CACHE['notes_' + woIdOrUuid]) return WO_DETAIL_CACHE['notes_' + woIdOrUuid];
   try {
-    var data = await apiFetch('/api/v0/work_orders/' + woIdOrUuid + '/notes');
-    var notes = (data && data.data) ? data.data : (Array.isArray(data) ? data : []);
+    // Use dedicated proxy action with v0 credentials (like property_groups)
+    var data = await proxyAction('wo_notes', { wo_id: woIdOrUuid });
+    var notes = (data && data.results) ? data.results :
+                (data && data.data) ? data.data :
+                (Array.isArray(data) ? data : []);
     WO_DETAIL_CACHE['notes_' + woIdOrUuid] = notes;
     return notes;
   } catch (e) { return []; }
@@ -3353,7 +3782,7 @@ function renderPayroll() {
   var html = '';
   workDone.forEach(function(wo) {
     var flagged = isWOFlagged(wo.id);
-    var afUrl = appfolioUrl('work_order', wo.uuid);
+    var afUrl = appfolioUrl('work_order', wo.id || wo.uuid);
     html += '<tr class="payroll-row" data-woid="' + escapeHtml(String(wo.id)) + '" data-wouuid="' + escapeHtml(String(wo.uuid)) + '" style="cursor:pointer;' + (flagged ? 'background:var(--warning-dim)' : '') + '">';
     html += '<td style="font-family:var(--font-mono);color:var(--accent)">#' + escapeHtml(String(wo.id)) + (afUrl ? ' <i class="fas fa-external-link-alt" style="font-size:9px;opacity:0.5"></i>' : '') + '</td>';
     html += '<td>' + escapeHtml(wo.propertyName) + '</td>';
@@ -3388,7 +3817,7 @@ function renderPayroll() {
         { label: 'Amount', value: wo.amount ? currency(parseFloat(wo.amount)) : '\u2014' },
         { label: 'Tenant', value: wo.tenant || '\u2014' },
         { label: 'Assigned To', value: wo.assignedUser || '\u2014' }
-      ], appfolioUrl('work_order', wo.uuid));
+      ], appfolioUrl('work_order', wo.id || wo.uuid));
     });
   });
 
@@ -3747,7 +4176,7 @@ function showWODetail(id) {
   var wo = WORK_ORDERS.find(function(w) { return String(w.id) === String(id); });
   if (!wo) return;
   var woDbUuid = resolveWODbUuid(wo);
-  var woAfUrl = appfolioUrl('work_order', wo.uuid || wo.id);
+  var woAfUrl = appfolioUrl('work_order', wo.id || wo.uuid);
   $('#woModalTitle').innerHTML = '#' + escapeHtml(String(wo.id)) + ' \u2014 ' + escapeHtml(wo.propertyName) + ' ' + escapeHtml(wo.unit) + (woAfUrl ? ' <a href="' + escapeHtml(woAfUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:var(--accent);margin-left:8px;text-decoration:none" title="View in AppFolio"><i class="fas fa-external-link-alt"></i></a>' : '');
 
   // Flag button state
@@ -3834,7 +4263,7 @@ function showWODetail(id) {
       });
     }
   } else {
-    var smEl = document.getElementById('detailSiteMgr');
+    smEl = document.getElementById('detailSiteMgr');
     if (smEl) smEl.textContent = '\u2014';
   }
 
@@ -4601,12 +5030,28 @@ function renderInspections(search) {
   if (ib) ib.textContent = overdueCount;
 }
 
+function vendorCatClass(cat) {
+  if (!cat) return 'cat-uncategorized';
+  return 'cat-' + cat.toLowerCase().replace(/[\s]+/g, '-');
+}
+
+function resolveVendorCompliance(v) {
+  // Manual override takes priority over API value
+  var manual = isVendorManuallyCompliant(v.id);
+  if (manual !== null) return { compliant: manual, isManual: true };
+  return { compliant: v.compliant, isManual: false };
+}
+
 function renderVendors(search) {
   var container = $('#vendorGrid');
 
   // Sync group filter dropdown
   var vendGrpSel = $('#vendorGroupFilter');
   if (vendGrpSel && vendGrpSel.value !== currentPropertyGroup) vendGrpSel.value = currentPropertyGroup;
+
+  // Read filter states
+  var catFilter = $('#vendorCategoryFilter') ? $('#vendorCategoryFilter').value : '';
+  var compFilter = $('#vendorComplianceFilter') ? $('#vendorComplianceFilter').value : '';
 
   // Note: Vendors don't have a direct property association for group filtering,
   // but we can filter by checking which vendors have WOs in the group
@@ -4622,13 +5067,31 @@ function renderVendors(search) {
 
   var filtered = VENDORS.filter(function(v) {
     if (vendorsInGroup && !vendorsInGroup[(v.name || '').toLowerCase()]) return false;
+
+    // Category filter
+    if (catFilter) {
+      var vCat = getVendorCategory(v.id) || 'Uncategorized';
+      if (vCat !== catFilter) return false;
+    }
+
+    // Compliance filter
+    if (compFilter) {
+      var res = resolveVendorCompliance(v);
+      if (compFilter === 'compliant' && !res.compliant) return false;
+      if (compFilter === 'non-compliant' && res.compliant) return false;
+      if (compFilter === 'manual-compliant' && !(res.compliant && res.isManual)) return false;
+    }
+
     if (!search) return true;
     var s = search.toLowerCase();
-    return (v.name || '').toLowerCase().indexOf(s) !== -1 || (v.email || '').toLowerCase().indexOf(s) !== -1;
+    var vCatStr = getVendorCategory(v.id) || '';
+    return (v.name || '').toLowerCase().indexOf(s) !== -1
+      || (v.email || '').toLowerCase().indexOf(s) !== -1
+      || vCatStr.toLowerCase().indexOf(s) !== -1;
   });
 
   if (filtered.length === 0) {
-    container.innerHTML = emptyHtml('fa-hard-hat', VENDORS.length === 0 ? 'No vendors loaded' : 'No vendors match your search');
+    container.innerHTML = emptyHtml('fa-hard-hat', VENDORS.length === 0 ? 'No vendors loaded' : 'No vendors match filters');
     return;
   }
 
@@ -4639,12 +5102,37 @@ function renderVendors(search) {
     var exp = ed ? ed < today : false;
     var due = ed ? daysBetween(today, ed) : 999;
     var wrn = !exp && due <= 60;
-    var cc = exp ? 'expired' : wrn ? 'warn' : '';
+    var cRes = resolveVendorCompliance(v);
+    var cc = '';
+    if (cRes.compliant && cRes.isManual) { cc = 'manual-compliant'; }
+    else if (exp) { cc = 'expired'; }
+    else if (wrn) { cc = 'warn'; }
+    var vCat = getVendorCategory(v.id);
+    var catBadgeCls = vendorCatClass(vCat);
     var afUrl = appfolioUrl('vendor', v.id);
+
     html += '<div class="vendor-card ' + cc + '" data-vendorid="' + escapeHtml(String(v.id)) + '" style="cursor:pointer">';
+    // Name + AF link
     html += '<div class="vendor-name">' + escapeHtml(v.name) + (afUrl ? ' <a href="' + escapeHtml(afUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--accent);text-decoration:none" title="View in AppFolio" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i></a>' : '') + '</div>';
-    html += '<div class="vendor-id"><i class="fas fa-fingerprint"></i> ID: ' + escapeHtml(String(v.id)) + '</div>';
-    html += '<div class="vendor-row"><span>Compliance</span>' + (v.compliant ? '<span class="tag compliant">Compliant</span>' : '<span class="tag non-compliant">' + escapeHtml(v.compliantStatus) + '</span>') + '</div>';
+    // ID + category badge
+    html += '<div class="vendor-id" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span><i class="fas fa-fingerprint"></i> ' + escapeHtml(String(v.id)) + '</span>';
+    html += '<span class="vendor-category-badge ' + catBadgeCls + '">' + escapeHtml(vCat || 'Uncategorized') + '</span>';
+    html += '</div>';
+    // Category selector (inline)
+    html += '<div class="vendor-row" style="align-items:center"><span>Category</span><select class="vendor-cat-select" data-vid="' + escapeHtml(String(v.id)) + '" onclick="event.stopPropagation()">';
+    VENDOR_CATEGORIES.forEach(function(c) {
+      html += '<option value="' + escapeHtml(c) + '"' + ((vCat || 'Uncategorized') === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+    });
+    html += '</select></div>';
+    // Compliance row with toggle
+    var compLabel = cRes.compliant ? 'Compliant' : (v.compliantStatus || 'Non-Compliant');
+    var toggleCls = 'vendor-compliance-toggle' + (cRes.compliant ? ' is-compliant' : '') + (cRes.isManual ? ' is-manual' : '');
+    html += '<div class="vendor-row" style="align-items:center"><span>Compliance</span>';
+    html += '<button class="' + toggleCls + '" data-vid="' + escapeHtml(String(v.id)) + '" onclick="event.stopPropagation()" title="Click to toggle compliance manually">';
+    html += '<i class="fas ' + (cRes.compliant ? 'fa-check-circle' : 'fa-times-circle') + '"></i> ' + escapeHtml(compLabel);
+    if (cRes.isManual) html += ' <span style="font-size:9px;opacity:0.7">(manual)</span>';
+    html += '</button></div>';
+    // Insurance
     if (v.insurance) {
       html += '<div class="vendor-row"><span>Insurance Exp.</span><span style="font-family:var(--font-mono);font-size:12px;color:' + (exp ? 'var(--danger)' : wrn ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.insurance) + (exp ? ' (EXPIRED)' : wrn ? ' (' + due + 'd)' : '') + '</span></div>';
     }
@@ -4654,24 +5142,57 @@ function renderVendors(search) {
   });
   container.innerHTML = html;
 
-  // Click vendor card to show detail
+  // Bind compliance toggle clicks
+  container.querySelectorAll('.vendor-compliance-toggle').forEach(function(btn) {
+    btn.addEventListener('click', async function(e) {
+      e.stopPropagation();
+      var vid = this.getAttribute('data-vid');
+      var current = isVendorManuallyCompliant(vid);
+      var newVal;
+      if (current === null) { newVal = true; }       // no override → mark compliant
+      else if (current === true) { newVal = false; }  // was compliant → mark non-compliant
+      else { newVal = null; }                          // was non-compliant → clear override (back to API)
+      await saveVendorOverride(vid, { compliant: newVal });
+      renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+      var label = newVal === true ? 'Marked compliant (manual)' : newVal === false ? 'Marked non-compliant (manual)' : 'Reset to API value';
+      showToast(label);
+    });
+  });
+
+  // Bind category selectors
+  container.querySelectorAll('.vendor-cat-select').forEach(function(sel) {
+    sel.addEventListener('change', async function(e) {
+      e.stopPropagation();
+      var vid = this.getAttribute('data-vid');
+      await saveVendorOverride(vid, { category: this.value });
+      renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+      showToast('Category → ' + this.value);
+    });
+  });
+
+  // Click vendor card to show detail modal
   container.querySelectorAll('.vendor-card').forEach(function(card) {
     card.addEventListener('click', function() {
       var vid = this.getAttribute('data-vendorid');
       var v = VENDORS.find(function(vn) { return String(vn.id) === vid; });
       if (!v) return;
+      var cRes = resolveVendorCompliance(v);
+      var vCat = getVendorCategory(v.id) || 'Uncategorized';
+      var compText = cRes.compliant ? 'Compliant' : (v.compliantStatus || 'Non-Compliant');
+      if (cRes.isManual) compText += ' (manual override)';
       showItemDetail('Vendor \u2014 ' + v.name, [
         { section: 'Vendor Info', icon: 'fa-hard-hat' },
         { label: 'Name', value: v.name },
         { label: 'ID', value: String(v.id) },
-        { label: 'Type', value: v.vendorType || '\u2014' },
+        { label: 'Category', value: vCat },
+        { label: 'Type (API)', value: v.vendorType || '\u2014' },
         { label: 'Trades', value: v.trades || '\u2014' },
         { section: 'Contact', icon: 'fa-phone' },
         { label: 'Phone', value: v.phone || '\u2014' },
         { label: 'Email', value: v.email || '\u2014' },
         { label: 'Address', value: v.address || '\u2014' },
         { section: 'Compliance', icon: 'fa-shield-alt' },
-        { label: 'Status', value: v.compliant ? 'Compliant' : (v.compliantStatus || 'Unknown') },
+        { label: 'Status', value: compText },
         { label: 'Liability Ins. Exp.', value: v.insurance || '\u2014' },
         { label: 'Auto Ins. Exp.', value: v.autoInsurance || '\u2014' },
         { label: 'Workers Comp Exp.', value: v.workersComp || '\u2014' },
@@ -4811,14 +5332,20 @@ function wireUpUI() {
         var inspList = $('#inspList');
         if (inspList) inspList.innerHTML = loadingHtml('Loading inspections\u2026');
         try {
-          var ok = await fetchInspections();
-          if (ok) {
+          var inspOk = await fetchInspections();
+          if (inspOk) {
             renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
             renderActivityFeed();
             await saveAllToCache();
             showToast('Inspections loaded \u2014 ' + INSPECTIONS.length);
           }
         } catch (e) { showToast('Inspection load failed: ' + (e.message || e)); }
+      }
+
+      // Lazy-load Webhook Data on first tab click
+      if (tabName === 'webhooks' && !_whLazyLoaded) {
+        _whLazyLoaded = true;
+        loadWebhookData();
       }
     });
   });
@@ -4937,6 +5464,12 @@ function wireUpUI() {
 
   /* btnLoadBills removed — billing stripped */
   $('#vendorSearch').addEventListener('input', function() { renderVendors(this.value); });
+  if ($('#vendorCategoryFilter')) {
+    $('#vendorCategoryFilter').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+  }
+  if ($('#vendorComplianceFilter')) {
+    $('#vendorComplianceFilter').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+  }
   $('#btnNewWO').addEventListener('click', function() { openModal('newWOModal'); });
   $('#btnNewTemplate').addEventListener('click', function() { showToast('Template editor \u2014 define trigger, variables, and body'); });
   $('#btnRefreshTurns').addEventListener('click', function() { sectionRefresh('turns', this); });
@@ -5108,6 +5641,73 @@ function wireUpUI() {
     });
   }
 
+  // Webhook Data Review — event listeners
+  var _whSearchTimer = null;
+  if ($('#whSearch')) {
+    $('#whSearch').addEventListener('input', function() {
+      clearTimeout(_whSearchTimer);
+      _whSearchTimer = setTimeout(function() {
+        _whFilters.search = $('#whSearch').value.trim();
+        _whPage = 0;
+        loadWebhookData();
+      }, 400);
+    });
+  }
+  if ($('#whTypeFilter')) {
+    $('#whTypeFilter').addEventListener('change', function() {
+      _whFilters.type = this.value;
+      _whPage = 0;
+      loadWebhookData();
+    });
+  }
+  if ($('#whSourceFilter')) {
+    $('#whSourceFilter').addEventListener('change', function() {
+      _whFilters.source = this.value;
+      _whPage = 0;
+      loadWebhookData();
+    });
+  }
+  if ($('#whDateFrom')) {
+    $('#whDateFrom').addEventListener('change', function() {
+      _whFilters.from = this.value;
+      _whPage = 0;
+      loadWebhookData();
+    });
+  }
+  if ($('#whDateTo')) {
+    $('#whDateTo').addEventListener('change', function() {
+      _whFilters.to = this.value;
+      _whPage = 0;
+      loadWebhookData();
+    });
+  }
+  if ($('#btnWhRefresh')) {
+    $('#btnWhRefresh').addEventListener('click', function() { loadWebhookData(); });
+  }
+  if ($('#btnWhStats')) {
+    $('#btnWhStats').addEventListener('click', function() {
+      var panel = $('#whStatsPanel');
+      if (panel && !panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+      } else {
+        loadWebhookStats();
+      }
+    });
+  }
+  if ($('#btnWhMigrate')) {
+    $('#btnWhMigrate').addEventListener('click', function() { migrateWebhookBlob(); });
+  }
+  if ($('#btnWhPrev')) {
+    $('#btnWhPrev').addEventListener('click', function() {
+      if (_whPage > 0) { _whPage--; loadWebhookData(); }
+    });
+  }
+  if ($('#btnWhNext')) {
+    $('#btnWhNext').addEventListener('click', function() {
+      if ((_whPage + 1) * _whPageSize < _whTotal) { _whPage++; loadWebhookData(); }
+    });
+  }
+
   // Create WO handler
   $('#btnCreateWO').addEventListener('click', async function() {
     var desc = $('#nwoDesc').value.trim();
@@ -5195,15 +5795,15 @@ async function initApp() {
   setApiStatus('loading', 'Initializing\u2026');
   updateCacheBadge('loading');
 
-  // Load flags from IndexedDB
+  // Load flags + vendor overrides from IndexedDB
   await loadFlags();
+  await loadVendorOverrides();
 
   // Show skeleton loading states
   if ($('#kanbanBoard')) $('#kanbanBoard').innerHTML = loadingHtml('Checking cache\u2026');
   if ($('#vendorGrid')) $('#vendorGrid').innerHTML = loadingHtml('Checking cache\u2026');
   if ($('#turnPipeline')) $('#turnPipeline').innerHTML = loadingHtml('Checking cache\u2026');
   if ($('#inspBody')) $('#inspBody').innerHTML = '<tr><td colspan="8">' + loadingHtml('Checking cache\u2026') + '</td></tr>';
-  if ($('#reconList')) $('#reconList').innerHTML = emptyHtml('fa-download', 'Bills load on demand \u2014 use the Load Bills button');
   renderTemplates();
   renderErrorLog();
   wireUpUI();
@@ -5258,7 +5858,7 @@ async function initApp() {
   }
 
   // ================================================================
-  // STEP 2: Pre-flight = Proxy v6 ?action=ping
+  // STEP 2: Pre-flight = Proxy v7 ?action=ping
   //         Tests proxy connectivity + AppFolio auth in one shot
   // ================================================================
   try {
@@ -5300,7 +5900,7 @@ async function initApp() {
   }
 
   // ================================================================
-  // STEP 3: Full data fetch via proxy v6 action endpoints
+  // STEP 3: Full data fetch via proxy v7 action endpoints
   //         Each action does server-side pagination — ONE request per dataset
   // ================================================================
   await fetchAllLive();
@@ -5323,7 +5923,7 @@ function withStepTimeout(fn, timeoutMs) {
   });
 }
 
-// Fetch all data via Proxy v6 action endpoints — ONE request per dataset
+// Fetch all data via Proxy v7 action endpoints — ONE request per dataset
 // Each ?action= call does server-side pagination and returns complete results
 // Every step has a 60-second timeout — NOTHING hangs forever
 async function fetchAllLive() {
@@ -5334,26 +5934,26 @@ async function fetchAllLive() {
   showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
 
   try {
-    // Step 0: Work Orders (proxy v6 — Reports API)
+    // Step 0: Work Orders (proxy v7 — Reports API)
     updateProgress(0, 'active', 'Fetching work orders\u2026');
     var woOk = await withStepTimeout(fetchWorkOrders, 60000);
     updateProgress(0, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
     if (woOk) { renderWorkOrders(); renderDashboardKPIs(); renderActivityFeed(); }
 
-    // Step 1: Properties (proxy v6 — Reports API)
+    // Step 1: Properties (proxy v7 — Reports API)
     updateProgress(1, 'active', 'Fetching properties\u2026');
     var propOk = await withStepTimeout(fetchProperties, 60000);
     updateProgress(1, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
     if (propOk) { populateDropdowns(); renderWorkOrders(); }
 
-    // Step 2: Turns — In Progress only, 60-day window (proxy v6 — Reports API)
+    // Step 2: Turns — In Progress only, 60-day window (proxy v7 — Reports API)
     // Short timeout (20s) — turns are supplementary; pipeline works from WOs + move-outs too
     updateProgress(2, 'active', 'Fetching in-progress turns\u2026');
     var turnOk = await withStepTimeout(function() { return fetchTurns(); }, 20000);
     updateProgress(2, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns skipped (timeout)');
     if (turnOk) { renderTurnBoard(); renderActivityFeed(); }
 
-    // Step 3: Upcoming Move-Outs — tenant directory, Notice tenants (proxy v6 — Reports API)
+    // Step 3: Upcoming Move-Outs — tenant directory, Notice tenants (proxy v7 — Reports API)
     updateProgress(3, 'active', 'Fetching upcoming move-outs\u2026');
     var moOk = await withStepTimeout(fetchUpcomingMoveouts, 45000);
     updateProgress(3, moOk ? 'done' : 'error', moOk ? UPCOMING_MOVEOUTS.length + ' upcoming' : 'Move-outs skipped');
@@ -5365,13 +5965,13 @@ async function fetchAllLive() {
     updateProgress(4, twoOk ? 'done' : 'error', twoOk ? TURN_WORK_ORDERS.length + ' turn WOs' : 'Turn WOs skipped');
     if (twoOk) { renderTurnBoard(); }
 
-    // Step 5: Property Groups (proxy v6 — DB API v0)
+    // Step 5: Property Groups (proxy v7 — DB API v0)
     updateProgress(5, 'active', 'Fetching property groups\u2026');
     var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
     updateProgress(5, grpOk ? 'done' : 'error', grpOk ? PROPERTY_GROUPS.length + ' groups' : 'Groups skipped');
     if (grpOk) { populateDropdowns(); renderWorkOrders(); }
 
-    // Step 6: Recent Tasks (proxy v6 — DB API v0)
+    // Step 6: Recent Tasks (proxy v7 — DB API v0)
     updateProgress(6, 'active', 'Fetching recent tasks\u2026');
     var taskOk = await withStepTimeout(fetchRecentTasks, 45000);
     updateProgress(6, taskOk ? 'done' : 'error', taskOk ? RECENT_TASKS.length + ' tasks' : 'Tasks skipped');
