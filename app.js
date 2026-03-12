@@ -77,102 +77,88 @@ function appfolioUrl(type, id) {
 }
 
 // ---- Shared group filter logic ----
-// Checks if a property (by ID or name) belongs to the given group.
-// Multiple matching strategies to handle UUID/numeric ID mismatch and
-// cases where resolvePropertyGroupNames hasn't completed yet.
+// Uses pre-computed UUID-based lookup maps built by resolvePropertyGroupNames.
+// Maps are: _nameToGroups (name→groups), _idToGroups (id→groups), _uuidToGroups (uuid→groups).
 function isInPropertyGroup(propertyId, propertyName, groupName) {
   if (!groupName) return true; // no filter = show all
 
-  // Find the property in PROPERTIES (Reports API data)
-  var prop = null;
+  // 1. Fast lookup by property name (covers both Reports API and DB API names)
+  if (propertyName) {
+    var groups = _nameToGroups[String(propertyName).toLowerCase()];
+    if (groups && groups.indexOf(groupName) !== -1) return true;
+  }
+
+  // 2. Fast lookup by Reports API property_id
+  if (propertyId) {
+    var idGroups = _idToGroups[String(propertyId)];
+    if (idGroups && idGroups.indexOf(groupName) !== -1) return true;
+  }
+
+  // 3. Portfolio fallback — check if property's portfolio matches the group name
   if (propertyName || propertyId) {
-    prop = PROPERTIES.find(function(p) {
+    var prop = PROPERTIES.find(function(p) {
       if (propertyName && p.name && p.name.toLowerCase() === String(propertyName).toLowerCase()) return true;
       if (propertyId && String(p.id) === String(propertyId)) return true;
       return false;
     });
+    if (prop && prop.portfolio && prop.portfolio === groupName) return true;
   }
 
-  // Strategy 1: prop.group tag (set by resolvePropertyGroupNames UUID→Name mapping)
-  if (prop && prop.group) return prop.group === groupName;
-
-  // Strategy 2: prop.portfolio field from Reports API (works without UUID map)
-  if (prop && prop.portfolio) return prop.portfolio === groupName;
-
-  // Strategy 3: Check group's resolvedNames (populated by resolvePropertyGroupNames)
-  if (propertyName) {
-    var nameLower = String(propertyName).toLowerCase();
-    var nameMatch = PROPERTY_GROUPS.some(function(g) {
-      return g.name === groupName && Array.isArray(g.resolvedNames) && g.resolvedNames.some(function(rn) {
-        return String(rn).toLowerCase() === nameLower;
-      });
-    });
-    if (nameMatch) return true;
-  }
-
-  // Strategy 4: Portfolio-based group matching — find all properties with this
-  // portfolio name and check if ANY group maps to them. Handles case where
-  // dropdown shows DB API group names but properties have Reports API portfolio names.
-  if (prop && prop.portfolio && PROPERTY_GROUPS.length > 0) {
-    // Get all property names in the selected group
-    var grp = PROPERTY_GROUPS.find(function(g) { return g.name === groupName; });
-    if (grp && Array.isArray(grp.resolvedNames) && grp.resolvedNames.length > 0) {
-      var propInGroup = grp.resolvedNames.some(function(rn) {
-        return String(rn).toLowerCase() === (prop.name || '').toLowerCase();
-      });
-      if (propInGroup) return true;
-    }
-    // If the group has portfolioNames (built from PROPERTIES), check those
-    if (grp && Array.isArray(grp.portfolioNames)) {
-      return grp.portfolioNames.indexOf(prop.portfolio) !== -1;
-    }
-  }
-
-  // Strategy 5: Direct UUID/ID check (works if IDs happen to match)
-  return PROPERTY_GROUPS.some(function(g) {
-    return g.name === groupName && Array.isArray(g.properties) && g.properties.some(function(pid) {
-      return String(pid) === String(propertyId);
-    });
-  });
+  return false;
 }
 
-// Populates ALL group filter dropdowns across every tab
+// Helper: add a group name to a lookup map entry (creates array if needed)
+function _addToGroupMap(map, key, groupName) {
+  if (!key) return;
+  var k = String(key);
+  if (!map[k]) map[k] = [];
+  if (map[k].indexOf(groupName) === -1) map[k].push(groupName);
+}
+
+// Populates the GLOBAL group filter dropdown (replaces per-tab dropdowns)
 function populateGroupFilters() {
-  var selectors = [
-    '#woGroupFilter', '#payrollGroupFilter', '#dashGroupFilter',
-    '#inspGroupFilter', '#vendorGroupFilter', '#reconGroupFilter',
-    '#turnGroupFilter'
-  ];
-  selectors.forEach(function(sel) {
-    var el = document.querySelector(sel);
-    if (!el) return;
-    var current = el.value; // preserve current selection
-    // Clear existing options except the first (All Groups)
-    while (el.options.length > 1) el.remove(1);
-    if (PROPERTY_GROUPS.length > 0) {
-      PROPERTY_GROUPS.forEach(function(g) {
-        if (!g.name) return;
-        var opt = document.createElement('option');
-        opt.value = g.name; opt.textContent = g.name;
-        el.appendChild(opt);
-      });
-    } else {
-      // Fallback: use portfolio field from PROPERTIES
-      var grps = {};
-      PROPERTIES.forEach(function(p) { if (p.portfolio) grps[p.portfolio] = true; });
-      Object.keys(grps).sort().forEach(function(g) {
-        var opt = document.createElement('option');
-        opt.value = g; opt.textContent = g;
-        el.appendChild(opt);
-      });
+  var el = document.getElementById('globalGroupFilter');
+  if (!el) return;
+  var current = el.value || currentPropertyGroup; // preserve current selection
+  // Clear existing options except the first (All Properties)
+  while (el.options.length > 1) el.remove(1);
+  if (PROPERTY_GROUPS.length > 0) {
+    PROPERTY_GROUPS.forEach(function(g) {
+      if (!g.name) return;
+      var opt = document.createElement('option');
+      opt.value = g.name; opt.textContent = g.name;
+      el.appendChild(opt);
+    });
+  } else {
+    // Fallback: use portfolio field from PROPERTIES
+    var grps = {};
+    PROPERTIES.forEach(function(p) { if (p.portfolio) grps[p.portfolio] = true; });
+    Object.keys(grps).sort().forEach(function(g) {
+      var opt = document.createElement('option');
+      opt.value = g; opt.textContent = g;
+      el.appendChild(opt);
+    });
+  }
+  // Restore previous selection if still valid
+  if (current) {
+    for (var i = 0; i < el.options.length; i++) {
+      if (el.options[i].value === current) { el.value = current; break; }
     }
-    // Restore previous selection if still valid
-    if (current) {
-      for (var i = 0; i < el.options.length; i++) {
-        if (el.options[i].value === current) { el.value = current; break; }
-      }
-    }
-  });
+  }
+  // Update the active indicator badge
+  updateGlobalGroupIndicator();
+}
+
+function updateGlobalGroupIndicator() {
+  var activeEl = document.getElementById('globalGroupActive');
+  var nameEl = document.getElementById('globalGroupName');
+  if (!activeEl || !nameEl) return;
+  if (currentPropertyGroup) {
+    nameEl.textContent = currentPropertyGroup;
+    activeEl.style.display = 'inline-flex';
+  } else {
+    activeEl.style.display = 'none';
+  }
 }
 
 // ---- Generic Item Detail Card ----
@@ -528,12 +514,19 @@ var VAULT_BLOBS = [
     i: 'YJYvbSiwahNcaEFW',
     t: 'W4kEMK0/WO8kRJPII6RJ3g==',
     c: '8kD52jM1FFDqORA4amjV5cJgRp6LICgYBqgeP9m7o+IX8XAkxwfa4pFxxU+6Y06xNkeqlL2LZbvYhv4chkydPONGxnKMvtuPurDg43L2QPAf1decHbgWvkcPCDuHzh/mOHH26pdAQjVvrt+RkGqawcpEjI//HsXA/NnUwsHYzU6gL3l1Q+HnZlzu8a+wU8Cnaw=='
+  },
+  { // Passphrase: handy::vendors — VENDOR-ONLY restricted access
+    s: 'h7M5Px4JaZmyG6VElz8WYA==',
+    i: 'kSKuoNSunr9A63nU',
+    t: '1b14DlE9WJbzFBH+dhQBAA==',
+    c: 'rdnAgJHdQrv87rhu1vANkr9ZFIvE8iEFMR1CppCyfx6/evvk31d5CGOg2kt1jXlJqc1xGEWprBc='
   }
 ];
 
 var API_CREDS = null;
 var API_VHOST = null;
 var API_PROXY = '';
+var _accessRole = 'full'; // 'full' = all tabs, 'vendors' = vendor-only restricted access
 var VAULT_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
 var vaultTimeoutId = null;
 var vaultCountdownId = null;
@@ -567,7 +560,10 @@ async function decryptVault(passphrase) {
   // Try each vault blob — supports multiple passphrases
   for (var i = 0; i < VAULT_BLOBS.length; i++) {
     try {
-      return await decryptVaultBlob(VAULT_BLOBS[i], passphrase);
+      var result = await decryptVaultBlob(VAULT_BLOBS[i], passphrase);
+      // Detect restricted-access role from encrypted payload
+      _accessRole = result.role || 'full';
+      return result;
     } catch (e) { /* try next blob */ }
   }
   throw new Error('Decryption failed for all vault blobs');
@@ -581,6 +577,7 @@ function wipeCredentials() {
   API_CREDS = null;
   API_VHOST = null;
   API_PROXY = '';
+  _accessRole = 'full';
 }
 
 function lockVault() {
@@ -591,6 +588,7 @@ function lockVault() {
   vaultCountdownId = null;
   appInitialized = false;
   WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; API_ERRORS = [];
+  _nameToGroups = {}; _idToGroups = {}; _uuidToGroups = {};
   detailCacheClear();
   _vendorsLazyLoaded = false; _inspLazyLoaded = false;
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
@@ -601,7 +599,43 @@ function lockVault() {
   $('#vaultPassphrase').value = '';
   $('#vaultError').classList.remove('show');
   $('#corsBanner').classList.remove('show');
+  // Restore all tabs visibility on lock (undo vendor-only restrictions)
+  $$('.nav-tab').forEach(function(t) { t.style.display = ''; });
+  $$('.section').forEach(function(s) { s.style.display = ''; });
+  document.body.classList.remove('role-vendors');
   $('#vaultPassphrase').focus();
+}
+
+// Apply access role restrictions — hides tabs/sections not allowed for the role
+// Called after unlock + before initApp
+function applyAccessRole() {
+  if (_accessRole === 'vendors') {
+    document.body.classList.add('role-vendors');
+    var allowedTabs = { vendors: true };
+    // Hide all nav tabs except vendors
+    $$('.nav-tab').forEach(function(t) {
+      var tabName = t.getAttribute('data-tab');
+      if (!allowedTabs[tabName]) {
+        t.style.display = 'none';
+      }
+    });
+    // Activate vendors tab
+    $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+    var vendorTab = document.querySelector('.nav-tab[data-tab="vendors"]');
+    if (vendorTab) vendorTab.classList.add('active');
+    // Show only vendors section
+    $$('.section').forEach(function(s) { s.classList.remove('active'); });
+    var vendorSec = document.getElementById('sec-vendors');
+    if (vendorSec) vendorSec.classList.add('active');
+    // Hide global filter bar in vendor-only mode (no property group filtering needed)
+    var gfBar = document.getElementById('globalFilterBar');
+    if (gfBar) gfBar.style.display = 'none';
+  } else {
+    document.body.classList.remove('role-vendors');
+    $$('.nav-tab').forEach(function(t) { t.style.display = ''; });
+    var gfBar2 = document.getElementById('globalFilterBar');
+    if (gfBar2) gfBar2.style.display = '';
+  }
 }
 
 function resetInactivityTimer() {
@@ -655,34 +689,58 @@ async function proxyAction(action, params) {
       url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
     });
   }
-  var res;
-  try {
-    res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
-  } catch (abortErr) {
-    if (abortErr.name === 'AbortError') {
-      var tmsg = 'Proxy action=' + action + ' timed out after 45s';
-      logApiError(0, tmsg, 'queued');
-      throw new Error(tmsg);
+  var maxRetries = 2; // retry once for transient 502/503/network errors
+  for (var attempt = 0; attempt <= maxRetries; attempt++) {
+    var res;
+    try {
+      res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
+    } catch (abortErr) {
+      if (abortErr.name === 'AbortError') {
+        var tmsg = 'Proxy action=' + action + ' timed out after 45s';
+        logApiError(0, tmsg, 'queued');
+        throw new Error(tmsg);
+      }
+      // Network error (CORS, DNS, connection refused) — retry once after backoff
+      if (attempt < maxRetries) {
+        var netWait = Math.pow(2, attempt + 1) * 1000; // 2s, 4s
+        logApiError(0, 'Proxy action=' + action + ' network error (attempt ' + (attempt + 1) + '/' + (maxRetries + 1) + ') — retrying in ' + (netWait / 1000) + 's', 'retry');
+        await sleep(netWait);
+        continue;
+      }
+      throw abortErr;
     }
-    throw abortErr;
-  }
-  if (!res.ok) {
-    var errBody = '';
-    try { errBody = await res.text(); } catch (e) { /* empty */ }
-    var errMsg = 'Proxy action=' + action + ' failed: HTTP ' + res.status;
-    if (errBody) {
-      try { var ej = JSON.parse(errBody); if (ej.error) errMsg += ' \u2014 ' + ej.error; } catch (e) { errMsg += ' \u2014 ' + errBody.substring(0, 200); }
+    // Retryable server errors: 502, 503, 504
+    if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < maxRetries) {
+      var backoff = Math.pow(2, attempt + 1) * 1000; // 2s, 4s
+      logApiError(res.status, 'Proxy action=' + action + ' HTTP ' + res.status + ' (attempt ' + (attempt + 1) + '/' + (maxRetries + 1) + ') — retrying in ' + (backoff / 1000) + 's', 'retry');
+      await sleep(backoff);
+      continue;
     }
-    logApiError(res.status, errMsg, 'queued');
-    throw new Error(errMsg);
+    if (!res.ok) {
+      var errBody = '';
+      try { errBody = await res.text(); } catch (e) { /* empty */ }
+      var errMsg = 'Proxy action=' + action + ' failed: HTTP ' + res.status;
+      if (errBody) {
+        try { var ej = JSON.parse(errBody); if (ej.error) errMsg += ' \u2014 ' + ej.error; } catch (e) { errMsg += ' \u2014 ' + errBody.substring(0, 200); }
+      }
+      logApiError(res.status, errMsg, 'queued');
+      throw new Error(errMsg);
+    }
+    var data = await res.json();
+    if (data && data.ok === false) {
+      // Proxy returned ok:false — could be transient AppFolio error, retry once
+      if (attempt < maxRetries) {
+        var retryWait = Math.pow(2, attempt + 1) * 1000;
+        logApiError(502, 'Proxy action=' + action + ': ' + (data.error || 'Unknown') + ' — retrying in ' + (retryWait / 1000) + 's', 'retry');
+        await sleep(retryWait);
+        continue;
+      }
+      var msg = 'Proxy action=' + action + ': ' + (data.error || 'Unknown error');
+      logApiError(502, msg, 'queued');
+      throw new Error(msg);
+    }
+    return data;
   }
-  var data = await res.json();
-  if (data && data.ok === false) {
-    var msg = 'Proxy action=' + action + ': ' + (data.error || 'Unknown error');
-    logApiError(502, msg, 'queued');
-    throw new Error(msg);
-  }
-  return data;
 }
 
 // Resolve a path to a fetchable URL.
@@ -1049,6 +1107,12 @@ var _webhookPollTimer = null;
 var _vendorsLazyLoaded = false; // lazy-load flag — vendors fetched on tab click
 var _inspLazyLoaded = false;   // lazy-load flag — inspections fetched on tab click
 var _whLazyLoaded = false;     // lazy-load flag — webhook data loaded on tab click
+var _groupFilterDirty = {};    // tabs that need re-render after group filter change
+var _proxyVersion = 'v7';     // detected on ping — 'v8'/'v8.1' enables cache_stats, force_refresh, etc.
+// UUID-based property group lookup maps (built by resolvePropertyGroupNames)
+var _nameToGroups = {};        // property name (lowercase) → [group names]
+var _idToGroups = {};          // Reports API property_id (string) → [group names]
+var _uuidToGroups = {};        // DB API property UUID → [group names]
 var appInitialized = false;
 var WO_FLAGS = {};
 var WO_DETAIL_CACHE = {};
@@ -1057,6 +1121,120 @@ var WO_DETAIL_CACHE_MAX = 50;  // max cached entries
 var PAYROLL_WEEK_OFFSET = 0;
 var currentPropertyGroup = '';
 var currentTurnFilter = 'open';
+
+/* =================================================================
+   CONFIG — Consolidated thresholds (edit here, not scattered in code)
+   ================================================================= */
+var CONFIG = {
+  // Turn pipeline
+  TURN_TARGET_DAYS: 30,         // default target completion days
+  TURN_STALLED_DAYS: 7,         // days before a turn is flagged stalled
+  TURN_WARNING_DAYS: 14,        // elapsed days before amber warning
+  SLA_BUSINESS_DAYS: 14,        // AZ deposit SLA: 14 business days
+  SLA_HOLIDAYS: [               // company holidays (YYYY-MM-DD) — update annually
+    '2026-01-01','2026-01-19','2026-02-16','2026-05-25','2026-07-03',
+    '2026-09-07','2026-11-26','2026-11-27','2026-12-24','2026-12-25'
+  ],
+  // Inspections
+  INSPECTION_OVERDUE_DAYS: 365,
+  INSPECTION_DUE_SOON_DAYS: 270,
+  // Vendor compliance
+  VENDOR_EXPIRY_ALERT_DAYS: 60,
+  // Move-outs
+  MOVEOUT_WINDOW_DAYS: 60,
+  // UI
+  TOAST_DURATION_MS: 3500,
+  DEBOUNCE_MS: 300,
+  // WO aging buckets (dashboard)
+  WO_AGING_BUCKETS: [
+    { label: '0–7d',  max: 7,   cls: 'fresh' },
+    { label: '8–30d', max: 30,  cls: 'fresh' },
+    { label: '31–60d', max: 60, cls: 'moderate' },
+    { label: '60d+',  max: Infinity, cls: 'old' }
+  ]
+};
+
+/* =================================================================
+   UTILITY — debounce, SLA, helpers
+   ================================================================= */
+function debounce(fn, delay) {
+  var timer;
+  return function() {
+    var ctx = this, args = arguments;
+    clearTimeout(timer);
+    timer = setTimeout(function() { fn.apply(ctx, args); }, delay);
+  };
+}
+
+// 14-business-day SLA countdown from move-out date
+// Returns { deadline: Date, businessDaysLeft: number, calendarDaysLeft: number, breached: boolean }
+function calculateSLA(moveOutDateStr) {
+  if (!moveOutDateStr) return null;
+  var start = new Date(moveOutDateStr);
+  if (isNaN(start.getTime())) return null;
+  var holidays = CONFIG.SLA_HOLIDAYS;
+  var current = new Date(start);
+  var added = 0;
+  while (added < CONFIG.SLA_BUSINESS_DAYS) {
+    current.setDate(current.getDate() + 1);
+    var dow = current.getDay();
+    if (dow === 0 || dow === 6) continue; // skip weekends
+    var iso = current.toISOString().slice(0, 10);
+    if (holidays.indexOf(iso) !== -1) continue; // skip holidays
+    added++;
+  }
+  // Now count business days remaining from today to deadline
+  var today = new Date();
+  today.setHours(0,0,0,0);
+  var deadline = new Date(current);
+  deadline.setHours(0,0,0,0);
+  var calendarDaysLeft = Math.ceil((deadline - today) / 86400000);
+  var businessDaysLeft = 0;
+  if (calendarDaysLeft > 0) {
+    var checkDate = new Date(today);
+    for (var di = 0; di < calendarDaysLeft; di++) {
+      checkDate.setDate(checkDate.getDate() + 1);
+      var d = checkDate.getDay();
+      if (d !== 0 && d !== 6) {
+        var isoCheck = checkDate.toISOString().slice(0, 10);
+        if (holidays.indexOf(isoCheck) === -1) businessDaysLeft++;
+      }
+    }
+  }
+  return {
+    deadline: deadline,
+    businessDaysLeft: Math.max(0, businessDaysLeft),
+    calendarDaysLeft: calendarDaysLeft,
+    breached: calendarDaysLeft < 0,
+    pct: Math.max(0, Math.min(100, ((CONFIG.SLA_BUSINESS_DAYS - businessDaysLeft) / CONFIG.SLA_BUSINESS_DAYS) * 100))
+  };
+}
+
+// Build vendor compliance lookup for cross-tab warnings
+function buildVendorComplianceMap() {
+  var map = {};
+  var today = new Date();
+  VENDORS.forEach(function(v) {
+    if (!v.name) return;
+    var key = v.name.toLowerCase();
+    var insDate = v.insurance ? new Date(v.insurance) : null;
+    if (insDate && insDate < today) {
+      map[key] = 'expired';
+    } else if (insDate && daysBetween(today, insDate) <= CONFIG.VENDOR_EXPIRY_ALERT_DAYS) {
+      map[key] = 'expiring';
+    }
+  });
+  return map;
+}
+
+// Aggregate turn completion: check ALL Unit Turn WOs for a unit
+function isTurnFullyComplete(matchingWOs) {
+  if (!matchingWOs || matchingWOs.length === 0) return false;
+  var terminalStatuses = ['Completed', 'Work Completed', 'Canceled', 'Work Done', 'Ready to Bill'];
+  return matchingWOs.every(function(wo) {
+    return terminalStatuses.indexOf(wo.status) !== -1;
+  });
+}
 
 /* =================================================================
    LRU Detail Cache helpers — bounded at WO_DETAIL_CACHE_MAX entries
@@ -1189,10 +1367,15 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     $('#vaultPassphrase').value = '';
     $('#vaultScreen').style.display = 'none';
     $('#appShell').classList.add('unlocked');
+    applyAccessRole();
     resetInactivityTimer();
     initApp();
     var proxyInfo = API_PROXY ? ' via proxy' : ' (direct)';
-    showToast('Vault unlocked \u2014 connecting to ' + vhost + '.appfolio.com' + proxyInfo);
+    if (_accessRole === 'vendors') {
+      showToast('Vendor access \u2014 connecting to ' + vhost + '.appfolio.com' + proxyInfo);
+    } else {
+      showToast('Vault unlocked \u2014 connecting to ' + vhost + '.appfolio.com' + proxyInfo);
+    }
   } catch (err) {
     wipeCredentials();
     $('#vaultError').textContent = 'Decryption failed \u2014 incorrect passphrase or corrupted vault.';
@@ -1331,7 +1514,8 @@ async function fetchWorkOrders() {
         link: r.Link || r.link || ''
       };
     });
-    setApiStatus('loading', 'Work orders: ' + WORK_ORDERS.length + ' loaded');
+    var cacheNote = (data.from_cache && data.cached_at) ? ' (cached)' : '';
+    setApiStatus('loading', 'Work orders: ' + WORK_ORDERS.length + ' loaded' + cacheNote);
     return true;
   } catch (err) {
     WORK_ORDERS = [];
@@ -1501,8 +1685,8 @@ async function fetchPropertyGroups() {
       };
     });
 
-    // Fetch UUID→Name map separately (non-blocking — groups work even if this fails)
-    resolvePropertyGroupNames();
+    // Fetch UUID→Name map — await so resolution completes before filters are used
+    await resolvePropertyGroupNames();
 
     return true;
   } catch (err) {
@@ -1516,85 +1700,123 @@ async function fetchPropertyGroups() {
 // This is a separate call so property_groups never times out.
 // If the UUID map fails, falls back to portfolio-based matching from PROPERTIES.
 async function resolvePropertyGroupNames() {
+  // Reset lookup maps
+  _nameToGroups = {};
+  _idToGroups = {};
+  _uuidToGroups = {};
+
   var uuidMapOk = false;
-  // Step 1: Try UUID→Name resolution via property_map
+
+  // Step 1: UUID resolution via property_map
+  // Builds: UUID → group names, DB API name → group names
   try {
     var mapData = await proxyAction('property_map');
     var uuidMap = mapData.property_uuid_map || {};
 
-    PROPERTY_GROUPS.forEach(function(g) {
-      var resolvedNames = [];
-      if (Array.isArray(g.properties) && uuidMap) {
-        g.properties.forEach(function(pid) {
-          var mapped = uuidMap[pid];
-          var mName = mapped ? (typeof mapped === 'string' ? mapped : mapped.name || '') : '';
-          if (mName && resolvedNames.indexOf(mName) === -1) resolvedNames.push(mName);
-        });
+    // Also build a reverse map: DB API name (lowercase) → [UUIDs]
+    var dbNameToUuids = {};
+    Object.keys(uuidMap).forEach(function(uuid) {
+      var entry = uuidMap[uuid];
+      var name = entry ? (typeof entry === 'string' ? entry : entry.name || '') : '';
+      if (name) {
+        var key = name.toLowerCase();
+        if (!dbNameToUuids[key]) dbNameToUuids[key] = [];
+        dbNameToUuids[key].push(uuid);
       }
+    });
+
+    PROPERTY_GROUPS.forEach(function(g) {
+      if (!g.name || !Array.isArray(g.properties)) return;
+      var resolvedNames = [];
+
+      g.properties.forEach(function(uuid) {
+        // Map UUID → group name
+        _addToGroupMap(_uuidToGroups, uuid, g.name);
+
+        // Resolve UUID → property name via the map
+        var mapped = uuidMap[uuid];
+        var mName = mapped ? (typeof mapped === 'string' ? mapped : mapped.name || '') : '';
+        if (mName) {
+          if (resolvedNames.indexOf(mName) === -1) resolvedNames.push(mName);
+          // Index by DB API name (lowercase)
+          _addToGroupMap(_nameToGroups, mName.toLowerCase(), g.name);
+        }
+      });
+
       g.resolvedNames = resolvedNames;
       g.propertyNames = resolvedNames;
-
-      // Tag matching PROPERTIES entries with this group name
-      resolvedNames.forEach(function(pname) {
-        if (!pname) return;
-        var prop = PROPERTIES.find(function(p) {
-          return (p.name || '').toLowerCase() === String(pname).toLowerCase();
-        });
-        if (prop) { prop.group = g.name; }
-      });
     });
+
     uuidMapOk = Object.keys(uuidMap).length > 0;
-    console.log('Property group UUID map resolved: ' + PROPERTY_GROUPS.length + ' groups, ' + Object.keys(uuidMap).length + ' properties mapped');
+
+    // Step 1b: Bridge DB API UUIDs to Reports API property_id via name matching.
+    // For each PROPERTIES entry, find its UUID(s) by matching name, then index by id.
+    if (uuidMapOk) {
+      PROPERTIES.forEach(function(p) {
+        if (!p.name) return;
+        var pNameLower = p.name.toLowerCase();
+        // Check if this Reports API property name matches any DB API property name
+        var matchedUuids = dbNameToUuids[pNameLower];
+        if (matchedUuids && matchedUuids.length > 0) {
+          // Store the first UUID on the property for reference
+          p._dbUuid = matchedUuids[0];
+          // For each matched UUID, copy that UUID's group memberships to the property_id
+          matchedUuids.forEach(function(uuid) {
+            var uGroups = _uuidToGroups[uuid];
+            if (uGroups) {
+              uGroups.forEach(function(gn) {
+                _addToGroupMap(_idToGroups, String(p.id), gn);
+                // Also ensure the Reports API name is indexed
+                _addToGroupMap(_nameToGroups, pNameLower, gn);
+              });
+            }
+          });
+        }
+      });
+    }
+
+    var nameCount = Object.keys(_nameToGroups).length;
+    var idCount = Object.keys(_idToGroups).length;
+    console.log('UUID group resolution: ' + PROPERTY_GROUPS.length + ' groups, ' +
+      Object.keys(uuidMap).length + ' UUID entries, ' +
+      nameCount + ' names mapped, ' + idCount + ' IDs mapped');
   } catch (err) {
     console.log('resolvePropertyGroupNames UUID map failed (will try portfolio fallback): ' + (err.message || err));
   }
 
-  // Step 2: Portfolio fallback — always run to supplement UUID mapping.
-  // Uses the portfolio field from PROPERTIES (Reports API) to bridge groups.
-  // If a group's resolved property names match property names that have a portfolio,
-  // we tag the group with those portfolio names for Strategy 4 in isInPropertyGroup.
+  // Step 2: Portfolio fallback — supplements UUID mapping.
+  // If a group's name matches a PROPERTIES portfolio, index those properties too.
   try {
     PROPERTY_GROUPS.forEach(function(g) {
-      var portfolioSet = {};
+      if (!g.name) return;
 
-      // If UUID resolution worked, find portfolios for resolved properties
+      // If UUID resolution worked for this group, also check resolved names for portfolios
       if (g.resolvedNames && g.resolvedNames.length > 0) {
         g.resolvedNames.forEach(function(rn) {
           var prop = PROPERTIES.find(function(p) {
             return (p.name || '').toLowerCase() === String(rn).toLowerCase();
           });
-          if (prop && prop.portfolio) portfolioSet[prop.portfolio] = true;
-          // Also tag prop.group if not already set
-          if (prop && !prop.group) prop.group = g.name;
-        });
-      }
-
-      // If UUID resolution didn't work, try matching group name to portfolio name directly
-      if (!uuidMapOk || (g.resolvedNames && g.resolvedNames.length === 0)) {
-        // Check if this group name matches any portfolio name in PROPERTIES
-        PROPERTIES.forEach(function(p) {
-          if (p.portfolio && p.portfolio === g.name) {
-            portfolioSet[p.portfolio] = true;
-            if (!p.group) p.group = g.name;
+          if (prop && prop.id) {
+            _addToGroupMap(_idToGroups, String(prop.id), g.name);
+            _addToGroupMap(_nameToGroups, (prop.name || '').toLowerCase(), g.name);
           }
         });
       }
 
-      g.portfolioNames = Object.keys(portfolioSet);
-    });
-
-    // Also: for properties with a portfolio that matches a group name, tag them
-    PROPERTIES.forEach(function(p) {
-      if (p.portfolio && !p.group) {
-        var matchingGroup = PROPERTY_GROUPS.find(function(g) {
-          return g.name === p.portfolio;
+      // If UUID resolution didn't populate this group, try portfolio name match
+      if (!uuidMapOk || !g.resolvedNames || g.resolvedNames.length === 0) {
+        PROPERTIES.forEach(function(p) {
+          if (p.portfolio && p.portfolio === g.name) {
+            _addToGroupMap(_nameToGroups, (p.name || '').toLowerCase(), g.name);
+            _addToGroupMap(_idToGroups, String(p.id), g.name);
+          }
         });
-        if (matchingGroup) p.group = matchingGroup.name;
       }
     });
 
-    var tagged = PROPERTIES.filter(function(p) { return !!p.group; }).length;
-    console.log('Portfolio fallback complete: ' + tagged + '/' + PROPERTIES.length + ' properties tagged with groups');
+    var totalMapped = Object.keys(_nameToGroups).length + Object.keys(_idToGroups).length;
+    console.log('Group lookup maps built: ' + Object.keys(_nameToGroups).length +
+      ' name entries, ' + Object.keys(_idToGroups).length + ' id entries (total: ' + totalMapped + ')');
   } catch (err) {
     console.log('Portfolio fallback error (non-fatal): ' + (err.message || err));
   }
@@ -1819,7 +2041,17 @@ function renderWebhookDataTable(events) {
     html += '<td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">' + rowNum + '</td>';
     html += '<td style="font-family:var(--font-mono);font-size:11px;white-space:nowrap">' + escapeHtml(e.ts ? formatDate(e.ts) : '\u2014') + '</td>';
     html += '<td><span class="tag wh-type-' + escapeHtml(String(e.type || 'webhook').replace(/[^a-z0-9_-]/gi, '')) + '">' + escapeHtml(e.type || 'webhook') + '</span></td>';
-    html += '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.title || '\u2014') + '</td>';
+    html += '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.title || '\u2014');
+    // v8 enriched data: show resource_type/resource_id if available
+    if (e.resource_type) {
+      html += ' <span style="font-size:10px;color:var(--text-muted)">(' + escapeHtml(e.resource_type);
+      if (e.resource_id) html += ':' + escapeHtml(String(e.resource_id).substring(0, 8));
+      html += ')</span>';
+    }
+    if (e.body_status === 'empty') {
+      html += ' <span style="font-size:9px;color:var(--warning)" title="Webhook body was empty (pre-v8 bug)">\u26a0 empty</span>';
+    }
+    html += '</td>';
     html += '<td style="' + priClass + '">' + escapeHtml(e.priority || 'normal') + '</td>';
     html += '<td style="font-size:11px;color:var(--text-muted)">' + escapeHtml(e.source || '\u2014') + '</td>';
     html += '<td><button class="action-btn" style="padding:2px 6px;font-size:10px" data-whexpand="' + (e.id || idx) + '" title="View raw"><i class="fas fa-eye"></i></button></td>';
@@ -1888,6 +2120,11 @@ async function loadWebhookStats() {
     var data = await proxyAction('webhook_stats');
     var html = '<div style="display:flex;gap:20px;flex-wrap:wrap">';
     html += '<div><strong style="font-size:18px;color:var(--accent)">' + (data.total || 0) + '</strong><div style="color:var(--text-muted)">Total Events</div></div>';
+    // v8: show has_data vs empty_body counts
+    if (data.has_data !== undefined) {
+      html += '<div><strong style="font-size:18px;color:var(--success)">' + (data.has_data || 0) + '</strong><div style="color:var(--text-muted)">With Data</div></div>';
+      html += '<div><strong style="font-size:18px;color:var(--warning)">' + (data.empty_body || 0) + '</strong><div style="color:var(--text-muted)">Empty (pre-v8)</div></div>';
+    }
     // By type
     if (data.by_type && data.by_type.length > 0) {
       html += '<div><strong>By Type:</strong><div style="margin-top:4px">';
@@ -1915,6 +2152,38 @@ async function loadWebhookStats() {
         html += '<div style="flex:1;background:var(--accent);border-radius:2px 2px 0 0;height:' + pct + '%;min-width:4px;opacity:0.8" title="' + escapeHtml(d.day) + ': ' + d.count + '"></div>';
       });
       html += '</div></div>';
+    }
+    // v8: append server-side cache stats
+    if (_proxyVersion.indexOf('v8') === 0) {
+      html += '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">';
+      html += '<strong style="color:var(--accent)"><i class="fas fa-database"></i> Server Cache (' + _proxyVersion + ')</strong>';
+      try {
+        var cStats = await proxyAction('cache_stats');
+        if (cStats.cache && cStats.cache.length > 0) {
+          html += '<table style="width:100%;margin-top:6px;font-size:12px;border-collapse:collapse">';
+          html += '<tr style="color:var(--text-muted);text-align:left"><th style="padding:3px 6px">Entity</th><th style="padding:3px 6px">Entries</th><th style="padding:3px 6px">Records</th><th style="padding:3px 6px">Last Cached</th></tr>';
+          cStats.cache.forEach(function(c) {
+            html += '<tr style="border-top:1px solid var(--border)">';
+            html += '<td style="padding:3px 6px;font-family:var(--font-mono)">' + escapeHtml(c.entity_type) + '</td>';
+            html += '<td style="padding:3px 6px">' + (c.entries || 0) + '</td>';
+            html += '<td style="padding:3px 6px">' + (c.total_records || 0) + '</td>';
+            html += '<td style="padding:3px 6px;color:var(--text-muted)">' + (c.last_cached ? timeAgo(c.last_cached) : '\u2014') + '</td>';
+            html += '</tr>';
+          });
+          html += '</table>';
+        } else {
+          html += '<div style="margin-top:4px;color:var(--text-muted)">No cached data yet</div>';
+        }
+        if (cStats.webhooks) {
+          html += '<div style="margin-top:6px;font-size:11px;color:var(--text-muted)">';
+          html += 'Webhooks: ' + (cStats.webhooks.total || 0) + ' total, ' + (cStats.webhooks.pending || 0) + ' pending';
+          if (cStats.turn_records !== undefined) html += ' | Turn records: ' + cStats.turn_records;
+          html += '</div>';
+        }
+      } catch (csErr) {
+        html += '<div style="margin-top:4px;color:var(--warning)">Cache stats unavailable: ' + escapeHtml(csErr.message || String(csErr)) + '</div>';
+      }
+      html += '</div>';
     }
     content.innerHTML = html;
   } catch (err) {
@@ -2070,30 +2339,42 @@ function processWebhookEvent(evt) {
   return changed;
 }
 
+var _lastWebhookMaxId = 0; // track highest seen event ID to skip redundant processing
 function setupWebhookAutoPoll(intervalSec) {
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
   if (intervalSec > 0) {
-    _webhookPollTimer = setInterval(async function() {
-      var prevCount = WEBHOOK_EVENTS.length;
-      var ok = await pollWebhookEvents();
-      if (ok && WEBHOOK_EVENTS.length > 0) {
+    _webhookPollTimer = setInterval(function() {
+      // Wrap in async IIFE to avoid blocking the interval handler
+      (async function() {
+        var prevCount = WEBHOOK_EVENTS.length;
+        var ok = await pollWebhookEvents();
+        if (!ok) return;
+        // Check if any genuinely new events arrived (by max ID)
+        var maxId = 0;
+        WEBHOOK_EVENTS.forEach(function(e) { if (e.id && e.id > maxId) maxId = e.id; });
+        if (maxId <= _lastWebhookMaxId) return; // No new events — skip all re-renders
+        _lastWebhookMaxId = maxId;
         // Process only NEW events through the organizer engine
         var newEvents = WEBHOOK_EVENTS.slice(0, WEBHOOK_EVENTS.length - prevCount);
+        // Skip events with empty body/raw (common with placeholder webhooks)
+        var meaningfulEvents = newEvents.filter(function(evt) { return evt.body && evt.body.length > 0; });
         var anyChanged = false;
-        newEvents.forEach(function(evt) {
+        meaningfulEvents.forEach(function(evt) {
           var didChange = processWebhookEvent(evt);
           if (didChange) anyChanged = true;
         });
-        renderWebhookEventList();
-        renderActivityFeed();
-        // If organizer engine modified WO/pipeline data, re-render affected views
-        if (anyChanged) {
-          renderWorkOrders();
-          renderTurnBoard();
-          renderDashboardKPIs();
-          showToast('\u26a1 Webhook updated ' + newEvents.length + ' event(s)');
-        }
-      }
+        // Defer renders to next animation frame to avoid blocking
+        requestAnimationFrame(function() {
+          renderWebhookEventList();
+          renderActivityFeed();
+          if (anyChanged) {
+            renderWorkOrders();
+            renderTurnBoard();
+            renderDashboardKPIs();
+            showToast('\u26a1 Webhook updated ' + meaningfulEvents.length + ' event(s)');
+          }
+        });
+      })();
     }, intervalSec * 1000);
   }
 }
@@ -2105,6 +2386,17 @@ async function fetchPropertyDetail(propId) {
   if (!propId) return null;
   var cached = detailCacheGet('prop_' + propId);
   if (cached) return cached;
+  // Reports API returns numeric IDs (e.g. 6393), but DB API v0 requires UUIDs.
+  // Only attempt fetch if propId looks like a UUID; otherwise return from PROPERTIES.
+  var isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(propId));
+  if (!isUuid) {
+    // Try to find in already-loaded PROPERTIES instead of hitting the API
+    var localProp = PROPERTIES.find(function(p) {
+      return String(p.id) === String(propId);
+    });
+    if (localProp) { detailCacheSet('prop_' + propId, localProp); return localProp; }
+    return null; // Don't call DB API with a numeric ID — it'll 404
+  }
   try {
     var data = await apiFetch('/api/v0/properties/' + propId);
     detailCacheSet('prop_' + propId, data);
@@ -2235,8 +2527,8 @@ function renderPayroll() {
   var rangeEl = $('#payrollRange');
   if (rangeEl) rangeEl.textContent = formatDate(period.start) + ' \u2014 ' + formatDate(period.end);
 
-  // Sync payroll group dropdown with global filter
-  var pgSel = $('#payrollGroupFilter');
+  // Sync global group filter dropdown
+  var pgSel = $('#globalGroupFilter');
   if (pgSel && pgSel.value !== currentPropertyGroup) pgSel.value = currentPropertyGroup;
 
   var workDone = WORK_ORDERS.filter(function(wo) {
@@ -2299,9 +2591,10 @@ function renderPayroll() {
 }
 
 function renderDashboardKPIs() {
-  // Sync dashboard group filter
-  var dashGrpSel = $('#dashGroupFilter');
-  if (dashGrpSel && dashGrpSel.value !== currentPropertyGroup) dashGrpSel.value = currentPropertyGroup;
+  // Sync global group filter dropdown
+  var gfSel = $('#globalGroupFilter');
+  if (gfSel && gfSel.value !== currentPropertyGroup) gfSel.value = currentPropertyGroup;
+  updateGlobalGroupIndicator();
 
   var openWOs = WORK_ORDERS.filter(function(w) {
     if (w.status === 'Completed' || w.status === 'Canceled') return false;
@@ -2322,19 +2615,69 @@ function renderDashboardKPIs() {
   var moveOuts = getUpcomingMoveOuts();
   var flaggedCount = Object.keys(WO_FLAGS).length;
 
+  // WO aging buckets
+  var agingCounts = CONFIG.WO_AGING_BUCKETS.map(function() { return 0; });
+  var today = new Date();
+  openWOs.forEach(function(wo) {
+    if (!wo.created) return;
+    var age = daysBetween(new Date(wo.created), today);
+    for (var bi = 0; bi < CONFIG.WO_AGING_BUCKETS.length; bi++) {
+      if (age <= CONFIG.WO_AGING_BUCKETS[bi].max) { agingCounts[bi]++; break; }
+    }
+  });
+  var agingHtml = '<div class="aging-badges">';
+  CONFIG.WO_AGING_BUCKETS.forEach(function(b, bi) {
+    if (agingCounts[bi] > 0) agingHtml += '<span class="aging-badge ' + b.cls + '">' + b.label + ': ' + agingCounts[bi] + '</span>';
+  });
+  agingHtml += '</div>';
+
+  // Unassigned urgent count
+  var unassignedUrgent = urgentWOs.filter(function(w) { return !w.vendorName && !w.vendor; });
+
   $('#kpiOpen').textContent = openWOs.length;
-  $('#kpiOpenSub').textContent = WORK_ORDERS.length + ' loaded (open, ' + DATA_WINDOW_DAYS + 'd)';
+  var openSubEl = $('#kpiOpenSub');
+  if (openSubEl) openSubEl.innerHTML = WORK_ORDERS.length + ' loaded (' + DATA_WINDOW_DAYS + 'd)' + agingHtml;
   $('#kpiUrgent').textContent = urgentWOs.length;
-  $('#kpiUrgentSub').textContent = urgentWOs.length > 0 ? urgentWOs.length + ' require immediate attention' : 'No urgent items';
+  var urgSubText = urgentWOs.length > 0 ? urgentWOs.length + ' require attention' : 'No urgent items';
+  if (unassignedUrgent.length > 0) urgSubText += ' \u2022 ' + unassignedUrgent.length + ' unassigned';
+  $('#kpiUrgentSub').textContent = urgSubText;
   $('#kpiTurns').textContent = activeTurns.length;
   $('#kpiTurnsSub').textContent = TURNS.length + ' total turns';
   $('#kpiMoveOuts').textContent = moveOuts.length;
-  $('#kpiMoveOutsSub').textContent = moveOuts.length > 0 ? moveOuts[0].daysLeft + 'd until next' : 'None in 60 days';
+  $('#kpiMoveOutsSub').textContent = moveOuts.length > 0 ? moveOuts[0].daysLeft + 'd until next' : 'None in ' + CONFIG.MOVEOUT_WINDOW_DAYS + ' days';
   $('#kpiFlagged').textContent = flaggedCount;
   $('#kpiFlaggedSub').textContent = flaggedCount > 0 ? flaggedCount + ' items flagged' : 'No flagged items';
 
   $('#woBadge').textContent = openWOs.length || '0';
   $('#turnBadge').textContent = activeTurns.length || '0';
+
+  // Active filter indicator
+  var fiEl = document.getElementById('filterIndicator');
+  if (fiEl) {
+    if (currentPropertyGroup) {
+      // Count properties in this group
+      var propsInGroup = PROPERTIES.filter(function(p) {
+        return isInPropertyGroup(p.id, p.name, currentPropertyGroup);
+      }).length;
+      fiEl.style.display = '';
+      fiEl.className = 'filter-indicator';
+      fiEl.innerHTML = '<i class="fas fa-filter"></i> Filtering: <strong>' + escapeHtml(currentPropertyGroup) +
+        '</strong> (' + propsInGroup + ' properties) &mdash; ' + openWOs.length + ' WOs, ' + activeTurns.length + ' turns' +
+        ' <button class="fi-clear" id="fiClearBtn">Clear Filter</button>';
+      var clearBtn = document.getElementById('fiClearBtn');
+      if (clearBtn) {
+        clearBtn.onclick = function() {
+          currentPropertyGroup = '';
+          var ggf = document.getElementById('globalGroupFilter');
+          if (ggf) ggf.value = '';
+          updateGlobalGroupIndicator();
+          renderAll();
+        };
+      }
+    } else {
+      fiEl.style.display = 'none';
+    }
+  }
 }
 
 function renderActivityFeed() {
@@ -2548,9 +2891,13 @@ function renderWorkOrders() {
     });
   }
 
-  // Group dropdown populated by populateGroupFilters() — just sync value
-  var grpSel = $('#woGroupFilter');
+  // Sync global group filter dropdown
+  var grpSel = $('#globalGroupFilter');
   if (grpSel && grpSel.value !== currentPropertyGroup) grpSel.value = currentPropertyGroup;
+  updateGlobalGroupIndicator();
+
+  // Vendor compliance map for cross-tab warnings
+  var vendorCompliance = buildVendorComplianceMap();
 
   if (WORK_ORDERS.length === 0) {
     board.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-inbox" style="font-size:36px;display:block;margin-bottom:12px;color:var(--border)"></i>No work orders loaded. Connect to API or import a cache file.</div>';
@@ -2587,7 +2934,13 @@ function renderWorkOrders() {
       html += '<div class="kc-meta">';
       if (wo.propertyName) html += '<span><i class="fas fa-building"></i> ' + escapeHtml(wo.propertyName) + '</span>';
       if (wo.unit) html += '<span><i class="fas fa-door-open"></i> ' + escapeHtml(wo.unit) + '</span>';
-      if (wo.vendorName) html += '<span><i class="fas fa-hard-hat"></i> ' + escapeHtml(wo.vendorName) + '</span>';
+      if (wo.vendorName) {
+        html += '<span><i class="fas fa-hard-hat"></i> ' + escapeHtml(wo.vendorName) + '</span>';
+        var vKey = (wo.vendorName || '').toLowerCase();
+        if (vendorCompliance[vKey]) {
+          html += '<div class="wo-vendor-warn"><i class="fas fa-exclamation-triangle"></i> Insurance ' + vendorCompliance[vKey] + '</div>';
+        }
+      }
       if (wo.created) html += '<span><i class="fas fa-clock"></i> ' + timeAgo(wo.created) + '</span>';
       if (wo.tenant) html += '<span><i class="fas fa-user"></i> ' + escapeHtml(wo.tenant) + '</span>';
       html += '</div></div>';
@@ -2775,6 +3128,8 @@ var TURN_RECORDS = []; // persisted stage overrides from proxy blob
 var TURN_PIPE_DATA = []; // computed pipeline entries
 var currentTurnPipeFilter = 'active';
 var currentTurnPipeGroup = '';
+var _inspSortCol = 'daysSince'; // default sort column
+var _inspSortDir = 'desc';      // 'asc' or 'desc'
 
 // Stage definitions — Hybrid Turn Pipeline phases
 // Upcoming = pre-turn (tenant gave notice), then MO → INS → WO → REQ → EST → ASN → DONE
@@ -3018,9 +3373,18 @@ function buildTurnPipeline() {
         elapsed = daysBetween(moveOutDate, today);
       }
     }
-    var target = (turnData && turnData.targetDays) || 30;
-    var isStalled = !isUpcoming && elapsed > 7 && currentStageIdx >= 1 && currentStageIdx < PIPE_STAGES.length - 1;
-    var isCompleted = (turnData && !!turnData.turnEnd) || (stages.work_done && stages.work_done.done);
+    var target = (turnData && turnData.targetDays) || CONFIG.TURN_TARGET_DAYS;
+    var isStalled = !isUpcoming && elapsed > CONFIG.TURN_STALLED_DAYS && currentStageIdx >= 1 && currentStageIdx < PIPE_STAGES.length - 1;
+    // Aggregate completion: ALL linked WOs must be in terminal status
+    var allWOsDone = isTurnFullyComplete(matchingWOs);
+    var isCompleted = (turnData && !!turnData.turnEnd) || (stages.work_done && stages.work_done.done && (matchingWOs.length === 0 || allWOsDone));
+    // If WOs exist but not all done, override work_done stage
+    if (matchingWOs.length > 0 && !allWOsDone && !turnData) {
+      stages.work_done.done = false;
+      isCompleted = false;
+    }
+    // SLA countdown
+    var sla = (!isUpcoming && moveOut) ? calculateSLA(moveOut) : null;
 
     // Parse cost
     var costNum = 0;
@@ -3047,6 +3411,8 @@ function buildTurnPipeline() {
       target: target,
       isStalled: isStalled && !isCompleted,
       isCompleted: isCompleted,
+      allWOsDone: allWOsDone,
+      sla: sla,
       costNum: costNum,
       totalBilled: (turnData && turnData.totalBilled) || '$0',
       savedRecord: savedRec || null
@@ -3150,9 +3516,9 @@ function renderTurnPipelineUI() {
   var group = currentTurnPipeGroup;
   var search = ($('#turnPipeSearch') ? $('#turnPipeSearch').value : '').toLowerCase();
 
-  // Sync group filter dropdown
-  var turnGrpSel = $('#turnGroupFilter');
-  if (turnGrpSel && turnGrpSel.value !== currentPropertyGroup) turnGrpSel.value = currentPropertyGroup;
+  // Sync global group filter dropdown
+  var turnGfSel = $('#globalGroupFilter');
+  if (turnGfSel && turnGfSel.value !== currentPropertyGroup) turnGfSel.value = currentPropertyGroup;
 
   var filtered = TURN_PIPE_DATA.filter(function(p) {
     if (filter === 'active' && p.isCompleted) return false;
@@ -3177,7 +3543,8 @@ function renderTurnPipelineUI() {
 
   var html = '';
   filtered.forEach(function(p, idx) {
-    var cardClass = p.isCompleted ? '' : p.isUpcoming ? 'upcoming' : p.isStalled ? 'stalled' : p.elapsed < 14 ? 'on-track' : 'waiting';
+    var slaBreach = p.sla && p.sla.breached && !p.isCompleted;
+    var cardClass = p.isCompleted ? '' : p.isUpcoming ? 'upcoming' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
     html += '<div class="pipe-card ' + cardClass + '" data-pipeidx="' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
 
     // Left: unit info
@@ -3212,12 +3579,18 @@ function renderTurnPipelineUI() {
       html += '<span class="pipe-card-elapsed" style="color:var(--info,#60a5fa)">' + daysUntil + 'd</span>';
       html += '<span class="pipe-card-cost">Move-out: ' + formatDate(p.moveOut) + '</span>';
     } else {
-      var eColor = p.elapsed > p.target ? 'var(--danger)' : p.elapsed > 14 ? 'var(--warning)' : 'var(--text-primary)';
+      var eColor = p.elapsed > p.target ? 'var(--danger)' : p.elapsed > CONFIG.TURN_WARNING_DAYS ? 'var(--warning)' : 'var(--text-primary)';
       html += '<span class="pipe-card-elapsed" style="color:' + eColor + '">' + p.elapsed + 'd</span>';
       var nextStage = p.currentStageIdx < PIPE_STAGES.length - 1 ? PIPE_STAGES[p.currentStageIdx + 1] : null;
       html += '<span class="pipe-card-cost">' + escapeHtml(p.totalBilled);
       if (nextStage) html += ' &bull; Next: ' + nextStage.label;
       html += '</span>';
+      // SLA progress bar
+      if (p.sla) {
+        var slaColor = p.sla.businessDaysLeft <= 2 ? 'red' : p.sla.businessDaysLeft <= 6 ? 'yellow' : 'green';
+        var slaLabel = p.sla.breached ? 'SLA BREACH' : p.sla.businessDaysLeft + ' biz days left';
+        html += '<div class="sla-bar" title="' + slaLabel + '"><div class="sla-bar-fill ' + slaColor + '" style="width:' + p.sla.pct + '%"></div></div>';
+      }
     }
     html += '</div>';
 
@@ -3277,6 +3650,18 @@ function renderTurnPipelineUI() {
     if (p.turn) {
       html += '<div class="detail-row"><div class="detail-row-label">Expected Move-In</div><div class="detail-row-value">' + (p.turn.expectedMoveIn ? formatDate(p.turn.expectedMoveIn) : '\u2014') + '</div></div>';
       html += '<div class="detail-row"><div class="detail-row-label">Target Days</div><div class="detail-row-value">' + (p.target || '\u2014') + '</div></div>';
+      // SLA deadline
+      if (p.sla) {
+        var slaStyle = p.sla.breached ? 'color:var(--danger);font-weight:700' : p.sla.businessDaysLeft <= 3 ? 'color:var(--warning);font-weight:700' : '';
+        var slaText = p.sla.breached ? 'BREACHED (' + Math.abs(p.sla.calendarDaysLeft) + 'd overdue)' : p.sla.businessDaysLeft + ' biz days left (due ' + formatDate(p.sla.deadline.toISOString()) + ')';
+        html += '<div class="detail-row"><div class="detail-row-label">SLA (14 biz days)</div><div class="detail-row-value" style="' + slaStyle + '">' + slaText + '</div></div>';
+      }
+      // WO completion aggregate
+      if (p.matchingWOs.length > 0) {
+        var doneCount = p.matchingWOs.filter(function(w) { return ['Completed','Work Completed','Canceled','Work Done','Ready to Bill'].indexOf(w.status) !== -1; }).length;
+        var woCompStyle = doneCount === p.matchingWOs.length ? 'color:var(--success)' : 'color:var(--warning)';
+        html += '<div class="detail-row"><div class="detail-row-label">WO Completion</div><div class="detail-row-value" style="' + woCompStyle + '">' + doneCount + '/' + p.matchingWOs.length + ' complete</div></div>';
+      }
       html += '<div class="detail-row"><div class="detail-row-label">Total Billed</div><div class="detail-row-value">' + escapeHtml(p.totalBilled) + '</div></div>';
       html += '<div class="detail-row"><div class="detail-row-label">Labor</div><div class="detail-row-value">' + escapeHtml(p.turn.laborCost || '$0') + '</div></div>';
       html += '<div class="detail-row"><div class="detail-row-label">Reference</div><div class="detail-row-value">' + escapeHtml(p.turn.referenceUser || '\u2014') + '</div></div>';
@@ -3367,8 +3752,8 @@ function renderInspections(search) {
   var classified = INSPECTIONS.map(function(r) {
     var lastDate = r.lastInspection ? new Date(r.lastInspection) : null;
     var daysSince = lastDate ? daysBetween(lastDate, today) : 999;
-    var overdue = !lastDate || daysSince > 365;
-    var dueSoon = !overdue && daysSince > 270;
+    var overdue = !lastDate || daysSince > CONFIG.INSPECTION_OVERDUE_DAYS;
+    var dueSoon = !overdue && daysSince > CONFIG.INSPECTION_DUE_SOON_DAYS;
     // Check if linked to an active turn
     var linkedTurn = TURN_PIPE_DATA.find(function(tp) {
       return !tp.isCompleted &&
@@ -3398,8 +3783,8 @@ function renderInspections(search) {
   e('kpiInspCurrent', currentCount);
   e('kpiInspTurnLinked', turnLinkedCount);
 
-  // Sync group filter dropdown
-  var inspGrpSel = $('#inspGroupFilter');
+  // Sync global group filter dropdown
+  var inspGrpSel = $('#globalGroupFilter');
   if (inspGrpSel && inspGrpSel.value !== currentPropertyGroup) inspGrpSel.value = currentPropertyGroup;
 
   // Filter
@@ -3417,6 +3802,27 @@ function renderInspections(search) {
         || (c.r.tenant || '').toLowerCase().indexOf(s) !== -1;
     }
     return true;
+  });
+
+  // Sort filtered results
+  var sortCol = _inspSortCol;
+  var sortDir = _inspSortDir === 'asc' ? 1 : -1;
+  filtered.sort(function(a, b) {
+    var va, vb;
+    if (sortCol === 'property') { va = (a.r.propertyName || '').toLowerCase(); vb = (b.r.propertyName || '').toLowerCase(); }
+    else if (sortCol === 'unit') { va = (a.r.unit || '').toLowerCase(); vb = (b.r.unit || '').toLowerCase(); }
+    else if (sortCol === 'daysSince') { va = a.daysSince; vb = b.daysSince; }
+    else if (sortCol === 'status') { va = a.overdue ? 0 : a.dueSoon ? 1 : 2; vb = b.overdue ? 0 : b.dueSoon ? 1 : 2; }
+    else { va = 0; vb = 0; }
+    if (va < vb) return -1 * sortDir;
+    if (va > vb) return 1 * sortDir;
+    return 0;
+  });
+
+  // Update sort indicators in table header
+  document.querySelectorAll('[data-inspsort]').forEach(function(th) {
+    th.classList.remove('asc', 'desc');
+    if (th.getAttribute('data-inspsort') === sortCol) th.classList.add(_inspSortDir);
   });
 
   if (filtered.length === 0) {
@@ -3471,8 +3877,8 @@ function resolveVendorCompliance(v) {
 function renderVendors(search) {
   var container = $('#vendorGrid');
 
-  // Sync group filter dropdown
-  var vendGrpSel = $('#vendorGroupFilter');
+  // Sync global group filter dropdown
+  var vendGrpSel = $('#globalGroupFilter');
   if (vendGrpSel && vendGrpSel.value !== currentPropertyGroup) vendGrpSel.value = currentPropertyGroup;
 
   // Read filter states
@@ -3778,6 +4184,20 @@ function wireUpUI() {
     });
   })();
 
+  // Inspection table — sortable header clicks
+  document.querySelectorAll('[data-inspsort]').forEach(function(th) {
+    th.addEventListener('click', function() {
+      var col = this.getAttribute('data-inspsort');
+      if (_inspSortCol === col) {
+        _inspSortDir = _inspSortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        _inspSortCol = col;
+        _inspSortDir = col === 'daysSince' ? 'desc' : 'asc';
+      }
+      renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+    });
+  });
+
   // Vendor grid — card clicks, compliance toggles, category selects
   (function() {
     var vendGrid = $('#vendorGrid');
@@ -3893,7 +4313,7 @@ function wireUpUI() {
           }
         }
       });
-      // Re-render if returning to a tab that was cleaned
+      // Re-render if returning to a tab that was cleaned (DOM cleanup above)
       var activeHeavy = heavyTabs[tabName];
       if (activeHeavy) {
         var el = document.querySelector(activeHeavy);
@@ -3903,6 +4323,13 @@ function wireUpUI() {
           else if (tabName === 'vendors') renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
           else if (tabName === 'inspections') renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
           else if (tabName === 'webhooks') loadWebhookData();
+        }
+      }
+      // Re-render if tab was dirtied by a group filter change while inactive
+      if (_groupFilterDirty[tabName]) {
+        _groupFilterDirty[tabName] = false;
+        if (typeof _tabRenderMap !== 'undefined' && _tabRenderMap[tabName]) {
+          try { _tabRenderMap[tabName](); } catch (e) { /* safe */ }
         }
       }
 
@@ -3957,7 +4384,7 @@ function wireUpUI() {
   });
 
   // WO dropdown filters
-  $('#woSearch').addEventListener('input', function() { renderWorkOrders(); });
+  $('#woSearch').addEventListener('input', debounce(function() { renderWorkOrders(); }, CONFIG.DEBOUNCE_MS));
   if ($('#woPriorityFilter')) {
     $('#woPriorityFilter').addEventListener('change', function() { currentWOPriority = this.value; renderWorkOrders(); });
   }
@@ -3991,9 +4418,9 @@ function wireUpUI() {
     });
   }
   if ($('#turnPipeSearch')) {
-    $('#turnPipeSearch').addEventListener('input', function() {
+    $('#turnPipeSearch').addEventListener('input', debounce(function() {
       renderTurnPipelineUI();
-    });
+    }, CONFIG.DEBOUNCE_MS));
   }
 
   // Inspection status filter
@@ -4059,7 +4486,7 @@ function wireUpUI() {
   }
 
   /* btnLoadBills removed — billing stripped */
-  $('#vendorSearch').addEventListener('input', function() { renderVendors(this.value); });
+  $('#vendorSearch').addEventListener('input', debounce(function() { renderVendors(this.value); }, CONFIG.DEBOUNCE_MS));
   if ($('#vendorCategoryFilter')) {
     $('#vendorCategoryFilter').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
   }
@@ -4082,7 +4509,7 @@ function wireUpUI() {
   $('#progClose').addEventListener('click', function() { $('#progressDock').classList.add('hidden'); });
 
   // Inspections search
-  $('#inspSearch').addEventListener('input', function() { renderInspections(this.value); });
+  $('#inspSearch').addEventListener('input', debounce(function() { renderInspections(this.value); }, CONFIG.DEBOUNCE_MS));
   $('#btnRefreshInsp').addEventListener('click', function() { sectionRefresh('inspections', this); });
 
   // Per-section refresh buttons
@@ -4104,72 +4531,79 @@ function wireUpUI() {
     }
   });
 
-  // Load Groups button — fetch property groups on-demand via v0 API
-  if ($('#btnLoadGroups')) {
-    $('#btnLoadGroups').addEventListener('click', async function() {
-      var btn = this;
-      btn.disabled = true;
-      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading\u2026';
+  // (Load Groups button moved to global filter bar — wired below)
+
+  // ---- Global property group filter (single dropdown in sticky header) ----
+  // Map tab names to their render functions (called on-demand, not all at once)
+  var _tabRenderMap = {
+    dashboard: function() { renderDashboardKPIs(); },
+    workorders: function() { renderWorkOrders(); },
+    payroll: function() { renderPayroll(); },
+    turnboard: function() { renderTurnPipelineUI(); },
+    inspections: function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
+    vendors: function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); }
+  };
+
+  // Optimized: only re-render the active tab + KPIs, defer via requestAnimationFrame
+  // Other tabs marked dirty and re-rendered lazily when switched to
+  function applyGroupFilterChange() {
+    var activeTab = document.querySelector('.nav-tab.active');
+    var tabName = activeTab ? activeTab.getAttribute('data-tab') : 'dashboard';
+    // Mark all renderable tabs as dirty
+    Object.keys(_tabRenderMap).forEach(function(t) { _groupFilterDirty[t] = true; });
+    // Immediately clear + render the active tab (deferred one frame to unblock the event)
+    _groupFilterDirty[tabName] = false;
+    requestAnimationFrame(function() {
       try {
-        await fetchPropertyGroups();
-        populateGroupFilters();
-        renderAll();
-        showToast('Loaded ' + PROPERTY_GROUPS.length + ' property groups');
-      } catch (err) {
-        showToast('Failed to load groups: ' + (err.message || err));
-      } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fas fa-layer-group"></i> Load Groups';
+        if (_tabRenderMap[tabName]) _tabRenderMap[tabName]();
+      } catch (e) { /* safe */ }
+      // Dashboard KPIs always refresh regardless of active tab
+      if (tabName !== 'dashboard') {
+        try { renderDashboardKPIs(); } catch (e) { /* safe */ }
       }
+    });
+    updateGlobalGroupIndicator();
+  }
+
+  // Wire up the single global group filter dropdown
+  var globalGrpEl = $('#globalGroupFilter');
+  if (globalGrpEl) {
+    globalGrpEl.addEventListener('change', function() {
+      currentPropertyGroup = this.value;
+      applyGroupFilterChange();
     });
   }
 
-  // ---- Global property group filter ----
-  // All group filter dropdowns share the same currentPropertyGroup variable
-  // Change on one tab propagates to all tabs on next render
-  var groupFilterIds = [
-    '#payrollGroupFilter', '#dashGroupFilter', '#inspGroupFilter',
-    '#vendorGroupFilter', '#reconGroupFilter', '#turnGroupFilter'
-  ];
-  groupFilterIds.forEach(function(sel) {
-    var el = document.querySelector(sel);
-    if (el) {
-      el.addEventListener('change', function() {
-        currentPropertyGroup = this.value;
-        // Sync all group filter dropdowns
-        groupFilterIds.concat(['#woGroupFilter']).forEach(function(s) {
-          var otherEl = document.querySelector(s);
-          if (otherEl && otherEl.value !== currentPropertyGroup) otherEl.value = currentPropertyGroup;
-        });
-        // Re-render all sections that use the group filter
-        try { renderWorkOrders(); } catch (e) { /* */ }
-        try { renderPayroll(); } catch (e) { /* */ }
-        try { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); } catch (e) { /* */ }
-        try { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); } catch (e) { /* */ }
-        try { renderTurnPipelineUI(); } catch (e) { /* */ }
-        try { renderDashboardKPIs(); } catch (e) { /* */ }
-      });
-    }
-  });
+  // Wire up the global group clear button
+  var globalClearBtn = $('#globalGroupClear');
+  if (globalClearBtn) {
+    globalClearBtn.addEventListener('click', function() {
+      currentPropertyGroup = '';
+      if (globalGrpEl) globalGrpEl.value = '';
+      applyGroupFilterChange();
+    });
+  }
 
-  // WO group filter also syncs globally
-  if ($('#woGroupFilter')) {
-    // Remove existing listener (was set above) and re-add with global sync
-    var woGrp = $('#woGroupFilter');
-    var newWoGrp = woGrp.cloneNode(true);
-    woGrp.parentNode.replaceChild(newWoGrp, woGrp);
-    newWoGrp.addEventListener('change', function() {
-      currentPropertyGroup = this.value;
-      groupFilterIds.forEach(function(s) {
-        var otherEl = document.querySelector(s);
-        if (otherEl && otherEl.value !== currentPropertyGroup) otherEl.value = currentPropertyGroup;
-      });
-      try { renderWorkOrders(); } catch (e) { /* */ }
-      try { renderPayroll(); } catch (e) { /* */ }
-      try { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); } catch (e) { /* */ }
-      try { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); } catch (e) { /* */ }
-      try { renderTurnPipelineUI(); } catch (e) { /* */ }
-      try { renderDashboardKPIs(); } catch (e) { /* */ }
+  // Wire up the "Reload Groups" button in the global filter bar
+  var btnGlobalLoadGroups = $('#btnGlobalLoadGroups');
+  if (btnGlobalLoadGroups) {
+    btnGlobalLoadGroups.addEventListener('click', async function() {
+      btnGlobalLoadGroups.disabled = true;
+      btnGlobalLoadGroups.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading…';
+      try {
+        var ok = await fetchPropertyGroups();
+        if (ok) {
+          populateGroupFilters();
+          showToast('Property groups refreshed — ' + PROPERTY_GROUPS.length + ' groups');
+        } else {
+          showToast('Failed to load property groups');
+        }
+      } catch (e) {
+        showToast('Error: ' + (e.message || e));
+      } finally {
+        btnGlobalLoadGroups.disabled = false;
+        btnGlobalLoadGroups.innerHTML = '<i class="fas fa-sync-alt"></i> Reload Groups';
+      }
     });
   }
 
@@ -4388,6 +4822,59 @@ async function initApp() {
   if (appInitialized) return;
   appInitialized = true;
 
+  // ================================================================
+  // VENDOR-ONLY MODE: streamlined init — only load vendor data
+  // ================================================================
+  if (_accessRole === 'vendors') {
+    setApiStatus('loading', 'Initializing vendor view\u2026');
+    updateCacheBadge('loading');
+    await loadVendorOverrides();
+
+    if ($('#vendorGrid')) $('#vendorGrid').innerHTML = loadingHtml('Loading vendors\u2026');
+    wireUpUI();
+
+    // Try cached vendors first
+    try {
+      var vCached = await cacheGet('vendors');
+      if (vCached && Array.isArray(vCached.data) && vCached.data.length > 0) {
+        VENDORS = vCached.data;
+        renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+        showToast('Loaded ' + VENDORS.length + ' vendors from cache');
+      }
+    } catch (e) { /* no cache */ }
+
+    // Skip ping — just fetch vendors directly (vendors only need Reports API)
+    try {
+      setApiStatus('loading', 'Loading vendors\u2026');
+      _vendorsLazyLoaded = true;
+      var vOk = await fetchVendors();
+      // Retry once if first attempt fails (Val Town cold start / transient timeout)
+      if (!vOk) {
+        setApiStatus('loading', 'Retrying vendors\u2026');
+        await sleep(2000);
+        vOk = await fetchVendors();
+      }
+      if (vOk) {
+        renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+        setApiStatus('', 'Vendor Access [v8] \u2014 ' + VENDORS.length + ' vendors');
+        $('#apiStatus').className = 'topbar-status';
+        showToast('Vendors loaded \u2014 ' + VENDORS.length);
+        await saveAllToCache();
+      } else {
+        setApiStatus('error', 'Vendor fetch failed \u2014 check proxy');
+        if (VENDORS.length === 0) showToast('Could not load vendors from proxy');
+      }
+    } catch (e) {
+      setApiStatus('error', 'Connection failed');
+      if (VENDORS.length === 0) showToast('Connection failed \u2014 ' + (e.message || e));
+    }
+    updateCacheBadge(VENDORS.length > 0 ? 'cached' : 'offline');
+    return;
+  }
+
+  // ================================================================
+  // FULL ACCESS MODE: normal init flow
+  // ================================================================
   setApiStatus('loading', 'Initializing\u2026');
   updateCacheBadge('loading');
 
@@ -4461,11 +4948,19 @@ async function initApp() {
     setApiStatus('loading', 'Pinging proxy\u2026');
     var pingData = await proxyAction('ping');
 
-    if (!pingData.ok) {
+    // Detect proxy version (v8 returns version field)
+    _proxyVersion = pingData.version || 'v7';
+
+    // Check APIs individually — be lenient: continue loading if Reports API is reachable
+    var rptOk = pingData.reports_api ? pingData.reports_api.ok : pingData.ok;
+    var dbOk = pingData.db_api ? pingData.db_api.ok : true;
+
+    if (!pingData.ok && !rptOk) {
+      // BOTH APIs failed — block loading
       var dbSt = (pingData.db_api && pingData.db_api.status) || pingData.status || 0;
       var rptSt = (pingData.reports_api && pingData.reports_api.status) || 0;
       var detail = 'DB:' + dbSt + ' Reports:' + rptSt;
-      logApiError(dbSt, 'Pre-flight: Proxy ping failed \u2014 ' + detail, 'resolved');
+      logApiError(dbSt, 'Pre-flight: Both APIs unreachable \u2014 ' + detail, 'resolved');
       showCorsError('Pre-flight ping failed (' + detail + '). Verify proxy has correct credentials and both domains are accessible.');
       setApiStatus('error', 'Auth Failed (' + detail + ')');
       if (!cacheLoaded) {
@@ -4475,7 +4970,17 @@ async function initApp() {
       updateCacheBadge(cacheLoaded ? 'cached' : 'offline', null, true);
       return;
     }
-    setApiStatus('loading', 'Proxy OK (' + pingData.latency_ms + 'ms) \u2014 loading data\u2026');
+    // At least Reports API is reachable — continue loading even if DB API is down
+    var pingMsg = 'Proxy OK';
+    if (pingData.latency_ms) pingMsg += ' (' + pingData.latency_ms + 'ms)';
+    if (_proxyVersion !== 'v7') pingMsg += ' [' + _proxyVersion + ']';
+    if (!dbOk) {
+      pingMsg += ' (DB API down, Reports OK)';
+      logApiError(0, 'DB API v0 unreachable — some features may be limited', 'resolved');
+    }
+    pingMsg += ' \u2014 loading data\u2026';
+    setApiStatus('loading', pingMsg);
+    console.log('Proxy version: ' + _proxyVersion + ', DB: ' + (dbOk ? 'ok' : 'down') + ', Reports: ' + (rptOk ? 'ok' : 'down'));
   } catch (preErr) {
     var peMsg = preErr.message || 'Connection failed';
     var isCsp = peMsg.indexOf('Content Security Policy') !== -1 || peMsg.indexOf('CSP') !== -1 || peMsg.indexOf('Refused to connect') !== -1 || preErr.name === 'TypeError';
@@ -4593,7 +5098,8 @@ async function fetchAllLive() {
 
   if (anySuccess) {
     var summary = 'WO:' + WORK_ORDERS.length + ' P:' + PROPERTIES.length + ' T:' + TURNS.length + ' (V/I lazy)';
-    setApiStatus('', 'Connected \u2014 ' + summary);
+    var versionTag = _proxyVersion !== 'v7' ? ' [' + _proxyVersion + ']' : '';
+    setApiStatus('', 'Connected' + versionTag + ' \u2014 ' + summary);
     $('#apiStatus').className = 'topbar-status';
     await saveAllToCache();
     updateProgress(-1, '', 'Sync complete \u2014 ' + summary);
@@ -4637,6 +5143,7 @@ async function loadStaleCache() {
 }
 
 // Manual refresh — force re-fetch everything from API
+// On v8 proxy: first invalidates server-side cache so fresh data is fetched
 async function refreshData() {
   var btn = $('#refreshBtn');
   if (btn.disabled) return;
@@ -4645,6 +5152,15 @@ async function refreshData() {
   btn.innerHTML = '<i class="fas fa-sync-alt"></i> Syncing\u2026';
 
   try {
+    // v8: invalidate all server-side caches before re-fetching
+    if (_proxyVersion.indexOf('v8') === 0) {
+      try {
+        await proxyAction('cache_invalidate');
+        console.log('v8+: Server-side cache cleared before refresh');
+      } catch (e) {
+        console.log('v8+: cache_invalidate failed (non-fatal): ' + (e.message || e));
+      }
+    }
     await fetchAllLive();
     showToast('Data refreshed \u2014 ' + WORK_ORDERS.length + ' work orders loaded');
   } catch (err) {
@@ -4655,3 +5171,140 @@ async function refreshData() {
     btn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
   }
 }
+
+
+/* =================================================================
+   ATTENTION REQUIRED — Dashboard overview panel
+   Renders stalled turns, overdue inspections, and vendor alerts
+   into the #attentionSection on the dashboard.
+   Called by renderAll() and renderDashboardKPIs().
+   ================================================================= */
+function renderAttentionPanel() {
+  var attnToday = new Date();
+
+  // Stalled turns
+  var stalledEl = document.getElementById('attentionStalledBody');
+  if (stalledEl) {
+    var stalled = TURN_PIPE_DATA.filter(function(p) { return p.isStalled && !p.isCompleted; });
+    // Also show SLA breaches
+    var slaBreach = TURN_PIPE_DATA.filter(function(p) { return p.sla && p.sla.breached && !p.isCompleted; });
+    if (stalled.length === 0 && slaBreach.length === 0) {
+      stalledEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> No stalled turns</div>';
+    } else {
+      var stalledHtml = '';
+      if (slaBreach.length > 0) {
+        stalledHtml += '<div class="attn-count" style="color:var(--danger)">' + slaBreach.length + ' SLA breach' + (slaBreach.length > 1 ? 'es' : '') + '</div>';
+        slaBreach.slice(0, 3).forEach(function(p) {
+          stalledHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(p.unit) + ' — ' + escapeHtml(p.property) + '</span><span class="attn-value" style="color:var(--danger)">' + Math.abs(p.sla.calendarDaysLeft) + 'd over</span></div>';
+        });
+      }
+      if (stalled.length > 0) {
+        stalledHtml += '<div style="margin-top:' + (slaBreach.length > 0 ? '6' : '0') + 'px;font-weight:600;font-size:11px;color:var(--warning)">' + stalled.length + ' stalled (' + CONFIG.TURN_STALLED_DAYS + 'd+ no progress)</div>';
+        stalled.slice(0, 3).forEach(function(p) {
+          stalledHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(p.unit) + ' — ' + escapeHtml(p.property) + '</span><span class="attn-value" style="color:var(--warning)">' + p.elapsed + 'd</span></div>';
+        });
+        if (stalled.length > 3) stalledHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:4px">+' + (stalled.length - 3) + ' more</div>';
+      }
+      stalledEl.innerHTML = stalledHtml;
+    }
+  }
+
+  // Overdue inspections + compliance %
+  var overdueEl = document.getElementById('attentionOverdueBody');
+  if (overdueEl) {
+    var overdue = INSPECTIONS.filter(function(r) {
+      var lastDate = r.lastInspection ? new Date(r.lastInspection) : null;
+      return !lastDate || daysBetween(lastDate, attnToday) > CONFIG.INSPECTION_OVERDUE_DAYS;
+    });
+    var totalInsp = INSPECTIONS.length;
+    var compliant = totalInsp - overdue.length;
+    var compPct = totalInsp > 0 ? Math.round((compliant / totalInsp) * 100) : 100;
+    if (overdue.length === 0) {
+      overdueEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> All inspections current (' + compPct + '% compliant)</div>';
+    } else {
+      var overdueHtml = '<div class="attn-count">' + overdue.length + ' overdue <span style="font-size:10px;font-weight:400;color:var(--text-muted)">(' + compPct + '% compliant)</span></div>';
+      overdue.slice(0, 5).forEach(function(r) {
+        var lastDate = r.lastInspection ? new Date(r.lastInspection) : null;
+        var ago = lastDate ? daysBetween(lastDate, attnToday) + 'd ago' : 'Never';
+        overdueHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(r.unit || '') + ' — ' + escapeHtml(r.propertyName || '') + '</span><span class="attn-value" style="color:var(--danger)">' + ago + '</span></div>';
+      });
+      if (overdue.length > 5) overdueHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:4px">+' + (overdue.length - 5) + ' more</div>';
+      overdueEl.innerHTML = overdueHtml;
+    }
+  }
+
+  // Vendor alerts (expired insurance)
+  var vendorEl = document.getElementById('attentionVendorsBody');
+  if (vendorEl) {
+    var vAlerts = VENDORS.filter(function(v) {
+      var ed = v.insurance ? new Date(v.insurance) : null;
+      return ed && ed < attnToday;
+    });
+    var expiringSoon = VENDORS.filter(function(v) {
+      var ed = v.insurance ? new Date(v.insurance) : null;
+      if (!ed || ed < attnToday) return false;
+      return daysBetween(attnToday, ed) <= CONFIG.VENDOR_EXPIRY_ALERT_DAYS;
+    });
+    if (vAlerts.length === 0 && expiringSoon.length === 0) {
+      vendorEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> All vendors compliant</div>';
+    } else {
+      var vendorHtml = '';
+      if (vAlerts.length > 0) {
+        vendorHtml += '<div class="attn-count" style="color:var(--danger)">' + vAlerts.length + ' expired</div>';
+        vAlerts.slice(0, 3).forEach(function(v) {
+          vendorHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(v.name) + '</span><span class="attn-value" style="color:var(--danger)">Expired</span></div>';
+        });
+        if (vAlerts.length > 3) vendorHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:2px">+' + (vAlerts.length - 3) + ' more</div>';
+      }
+      if (expiringSoon.length > 0) {
+        vendorHtml += '<div style="margin-top:6px;font-weight:600;font-size:11px;color:var(--warning)">' + expiringSoon.length + ' expiring within ' + CONFIG.VENDOR_EXPIRY_ALERT_DAYS + ' days</div>';
+        expiringSoon.slice(0, 3).forEach(function(v) {
+          var ed = new Date(v.insurance);
+          var daysLeft = daysBetween(attnToday, ed);
+          vendorHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(v.name) + '</span><span class="attn-value" style="color:var(--warning)">' + daysLeft + 'd</span></div>';
+        });
+      }
+      vendorEl.innerHTML = vendorHtml;
+    }
+  }
+
+  // Urgent WOs — unassigned + high priority
+  var urgentEl = document.getElementById('attentionUrgentBody');
+  if (urgentEl) {
+    var urgentOpen = WORK_ORDERS.filter(function(w) {
+      return (w.priority === 'Urgent' || w.priority === 'Emergency') && w.status !== 'Completed' && w.status !== 'Canceled';
+    });
+    var unassigned = urgentOpen.filter(function(w) { return !w.vendorName && !w.vendor; });
+    if (urgentOpen.length === 0) {
+      urgentEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> No urgent work orders</div>';
+    } else {
+      var urgentHtml = '<div class="attn-count">' + urgentOpen.length + ' urgent</div>';
+      if (unassigned.length > 0) {
+        urgentHtml += '<div style="font-weight:600;font-size:11px;color:var(--danger);margin-bottom:4px">' + unassigned.length + ' unassigned!</div>';
+        unassigned.slice(0, 3).forEach(function(w) {
+          urgentHtml += '<div class="attn-item"><span class="attn-label">#' + escapeHtml(String(w.id)) + ' — ' + escapeHtml((w.description || '').substring(0, 40)) + '</span><span class="attn-value" style="color:var(--danger)">No vendor</span></div>';
+        });
+      } else {
+        urgentOpen.slice(0, 3).forEach(function(w) {
+          urgentHtml += '<div class="attn-item"><span class="attn-label">#' + escapeHtml(String(w.id)) + ' — ' + escapeHtml((w.description || '').substring(0, 40)) + '</span><span class="attn-value">' + escapeHtml(w.vendorName || w.vendor || '') + '</span></div>';
+        });
+      }
+      if (urgentOpen.length > 3) urgentHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:4px">+' + (urgentOpen.length - 3) + ' more</div>';
+      urgentEl.innerHTML = urgentHtml;
+    }
+  }
+}
+
+// Patch renderAll to include attention panel
+var _origRenderAll = renderAll;
+renderAll = function() {
+  _origRenderAll();
+  try { renderAttentionPanel(); } catch (e) { console.log('renderAttentionPanel error: ' + (e.message || e)); }
+};
+
+// Patch renderDashboardKPIs to include attention panel
+var _origRenderDashKPIs = renderDashboardKPIs;
+renderDashboardKPIs = function() {
+  _origRenderDashKPIs();
+  try { renderAttentionPanel(); } catch (e) { /* */ }
+};
