@@ -333,6 +333,31 @@ body {
 .topbar-status.loading { color: var(--warning); }
 .topbar-status.loading .dot { background: var(--warning); }
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+/* Vendor-only restricted access role badge */
+.role-badge {
+  display: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+body.role-vendors .role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: linear-gradient(135deg, rgba(255,165,0,0.15), rgba(255,120,0,0.25));
+  color: #f0a030;
+  border: 1px solid rgba(255,165,0,0.3);
+}
+/* Hide refresh / rate controls in vendor-only mode */
+body.role-vendors .refresh-btn,
+body.role-vendors .rate-badge,
+body.role-vendors .sync-timestamp,
+body.role-vendors .cache-badge { display: none; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 .rate-badge {
   font-family: var(--font-mono);
@@ -464,6 +489,52 @@ body {
 .nav-tab .badge {
   font-size: 10px; padding: 1px 6px; border-radius: 8px;
   background: var(--danger); color: #fff; font-weight: 600;
+}
+
+/* Global Property Group Filter Bar */
+.global-filter-bar {
+  position: sticky; top: 52px; z-index: 98;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 20px;
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  backdrop-filter: blur(12px);
+}
+.global-filter-bar .gf-icon { color: var(--accent); font-size: 13px; }
+.global-filter-bar select {
+  font-family: var(--font-mono); font-size: 12px;
+  padding: 5px 10px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input); color: var(--text-primary);
+  cursor: pointer; min-width: 150px; max-width: 240px;
+}
+.global-filter-bar select:focus { border-color: var(--accent); outline: none; }
+.global-filter-bar .gf-active {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 10px;
+  background: var(--accent-dim); color: var(--accent);
+  font-weight: 600; font-size: 11px;
+}
+.global-filter-bar .gf-clear {
+  cursor: pointer; font-size: 13px; opacity: 0.7;
+  background: none; border: none; color: var(--accent);
+  padding: 0 2px; line-height: 1;
+}
+.global-filter-bar .gf-clear:hover { opacity: 1; }
+.global-filter-bar .gf-load-btn {
+  font-family: var(--font-mono); font-size: 11px;
+  padding: 4px 10px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input); color: var(--accent);
+  cursor: pointer; white-space: nowrap;
+}
+.global-filter-bar .gf-load-btn:hover { background: var(--accent-dim); }
+@media (max-width: 768px) {
+  .global-filter-bar { padding: 6px 12px; gap: 6px; flex-wrap: wrap; }
+  .global-filter-bar select { min-width: 120px; }
 }
 
 /* Main Content */
@@ -892,6 +963,37 @@ body {
 .pipe-card.on-track { border-left: 3px solid var(--success); }
 .pipe-card.waiting { border-left: 3px solid var(--warning); }
 .pipe-card.upcoming { border-left: 3px solid #60a5fa; background: rgba(96,165,250,0.04); }
+.pipe-card.sla-breach { border-left: 3px solid var(--danger); background: var(--danger-dim); }
+
+/* SLA progress bar on pipe cards */
+.sla-bar { height: 3px; border-radius: 2px; margin-top: 3px; background: var(--bg-input); overflow: hidden; min-width: 60px; }
+.sla-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s ease; }
+.sla-bar-fill.green { background: var(--success); }
+.sla-bar-fill.yellow { background: var(--warning); }
+.sla-bar-fill.red { background: var(--danger); }
+
+/* Active filter indicator */
+.filter-indicator { display: flex; align-items: center; gap: 8px; padding: 6px 12px; margin-bottom: 10px; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: var(--radius); font-size: 12px; color: var(--accent); font-weight: 600; animation: fadeIn 0.2s ease; }
+.filter-indicator .fi-clear { cursor: pointer; background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 2px 8px; font-size: 10px; font-weight: 700; font-family: var(--font-sans); }
+.filter-indicator .fi-clear:hover { opacity: 0.85; }
+
+/* Sortable table headers */
+th.sortable { cursor: pointer; user-select: none; position: relative; }
+th.sortable:hover { color: var(--accent); }
+th.sortable::after { content: '\f0dc'; font-family: 'Font Awesome 6 Free'; font-weight: 900; font-size: 9px; margin-left: 4px; opacity: 0.3; }
+th.sortable.asc::after { content: '\f0de'; opacity: 1; color: var(--accent); }
+th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
+
+/* WO aging badges */
+.aging-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.aging-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; font-family: var(--font-mono); }
+.aging-badge.fresh { background: var(--success-dim); color: var(--success); }
+.aging-badge.moderate { background: var(--warning-dim); color: var(--warning); }
+.aging-badge.old { background: var(--danger-dim); color: var(--danger); }
+
+/* Vendor compliance warning on kanban */
+.wo-vendor-warn { font-size: 9px; color: var(--danger); margin-top: 2px; }
+.wo-vendor-warn i { margin-right: 2px; }
 .dark .pipe-card.upcoming { background: rgba(96,165,250,0.08); }
 
 /* Card left: unit info */
@@ -1030,3 +1132,13 @@ body {
   .pipe-legend-stages { max-width: unset; }
 }
 
+
+/* Attention Required Panel */
+.attention-card{background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.attention-card-title{font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.attention-card .attn-item{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border);font-size:11px}
+.attention-card .attn-item:last-child{border-bottom:none}
+.attention-card .attn-item .attn-label{color:var(--text-secondary)}
+.attention-card .attn-item .attn-value{font-family:var(--font-mono);color:var(--text-primary);font-weight:500}
+.attention-card .attn-count{font-size:20px;font-weight:700;color:var(--accent);margin-bottom:4px}
+.attention-card .attn-empty{color:var(--text-muted);font-style:italic;font-size:11px}
