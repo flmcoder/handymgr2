@@ -366,7 +366,8 @@ body.role-vendors .role-badge {
 body.role-vendors .refresh-btn,
 body.role-vendors .rate-badge,
 body.role-vendors .sync-timestamp,
-body.role-vendors .cache-badge { display: none; }
+body.role-vendors .cache-badge,
+body.role-vendors .global-filter-bar { display: none; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 .rate-badge {
   font-family: var(--font-mono);
@@ -498,6 +499,52 @@ body.role-vendors .cache-badge { display: none; }
 .nav-tab .badge {
   font-size: 10px; padding: 1px 6px; border-radius: 8px;
   background: var(--danger); color: #fff; font-weight: 600;
+}
+
+/* Global Property Group Filter Bar */
+.global-filter-bar {
+  position: sticky; top: 52px; z-index: 98;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 20px;
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  backdrop-filter: blur(12px);
+}
+.global-filter-bar .gf-icon { color: var(--accent); font-size: 13px; }
+.global-filter-bar select {
+  font-family: var(--font-mono); font-size: 12px;
+  padding: 5px 10px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input); color: var(--text-primary);
+  cursor: pointer; min-width: 150px; max-width: 240px;
+}
+.global-filter-bar select:focus { border-color: var(--accent); outline: none; }
+.global-filter-bar .gf-active {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 10px;
+  background: var(--accent-dim); color: var(--accent);
+  font-weight: 600; font-size: 11px;
+}
+.global-filter-bar .gf-clear {
+  cursor: pointer; font-size: 13px; opacity: 0.7;
+  background: none; border: none; color: var(--accent);
+  padding: 0 2px; line-height: 1;
+}
+.global-filter-bar .gf-clear:hover { opacity: 1; }
+.global-filter-bar .gf-load-btn {
+  font-family: var(--font-mono); font-size: 11px;
+  padding: 4px 10px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input); color: var(--accent);
+  cursor: pointer; white-space: nowrap;
+}
+.global-filter-bar .gf-load-btn:hover { background: var(--accent-dim); }
+@media (max-width: 768px) {
+  .global-filter-bar { padding: 6px 12px; gap: 6px; flex-wrap: wrap; }
+  .global-filter-bar select { min-width: 120px; }
 }
 
 /* Main Content */
@@ -1181,6 +1228,18 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
   <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
 </nav>
 
+<!-- Global Property Group Filter Bar -->
+<div class="global-filter-bar" id="globalFilterBar">
+  <i class="fas fa-layer-group gf-icon"></i>
+  <span>Group:</span>
+  <select id="globalGroupFilter"><option value="">All Properties</option></select>
+  <span id="globalGroupActive" style="display:none" class="gf-active">
+    <span id="globalGroupName"></span>
+    <button class="gf-clear" id="globalGroupClear" title="Clear filter">&times;</button>
+  </span>
+  <button class="gf-load-btn" id="btnGlobalLoadGroups" title="Refresh property groups from API"><i class="fas fa-sync-alt"></i> Reload Groups</button>
+</div>
+
 <!-- Main Content -->
 <div class="main-content">
 
@@ -1199,9 +1258,6 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 </div>
 
 <section class="section active" id="sec-dashboard">
-  <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-    <select id="dashGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:140px"><option value="">All Groups</option></select>
-  </div>
   <div id="filterIndicator" style="display:none"></div>
   <div class="kpi-grid stagger">
     <div class="kpi-card amber kpi-clickable" data-kpi="open"><div class="kpi-label">Open Work Orders</div><div class="kpi-value" id="kpiOpen">—</div><div class="kpi-sub" id="kpiOpenSub">Loading…</div></div>
@@ -1279,8 +1335,6 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
     <select id="woPriorityFilter"><option value="">All Priorities</option><option value="Urgent">Urgent</option><option value="Normal">Normal</option><option value="Low">Low</option></select>
     <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
     <select id="woPropertyFilter"><option value="">All Properties</option></select>
-    <select id="woGroupFilter"><option value="">All Groups</option></select>
-    <button class="action-btn" id="btnLoadGroups" title="Load property groups from v0 API"><i class="fas fa-layer-group"></i> Load Groups</button>
     <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
     <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
     <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
@@ -1297,7 +1351,6 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
       <div class="section-subtitle">Work orders marked "Work Done" — Friday-to-Friday pay period</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <select id="payrollGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <button class="action-btn" id="payrollPrev"><i class="fas fa-chevron-left"></i> Prev</button>
       <span class="payroll-range-label" id="payrollRange">—</span>
       <button class="action-btn" id="payrollNext">Next <i class="fas fa-chevron-right"></i></button>
@@ -1346,7 +1399,6 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
       <select class="form-select" id="turnPipeGroup" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
         <option value="">All Properties</option>
       </select>
-      <select id="turnGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <div class="search-box" style="width:180px"><i class="fas fa-search"></i><input type="text" placeholder="Search turns…" id="turnPipeSearch"></div>
       <button class="sec-refresh" id="btnRefreshTurns"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
@@ -1394,7 +1446,6 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
         <option value="current">Current</option>
         <option value="turn_linked">Turn-Linked</option>
       </select>
-      <select id="inspGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search inspections…" id="inspSearch"></div>
       <button class="sec-refresh" id="btnRefreshInsp"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
@@ -1425,7 +1476,6 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
         <option value="non-compliant">Non-Compliant</option>
         <option value="manual-compliant">Manually Compliant</option>
       </select>
-      <select id="vendorGroupFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px"><option value="">All Groups</option></select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search vendors…" id="vendorSearch"></div>
       <button class="sec-refresh" id="btnRefreshVendors"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
@@ -1704,43 +1754,50 @@ function isInPropertyGroup(propertyId, propertyName, groupName) {
   return false;
 }
 
-// Populates ALL group filter dropdowns across every tab
+// Populates the GLOBAL group filter dropdown (replaces per-tab dropdowns)
 function populateGroupFilters() {
-  var selectors = [
-    '#woGroupFilter', '#payrollGroupFilter', '#dashGroupFilter',
-    '#inspGroupFilter', '#vendorGroupFilter', '#reconGroupFilter',
-    '#turnGroupFilter'
-  ];
-  selectors.forEach(function(sel) {
-    var el = document.querySelector(sel);
-    if (!el) return;
-    var current = el.value; // preserve current selection
-    // Clear existing options except the first (All Groups)
-    while (el.options.length > 1) el.remove(1);
-    if (PROPERTY_GROUPS.length > 0) {
-      PROPERTY_GROUPS.forEach(function(g) {
-        if (!g.name) return;
-        var opt = document.createElement('option');
-        opt.value = g.name; opt.textContent = g.name;
-        el.appendChild(opt);
-      });
-    } else {
-      // Fallback: use portfolio field from PROPERTIES
-      var grps = {};
-      PROPERTIES.forEach(function(p) { if (p.portfolio) grps[p.portfolio] = true; });
-      Object.keys(grps).sort().forEach(function(g) {
-        var opt = document.createElement('option');
-        opt.value = g; opt.textContent = g;
-        el.appendChild(opt);
-      });
+  var el = document.getElementById('globalGroupFilter');
+  if (!el) return;
+  var current = el.value || currentPropertyGroup; // preserve current selection
+  // Clear existing options except the first (All Properties)
+  while (el.options.length > 1) el.remove(1);
+  if (PROPERTY_GROUPS.length > 0) {
+    PROPERTY_GROUPS.forEach(function(g) {
+      if (!g.name) return;
+      var opt = document.createElement('option');
+      opt.value = g.name; opt.textContent = g.name;
+      el.appendChild(opt);
+    });
+  } else {
+    // Fallback: use portfolio field from PROPERTIES
+    var grps = {};
+    PROPERTIES.forEach(function(p) { if (p.portfolio) grps[p.portfolio] = true; });
+    Object.keys(grps).sort().forEach(function(g) {
+      var opt = document.createElement('option');
+      opt.value = g; opt.textContent = g;
+      el.appendChild(opt);
+    });
+  }
+  // Restore previous selection if still valid
+  if (current) {
+    for (var i = 0; i < el.options.length; i++) {
+      if (el.options[i].value === current) { el.value = current; break; }
     }
-    // Restore previous selection if still valid
-    if (current) {
-      for (var i = 0; i < el.options.length; i++) {
-        if (el.options[i].value === current) { el.value = current; break; }
-      }
-    }
-  });
+  }
+  // Update the active indicator badge
+  updateGlobalGroupIndicator();
+}
+
+function updateGlobalGroupIndicator() {
+  var activeEl = document.getElementById('globalGroupActive');
+  var nameEl = document.getElementById('globalGroupName');
+  if (!activeEl || !nameEl) return;
+  if (currentPropertyGroup) {
+    nameEl.textContent = currentPropertyGroup;
+    activeEl.style.display = 'inline-flex';
+  } else {
+    activeEl.style.display = 'none';
+  }
 }
 
 // ---- Generic Item Detail Card ----
@@ -4061,8 +4118,8 @@ function renderPayroll() {
   var rangeEl = $('#payrollRange');
   if (rangeEl) rangeEl.textContent = formatDate(period.start) + ' \u2014 ' + formatDate(period.end);
 
-  // Sync payroll group dropdown with global filter
-  var pgSel = $('#payrollGroupFilter');
+  // Sync global group filter dropdown
+  var pgSel = $('#globalGroupFilter');
   if (pgSel && pgSel.value !== currentPropertyGroup) pgSel.value = currentPropertyGroup;
 
   var workDone = WORK_ORDERS.filter(function(wo) {
@@ -4125,9 +4182,10 @@ function renderPayroll() {
 }
 
 function renderDashboardKPIs() {
-  // Sync dashboard group filter
-  var dashGrpSel = $('#dashGroupFilter');
-  if (dashGrpSel && dashGrpSel.value !== currentPropertyGroup) dashGrpSel.value = currentPropertyGroup;
+  // Sync global group filter dropdown
+  var gfSel = $('#globalGroupFilter');
+  if (gfSel && gfSel.value !== currentPropertyGroup) gfSel.value = currentPropertyGroup;
+  updateGlobalGroupIndicator();
 
   var openWOs = WORK_ORDERS.filter(function(w) {
     if (w.status === 'Completed' || w.status === 'Canceled') return false;
@@ -4423,7 +4481,7 @@ function renderWorkOrders() {
   }
 
   // Group dropdown populated by populateGroupFilters() — just sync value
-  var grpSel = $('#woGroupFilter');
+  var grpSel = $('#globalGroupFilter');
   if (grpSel && grpSel.value !== currentPropertyGroup) grpSel.value = currentPropertyGroup;
 
   // Vendor compliance map for cross-tab warnings
@@ -5046,9 +5104,9 @@ function renderTurnPipelineUI() {
   var group = currentTurnPipeGroup;
   var search = ($('#turnPipeSearch') ? $('#turnPipeSearch').value : '').toLowerCase();
 
-  // Sync group filter dropdown
-  var turnGrpSel = $('#turnGroupFilter');
-  if (turnGrpSel && turnGrpSel.value !== currentPropertyGroup) turnGrpSel.value = currentPropertyGroup;
+  // Sync global group filter dropdown
+  var turnGfSel = $('#globalGroupFilter');
+  if (turnGfSel && turnGfSel.value !== currentPropertyGroup) turnGfSel.value = currentPropertyGroup;
 
   var filtered = TURN_PIPE_DATA.filter(function(p) {
     if (filter === 'active' && p.isCompleted) return false;
@@ -5314,7 +5372,7 @@ function renderInspections(search) {
   e('kpiInspTurnLinked', turnLinkedCount);
 
   // Sync group filter dropdown
-  var inspGrpSel = $('#inspGroupFilter');
+  var inspGrpSel = $('#globalGroupFilter');
   if (inspGrpSel && inspGrpSel.value !== currentPropertyGroup) inspGrpSel.value = currentPropertyGroup;
 
   // Filter
@@ -5408,7 +5466,7 @@ function renderVendors(search) {
   var container = $('#vendorGrid');
 
   // Sync group filter dropdown
-  var vendGrpSel = $('#vendorGroupFilter');
+  var vendGrpSel = $('#globalGroupFilter');
   if (vendGrpSel && vendGrpSel.value !== currentPropertyGroup) vendGrpSel.value = currentPropertyGroup;
 
   // Read filter states
@@ -6061,33 +6119,7 @@ function wireUpUI() {
     }
   });
 
-  // Load Groups button — fetch property groups on-demand via v0 API
-  if ($('#btnLoadGroups')) {
-    $('#btnLoadGroups').addEventListener('click', async function() {
-      var btn = this;
-      btn.disabled = true;
-      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading\u2026';
-      try {
-        await fetchPropertyGroups();
-        populateGroupFilters();
-        renderAll();
-        showToast('Loaded ' + PROPERTY_GROUPS.length + ' property groups');
-      } catch (err) {
-        showToast('Failed to load groups: ' + (err.message || err));
-      } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fas fa-layer-group"></i> Load Groups';
-      }
-    });
-  }
-
-  // ---- Global property group filter ----
-  // All group filter dropdowns share the same currentPropertyGroup variable
-  // Change on one tab propagates to all tabs on next render
-  var groupFilterIds = [
-    '#payrollGroupFilter', '#dashGroupFilter', '#inspGroupFilter',
-    '#vendorGroupFilter', '#reconGroupFilter', '#turnGroupFilter'
-  ];
+  // ---- Global property group filter (single bar in sticky header) ----
 
   // Map tab names to their render functions (called on-demand, not all at once)
   var _tabRenderMap = {
@@ -6104,49 +6136,54 @@ function wireUpUI() {
   function applyGroupFilterChange() {
     var activeTab = document.querySelector('.nav-tab.active');
     var tabName = activeTab ? activeTab.getAttribute('data-tab') : 'dashboard';
-    // Mark all renderable tabs as dirty
     Object.keys(_tabRenderMap).forEach(function(t) { _groupFilterDirty[t] = true; });
-    // Immediately clear + render the active tab (deferred one frame to unblock the event)
     _groupFilterDirty[tabName] = false;
     requestAnimationFrame(function() {
       try {
         if (_tabRenderMap[tabName]) _tabRenderMap[tabName]();
       } catch (e) { /* safe */ }
-      // Dashboard KPIs always refresh regardless of active tab
       if (tabName !== 'dashboard') {
         try { renderDashboardKPIs(); } catch (e) { /* safe */ }
       }
     });
+    updateGlobalGroupIndicator();
   }
 
-  groupFilterIds.forEach(function(sel) {
-    var el = document.querySelector(sel);
-    if (el) {
-      el.addEventListener('change', function() {
-        currentPropertyGroup = this.value;
-        // Sync all group filter dropdowns
-        groupFilterIds.concat(['#woGroupFilter']).forEach(function(s) {
-          var otherEl = document.querySelector(s);
-          if (otherEl && otherEl.value !== currentPropertyGroup) otherEl.value = currentPropertyGroup;
-        });
-        applyGroupFilterChange();
-      });
-    }
-  });
-
-  // WO group filter also syncs globally
-  if ($('#woGroupFilter')) {
-    // Remove existing listener (was set above) and re-add with global sync
-    var woGrp = $('#woGroupFilter');
-    var newWoGrp = woGrp.cloneNode(true);
-    woGrp.parentNode.replaceChild(newWoGrp, woGrp);
-    newWoGrp.addEventListener('change', function() {
+  // Global group filter dropdown — single source of truth for all tabs
+  if ($('#globalGroupFilter')) {
+    $('#globalGroupFilter').addEventListener('change', function() {
       currentPropertyGroup = this.value;
-      groupFilterIds.forEach(function(s) {
-        var otherEl = document.querySelector(s);
-        if (otherEl && otherEl.value !== currentPropertyGroup) otherEl.value = currentPropertyGroup;
-      });
       applyGroupFilterChange();
+    });
+  }
+
+  // Global group clear button
+  if ($('#globalGroupClear')) {
+    $('#globalGroupClear').addEventListener('click', function() {
+      currentPropertyGroup = '';
+      var sel = $('#globalGroupFilter');
+      if (sel) sel.value = '';
+      applyGroupFilterChange();
+    });
+  }
+
+  // Global load groups button (replaces old per-tab #btnLoadGroups)
+  if ($('#btnGlobalLoadGroups')) {
+    $('#btnGlobalLoadGroups').addEventListener('click', async function() {
+      var btn = this;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading\u2026';
+      try {
+        await fetchPropertyGroups();
+        populateGroupFilters();
+        renderAll();
+        showToast('Loaded ' + PROPERTY_GROUPS.length + ' property groups');
+      } catch (err) {
+        showToast('Failed to load groups: ' + (err.message || err));
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-sync-alt"></i> Reload Groups';
+      }
     });
   }
 
@@ -6386,28 +6423,26 @@ async function initApp() {
       }
     } catch (e) { /* no cache */ }
 
-    // Ping proxy then fetch fresh vendors
+    // Skip ping — just fetch vendors directly (vendors only need Reports API)
     try {
-      setApiStatus('loading', 'Pinging proxy\u2026');
-      var vPing = await proxyAction('ping');
-      if (vPing.ok) {
-        _proxyVersion = vPing.version || 'v7';
-        setApiStatus('loading', 'Loading vendors\u2026');
-        _vendorsLazyLoaded = true;
-        var vOk = await fetchVendors();
-        if (vOk) {
-          renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-          var vTag = _proxyVersion !== 'v7' ? ' [' + _proxyVersion + ']' : '';
-          setApiStatus('', 'Vendor Access' + vTag + ' \u2014 ' + VENDORS.length + ' vendors');
-          $('#apiStatus').className = 'topbar-status';
-          showToast('Vendors loaded \u2014 ' + VENDORS.length);
-          await saveAllToCache();
-        } else {
-          setApiStatus('error', 'Vendor fetch failed');
-        }
+      setApiStatus('loading', 'Loading vendors\u2026');
+      _vendorsLazyLoaded = true;
+      var vOk = await fetchVendors();
+      // Retry once if first attempt fails (Val Town cold start / transient timeout)
+      if (!vOk) {
+        setApiStatus('loading', 'Retrying vendors\u2026');
+        await sleep(2000);
+        vOk = await fetchVendors();
+      }
+      if (vOk) {
+        renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+        setApiStatus('', 'Vendor Access [v8] \u2014 ' + VENDORS.length + ' vendors');
+        $('#apiStatus').className = 'topbar-status';
+        showToast('Vendors loaded \u2014 ' + VENDORS.length);
+        await saveAllToCache();
       } else {
-        setApiStatus('error', 'Proxy ping failed');
-        if (VENDORS.length === 0) showToast('Could not connect to proxy');
+        setApiStatus('error', 'Vendor fetch failed \u2014 check proxy');
+        if (VENDORS.length === 0) showToast('Could not load vendors from proxy');
       }
     } catch (e) {
       setApiStatus('error', 'Connection failed');
@@ -6493,11 +6528,19 @@ async function initApp() {
     setApiStatus('loading', 'Pinging proxy\u2026');
     var pingData = await proxyAction('ping');
 
-    if (!pingData.ok) {
+    // Detect proxy version (v8 returns version field)
+    _proxyVersion = pingData.version || 'v7';
+
+    // Check APIs individually — be lenient: continue loading if Reports API is reachable
+    var rptOk = pingData.reports_api ? pingData.reports_api.ok : pingData.ok;
+    var dbOk = pingData.db_api ? pingData.db_api.ok : true;
+
+    if (!pingData.ok && !rptOk) {
+      // BOTH APIs failed — block loading
       var dbSt = (pingData.db_api && pingData.db_api.status) || pingData.status || 0;
       var rptSt = (pingData.reports_api && pingData.reports_api.status) || 0;
       var detail = 'DB:' + dbSt + ' Reports:' + rptSt;
-      logApiError(dbSt, 'Pre-flight: Proxy ping failed \u2014 ' + detail, 'resolved');
+      logApiError(dbSt, 'Pre-flight: Both APIs unreachable \u2014 ' + detail, 'resolved');
       showCorsError('Pre-flight ping failed (' + detail + '). Verify proxy has correct credentials and both domains are accessible.');
       setApiStatus('error', 'Auth Failed (' + detail + ')');
       if (!cacheLoaded) {
@@ -6507,14 +6550,17 @@ async function initApp() {
       updateCacheBadge(cacheLoaded ? 'cached' : 'offline', null, true);
       return;
     }
-    // Detect proxy version (v8 returns version field)
-    _proxyVersion = pingData.version || 'v7';
+    // At least Reports API is reachable — continue loading even if DB API is down
     var pingMsg = 'Proxy OK';
     if (pingData.latency_ms) pingMsg += ' (' + pingData.latency_ms + 'ms)';
     if (_proxyVersion !== 'v7') pingMsg += ' [' + _proxyVersion + ']';
+    if (!dbOk) {
+      pingMsg += ' (DB API down, Reports OK)';
+      logApiError(0, 'DB API v0 unreachable — some features may be limited', 'resolved');
+    }
     pingMsg += ' \u2014 loading data\u2026';
     setApiStatus('loading', pingMsg);
-    console.log('Proxy version: ' + _proxyVersion);
+    console.log('Proxy version: ' + _proxyVersion + ', DB: ' + (dbOk ? 'ok' : 'down') + ', Reports: ' + (rptOk ? 'ok' : 'down'));
   } catch (preErr) {
     var peMsg = preErr.message || 'Connection failed';
     var isCsp = peMsg.indexOf('Content Security Policy') !== -1 || peMsg.indexOf('CSP') !== -1 || peMsg.indexOf('Refused to connect') !== -1 || preErr.name === 'TypeError';
