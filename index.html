@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HandyManager — AppFolio Utility</title>
+<title>HandyManager — Maintenance Cockpit</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -46,75 +46,48 @@ html.dark {
   --bg-card-hover: #1e2330;
   --bg-input: #10131a;
   --border: #262b38;
-  --border-active: #5b9cf5;
-  --text-primary: #e8e6e1;
-  --text-secondary: #8a8d97;
-  --text-muted: #555963;
-  --accent: #5b9cf5;
-  --accent-dim: rgba(91,156,245,0.15);
-  --accent-glow: rgba(91,156,245,0.25);
-  --danger: #e0544e;
-  --danger-dim: rgba(224,84,78,0.15);
-  --success: #3ab878;
-  --success-dim: rgba(58,184,120,0.15);
-  --info: #4da6e8;
-  --info-dim: rgba(77,166,232,0.15);
-  --warning: #e8b44d;
-  --warning-dim: rgba(232,180,77,0.15);
-  --purple: #9b7ae8;
-  --purple-dim: rgba(155,122,232,0.15);
-  --shadow: 0 2px 12px rgba(0,0,0,0.3);
+  --border-active: #60a5fa;
+  --text-primary: #f3f4f7;
+  --text-secondary: #b5bbca;
+  --text-muted: #7f8698;
+  --accent: #60a5fa;
+  --accent-dim: rgba(96,165,250,0.14);
+  --accent-glow: rgba(96,165,250,0.22);
+  --danger: #ef4444;
+  --success: #22c55e;
+  --info: #38bdf8;
+  --warning: #f59e0b;
+  --purple: #8b7cf6;
+  --shadow: 0 10px 30px rgba(0,0,0,0.35);
 }
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { font-size: 16px; }
+
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; }
 body {
-  font-family: var(--font-sans);
+  margin: 0;
   background: var(--bg-primary);
   color: var(--text-primary);
-  min-height: 100vh;
-  overflow-x: hidden;
+  font-family: var(--font-sans);
+  overflow: hidden;
 }
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
-/* ===================== VAULT / UNLOCK SCREEN ===================== */
-#vaultScreen {
+.vault-wrap {
+  min-height: 100vh;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
-  padding: 24px;
-  background: var(--bg-primary);
-  position: relative;
-  overflow: hidden;
+  padding: 20px;
 }
-#vaultScreen::before {
-  content: '';
-  position: absolute;
-  width: 600px; height: 600px;
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
-  top: -200px; right: -200px;
-  opacity: 0.3;
-  pointer-events: none;
-}
-#vaultScreen::after {
-  content: '';
-  position: absolute;
-  width: 400px; height: 400px;
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--purple-dim) 0%, transparent 70%);
-  bottom: -150px; left: -100px;
-  opacity: 0.4;
-  pointer-events: none;
-}
-.vault-box {
+
+.vault-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
   padding: 36px;
   width: 100%;
   max-width: 420px;
@@ -2151,19 +2124,7 @@ function cacheSet(key, data) {
   return openCacheDB().then(function(db) {
     return new Promise(function(resolve) {
       var tx = db.transaction(CACHE_STORE, 'readwrite');
-      var store = tx.objectStore(CACHE_STORE);
-      store.put({ key: key, data: data, timestamp: Date.now() });
-      tx.oncomplete = function() { resolve(true); };
-      tx.onerror = function() { resolve(false); };
-    });
-  }).catch(function() { return false; });
-}
-
-function cacheClearAll() {
-  return openCacheDB().then(function(db) {
-    return new Promise(function(resolve) {
-      var tx = db.transaction(CACHE_STORE, 'readwrite');
-      tx.objectStore(CACHE_STORE).clear();
+      tx.objectStore(CACHE_STORE).put({ key: key, data: data, timestamp: Date.now() });
       tx.oncomplete = function() { resolve(); };
       tx.onerror = function() { resolve(); };
     });
@@ -8204,23 +8165,28 @@ renderDashboardKPIs = function() {
   }
 
   function decodeEvent(e) {
-    var evtType = e.event_type || e.type || '';
-    var resType = e.resource_type || '';
-    var label = WH_LABELS[evtType] || e.event_label || e.title || evtType || 'Webhook Event';
-    var resName = e.resource_name || '';
-    var resId = e.resource_id || '';
-    // Try to resolve against cached data
-    if (!resName && resId) {
-      if (resType === 'work_order') {
-        var wo = WORK_ORDERS.find(function(w) { return String(w.id) === String(resId) || w.uuid === resId; });
-        if (wo) resName = (wo.unit_name || wo.unit || '') + ' — ' + (wo.propertyName || wo.property_name || wo.property || '');
-      } else if (resType === 'unit_turn') {
-        var turn = (typeof TURNS !== 'undefined' ? TURNS : []).find(function(t) { return String(t.id) === String(resId) || t.uuid === resId; });
-        if (turn) resName = (turn.unit || '') + ' — ' + (turn.propertyName || turn.property_name || turn.property || '');
-      }
-    }
+    var meta = extractWebhookMeta(e);
+    var evtType = meta.eventType || e.event_type || e.type || '';
+    var resType = meta.resourceType || e.resource_type || '';
+    var resId = meta.resourceId || e.resource_id || '';
+    var label = decodeWebhookTitle(e, meta) || WH_LABELS[evtType] || e.event_label || e.title || evtType || 'Webhook Event';
+    var resName = meta.resourceName || e.resource_name || '';
     var iconMeta = WH_ICONS[resType] || { icon: 'fa-circle-dot', color: 'var(--text-muted)' };
-    return { label: label, resName: resName, resId: resId, icon: iconMeta.icon, color: iconMeta.color, ts: e.ts || e.timestamp || e.received_at || '' };
+    var ckey = (resType && resId) ? webhookResolveKey(resType, resId) : '';
+    var resolved = ckey ? WEBHOOK_RESOURCE_CACHE[ckey] : null;
+    return {
+      label: label,
+      resName: resName,
+      resId: resId,
+      icon: iconMeta.icon,
+      color: iconMeta.color,
+      ts: e.ts || e.timestamp || e.received_at || '',
+      raw: e.raw || meta.payload || {},
+      change: getWebhookChangeSummary(meta.payload || {}),
+      richObj: (resolved && resolved.record) ? buildAppFolioStyleTitle(resType, evtType, resolved.record) : '',
+      status: (resolved && resolved.summary && resolved.summary.status) ? resolved.summary.status : '',
+      reference: (resolved && resolved.summary && resolved.summary.reference) ? resolved.summary.reference : ''
+    };
   }
 
   function renderLiveList() {
@@ -8228,27 +8194,37 @@ renderDashboardKPIs = function() {
       liveList.innerHTML = '<div class="wh-live-empty"><i class="fas fa-satellite-dish" style="font-size:24px;opacity:0.2;margin-bottom:8px"></i>No webhook events yet.<br>Configure webhooks in AppFolio.</div>';
       return;
     }
-    liveList.innerHTML = _whEvents.slice(0, 100).map(function(e) {
+    liveList.innerHTML = _whEvents.slice(0, 100).map(function(e, idx) {
       var d = decodeEvent(e);
+      var detailId = 'whLiveDetail_' + (e.id || idx);
       return '<div class="wh-live-item" style="animation:fadeIn 0.3s ease">' +
-        '<div class="wh-live-item-head">' +
+        '<div class="wh-live-item-head wh-live-item-toggle" data-whlive="' + detailId + '" style="cursor:pointer">' +
         '<span class="wh-live-item-icon" style="color:' + d.color + '"><i class="fas ' + d.icon + '"></i></span>' +
         '<span class="wh-live-item-title">' + escapeHtml(d.label) + '</span>' +
-        '<span class="wh-live-item-time">' + (d.ts ? relativeTime(d.ts) : '') + '</span>' +
+        '<span class="wh-live-item-time">' + (d.ts ? timeAgo(d.ts) : '') + '</span>' +
+        '<i class="fas fa-chevron-down" id="' + detailId + '_chev" style="font-size:9px;color:var(--text-muted);margin-left:6px;transition:transform .15s"></i>' +
         '</div>' +
         (d.resName ? '<div class="wh-live-item-body">' + escapeHtml(d.resName) + '</div>' : '') +
         (d.resId && !d.resName ? '<div class="wh-live-item-body" style="font-family:var(--font-mono);font-size:10px;opacity:0.6">' + escapeHtml(d.resId) + '</div>' : '') +
+        '<div id="' + detailId + '" style="display:none;margin-top:6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);font-size:10px;line-height:1.6">' +
+          (d.richObj ? '<div><span style="color:var(--text-muted)">Object:</span> ' + escapeHtml(d.richObj + (d.reference ? ' #' + d.reference : '')) + (d.status ? ' <span style="color:var(--text-muted)">(' + escapeHtml(d.status) + ')</span>' : '') + '</div>' : '') +
+          '<div><span style="color:var(--text-muted)">Change:</span> ' + escapeHtml(d.change || 'No field-level change details provided') + '</div>' +
+          '<pre style="margin:4px 0 0;white-space:pre-wrap;word-break:break-word;max-height:110px;overflow-y:auto;background:var(--bg-tertiary);padding:4px;border-radius:4px">' + escapeHtml(typeof d.raw === 'string' ? d.raw : JSON.stringify(d.raw, null, 2)) + '</pre>' +
+        '</div>' +
         '</div>';
     }).join('');
-  }
 
-  function relativeTime(iso) {
-    if (!iso) return '';
-    var s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-    if (s < 60) return s + 's ago';
-    if (s < 3600) return Math.floor(s / 60) + 'm ago';
-    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
-    return Math.floor(s / 86400) + 'd ago';
+    liveList.querySelectorAll('.wh-live-item-toggle').forEach(function(row) {
+      row.addEventListener('click', function() {
+        var detailId = row.getAttribute('data-whlive');
+        var detail = document.getElementById(detailId);
+        var chev = document.getElementById(detailId + '_chev');
+        if (!detail) return;
+        var isOpen = detail.style.display !== 'none';
+        detail.style.display = isOpen ? 'none' : 'block';
+        if (chev) chev.style.transform = isOpen ? '' : 'rotate(180deg)';
+      });
+    });
   }
 
   function pollLiveEvents() {
