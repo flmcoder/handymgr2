@@ -3588,7 +3588,7 @@ function renderTurnPipelineUI() {
       // SLA progress bar
       if (p.sla) {
         var slaColor = p.sla.businessDaysLeft <= 2 ? 'red' : p.sla.businessDaysLeft <= 6 ? 'yellow' : 'green';
-        var slaLabel = p.sla.breached ? 'SLA BREACH' : p.sla.businessDaysLeft + ' biz days left';
+        var slaLabel = p.sla.breached ? 'Need Review' : p.sla.businessDaysLeft + ' biz days left';
         html += '<div class="sla-bar" title="' + slaLabel + '"><div class="sla-bar-fill ' + slaColor + '" style="width:' + p.sla.pct + '%"></div></div>';
       }
     }
