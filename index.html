@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HandyManager — AppFolio Maintenance Utility</title>
+<title>HandyManager — Maintenance Cockpit</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -3988,6 +3988,68 @@ var WEBHOOK_EVENT_VERBS = {
   deleted: 'Deleted'
 };
 
+// resource_type/resource_id -> resolved AppFolio record (via proxy action=webhook_resolve)
+var WEBHOOK_RESOURCE_CACHE = {};
+var WEBHOOK_RESOURCE_INFLIGHT = {};
+
+function webhookResolveKey(resourceType, resourceId) {
+  var rt = String(resourceType || '').toLowerCase().trim();
+  var rid = String(resourceId || '').trim();
+  if (!rt || !rid) return '';
+  return rt + ':' + rid;
+}
+
+async function resolveWebhookResource(resourceType, resourceId) {
+  var key = webhookResolveKey(resourceType, resourceId);
+  if (!key) return null;
+  if (WEBHOOK_RESOURCE_CACHE[key]) return WEBHOOK_RESOURCE_CACHE[key];
+  if (WEBHOOK_RESOURCE_INFLIGHT[key]) return WEBHOOK_RESOURCE_INFLIGHT[key];
+
+  WEBHOOK_RESOURCE_INFLIGHT[key] = (async function() {
+    try {
+      var res = await proxyAction('webhook_resolve', {
+        resource_type: resourceType,
+        resource_id: resourceId
+      });
+      if (res && res.ok) {
+        WEBHOOK_RESOURCE_CACHE[key] = {
+          ts: Date.now(),
+          summary: res.summary || {},
+          record: res.record || {},
+          endpoint: res.endpoint || '',
+          domain: res.domain || ''
+        };
+      }
+    } catch (e) {
+      // Keep quiet; unresolved IDs should never break webhook rendering.
+    } finally {
+      delete WEBHOOK_RESOURCE_INFLIGHT[key];
+    }
+    return WEBHOOK_RESOURCE_CACHE[key] || null;
+  })();
+
+  return WEBHOOK_RESOURCE_INFLIGHT[key];
+}
+
+function getWebhookChangeSummary(payload) {
+  var p = payload || {};
+  if (Array.isArray(p.changed_fields) && p.changed_fields.length > 0) {
+    return 'Fields changed: ' + p.changed_fields.join(', ');
+  }
+  if (Array.isArray(p.changed_attributes) && p.changed_attributes.length > 0) {
+    return 'Fields changed: ' + p.changed_attributes.join(', ');
+  }
+  if (p.changes && typeof p.changes === 'object') {
+    var keys = Object.keys(p.changes);
+    if (keys.length > 0) return 'Fields changed: ' + keys.join(', ');
+  }
+  if (p.delta && typeof p.delta === 'object') {
+    var dkeys = Object.keys(p.delta);
+    if (dkeys.length > 0) return 'Fields changed: ' + dkeys.join(', ');
+  }
+  return 'Field-level change details were not provided by this webhook payload.';
+}
+
 function parseWebhookJson(raw) {
   if (!raw) return null;
   if (typeof raw === 'object') return raw;
@@ -4010,6 +4072,14 @@ function singularizeTopic(topic) {
   return t;
 }
 
+function normalizeWebhookResourceType(rawType, topic) {
+  var rt = String(rawType || '').trim().toLowerCase();
+  if (rt && rt.indexOf('.') !== -1) rt = rt.split('.')[0];
+  rt = rt.replace(/[^a-z0-9_]/g, '');
+  if (!rt) rt = singularizeTopic(topic || '');
+  return singularizeTopic(rt);
+}
+
 function titleCaseWords(str) {
   return String(str || '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
 }
@@ -4017,7 +4087,15 @@ function titleCaseWords(str) {
 function resolveWebhookResourceName(resourceType, resourceId) {
   if (!resourceId) return '';
   var rid = String(resourceId);
-  var rtype = String(resourceType || '').toLowerCase();
+  var rtype = normalizeWebhookResourceType(resourceType, '');
+  var ckey = webhookResolveKey(rtype, rid);
+  var cached = ckey ? WEBHOOK_RESOURCE_CACHE[ckey] : null;
+  if (cached && cached.summary) {
+    var s = cached.summary;
+    var base = s.title || s.reference || '';
+    if (base && s.reference && base !== s.reference) base += ' #' + s.reference;
+    if (base) return base;
+  }
 
   if (rtype === 'work_order') {
     var wo = WORK_ORDERS.find(function(w) { return String(w.uuid) === rid || String(w.id) === rid; });
@@ -4046,7 +4124,7 @@ function extractWebhookMeta(e) {
   var payload = parseWebhookJson(e.payload) || parseWebhookJson(e.raw) || parseWebhookJson(e.body) || {};
   var topic = String(e.topic || payload.topic || '').trim().toLowerCase();
   var eventType = String(e.event_type || payload.event_type || e.type || '').trim().toLowerCase();
-  var resourceType = String(e.resource_type || payload.resource_type || singularizeTopic(topic) || '').trim().toLowerCase();
+  var resourceType = normalizeWebhookResourceType(e.resource_type || payload.resource_type || '', topic);
   var resourceId = String(e.resource_id || payload.resource_id || '').trim();
   var resourceName = String(e.resource_name || payload.resource_name || '').trim();
   if (!resourceName && resourceId) resourceName = resolveWebhookResourceName(resourceType, resourceId);
@@ -4172,6 +4250,44 @@ async function loadWebhookData() {
     updateWhPagination();
     // Populate filter dropdowns from data (first load)
     populateWhFilterDropdowns(events);
+
+    // Progressive enrichment: resolve opaque resource IDs into human-readable objects.
+    // Cap per page to avoid flooding AppFolio rate limits.
+    (async function enrichVisibleWebhookEvents() {
+      var unresolved = [];
+      events.forEach(function(evt) {
+        var rt = String(evt.resource_type || '').trim();
+        var rid = String(evt.resource_id || '').trim();
+        var key = webhookResolveKey(rt, rid);
+        if (!key) return;
+        if (WEBHOOK_RESOURCE_CACHE[key] || WEBHOOK_RESOURCE_INFLIGHT[key]) return;
+        unresolved.push({ rt: rt, rid: rid });
+      });
+
+      if (unresolved.length === 0) return;
+      var maxResolve = Math.min(20, unresolved.length);
+      var changed = false;
+      for (var i = 0; i < maxResolve; i++) {
+        var item = unresolved[i];
+        var got = await resolveWebhookResource(item.rt, item.rid);
+        if (got) changed = true;
+        // Keep under AppFolio 8 req/s limit with small jittered delay.
+        await sleep(140 + Math.floor(Math.random() * 40));
+      }
+      if (!changed) return;
+
+      // Recompute titles with resolved names and re-render current page.
+      events = events.map(function(evt) {
+        var meta = extractWebhookMeta(evt);
+        var title = decodeWebhookTitle(evt, meta);
+        return Object.assign({}, evt, {
+          resource_name: meta.resourceName || evt.resource_name || '',
+          title: title,
+          event_label: evt.event_label || title
+        });
+      });
+      renderWebhookDataTable(events);
+    })();
   } catch (err) {
     body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--danger)">Failed to load: ' + escapeHtml(err.message || String(err)) + '</td></tr>';
   }
@@ -4186,6 +4302,10 @@ function renderWebhookDataTable(events) {
   }
   var html = '';
   events.forEach(function(e, idx) {
+    var meta = extractWebhookMeta(e);
+    var ckey = webhookResolveKey(meta.resourceType || e.resource_type, meta.resourceId || e.resource_id);
+    var resolved = ckey ? WEBHOOK_RESOURCE_CACHE[ckey] : null;
+    var changeSummary = getWebhookChangeSummary(meta.payload || {});
     var isPri = e.priority === 'urgent' || e.priority === 'high';
     var priClass = isPri ? 'color:var(--danger);font-weight:600' : 'color:var(--text-secondary)';
     var rowNum = _whPage * _whPageSize + idx + 1;
@@ -4212,6 +4332,17 @@ function renderWebhookDataTable(events) {
     html += '<tr class="wh-detail-row hidden" id="whDetail_' + (e.id || idx) + '">';
     html += '<td colspan="7" style="padding:10px 14px;background:var(--bg-input);border-bottom:2px solid var(--accent)">';
     html += '<div style="font-size:11px;font-family:var(--font-mono);line-height:1.5">';
+    html += '<strong>Object:</strong> ';
+    if (resolved && resolved.summary) {
+      html += escapeHtml((resolved.summary.title || 'Resolved') + (resolved.summary.reference ? ' #' + resolved.summary.reference : ''));
+      if (resolved.summary.status) html += ' <span style="color:var(--text-muted)">(' + escapeHtml(resolved.summary.status) + ')</span>';
+    } else if ((meta.resourceType || e.resource_type) && (meta.resourceId || e.resource_id)) {
+      html += escapeHtml(String(meta.resourceType || e.resource_type)) + ' / ' + escapeHtml(String(meta.resourceId || e.resource_id));
+    } else {
+      html += '(unknown)';
+    }
+    html += '<br>';
+    html += '<strong>Change:</strong> ' + escapeHtml(changeSummary) + '<br>';
     html += '<strong>Body:</strong> ' + escapeHtml(e.body || '(empty)') + '<br>';
     if (e.raw) {
       var rawStr = typeof e.raw === 'string' ? e.raw : JSON.stringify(e.raw);
