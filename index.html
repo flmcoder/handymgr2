@@ -973,6 +973,16 @@ body.role-vendors .cache-badge { display: none; }
 .pipe-card.waiting { border-left: 3px solid var(--warning); }
 .pipe-card.upcoming { border-left: 3px solid #60a5fa; background: rgba(96,165,250,0.04); }
 .pipe-card.sla-breach { border-left: 3px solid var(--danger); background: var(--danger-dim); }
+/* Radar / confirmation-gate UI */
+.pipe-card.on-radar { border-left: 3px solid #60a5fa; background: rgba(96,165,250,0.03); }
+.dark .pipe-card.on-radar { background: rgba(96,165,250,0.07); }
+.radar-badge { font-family: var(--font-mono); font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; background: rgba(96,165,250,0.2); color: #60a5fa; text-transform: uppercase; white-space: nowrap; display: inline-block; margin-bottom: 2px; }
+.pipe-dot.gate { border: 2px dashed var(--accent) !important; background: var(--accent-dim) !important; color: var(--accent) !important; }
+.pipe-dot.waiting-gate { opacity: 0.22; }
+.pipe-section-head { display: flex; align-items: center; gap: 8px; padding: 7px 14px; background: var(--bg-secondary); border: 1px solid var(--border); border-bottom: none; font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted); margin-top: 12px; }
+.pipe-section-head.active-section { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-dim); }
+.pipe-section-head.on-radar-section { color: #60a5fa; border-color: rgba(96,165,250,0.28); }
+.pipe-section-head.completed-section { color: var(--success); border-color: var(--success-dim); background: var(--success-dim); }
 
 /* SLA progress bar on pipe cards */
 .sla-bar { height: 3px; border-radius: 2px; margin-top: 3px; background: var(--bg-input); overflow: hidden; min-width: 60px; }
@@ -1520,7 +1530,8 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 <section class="section" id="sec-turnboard">
   <!-- Turn Pipeline KPIs -->
   <div class="kpi-grid" id="turnKpis">
-    <div class="kpi-card amber"><div class="kpi-label">Active Turns</div><div class="kpi-value" id="kpiActiveTurns">0</div><div class="kpi-sub" id="kpiActiveTurnsSub">Loading…</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">Confirmed Active</div><div class="kpi-value" id="kpiActiveTurns">0</div><div class="kpi-sub" id="kpiActiveTurnsSub">Loading…</div></div>
+    <div class="kpi-card" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;border-top:3px solid #60a5fa"><div class="kpi-label">On Radar</div><div class="kpi-value" id="kpiOnRadar">0</div><div class="kpi-sub" id="kpiOnRadarSub">awaiting confirmation</div></div>
     <div class="kpi-card red"><div class="kpi-label">Avg Days</div><div class="kpi-value" id="kpiAvgTurnDays">—</div><div class="kpi-sub" id="kpiAvgTurnSub">elapsed on active turns</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Awaiting Estimates</div><div class="kpi-value" id="kpiAwaitEst">0</div><div class="kpi-sub" id="kpiAwaitEstSub">turns pending vendor bids</div></div>
     <div class="kpi-card green"><div class="kpi-label">Total Billed</div><div class="kpi-value" id="kpiTurnBilled">$0</div><div class="kpi-sub" id="kpiTurnBilledSub">active turns combined</div></div>
@@ -1534,8 +1545,9 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <select class="form-select" id="turnPipeFilter" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
-        <option value="active">Active Turns</option>
-        <option value="upcoming">Upcoming Move-Outs</option>
+        <option value="active">Active (Confirmed)</option>
+        <option value="on_radar">On Radar</option>
+        <option value="upcoming">Upcoming</option>
         <option value="stalled">Stalled (7d+)</option>
         <option value="all">All Pipeline</option>
         <option value="completed">Completed</option>
@@ -5528,7 +5540,15 @@ function buildTurnPipeline() {
     var isStalled = !isUpcoming && elapsed > CONFIG.TURN_STALLED_DAYS && currentStageIdx >= 1 && currentStageIdx < PIPE_STAGES.length - 1;
     // Aggregate completion: ALL linked WOs must be in terminal status
     var allWOsDone = isTurnFullyComplete(matchingWOs);
-    var isCompleted = (turnData && !!turnData.turnEnd) || (allWorkDone && matchingWOs.length > 0) || (matchingWOs.length === 0 && stages.work_done && stages.work_done.done);
+    // A turn is CONFIRMED when AppFolio is tracking it (comes from unit_turn_detail report)
+    // OR when a post-move-out inspection exists for that unit (the confirmation gate).
+    var isConfirmed = (turnData !== null) || stages.inspection.done;
+    var isOnRadar = !isConfirmed; // watching but not yet a confirmed active turn
+    // Completed requires confirmation — unconfirmed upcoming never counts as done
+    var isCompleted = isConfirmed && (
+      (turnData && !!turnData.turnEnd) ||
+      (allWOsDone && matchingWOs.length > 0) ||
+      (matchingWOs.length === 0 && stages.work_done && stages.work_done.done));
     // Safety: if WOs exist but not all done, ensure not marked complete
     if (matchingWOs.length > 0 && !allWOsDone) {
       stages.work_done.done = false;
@@ -5553,6 +5573,8 @@ function buildTurnPipeline() {
       moveOut: moveOut,
       tenant: moveoutTenant || '',
       isUpcoming: isUpcoming,
+      isConfirmed: isConfirmed,
+      isOnRadar: isOnRadar,
       stages: stages,
       currentStageIdx: currentStageIdx,
       matchingWOs: matchingWOs,
@@ -5584,12 +5606,19 @@ function buildTurnPipeline() {
     addEntry(key, mo.unit, mo.property, mo.propertyId, mo.unitId, mo.moveOut, null, mo.tenant);
   });
 
-  // Sort: upcoming first (by days-until), then active (by elapsed desc), then completed
+  // Sort: confirmed active (most elapsed) → on-radar (upcoming first, then oldest-awaiting)
+  // → completed (most recently done first)
   TURN_PIPE_DATA.sort(function(a, b) {
-    if (a.isCompleted !== b.isCompleted) return a.isCompleted ? 1 : -1;
-    if (a.isUpcoming !== b.isUpcoming) return a.isUpcoming ? -1 : 1;
-    if (a.isUpcoming && b.isUpcoming) return a.elapsed - b.elapsed; // days-until ascending
-    return b.elapsed - a.elapsed; // elapsed descending for active
+    var aGroup = a.isCompleted ? 2 : a.isConfirmed ? 0 : 1; // 0=active, 1=radar, 2=done
+    var bGroup = b.isCompleted ? 2 : b.isConfirmed ? 0 : 1;
+    if (aGroup !== bGroup) return aGroup - bGroup;
+    if (aGroup === 0) return b.elapsed - a.elapsed; // active: most elapsed first
+    if (aGroup === 1) { // on-radar: upcoming (soonest MO first) then past-awaiting-insp
+      if (a.isUpcoming !== b.isUpcoming) return a.isUpcoming ? -1 : 1;
+      if (a.isUpcoming && b.isUpcoming) return a.elapsed - b.elapsed; // days-until asc
+      return b.elapsed - a.elapsed; // days-since-moveout desc
+    }
+    return b.elapsed - a.elapsed; // completed: most recent first
   });
 }
 
@@ -5613,23 +5642,30 @@ function renderTurnBoard() {
 }
 
 function renderTurnKPIs() {
-  var active = TURN_PIPE_DATA.filter(function(p) { return !p.isCompleted && !p.isUpcoming; });
-  var upcoming = TURN_PIPE_DATA.filter(function(p) { return p.isUpcoming; });
-  var awaitEst = active.filter(function(p) {
+  // Separate confirmed-active turns from on-radar (unconfirmed) entries
+  var confirmed = TURN_PIPE_DATA.filter(function(p) { return p.isConfirmed && !p.isCompleted; });
+  var onRadar   = TURN_PIPE_DATA.filter(function(p) { return p.isOnRadar; });
+  var upcoming  = TURN_PIPE_DATA.filter(function(p) { return p.isUpcoming; }); // subset of onRadar
+  var active    = confirmed; // alias — same set for downstream stats
+  var awaitEst  = confirmed.filter(function(p) {
     return p.stages.wo_created && p.stages.wo_created.done && p.stages.est_received && !p.stages.est_received.done;
   });
   var totalBilled = 0;
-  active.forEach(function(p) { totalBilled += p.costNum; });
+  confirmed.forEach(function(p) { totalBilled += p.costNum; });
   var avgDays = 0;
-  if (active.length > 0) {
+  if (confirmed.length > 0) {
     var totalDays = 0;
-    active.forEach(function(p) { totalDays += Math.abs(p.elapsed); });
-    avgDays = Math.round(totalDays / active.length);
+    confirmed.forEach(function(p) { totalDays += Math.abs(p.elapsed); });
+    avgDays = Math.round(totalDays / confirmed.length);
   }
 
   var e = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
-  e('kpiActiveTurns', active.length);
-  e('kpiActiveTurnsSub', active.length + ' active' + (upcoming.length > 0 ? ', ' + upcoming.length + ' upcoming' : ''));
+  e('kpiActiveTurns', confirmed.length);
+  e('kpiActiveTurnsSub', confirmed.length + ' confirmed' + (upcoming.length > 0 ? ', ' + upcoming.length + ' upcoming' : ''));
+  e('kpiOnRadar', onRadar.length);
+  var radarUpcoming = onRadar.filter(function(p) { return p.isUpcoming; }).length;
+  var radarPast     = onRadar.filter(function(p) { return !p.isUpcoming; }).length;
+  e('kpiOnRadarSub', (radarUpcoming > 0 ? radarUpcoming + ' upcoming' : '') + (radarUpcoming > 0 && radarPast > 0 ? ', ' : '') + (radarPast > 0 ? radarPast + ' awaiting inspection' : '') || 'no possible turns');
   e('kpiAvgTurnDays', avgDays > 0 ? avgDays + 'd' : '\u2014');
   e('kpiAvgTurnSub', avgDays > 0 ? 'avg days elapsed' : 'no active turns');
   e('kpiAwaitEst', awaitEst.length);
@@ -5672,7 +5708,10 @@ function renderTurnPipelineUI() {
   if (turnGfSel && turnGfSel.value !== currentPropertyGroup) turnGfSel.value = currentPropertyGroup;
 
   var filtered = TURN_PIPE_DATA.filter(function(p) {
-    if (filter === 'active' && p.isCompleted) return false;
+    // 'active' = confirmed turns that aren't yet complete
+    if (filter === 'active' && (!p.isConfirmed || p.isCompleted)) return false;
+    // 'on_radar' = unconfirmed (possible) turns
+    if (filter === 'on_radar' && !p.isOnRadar) return false;
     if (filter === 'completed' && !p.isCompleted) return false;
     if (filter === 'stalled' && (!p.isStalled || p.isCompleted)) return false;
     if (filter === 'upcoming' && !p.isUpcoming) return false;
@@ -5693,9 +5732,30 @@ function renderTurnPipelineUI() {
   }
 
   var html = '';
+  // Track distinct groups to decide whether to render section dividers
+  var groupCounts = { active: 0, on_radar: 0, completed: 0 };
+  filtered.forEach(function(p) {
+    var g = p.isCompleted ? 'completed' : p.isConfirmed ? 'active' : 'on_radar';
+    groupCounts[g]++;
+  });
+  var multiGroup = (groupCounts.active > 0 ? 1 : 0) + (groupCounts.on_radar > 0 ? 1 : 0) + (groupCounts.completed > 0 ? 1 : 0) > 1;
+  var prevGroup = null;
   filtered.forEach(function(p, idx) {
+    if (multiGroup) {
+      var thisGroup = p.isCompleted ? 'completed' : p.isConfirmed ? 'active' : 'on_radar';
+      if (thisGroup !== prevGroup) {
+        var secLabels = {
+          active:    '<i class="fas fa-exchange-alt" style="margin-right:6px"></i>Active Turns \u2014 ' + groupCounts.active,
+          on_radar:  '<i class="fas fa-satellite-dish" style="margin-right:6px"></i>On Radar \u2014 ' + groupCounts.on_radar + ' possible',
+          completed: '<i class="fas fa-check-circle" style="margin-right:6px"></i>Completed \u2014 ' + groupCounts.completed
+        };
+        var secCls = thisGroup === 'active' ? 'active-section' : thisGroup === 'on_radar' ? 'on-radar-section' : 'completed-section';
+        html += '<div class="pipe-section-head ' + secCls + '">' + secLabels[thisGroup] + '</div>';
+        prevGroup = thisGroup;
+      }
+    }
     var slaBreach = p.sla && p.sla.breached && !p.isCompleted;
-    var cardClass = p.isCompleted ? '' : p.isUpcoming ? 'upcoming' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
+    var cardClass = p.isCompleted ? '' : p.isUpcoming ? 'upcoming' : p.isOnRadar ? 'on-radar' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
     html += '<div class="pipe-card ' + cardClass + '" data-pipeidx="' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
 
     // Left: unit info
@@ -5709,10 +5769,16 @@ function renderTurnPipelineUI() {
     PIPE_STAGES.forEach(function(ps, si) {
       var stage = p.stages[ps.key] || {};
       var dotClass = '';
+      var isGate     = p.isOnRadar && ps.key === 'inspection' && !stage.done;
+      var isPostGate = p.isOnRadar && si > 2 && !(p.stages.inspection && p.stages.inspection.done);
       if (stage.done) {
         dotClass = 'done';
-      } else if (si === p.currentStageIdx + 1) {
+      } else if (isGate) {
+        dotClass = 'gate';
+      } else if (!p.isOnRadar && si === p.currentStageIdx + 1) {
         dotClass = p.isStalled ? 'warn' : 'active';
+      } else if (isPostGate) {
+        dotClass = 'waiting-gate';
       }
       html += '<div class="pipe-dot ' + dotClass + '" title="' + escapeHtml(ps.title) + (stage.date ? ' — ' + formatDate(stage.date) : '') + '">';
       html += '<i class="fas ' + ps.icon + '"></i></div>';
@@ -5729,6 +5795,10 @@ function renderTurnPipelineUI() {
       var daysUntil = Math.abs(p.elapsed);
       html += '<span class="pipe-card-elapsed" style="color:var(--info,#60a5fa)">' + daysUntil + 'd</span>';
       html += '<span class="pipe-card-cost">Move-out: ' + formatDate(p.moveOut) + '</span>';
+    } else if (p.isOnRadar) {
+      html += '<span class="radar-badge" style="margin-bottom:3px">ON RADAR</span>';
+      html += '<span class="pipe-card-elapsed" style="color:#60a5fa">' + p.elapsed + 'd</span>';
+      html += '<span class="pipe-card-cost" style="color:var(--text-muted)">Awaiting inspection</span>';
     } else {
       var eColor = p.elapsed > p.target ? 'var(--danger)' : p.elapsed > CONFIG.TURN_WARNING_DAYS ? 'var(--warning)' : 'var(--text-primary)';
       html += '<span class="pipe-card-elapsed" style="color:' + eColor + '">' + p.elapsed + 'd</span>';
@@ -5780,7 +5850,13 @@ function renderTurnPipelineUI() {
     html += '<div>';
 
     // Matched Work Orders
-    html += '<div class="detail-section-title"><i class="fas fa-wrench"></i> Linked Work Orders (' + p.matchingWOs.length + ')</div>';
+    var woSecTitle = p.isOnRadar
+      ? 'Potential Work Orders (' + p.matchingWOs.length + ') \u2014 unconfirmed'
+      : 'Linked Work Orders (' + p.matchingWOs.length + ')';
+    html += '<div class="detail-section-title"><i class="fas fa-wrench"></i> ' + woSecTitle + '</div>';
+    if (p.isOnRadar) {
+      html += '<div style="font-size:11px;color:#60a5fa;padding:5px 8px;background:rgba(96,165,250,0.09);border-radius:4px;margin-bottom:6px"><i class="fas fa-info-circle" style="margin-right:4px"></i>Once a move-out inspection is recorded, this turn is confirmed and these WOs will be formally linked.</div>';
+    }
     if (p.matchingWOs.length > 0) {
       html += '<div class="pipe-wo-list">';
       p.matchingWOs.forEach(function(wo) {
@@ -5801,6 +5877,9 @@ function renderTurnPipelineUI() {
     html += '<div class="detail-section-title" style="margin-top:12px"><i class="fas fa-info-circle"></i> Turn Details</div>';
     html += '<div class="detail-grid">';
     html += '<div class="detail-row"><div class="detail-row-label">Move-Out</div><div class="detail-row-value">' + (p.moveOut ? formatDate(p.moveOut) : '\u2014') + '</div></div>';
+    if (p.isOnRadar) {
+      html += '<div class="detail-row"><div class="detail-row-label">Confirmation</div><div class="detail-row-value" style="color:#60a5fa"><i class="fas fa-satellite-dish" style="margin-right:4px"></i>On Radar \u2014 awaiting inspection</div></div>';
+    }
     if (p.tenant) html += '<div class="detail-row"><div class="detail-row-label">Tenant</div><div class="detail-row-value">' + escapeHtml(p.tenant) + '</div></div>';
     if (p.turn) {
       html += '<div class="detail-row"><div class="detail-row-label">Expected Move-In</div><div class="detail-row-value">' + (p.turn.expectedMoveIn ? formatDate(p.turn.expectedMoveIn) : '\u2014') + '</div></div>';
