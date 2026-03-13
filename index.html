@@ -759,7 +759,7 @@ body.role-vendors .cache-badge { display: none; }
 .kanban-card .kc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
 .kanban-card .kc-id { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--accent); }
 .kanban-card .kc-priority { font-size: 9px; }
-.kanban-card .kc-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.4; margin-bottom: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.kanban-card .kc-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.4; margin-bottom: 6px; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .kanban-card .kc-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 10px; color: var(--text-muted); }
 .kanban-card .kc-meta span { display: flex; align-items: center; gap: 3px; }
 .kanban-card .kc-meta i { font-size: 9px; }
@@ -1207,6 +1207,11 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 
 /* Database Admin GUI */
 .dbadmin-wrap{display:flex;flex-direction:column;gap:14px}
+.dbadmin-key-row{display:flex;align-items:center;gap:8px;padding:6px 14px 8px;border-bottom:1px solid var(--border);background:var(--bg-secondary)}
+.dbadmin-key-row label{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);white-space:nowrap;text-transform:uppercase;letter-spacing:.5px}
+.dbadmin-key-input{flex:1;max-width:260px;font-family:var(--font-mono);font-size:12px;padding:4px 8px;border-radius:5px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)}
+.dbadmin-key-input:focus{outline:none;border-color:var(--accent)}
+.dbadmin-key-hint{font-size:10px;color:var(--text-muted)}
 .dbadmin-editor-wrap{
   background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);
   overflow:hidden
@@ -1651,8 +1656,13 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
           <button class="dbadmin-shortcut" data-sql="SELECT name FROM sqlite_master WHERE type='table' ORDER BY name">Tables</button>
           <button class="dbadmin-shortcut" data-sql="SELECT * FROM webhook_events ORDER BY id DESC LIMIT 50">Webhooks</button>
           <button class="dbadmin-shortcut" data-sql="PRAGMA table_list">Table List</button>
-          <button class="dbadmin-shortcut" data-sql="SELECT * FROM api_cache ORDER BY updated_at DESC LIMIT 20">Cache</button>
+          <button class="dbadmin-shortcut" data-sql="SELECT * FROM api_cache ORDER BY cached_at DESC LIMIT 20">Cache</button>
         </div>
+      </div>
+      <div class="dbadmin-key-row">
+        <label for="dbAdminKey"><i class="fas fa-key"></i>&nbsp; Admin Key</label>
+        <input type="password" class="dbadmin-key-input" id="dbAdminKey" autocomplete="off" placeholder="PROXY_ADMIN_KEY from Val Town env">
+        <span class="dbadmin-key-hint">Set <code>PROXY_ADMIN_KEY</code> in Val Town env vars to enable SQL access</span>
       </div>
       <textarea class="dbadmin-sql-editor" id="dbEditor" spellcheck="false" placeholder="-- Enter SQL here (Ctrl+Enter to run)&#10;-- Read-only: SELECT, PRAGMA, EXPLAIN&#10;-- Write: INSERT, UPDATE, DELETE, CREATE&#10;&#10;SELECT * FROM webhook_events ORDER BY id DESC LIMIT 25;"></textarea>
       <div class="dbadmin-btn-row">
@@ -1862,7 +1872,7 @@ function daysBetween(a, b) {
   return Math.round(Math.abs(db - da) / 86400000);
 }
 function currency(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0 }); }
-function showToast(msg) { var t = $('#toast'); $('#toastMsg').textContent = msg; t.style.display = 'block'; clearTimeout(t._tid); t._tid = setTimeout(function() { t.style.display = 'none'; }, 3500); }
+function showToast(msg, duration) { var t = $('#toast'); $('#toastMsg').textContent = msg; t.style.display = 'block'; clearTimeout(t._tid); t._tid = setTimeout(function() { t.style.display = 'none'; }, duration || 3500); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -1900,12 +1910,13 @@ function appfolioUrl(type, id) {
 // ---- Shared group filter logic ----
 // Uses pre-computed UUID-based lookup maps built by resolvePropertyGroupNames.
 // Maps are: _nameToGroups (name→groups), _idToGroups (id→groups), _uuidToGroups (uuid→groups).
+var _isInGroupMissLogCount = 0; // throttle miss logs
 function isInPropertyGroup(propertyId, propertyName, groupName) {
   if (!groupName) return true; // no filter = show all
 
   // 1. Fast lookup by property name (covers both Reports API and DB API names)
   if (propertyName) {
-    var groups = _nameToGroups[String(propertyName).toLowerCase()];
+    var groups = _nameToGroups[String(propertyName).trim().toLowerCase()];
     if (groups && groups.indexOf(groupName) !== -1) return true;
   }
 
@@ -1918,11 +1929,19 @@ function isInPropertyGroup(propertyId, propertyName, groupName) {
   // 3. Portfolio fallback — check if property's portfolio matches the group name
   if (propertyName || propertyId) {
     var prop = PROPERTIES.find(function(p) {
-      if (propertyName && p.name && p.name.toLowerCase() === String(propertyName).toLowerCase()) return true;
+      if (propertyName && p.name && p.name.trim().toLowerCase() === String(propertyName).trim().toLowerCase()) return true;
       if (propertyId && String(p.id) === String(propertyId)) return true;
       return false;
     });
-    if (prop && prop.portfolio && prop.portfolio === groupName) return true;
+    if (prop && prop.portfolio) {
+      if (prop.portfolio.trim() === groupName.trim() || prop.portfolio.trim().toLowerCase() === groupName.trim().toLowerCase()) return true;
+    }
+  }
+
+  // Throttled diagnostic: log first 5 misses per filter change to help debug
+  if (_isInGroupMissLogCount < 5) {
+    _isInGroupMissLogCount++;
+    console.log('[PG] isInPropertyGroup MISS: id=' + propertyId + ' name="' + propertyName + '" group="' + groupName + '"');
   }
 
   return false;
@@ -1943,27 +1962,58 @@ function populateGroupFilters() {
   var current = el.value || currentPropertyGroup; // preserve current selection
   // Clear existing options except the first (All Properties)
   while (el.options.length > 1) el.remove(1);
+
+  var addedCount = 0;
   if (PROPERTY_GROUPS.length > 0) {
-    PROPERTY_GROUPS.forEach(function(g) {
+    // Sort groups alphabetically for better UX
+    var sorted = PROPERTY_GROUPS.slice().sort(function(a, b) {
+      return (a.name || '').localeCompare(b.name || '');
+    });
+    sorted.forEach(function(g) {
       if (!g.name) return;
       var opt = document.createElement('option');
-      opt.value = g.name; opt.textContent = g.name;
+      opt.value = g.name;
+      // Show resolved property count for feedback
+      var pCount = (g.resolvedNames && g.resolvedNames.length) || (g.properties && g.properties.length) || 0;
+      opt.textContent = g.name + (pCount > 0 ? ' (' + pCount + ')' : '');
       el.appendChild(opt);
+      addedCount++;
     });
-  } else {
-    // Fallback: use portfolio field from PROPERTIES
-    var grps = {};
-    PROPERTIES.forEach(function(p) { if (p.portfolio) grps[p.portfolio] = true; });
-    Object.keys(grps).sort().forEach(function(g) {
-      var opt = document.createElement('option');
-      opt.value = g; opt.textContent = g;
-      el.appendChild(opt);
-    });
+    console.log('[PG] populateGroupFilters: ' + addedCount + ' groups from PROPERTY_GROUPS');
   }
+
+  // Fallback: always add portfolio-based groups that aren't already present
+  var existingNames = {};
+  for (var i = 0; i < el.options.length; i++) {
+    existingNames[el.options[i].value.toLowerCase()] = true;
+  }
+  var grps = {};
+  PROPERTIES.forEach(function(p) {
+    if (p.portfolio) {
+      var pf = p.portfolio.trim();
+      if (pf && !existingNames[pf.toLowerCase()]) grps[pf] = true;
+    }
+  });
+  var pfKeys = Object.keys(grps).sort();
+  if (pfKeys.length > 0) {
+    pfKeys.forEach(function(g) {
+      var opt = document.createElement('option');
+      opt.value = g; opt.textContent = g + ' (portfolio)';
+      el.appendChild(opt);
+      addedCount++;
+    });
+    console.log('[PG] populateGroupFilters: added ' + pfKeys.length + ' portfolio fallback groups');
+  }
+
+  if (addedCount === 0) {
+    console.log('[PG] populateGroupFilters: NO groups available — PROPERTY_GROUPS=' +
+      PROPERTY_GROUPS.length + ', PROPERTIES=' + PROPERTIES.length);
+  }
+
   // Restore previous selection if still valid
   if (current) {
-    for (var i = 0; i < el.options.length; i++) {
-      if (el.options[i].value === current) { el.value = current; break; }
+    for (var j = 0; j < el.options.length; j++) {
+      if (el.options[j].value === current) { el.value = current; break; }
     }
   }
   // Update the active indicator badge
@@ -3243,6 +3293,8 @@ var TEMPLATES = [
    SMART FILTERS — 180-day window, open-only WOs, small chunks
    ================================================================= */
 var DATA_WINDOW_DAYS = 180;
+var PROPERTY_GROUPS_LAST_UPDATED_FROM = '2024-01-01T00:00:00Z';
+var PROPERTY_GROUPS_PAGE_SIZE = 100;
 
 function dateNDaysAgo(n) {
   var d = new Date();
@@ -3252,6 +3304,22 @@ function dateNDaysAgo(n) {
 
 // Open WO status codes for Reports API (excludes 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill)
 // Defined in fetchWorkOrders() as OPEN_WO_STATUS_CODES
+
+function buildPropertyGroupsQueryParams() {
+  return {
+    'filters[LastUpdatedAtFrom]': PROPERTY_GROUPS_LAST_UPDATED_FROM,
+    'page[size]': PROPERTY_GROUPS_PAGE_SIZE
+  };
+}
+
+function buildPropertyGroupsProxyCurl(proxyUrl) {
+  if (!proxyUrl) return '';
+  var qp = new URLSearchParams();
+  qp.append('action', 'property_groups');
+  qp.append('filters[LastUpdatedAtFrom]', PROPERTY_GROUPS_LAST_UPDATED_FROM);
+  qp.append('page[size]', String(PROPERTY_GROUPS_PAGE_SIZE));
+  return 'curl -X GET "' + proxyUrl + '?' + qp.toString() + '" --compressed';
+}
 
 /* =================================================================
    PROGRESS DOCK — non-blocking corner indicator
@@ -3493,25 +3561,56 @@ async function fetchInspections() {
 async function fetchPropertyGroups() {
   try {
     setApiStatus('loading', 'Loading property groups\u2026');
-    var data = await proxyAction('property_groups');
+    var pgParams = buildPropertyGroupsQueryParams();
+    var data;
+    try {
+      data = await proxyAction('property_groups', pgParams);
+    } catch (actionErr) {
+      // Fallback for proxies that do not forward DB API filters for this action.
+      var pgPath = '/api/v0/property_groups?filters[LastUpdatedAtFrom]=' +
+        encodeURIComponent(PROPERTY_GROUPS_LAST_UPDATED_FROM) +
+        '&page[size]=' + encodeURIComponent(PROPERTY_GROUPS_PAGE_SIZE);
+      console.log('[PG] property_groups action failed; using passthrough fallback: ' + (actionErr.message || actionErr));
+      data = await apiFetch(pgPath);
+    }
+    console.log('[PG] property_groups response keys: ' + Object.keys(data).join(', '));
+    console.log('[PG] property_groups query: filters[LastUpdatedAtFrom]=' + PROPERTY_GROUPS_LAST_UPDATED_FROM + ', page[size]=' + PROPERTY_GROUPS_PAGE_SIZE);
     var results = data.results || data.data || [];
+    console.log('[PG] Raw results count: ' + results.length);
+    if (results.length > 0) {
+      console.log('[PG] First group raw keys: ' + Object.keys(results[0]).join(', '));
+      var rawPids = results[0].PropertyIds || results[0].Properties || results[0].properties || results[0].property_ids || [];
+      console.log('[PG] First group PropertyIds type=' + typeof rawPids + ' isArray=' + Array.isArray(rawPids) + ' len=' + (rawPids.length || 0));
+      if (rawPids.length > 0) console.log('[PG] First PropertyId sample: ' + JSON.stringify(rawPids[0]));
+    }
 
     PROPERTY_GROUPS = results.map(function(g) {
+      // Normalize PropertyIds: may be plain UUID strings OR objects like {Id:"uuid"}
+      var rawProps = g.PropertyIds || g.Properties || g.properties || g.property_ids || [];
+      var normalizedProps = (Array.isArray(rawProps) ? rawProps : []).map(function(pid) {
+        if (typeof pid === 'string') return pid.trim();
+        if (pid && typeof pid === 'object') return String(pid.Id || pid.id || pid.PropertyId || pid.property_id || '').trim();
+        return String(pid || '').trim();
+      }).filter(Boolean);
+
       return {
         id: g.Id || g.id || '',
-        name: g.Name || g.name || '',
-        properties: g.PropertyIds || g.Properties || g.properties || g.property_ids || [],
+        name: (g.Name || g.name || '').trim(),
+        properties: normalizedProps,
         propertyNames: [],
         resolvedNames: []
       };
     });
+
+    console.log('[PG] Parsed groups: ' + PROPERTY_GROUPS.length + ', with PropertyIds: ' +
+      PROPERTY_GROUPS.filter(function(g) { return g.properties.length > 0; }).length);
 
     // Fetch UUID→Name map — await so resolution completes before filters are used
     await resolvePropertyGroupNames();
 
     return true;
   } catch (err) {
-    console.log('fetchPropertyGroups error: ' + (err.message || err));
+    console.log('[PG] fetchPropertyGroups FATAL error: ' + (err.message || err));
     PROPERTY_GROUPS = [];
     return false;
   }
@@ -3520,47 +3619,89 @@ async function fetchPropertyGroups() {
 // Resolve UUID→Name mapping for property groups (called after groups load)
 // This is a separate call so property_groups never times out.
 // If the UUID map fails, falls back to portfolio-based matching from PROPERTIES.
+// Stores diagnostic info on _pgDiag for the Reload Groups shift-click report.
 async function resolvePropertyGroupNames() {
   // Reset lookup maps
   _nameToGroups = {};
   _idToGroups = {};
   _uuidToGroups = {};
+  // Diagnostic collector — shift-click "Reload Groups" shows this
+  var diag = { uuidMapSize: 0, dbNameCount: 0, uuidHits: 0, uuidMisses: 0,
+    nameMatches: 0, idMatches: 0, portfolioMatches: 0, errors: [] };
 
   var uuidMapOk = false;
 
   // Step 1: UUID resolution via property_map
   // Builds: UUID → group names, DB API name → group names
   try {
-    var mapData = await proxyAction('property_map');
+    var mapData;
+    try {
+      mapData = await proxyAction('property_map');
+    } catch (mapErr) {
+      // Fallback: build UUID→name map from DB API properties via passthrough.
+      var propsPath = '/api/v0/properties?filters[LastUpdatedAtFrom]=' +
+        encodeURIComponent(PROPERTY_GROUPS_LAST_UPDATED_FROM) +
+        '&page[size]=' + encodeURIComponent(PROPERTY_GROUPS_PAGE_SIZE);
+      console.log('[PG] property_map action failed; building map from properties fallback: ' + (mapErr.message || mapErr));
+      var dbProps = await fetchAllPages(propsPath);
+      var uuidMapFallback = {};
+      dbProps.forEach(function(p) {
+        var pid = p.Id || p.id || '';
+        var pname = p.Name || p.name || p.PropertyName || p.property_name || '';
+        if (pid && pname) uuidMapFallback[String(pid)] = { name: String(pname) };
+      });
+      mapData = { property_uuid_map: uuidMapFallback };
+    }
+    console.log('[PG] property_map response keys: ' + Object.keys(mapData).join(', '));
     var uuidMap = mapData.property_uuid_map || {};
+    diag.uuidMapSize = Object.keys(uuidMap).length;
+    console.log('[PG] UUID map entries: ' + diag.uuidMapSize);
+    if (diag.uuidMapSize > 0) {
+      var sampleKey = Object.keys(uuidMap)[0];
+      console.log('[PG] UUID map sample: ' + sampleKey + ' → ' + JSON.stringify(uuidMap[sampleKey]));
+    }
 
-    // Also build a reverse map: DB API name (lowercase) → [UUIDs]
+    // Also build a reverse map: DB API name (lowercase, trimmed) → [UUIDs]
     var dbNameToUuids = {};
     Object.keys(uuidMap).forEach(function(uuid) {
       var entry = uuidMap[uuid];
-      var name = entry ? (typeof entry === 'string' ? entry : entry.name || '') : '';
+      var name = '';
+      if (entry) {
+        name = typeof entry === 'string' ? entry : (entry.name || entry.Name || '');
+      }
+      name = name.trim();
       if (name) {
         var key = name.toLowerCase();
         if (!dbNameToUuids[key]) dbNameToUuids[key] = [];
         dbNameToUuids[key].push(uuid);
       }
     });
+    diag.dbNameCount = Object.keys(dbNameToUuids).length;
+    console.log('[PG] Reverse name→UUID map: ' + diag.dbNameCount + ' distinct names');
 
     PROPERTY_GROUPS.forEach(function(g) {
-      if (!g.name || !Array.isArray(g.properties)) return;
+      if (!g.name) return;
+      // Tolerate non-array (e.g. null after normalization failure) — treat as empty
+      var props = Array.isArray(g.properties) ? g.properties : [];
       var resolvedNames = [];
 
-      g.properties.forEach(function(uuid) {
+      props.forEach(function(uuid) {
         // Map UUID → group name
         _addToGroupMap(_uuidToGroups, uuid, g.name);
 
         // Resolve UUID → property name via the map
         var mapped = uuidMap[uuid];
-        var mName = mapped ? (typeof mapped === 'string' ? mapped : mapped.name || '') : '';
+        var mName = '';
+        if (mapped) {
+          mName = (typeof mapped === 'string' ? mapped : (mapped.name || mapped.Name || '')).trim();
+        }
         if (mName) {
+          diag.uuidHits++;
           if (resolvedNames.indexOf(mName) === -1) resolvedNames.push(mName);
-          // Index by DB API name (lowercase)
+          // Index by DB API name (lowercase, trimmed)
           _addToGroupMap(_nameToGroups, mName.toLowerCase(), g.name);
+        } else {
+          diag.uuidMisses++;
         }
       });
 
@@ -3568,17 +3709,19 @@ async function resolvePropertyGroupNames() {
       g.propertyNames = resolvedNames;
     });
 
-    uuidMapOk = Object.keys(uuidMap).length > 0;
+    uuidMapOk = diag.uuidMapSize > 0;
+    console.log('[PG] UUID hits: ' + diag.uuidHits + ', misses: ' + diag.uuidMisses);
 
     // Step 1b: Bridge DB API UUIDs to Reports API property_id via name matching.
     // For each PROPERTIES entry, find its UUID(s) by matching name, then index by id.
     if (uuidMapOk) {
       PROPERTIES.forEach(function(p) {
         if (!p.name) return;
-        var pNameLower = p.name.toLowerCase();
+        var pNameLower = (p.name || '').trim().toLowerCase();
         // Check if this Reports API property name matches any DB API property name
         var matchedUuids = dbNameToUuids[pNameLower];
         if (matchedUuids && matchedUuids.length > 0) {
+          diag.nameMatches++;
           // Store the first UUID on the property for reference
           p._dbUuid = matchedUuids[0];
           // For each matched UUID, copy that UUID's group memberships to the property_id
@@ -3594,15 +3737,16 @@ async function resolvePropertyGroupNames() {
           });
         }
       });
+      diag.idMatches = Object.keys(_idToGroups).length;
     }
 
-    var nameCount = Object.keys(_nameToGroups).length;
-    var idCount = Object.keys(_idToGroups).length;
-    console.log('UUID group resolution: ' + PROPERTY_GROUPS.length + ' groups, ' +
-      Object.keys(uuidMap).length + ' UUID entries, ' +
-      nameCount + ' names mapped, ' + idCount + ' IDs mapped');
+    console.log('[PG] Step 1 done — nameMap: ' + Object.keys(_nameToGroups).length +
+      ', idMap: ' + Object.keys(_idToGroups).length +
+      ', nameMatches(props↔dbNames): ' + diag.nameMatches + '/' + PROPERTIES.length);
   } catch (err) {
-    console.log('resolvePropertyGroupNames UUID map failed (will try portfolio fallback): ' + (err.message || err));
+    var errMsg = 'UUID map failed: ' + (err.message || err);
+    diag.errors.push(errMsg);
+    console.log('[PG] ' + errMsg + ' (will try portfolio fallback)');
   }
 
   // Step 2: Portfolio fallback — supplements UUID mapping.
@@ -3615,11 +3759,11 @@ async function resolvePropertyGroupNames() {
       if (g.resolvedNames && g.resolvedNames.length > 0) {
         g.resolvedNames.forEach(function(rn) {
           var prop = PROPERTIES.find(function(p) {
-            return (p.name || '').toLowerCase() === String(rn).toLowerCase();
+            return (p.name || '').trim().toLowerCase() === String(rn).trim().toLowerCase();
           });
           if (prop && prop.id) {
             _addToGroupMap(_idToGroups, String(prop.id), g.name);
-            _addToGroupMap(_nameToGroups, (prop.name || '').toLowerCase(), g.name);
+            _addToGroupMap(_nameToGroups, (prop.name || '').trim().toLowerCase(), g.name);
           }
         });
       }
@@ -3627,20 +3771,28 @@ async function resolvePropertyGroupNames() {
       // If UUID resolution didn't populate this group, try portfolio name match
       if (!uuidMapOk || !g.resolvedNames || g.resolvedNames.length === 0) {
         PROPERTIES.forEach(function(p) {
-          if (p.portfolio && p.portfolio === g.name) {
-            _addToGroupMap(_nameToGroups, (p.name || '').toLowerCase(), g.name);
+          var portfolio = (p.portfolio || '').trim();
+          var gName = g.name.trim();
+          if (portfolio && (portfolio === gName || portfolio.toLowerCase() === gName.toLowerCase())) {
+            diag.portfolioMatches++;
+            _addToGroupMap(_nameToGroups, (p.name || '').trim().toLowerCase(), g.name);
             _addToGroupMap(_idToGroups, String(p.id), g.name);
           }
         });
       }
     });
 
-    var totalMapped = Object.keys(_nameToGroups).length + Object.keys(_idToGroups).length;
-    console.log('Group lookup maps built: ' + Object.keys(_nameToGroups).length +
-      ' name entries, ' + Object.keys(_idToGroups).length + ' id entries (total: ' + totalMapped + ')');
+    console.log('[PG] Step 2 done — final nameMap: ' + Object.keys(_nameToGroups).length +
+      ', idMap: ' + Object.keys(_idToGroups).length +
+      ', portfolioMatches: ' + diag.portfolioMatches);
   } catch (err) {
-    console.log('Portfolio fallback error (non-fatal): ' + (err.message || err));
+    var pfErr = 'Portfolio fallback error: ' + (err.message || err);
+    diag.errors.push(pfErr);
+    console.log('[PG] ' + pfErr);
   }
+
+  // Store diagnostics for the shift-click report
+  window._pgDiag = diag;
 }
 
 // Recent Tasks: Proxy v7 ?action=recent_tasks — server-side pagination via DB API v0
@@ -3761,16 +3913,17 @@ async function pollWebhookEvents() {
         if (!existing[key]) {
           var evtBody = e.body || '';
           if (evtBody.length > 500) evtBody = evtBody.substring(0, 500) + '\u2026';
+          var meta = extractWebhookMeta(e);
           // Decode event type to friendly label
-          var friendlyTitle = decodeWebhookTitle(e);
+          var friendlyTitle = decodeWebhookTitle(e, meta);
           WEBHOOK_EVENTS.push({
             id: e.id || 0,
             ts: e.ts || e.timestamp || new Date().toISOString(),
-            type: e.type || e.event_type || 'webhook',
+            type: meta.eventType || e.type || e.event_type || 'webhook',
             event_label: e.event_label || friendlyTitle,
-            resource_type: e.resource_type || '',
-            resource_id: e.resource_id || '',
-            resource_name: e.resource_name || '',
+            resource_type: meta.resourceType || '',
+            resource_id: meta.resourceId || '',
+            resource_name: meta.resourceName || '',
             title: friendlyTitle,
             body: evtBody,
             priority: e.priority || 'normal',
@@ -3814,30 +3967,114 @@ var WEBHOOK_LABELS = {
   'lease.updated': 'Lease Updated'
 };
 
-function decodeWebhookTitle(e) {
+var WEBHOOK_EVENT_VERBS = {
+  create: 'Created',
+  created: 'Created',
+  update: 'Updated',
+  updated: 'Updated',
+  delete: 'Deleted',
+  deleted: 'Deleted'
+};
+
+function parseWebhookJson(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  if (typeof raw !== 'string') return null;
+  var s = raw.trim();
+  if (!s) return null;
+  try { return JSON.parse(s); } catch (e1) { /* ignore */ }
+  try {
+    var cleaned = s.replace(/^"|"$/g, '').replace(/\\"/g, '"').replace(/""/g, '"');
+    return JSON.parse(cleaned);
+  } catch (e2) { /* ignore */ }
+  return null;
+}
+
+function singularizeTopic(topic) {
+  var t = String(topic || '').trim().toLowerCase();
+  if (!t) return '';
+  if (t.slice(-3) === 'ies') return t.slice(0, -3) + 'y';
+  if (t.slice(-1) === 's') return t.slice(0, -1);
+  return t;
+}
+
+function titleCaseWords(str) {
+  return String(str || '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+}
+
+function resolveWebhookResourceName(resourceType, resourceId) {
+  if (!resourceId) return '';
+  var rid = String(resourceId);
+  var rtype = String(resourceType || '').toLowerCase();
+
+  if (rtype === 'work_order') {
+    var wo = WORK_ORDERS.find(function(w) { return String(w.uuid) === rid || String(w.id) === rid; });
+    if (wo) return 'WO#' + (wo.id || rid.slice(0, 8)) + (wo.propertyName ? ' - ' + wo.propertyName : '');
+  }
+  if (rtype === 'property') {
+    var prop = PROPERTIES.find(function(p) { return String(p._dbUuid) === rid || String(p.id) === rid; });
+    if (prop) return prop.name || '';
+  }
+  if (rtype === 'vendor') {
+    var vendor = VENDORS.find(function(v) { return String(v.id) === rid; });
+    if (vendor) return vendor.name || '';
+  }
+  if (rtype === 'unit_turn') {
+    var turn = TURNS.find(function(t) { return String(t.unitTurnId) === rid || String(t.unitId) === rid; });
+    if (turn) return (turn.unit || rid.slice(0, 8)) + (turn.property ? ' - ' + turn.property : '');
+  }
+  if (rtype === 'property_group') {
+    var grp = PROPERTY_GROUPS.find(function(g) { return String(g.id) === rid; });
+    if (grp) return grp.name || '';
+  }
+  return '';
+}
+
+function extractWebhookMeta(e) {
+  var payload = parseWebhookJson(e.payload) || parseWebhookJson(e.raw) || parseWebhookJson(e.body) || {};
+  var topic = String(e.topic || payload.topic || '').trim().toLowerCase();
+  var eventType = String(e.event_type || payload.event_type || e.type || '').trim().toLowerCase();
+  var resourceType = String(e.resource_type || payload.resource_type || singularizeTopic(topic) || '').trim().toLowerCase();
+  var resourceId = String(e.resource_id || payload.resource_id || '').trim();
+  var resourceName = String(e.resource_name || payload.resource_name || '').trim();
+  if (!resourceName && resourceId) resourceName = resolveWebhookResourceName(resourceType, resourceId);
+  return {
+    payload: payload,
+    topic: topic,
+    eventType: eventType,
+    resourceType: resourceType,
+    resourceId: resourceId,
+    resourceName: resourceName
+  };
+}
+
+function decodeWebhookTitle(e, meta) {
+  meta = meta || extractWebhookMeta(e);
   // If proxy already decoded it, use that
   if (e.event_label && e.event_label !== 'webhook' && e.event_label !== e.type) return e.event_label;
   if (e.title && e.title !== 'Webhook Event') return e.title;
+
+  var combinedKey = '';
+  if (meta.resourceType && meta.eventType) combinedKey = meta.resourceType + '.' + meta.eventType;
+
   // Decode from event type
-  var label = WEBHOOK_LABELS[e.type] || WEBHOOK_LABELS[e.event_type] || '';
+  var label = WEBHOOK_LABELS[combinedKey] || WEBHOOK_LABELS[e.type] || WEBHOOK_LABELS[e.event_type] || '';
+  if (!label && meta.resourceType && meta.eventType) {
+    label = titleCaseWords(meta.resourceType) + ' ' + (WEBHOOK_EVENT_VERBS[meta.eventType] || titleCaseWords(meta.eventType));
+  }
+  if (!label && meta.topic && meta.eventType) {
+    label = titleCaseWords(singularizeTopic(meta.topic)) + ' ' + (WEBHOOK_EVENT_VERBS[meta.eventType] || titleCaseWords(meta.eventType));
+  }
   if (!label && e.type) {
-    // Generic: "work_order.updated" → "Work Order Updated"
-    label = e.type.replace(/_/g, ' ').replace(/\./g, ' — ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+    label = String(e.type).replace(/_/g, ' ').replace(/\./g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
   }
+
   // Try to resolve resource name
-  var resName = e.resource_name || '';
-  if (!resName && e.resource_id) {
-    // Try matching against our cached PROPERTIES
-    var prop = PROPERTIES.find(function(p) { return p._dbUuid === e.resource_id; });
-    if (prop) resName = prop.name;
-    // Try matching work orders
-    if (!resName) {
-      var wo = WORK_ORDERS.find(function(w) { return w.uuid === e.resource_id; });
-      if (wo) resName = 'WO#' + wo.id + (wo.propertyName ? ' — ' + wo.propertyName : '');
-    }
-    if (!resName) resName = e.resource_id.substring(0, 8) + '\u2026';
+  var resName = meta.resourceName || '';
+  if (!resName && meta.resourceId) {
+    resName = meta.resourceId.substring(0, 8) + '\u2026';
   }
-  return (label || 'Webhook Event') + (resName ? ' \u2014 ' + resName : '');
+  return (label || 'Webhook Event') + (resName ? ' - ' + resName : '');
 }
 
 function renderWebhookEventList() {
@@ -3894,12 +4131,28 @@ async function loadWebhookData() {
     };
     if (_whFilters.search) params.search = _whFilters.search;
     if (_whFilters.type) params.type = _whFilters.type;
+    if (_whFilters.source) params.source = _whFilters.source;
     if (_whFilters.from) params.from = _whFilters.from + 'T00:00:00Z';
     if (_whFilters.to) params.to = _whFilters.to + 'T23:59:59Z';
-    // Source filter is client-side (proxy doesn't have source filter param — add if needed)
     var data = await proxyAction('webhook_events', params);
-    _whTotal = data.total || 0;
-    var events = data.events || [];
+    var events = (data.events || []).map(function(evt) {
+      var meta = extractWebhookMeta(evt);
+      var title = decodeWebhookTitle(evt, meta);
+      return Object.assign({}, evt, {
+        type: meta.eventType || evt.type || evt.event_type || 'webhook',
+        resource_type: meta.resourceType || evt.resource_type || '',
+        resource_id: meta.resourceId || evt.resource_id || '',
+        resource_name: meta.resourceName || evt.resource_name || '',
+        title: title,
+        event_label: evt.event_label || title
+      });
+    });
+    if (_whFilters.source) {
+      events = events.filter(function(evt) {
+        return String(evt.source || '').toLowerCase() === String(_whFilters.source).toLowerCase();
+      });
+    }
+    _whTotal = _whFilters.source ? events.length : (data.total || events.length);
     // Update badge
     var badge = $('#whBadge');
     if (badge) badge.textContent = _whTotal || '\u2014';
@@ -6467,11 +6720,22 @@ function wireUpUI() {
     updateGlobalGroupIndicator();
   }
 
+  function clearPropertyGroupFilters() {
+    currentPropertyGroup = '';
+    _isInGroupMissLogCount = 0;
+    if (globalGrpEl) globalGrpEl.value = '';
+    currentTurnPipeGroup = '';
+    var turnGroupEl = $('#turnPipeGroup');
+    if (turnGroupEl) turnGroupEl.value = '';
+    applyGroupFilterChange();
+  }
+
   // Wire up the single global group filter dropdown
   var globalGrpEl = $('#globalGroupFilter');
   if (globalGrpEl) {
     globalGrpEl.addEventListener('change', function() {
       currentPropertyGroup = this.value;
+      _isInGroupMissLogCount = 0; // reset miss log throttle on filter change
       applyGroupFilterChange();
     });
   }
@@ -6480,25 +6744,52 @@ function wireUpUI() {
   var globalClearBtn = $('#globalGroupClear');
   if (globalClearBtn) {
     globalClearBtn.addEventListener('click', function() {
-      currentPropertyGroup = '';
-      if (globalGrpEl) globalGrpEl.value = '';
-      applyGroupFilterChange();
+      clearPropertyGroupFilters();
     });
   }
 
   // Wire up the "Reload Groups" button in the global filter bar
+  // Shift+Click shows detailed diagnostics toast for debugging
   var btnGlobalLoadGroups = $('#btnGlobalLoadGroups');
   if (btnGlobalLoadGroups) {
-    btnGlobalLoadGroups.addEventListener('click', async function() {
+    btnGlobalLoadGroups.addEventListener('click', async function(evt) {
+      var wantDiag = evt && evt.shiftKey;
+      var wantCopyCommand = evt && (evt.altKey || evt.ctrlKey || evt.metaKey);
       btnGlobalLoadGroups.disabled = true;
-      btnGlobalLoadGroups.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading…';
+      btnGlobalLoadGroups.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading\u2026';
       try {
         var ok = await fetchPropertyGroups();
         if (ok) {
           populateGroupFilters();
-          showToast('Property groups refreshed — ' + PROPERTY_GROUPS.length + ' groups');
+          if (wantCopyCommand && navigator.clipboard) {
+            var cmd = buildPropertyGroupsProxyCurl(API_PROXY);
+            if (cmd) {
+              await navigator.clipboard.writeText(cmd);
+              showToast('Copied property-groups proxy curl command');
+            }
+          }
+          if (wantDiag && window._pgDiag) {
+            var d = window._pgDiag;
+            var lines = [
+              'Groups: ' + PROPERTY_GROUPS.length,
+              'UUID map: ' + d.uuidMapSize + ' entries',
+              'DB names: ' + d.dbNameCount,
+              'UUID hits/misses: ' + d.uuidHits + '/' + d.uuidMisses,
+              'Name bridges: ' + d.nameMatches + '/' + PROPERTIES.length,
+              'ID map: ' + d.idMatches + ' props',
+              'Portfolio matches: ' + d.portfolioMatches,
+              'nameMap: ' + Object.keys(_nameToGroups).length,
+              'idMap: ' + Object.keys(_idToGroups).length
+            ];
+            if (d.errors.length > 0) lines.push('ERRORS: ' + d.errors.join('; '));
+            showToast(lines.join(' | '), 12000);
+          } else {
+            showToast('Property groups refreshed \u2014 ' + PROPERTY_GROUPS.length + ' groups, ' +
+              Object.keys(_nameToGroups).length + ' name mappings, ' +
+              Object.keys(_idToGroups).length + ' ID mappings');
+          }
         } else {
-          showToast('Failed to load property groups');
+          showToast('Failed to load property groups \u2014 check console for [PG] logs');
         }
       } catch (e) {
         showToast('Error: ' + (e.message || e));
@@ -6611,6 +6902,19 @@ function wireUpUI() {
       _whFilters.to = this.value;
       _whPage = 0;
       loadWebhookData();
+    });
+  }
+  if ($('#btnWhClear')) {
+    $('#btnWhClear').addEventListener('click', function() {
+      _whFilters = { search: '', type: '', source: '', from: '', to: '' };
+      _whPage = 0;
+      if ($('#whSearch')) $('#whSearch').value = '';
+      if ($('#whTypeFilter')) $('#whTypeFilter').value = '';
+      if ($('#whSourceFilter')) $('#whSourceFilter').value = '';
+      if ($('#whDateFrom')) $('#whDateFrom').value = '';
+      if ($('#whDateTo')) $('#whDateTo').value = '';
+      loadWebhookData();
+      showToast('Webhook filters cleared');
     });
   }
   if ($('#btnWhRefresh')) {
@@ -6971,7 +7275,10 @@ async function fetchAllLive() {
     // Step 5: Property Groups (proxy v7 — DB API v0)
     updateProgress(5, 'active', 'Fetching property groups\u2026');
     var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
-    updateProgress(5, grpOk ? 'done' : 'error', grpOk ? PROPERTY_GROUPS.length + ' groups' : 'Groups skipped');
+    var grpMsg = grpOk
+      ? PROPERTY_GROUPS.length + ' groups, ' + Object.keys(_idToGroups).length + ' ID maps'
+      : 'Groups skipped';
+    updateProgress(5, grpOk ? 'done' : 'error', grpMsg);
     if (grpOk) { populateDropdowns(); renderWorkOrders(); }
 
     // Step 6: Recent Tasks (proxy v7 — DB API v0)
@@ -7235,6 +7542,22 @@ renderDashboardKPIs = function() {
   var _dbLastRows = [];
   var _dbLastCols = [];
   var _pendingSQL = null;
+  var keyInput = document.getElementById('dbAdminKey');
+
+  // Load persisted admin key
+  if (keyInput) {
+    keyInput.value = localStorage.getItem('hm_proxy_admin_key') || '';
+    keyInput.addEventListener('change', function() {
+      localStorage.setItem('hm_proxy_admin_key', keyInput.value.trim());
+    });
+    keyInput.addEventListener('blur', function() {
+      localStorage.setItem('hm_proxy_admin_key', keyInput.value.trim());
+    });
+  }
+
+  function getAdminKey() {
+    return (keyInput ? keyInput.value.trim() : '') || localStorage.getItem('hm_proxy_admin_key') || '';
+  }
 
   function setStatus(cls, text) {
     connStatus.className = 'dbadmin-status ' + cls;
@@ -7277,7 +7600,8 @@ renderDashboardKPIs = function() {
     if (!sql) return;
     setStatus('ok', 'Running\u2026');
     var t0 = Date.now();
-    proxyAction('sql_query', { query: sql }).then(function(data) {
+    var key = getAdminKey();
+    proxyAction('sql_query', { query: sql, key: key }).then(function(data) {
       var ms = Date.now() - t0;
       setStatus('ok', 'OK');
       addHistory(sql);
@@ -7308,7 +7632,8 @@ renderDashboardKPIs = function() {
     if (!sql) return;
     setStatus('ok', 'Executing\u2026');
     var t0 = Date.now();
-    proxyAction('sql_execute', { query: sql }).then(function(data) {
+    var key = getAdminKey();
+    proxyAction('sql_execute', { query: sql, key: key }).then(function(data) {
       var ms = Date.now() - t0;
       setStatus('ok', 'OK');
       addHistory(sql);
