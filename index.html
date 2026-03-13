@@ -4155,6 +4155,107 @@ function extractWebhookMeta(e) {
   };
 }
 
+// Build an AppFolio-style human-readable title from a resolved record.
+// Returns null when insufficient fields are present (caller falls back to generic label).
+function buildAppFolioStyleTitle(resourceType, eventType, record) {
+  if (!record || !resourceType) return null;
+  var r = record;
+  var rtype = String(resourceType || '').toLowerCase().replace(/[^a-z_]/g, '');
+  var etype = String(eventType || '').toLowerCase();
+  var isCreate = etype === 'create' || etype === 'created';
+  var isUpdate = etype === 'update' || etype === 'updated';
+  var isDelete = etype === 'delete' || etype === 'deleted';
+
+  if (rtype === 'work_order') {
+    var woTitle = r.Title || r.Description || '';
+    var num     = r.Number ? ' #' + r.Number : '';
+    var prop    = r.PropertyName || '';
+    var unit    = r.UnitName || r.Unit || '';
+    var loc     = [prop, unit].filter(Boolean).join(' / ');
+    var submitter = r.SubmittedByName || r.CreatedByName || r.CreatedBy || r.ReportedBy || '';
+    var rawCat  = r.Category || r.ServiceType || '';
+    var category = rawCat.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+    if (isCreate) {
+      var objLabel = category || 'Work Order';
+      var parts = [];
+      if (submitter) parts.push('from ' + submitter);
+      if (loc)       parts.push(loc);
+      return 'New ' + objLabel + (parts.length ? ' ' + parts.join(' / ') : (woTitle ? ' - ' + woTitle : '')) + num;
+    }
+    if (isUpdate) return 'Work Order Updated' + (woTitle ? ' - ' + woTitle : (loc ? ' - ' + loc : '')) + num;
+    if (isDelete) return 'Work Order Removed' + (woTitle ? ' - ' + woTitle : '') + num;
+    return (woTitle || 'Work Order') + num + (loc ? ' \u2014 ' + loc : '');
+  }
+
+  if (rtype === 'vendor') {
+    var vName = r.Name || r.CompanyName || '';
+    if (!vName) return null;
+    if (isCreate) return 'Vendor Added \u2014 ' + vName;
+    if (isUpdate) return 'Vendor Updated \u2014 ' + vName;
+    if (isDelete) return 'Vendor Removed \u2014 ' + vName;
+    return vName;
+  }
+
+  if (rtype === 'tenant') {
+    var tName = r.FullName || r.Name || [r.FirstName, r.LastName].filter(Boolean).join(' ') || '';
+    var tUnit = r.UnitName || r.Unit || '';
+    var tProp = r.PropertyName || '';
+    var tLoc  = [tProp, tUnit].filter(Boolean).join(' / ');
+    if (!tName && !tLoc) return null;
+    if (isCreate) return 'Tenant Added' + (tName ? ' \u2014 ' + tName : '') + (tLoc ? ' | ' + tLoc : '');
+    if (isUpdate) return 'Tenant Updated' + (tName ? ' \u2014 ' + tName : '');
+    return tName || 'Tenant';
+  }
+
+  if (rtype === 'unit_turn') {
+    var utUnit  = r.Unit || r.UnitName || '';
+    var utProp  = r.PropertyName || '';
+    var utStage = r.Stage || '';
+    var utLoc   = [utProp, utUnit].filter(Boolean).join(' / ');
+    if (!utLoc) return null;
+    if (isCreate) return 'Turn Started \u2014 ' + utLoc;
+    if (isUpdate) return 'Turn Updated' + (utStage ? ' \u2192 ' + utStage : '') + ' \u2014 ' + utLoc;
+    return 'Unit Turn \u2014 ' + utLoc;
+  }
+
+  if (rtype === 'lease') {
+    var lTenants = r.TenantNames || r.TenantName || r.Name || '';
+    if (Array.isArray(lTenants)) lTenants = lTenants.join(', ');
+    var lUnit = r.UnitName || r.Unit || '';
+    var lProp = r.PropertyName || '';
+    var lLoc  = [lProp, lUnit].filter(Boolean).join(' / ');
+    if (isCreate) return 'Lease Created' + (lTenants ? ' \u2014 ' + lTenants : '') + (lLoc ? ' / ' + lLoc : '');
+    if (isUpdate) return 'Lease Updated'  + (lTenants ? ' \u2014 ' + lTenants : '');
+    return 'Lease' + (lTenants ? ' \u2014 ' + lTenants : '');
+  }
+
+  if (rtype === 'inspection') {
+    var iName = r.Name || r.InspectionName || r.Title || '';
+    var iProp = r.PropertyName || '';
+    if (isCreate) return 'Inspection Scheduled' + (iName ? ' \u2014 ' + iName : '') + (iProp ? ' / ' + iProp : '');
+    if (isUpdate) return 'Inspection Updated'   + (iName ? ' \u2014 ' + iName : '');
+    return 'Inspection' + (iName ? ' \u2014 ' + iName : '');
+  }
+
+  if (rtype === 'property') {
+    var pName = r.Name || r.PropertyName || '';
+    if (!pName) return null;
+    if (isCreate) return 'Property Added \u2014 ' + pName;
+    if (isUpdate) return 'Property Updated \u2014 ' + pName;
+    return pName;
+  }
+
+  if (rtype === 'task') {
+    var tskTitle = r.Title || r.Name || r.Subject || '';
+    var tskWho   = r.AssignedToName || r.AssignedTo || '';
+    if (isCreate) return 'Task Created' + (tskTitle ? ' \u2014 ' + tskTitle : '') + (tskWho ? ' for ' + tskWho : '');
+    if (isUpdate) return 'Task Updated'  + (tskTitle ? ' \u2014 ' + tskTitle : '');
+    return tskTitle || null;
+  }
+
+  return null;
+}
+
 function decodeWebhookTitle(e, meta) {
   meta = meta || extractWebhookMeta(e);
   var hasResolvedName = !!(meta && meta.resourceName);
@@ -4166,6 +4267,14 @@ function decodeWebhookTitle(e, meta) {
   // Preserve explicit non-fallback labels unless we now have a resolved resource name.
   if (!hasResolvedName && e.event_label && e.event_label !== 'webhook' && e.event_label !== e.type) return e.event_label;
   if (!hasResolvedName && e.title && e.title !== 'Webhook Event' && !looksLikeFallbackProxyTitle) return e.title;
+
+  // When a resolved record is cached, build an AppFolio-style rich title.
+  var rckey = (meta.resourceType && meta.resourceId) ? webhookResolveKey(meta.resourceType, meta.resourceId) : '';
+  var rcCached = rckey ? WEBHOOK_RESOURCE_CACHE[rckey] : null;
+  if (rcCached && rcCached.record) {
+    var richTitle = buildAppFolioStyleTitle(meta.resourceType, meta.eventType, rcCached.record);
+    if (richTitle) return richTitle;
+  }
 
   var combinedKey = '';
   if (meta.resourceType && meta.eventType) combinedKey = meta.resourceType + '.' + meta.eventType;
@@ -4223,29 +4332,78 @@ function renderWebhookEventList() {
     return;
   }
   var html = '';
-  WEBHOOK_EVENTS.slice(0, 25).forEach(function(e) {
+  WEBHOOK_EVENTS.slice(0, 25).forEach(function(e, idx) {
     var isPri = e.priority === 'urgent' || e.priority === 'high';
     var iconClass = 'fa-plug';
     var iconColor = 'var(--purple)';
-    if (e.resource_type === 'work_order') { iconClass = 'fa-wrench'; iconColor = 'var(--accent)'; }
-    else if (e.resource_type === 'unit_turn') { iconClass = 'fa-exchange-alt'; iconColor = 'var(--info,#60a5fa)'; }
-    else if (e.resource_type === 'inspection') { iconClass = 'fa-clipboard-check'; iconColor = 'var(--success)'; }
-    else if (e.resource_type === 'tenant') { iconClass = 'fa-user'; iconColor = 'var(--warning)'; }
-    else if (e.resource_type === 'vendor') { iconClass = 'fa-hard-hat'; iconColor = 'var(--success)'; }
-    else if (e.resource_type === 'property') { iconClass = 'fa-building'; iconColor = 'var(--accent)'; }
-    html += '<div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:flex-start">';
+    var rtype = e.resource_type || '';
+    if (rtype === 'work_order') { iconClass = 'fa-wrench'; iconColor = 'var(--accent)'; }
+    else if (rtype === 'unit_turn') { iconClass = 'fa-exchange-alt'; iconColor = 'var(--info,#60a5fa)'; }
+    else if (rtype === 'inspection') { iconClass = 'fa-clipboard-check'; iconColor = 'var(--success)'; }
+    else if (rtype === 'tenant') { iconClass = 'fa-user'; iconColor = 'var(--warning)'; }
+    else if (rtype === 'vendor') { iconClass = 'fa-hard-hat'; iconColor = 'var(--success)'; }
+    else if (rtype === 'property') { iconClass = 'fa-building'; iconColor = 'var(--accent)'; }
+    var detailId = 'whPanelDetail_' + (e.id || idx);
+    var meta = extractWebhookMeta(e);
+    var rckey = (meta.resourceType && meta.resourceId) ? webhookResolveKey(meta.resourceType, meta.resourceId) : '';
+    var resolved = rckey ? WEBHOOK_RESOURCE_CACHE[rckey] : null;
+
+    // Build detail content
+    var richTitle = (resolved && resolved.record) ? buildAppFolioStyleTitle(meta.resourceType, meta.eventType, resolved.record) : null;
+    var objectLine = richTitle || (resolved && resolved.summary && resolved.summary.title) || '';
+    if (!objectLine && meta.resourceId) objectLine = (meta.resourceType || '') + ' / ' + meta.resourceId;
+    var statusLine = (resolved && resolved.summary && resolved.summary.status) || '';
+    var refLine    = (resolved && resolved.summary && resolved.summary.reference) ? '#' + resolved.summary.reference : '';
+    var changes    = getWebhookChangeSummary(meta.payload || {});
+    var rec        = (resolved && resolved.record) || {};
+    var ctxParts   = [];
+    if (rec.PropertyName) ctxParts.push(rec.PropertyName);
+    if (rec.UnitName || rec.Unit) ctxParts.push(rec.UnitName || rec.Unit);
+    if (rec.AssignedToName || rec.VendorName) ctxParts.push(rec.AssignedToName || rec.VendorName);
+
+    html += '<div style="border-bottom:1px solid var(--border)">';
+    // Header row — clickable to expand
+    html += '<div class="wh-panel-item" data-whpanel="' + detailId + '" style="padding:5px 2px;display:flex;gap:6px;align-items:flex-start;cursor:pointer;user-select:none">';
     html += '<i class="fas ' + iconClass + '" style="color:' + iconColor + ';margin-top:2px;font-size:11px;width:14px;text-align:center;flex-shrink:0"></i>';
     html += '<div style="flex:1;min-width:0">';
     html += '<span style="color:var(--text-muted);font-size:10px">' + escapeHtml(e.ts ? timeAgo(e.ts) : '\u2014') + '</span> ';
     if (isPri) html += '<span style="color:var(--danger);font-weight:600">\u26a0 </span>';
-    html += '<strong style="color:var(--text-primary);font-size:11px">' + escapeHtml(e.title) + '</strong>';
-    if (e.body) html += '<div style="color:var(--text-secondary);margin-top:1px;font-size:10px">' + escapeHtml(e.body.substring(0, 120)) + '</div>';
-    html += '</div></div>';
+    html += '<strong style="color:var(--text-primary);font-size:11px">' + escapeHtml(e.title || decodeWebhookTitle(e, meta)) + '</strong>';
+    if (e.body) html += '<div style="color:var(--text-secondary);margin-top:1px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.body.substring(0, 100)) + '</div>';
+    html += '</div>';
+    html += '<i class="fas fa-chevron-down" style="font-size:9px;color:var(--text-muted);margin-top:3px;flex-shrink:0;transition:transform .15s" id="' + detailId + '_chev"></i>';
+    html += '</div>';
+
+    // Collapsible detail panel
+    html += '<div id="' + detailId + '" style="display:none;padding:6px 8px 8px 20px;font-size:10px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-input);line-height:1.7">';
+    if (objectLine) html += '<div><span style="color:var(--text-muted)">Object:</span> ' + escapeHtml(objectLine + (refLine ? ' ' + refLine : '')) + (statusLine ? ' <span style="color:var(--text-muted)">(' + escapeHtml(statusLine) + ')</span>' : '') + '</div>';
+    if (ctxParts.length) html += '<div><span style="color:var(--text-muted)">Where:</span> ' + escapeHtml(ctxParts.join(' \u00b7 ')) + '</div>';
+    html += '<div><span style="color:var(--text-muted)">Change:</span> ' + escapeHtml(changes) + '</div>';
+    if (e.body)    html += '<div style="margin-top:2px"><span style="color:var(--text-muted)">Body:</span> ' + escapeHtml(e.body) + '</div>';
+    if (e.raw) {
+      var rawStr = typeof e.raw === 'string' ? e.raw : JSON.stringify(e.raw, null, 2);
+      html += '<pre style="margin:4px 0 0;white-space:pre-wrap;word-break:break-all;max-height:100px;overflow-y:auto;background:var(--bg-tertiary);padding:4px;border-radius:3px;font-size:9px">' + escapeHtml(rawStr) + '</pre>';
+    }
+    html += '</div>';
+    html += '</div>';
   });
   if (WEBHOOK_EVENTS.length > 25) {
     html += '<div style="padding:4px 0;color:var(--text-muted);text-align:center;font-size:10px">\u2026 and ' + (WEBHOOK_EVENTS.length - 25) + ' more</div>';
   }
   el.innerHTML = html;
+
+  // Wire up expand/collapse via delegation on the list container
+  el.querySelectorAll('.wh-panel-item').forEach(function(row) {
+    row.addEventListener('click', function() {
+      var detailId = row.getAttribute('data-whpanel');
+      var detail = document.getElementById(detailId);
+      var chev   = document.getElementById(detailId + '_chev');
+      if (!detail) return;
+      var open = detail.style.display !== 'none';
+      detail.style.display = open ? 'none' : 'block';
+      if (chev) chev.style.transform = open ? '' : 'rotate(180deg)';
+    });
+  });
 }
 
 /* =================================================================
@@ -4380,7 +4538,27 @@ function renderWebhookDataTable(events) {
     html += '<td colspan="7" style="padding:10px 14px;background:var(--bg-input);border-bottom:2px solid var(--accent)">';
     html += '<div style="font-size:11px;font-family:var(--font-mono);line-height:1.5">';
     html += '<strong>Object:</strong> ';
-    if (resolved && resolved.summary) {
+    if (resolved && resolved.record) {
+      var richObj = buildAppFolioStyleTitle(meta.resourceType, meta.eventType, resolved.record);
+      if (richObj) {
+        html += escapeHtml(richObj);
+      } else if (resolved.summary) {
+        html += escapeHtml((resolved.summary.title || 'Resolved') + (resolved.summary.reference ? ' #' + resolved.summary.reference : ''));
+      }
+      if (resolved.summary && resolved.summary.status) {
+        html += ' <span style="color:var(--text-muted)">(' + escapeHtml(resolved.summary.status) + ')</span>';
+      }
+      // Contextual details line: property · unit · assigned vendor
+      var rec = resolved.record;
+      var ctxParts = [];
+      if (rec.PropertyName) ctxParts.push(rec.PropertyName);
+      if (rec.UnitName || rec.Unit) ctxParts.push(rec.UnitName || rec.Unit);
+      if (rec.AssignedToName || rec.VendorName) ctxParts.push('Assigned: ' + (rec.AssignedToName || rec.VendorName));
+      if (rec.Priority) ctxParts.push('Priority: ' + rec.Priority);
+      if (ctxParts.length > 0) {
+        html += '<br><span style="font-size:10px;color:var(--text-muted);padding-left:8px">' + escapeHtml(ctxParts.join(' \u00b7 ')) + '</span>';
+      }
+    } else if (resolved && resolved.summary) {
       html += escapeHtml((resolved.summary.title || 'Resolved') + (resolved.summary.reference ? ' #' + resolved.summary.reference : ''));
       if (resolved.summary.status) html += ' <span style="color:var(--text-muted)">(' + escapeHtml(resolved.summary.status) + ')</span>';
     } else if ((meta.resourceType || e.resource_type) && (meta.resourceId || e.resource_id)) {
