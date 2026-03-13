@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HandyManager — Maintenance Cockpit</title>
+<title>HandyManager — AppFolio Utility</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -2081,9 +2081,21 @@ function skeletonRows(n) {
   }
   return h;
 }
+function parseWebhookTs(dateStr) {
+  var s = String(dateStr || '').trim();
+  if (!s) return null;
+  // SQLite datetime('now') often comes back as "YYYY-MM-DD HH:MM:SS" (UTC, no zone).
+  // Treat it explicitly as UTC to avoid negative "ago" values in local timezones.
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) s = s.replace(' ', 'T') + 'Z';
+  var d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function timeAgo(dateStr) {
-  var d = new Date(dateStr);
+  var d = parseWebhookTs(dateStr);
+  if (!d) return '\u2014';
   var diff = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (diff < 0) diff = 0;
   if (diff < 60) return diff + 's ago';
   if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
   if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
@@ -3917,11 +3929,11 @@ async function pollWebhookEvents() {
   try {
     var data = await proxyAction('webhook_events');
     if (data && Array.isArray(data.events)) {
-      // Merge new events (dedup by timestamp + title)
+      // Merge new events (dedup by AppFolio event_id when present)
       var existing = {};
-      WEBHOOK_EVENTS.forEach(function(e) { existing[e.ts + '|' + e.title] = true; });
+      WEBHOOK_EVENTS.forEach(function(e) { existing[webhookEventDedupeKey(e)] = true; });
       data.events.forEach(function(e) {
-        var key = (e.id || '') + '|' + (e.ts || e.timestamp || '') + '|' + (e.title || '');
+        var key = webhookEventDedupeKey(e);
         if (!existing[key]) {
           var evtBody = e.body || '';
           if (evtBody.length > 500) evtBody = evtBody.substring(0, 500) + '\u2026';
@@ -3944,9 +3956,14 @@ async function pollWebhookEvents() {
           existing[key] = true;
         }
       });
-      // Sort newest first
-      WEBHOOK_EVENTS.sort(function(a, b) { return new Date(b.ts) - new Date(a.ts); });
-      // Keep last 200
+      // Sort newest first (timezone-safe parser)
+      WEBHOOK_EVENTS.sort(function(a, b) {
+        var bt = parseWebhookTs(b.ts);
+        var at = parseWebhookTs(a.ts);
+        return (bt ? bt.getTime() : 0) - (at ? at.getTime() : 0);
+      });
+      // Keep last 200 after a final dedupe pass
+      WEBHOOK_EVENTS = dedupeWebhookEvents(WEBHOOK_EVENTS);
       if (WEBHOOK_EVENTS.length > 200) WEBHOOK_EVENTS = WEBHOOK_EVENTS.slice(0, 200);
     }
     return true;
@@ -4140,9 +4157,15 @@ function extractWebhookMeta(e) {
 
 function decodeWebhookTitle(e, meta) {
   meta = meta || extractWebhookMeta(e);
-  // If proxy already decoded it, use that
-  if (e.event_label && e.event_label !== 'webhook' && e.event_label !== e.type) return e.event_label;
-  if (e.title && e.title !== 'Webhook Event') return e.title;
+  var hasResolvedName = !!(meta && meta.resourceName);
+  var looksLikeFallbackProxyTitle = false;
+  if (e && e.title) {
+    // Example fallback: "work_orders.update -> work_orders/uuid"
+    looksLikeFallbackProxyTitle = /(?:\u2192|->)\s*[a-z_]+\/[0-9a-f-]{8,}/i.test(String(e.title));
+  }
+  // Preserve explicit non-fallback labels unless we now have a resolved resource name.
+  if (!hasResolvedName && e.event_label && e.event_label !== 'webhook' && e.event_label !== e.type) return e.event_label;
+  if (!hasResolvedName && e.title && e.title !== 'Webhook Event' && !looksLikeFallbackProxyTitle) return e.title;
 
   var combinedKey = '';
   if (meta.resourceType && meta.eventType) combinedKey = meta.resourceType + '.' + meta.eventType;
@@ -4165,6 +4188,29 @@ function decodeWebhookTitle(e, meta) {
     resName = meta.resourceId.substring(0, 8) + '\u2026';
   }
   return (label || 'Webhook Event') + (resName ? ' - ' + resName : '');
+}
+
+function webhookEventDedupeKey(e) {
+  var payload = parseWebhookJson(e && (e.payload || e.raw || e.body)) || {};
+  var eid = String((e && e.event_id) || payload.event_id || '').trim();
+  if (eid) return 'event_id:' + eid;
+  var rt = String((e && e.resource_type) || payload.resource_type || payload.topic || '').trim().toLowerCase();
+  var rid = String((e && e.resource_id) || payload.resource_id || '').trim();
+  var et = String((e && e.type) || (e && e.event_type) || payload.event_type || '').trim().toLowerCase();
+  var ts = String((e && e.ts) || payload.event_timestamp || payload.message_sent_at || '').trim();
+  return rt + '|' + rid + '|' + et + '|' + ts;
+}
+
+function dedupeWebhookEvents(list) {
+  var out = [];
+  var seen = {};
+  (list || []).forEach(function(e) {
+    var k = webhookEventDedupeKey(e);
+    if (seen[k]) return;
+    seen[k] = true;
+    out.push(e);
+  });
+  return out;
 }
 
 function renderWebhookEventList() {
@@ -4237,6 +4283,7 @@ async function loadWebhookData() {
         event_label: evt.event_label || title
       });
     });
+    events = dedupeWebhookEvents(events);
     if (_whFilters.source) {
       events = events.filter(function(evt) {
         return String(evt.source || '').toLowerCase() === String(_whFilters.source).toLowerCase();
@@ -4311,7 +4358,7 @@ function renderWebhookDataTable(events) {
     var rowNum = _whPage * _whPageSize + idx + 1;
     html += '<tr class="wh-data-row" data-whid="' + (e.id || idx) + '" style="cursor:pointer">';
     html += '<td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">' + rowNum + '</td>';
-    html += '<td style="font-family:var(--font-mono);font-size:11px;white-space:nowrap">' + escapeHtml(e.ts ? formatDate(e.ts) : '\u2014') + '</td>';
+    html += '<td style="font-family:var(--font-mono);font-size:11px;white-space:nowrap">' + escapeHtml(e.ts ? timeAgo(e.ts) : '\u2014') + '</td>';
     html += '<td><span class="tag wh-type-' + escapeHtml(String(e.type || 'webhook').replace(/[^a-z0-9_-]/gi, '')) + '">' + escapeHtml(e.type || 'webhook') + '</span></td>';
     html += '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.title || '\u2014');
     // v8 enriched data: show resource_type/resource_id if available
