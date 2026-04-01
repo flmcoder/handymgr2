@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HandyManager - An AppFolio Utility</title>
+<title>HandyManager - AppFolio Utility</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -3196,6 +3196,9 @@ function startAutoSync() {
     try {
       await fetchWorkOrders();
       await fetchTurns();
+      await fetchUpcomingMoveouts();
+      await fetchTurnWorkOrders();
+      await fetchUnitTurnsDB();
       await fetchInspections();
       renderWorkOrders();
       renderTurnBoard();
@@ -3790,7 +3793,10 @@ var PROPERTY_GROUPS = [];
 var TURNS = [];
 var UPCOMING_MOVEOUTS = []; // from tenant_directory — tenants on notice
 var TURN_WORK_ORDERS = []; // from DB API — unit turn WOs with real-time status
-var UNIT_TURNS_DB = [];    // from DB API unit_turns endpoint — live deposit/scheduling data
+var UNIT_TURNS_DB = [];    // SQL-backed unit turn tracker records
+var UNIT_TURN_TRACKER_BY_KEY = {};
+var _turnTrackerSyncInFlight = false;
+var _lastTurnTrackerSyncHash = '';
 var BILLS = []; // from DB API — AP bills for WO close-assist
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
@@ -5038,39 +5044,67 @@ async function fetchTurnWorkOrders() {
   }
 }
 
-// Unit Turns (DB API): Proxy ?action=unit_turns — live turn records from DB API v0
-// Provides richer status / scheduling data not in the Reports API unit_turn_detail.
-// Merged into TURNS by unitTurnId after fetch so buildTurnPipeline picks it up.
+// Unit Turns (SQL tracker): Proxy ?action=unit_turns
+// Stores inferred + manual turn tracking records synced from the pipeline.
 async function fetchUnitTurnsDB() {
   try {
-    setApiStatus('loading', 'Loading unit turns (live)…');
+    setApiStatus('loading', 'Loading unit turn tracker…');
     var data = await proxyAction('unit_turns', { days: '180' });
     var results = data.results || data.data || [];
+    UNIT_TURN_TRACKER_BY_KEY = {};
     UNIT_TURNS_DB = results.map(function(t) {
-      return {
-        id: t.Id || t.id || '',
-        unitId: t.UnitId || t.unit_id || t.unitId || '',
-        propertyId: t.PropertyId || t.property_id || t.propertyId || '',
-        unit: t.UnitName || t.unit_name || t.unit || '',
-        property: t.PropertyName || t.property_name || t.property || '',
-        moveOut: t.MoveOutDate || t.move_out_date || t.moveOut || '',
-        expectedMoveIn: t.ExpectedMoveInDate || t.expected_move_in_date || t.expectedMoveIn || '',
-        status: t.Status || t.status || '',
-        depositStatus: t.DepositStatus || t.deposit_status || '',
-        depositAmount: t.DepositAmount || t.deposit_amount || '',
-        depositReturnDeadline: t.DepositReturnDeadline || t.deposit_return_deadline || '',
-        totalBilled: t.TotalBilled || t.total_billed || '',
-        laborCost: t.LaborCost || t.labor_cost || '',
-        siteManager: t.SiteManager || t.site_manager || '',
-        targetDays: parseInt(t.TargetDaysToComplete || t.target_days_to_complete || 0, 10) || 0,
-        turnEnd: t.TurnEndDate || t.turn_end_date || t.turnEnd || '',
-        link: t.Link || ''
+      var linked = Array.isArray(t.linked_work_orders) ? t.linked_work_orders : [];
+      var normalized = {
+        id: t.tracking_uuid || t.Id || t.id || '',
+        trackingUuid: t.tracking_uuid || '',
+        trackingCode: t.tracking_code || '',
+        turnKey: t.turn_key || '',
+        unitTurnId: t.unit_turn_id || t.UnitTurnId || '',
+        unitId: t.unit_id || t.UnitId || t.unitId || '',
+        propertyId: t.property_id || t.PropertyId || t.propertyId || '',
+        unit: t.unit_name || t.UnitName || t.unit || '',
+        property: t.property_name || t.PropertyName || t.property || '',
+        moveOut: t.move_out_date || t.MoveOutDate || t.moveOut || '',
+        moveIn: t.move_in_date || t.MoveInDate || t.moveIn || '',
+        inspectionDate: t.inspection_date || '',
+        firstWoDate: t.first_wo_date || '',
+        estimateRequestedDate: t.estimate_requested_date || '',
+        estimateReceivedDate: t.estimate_received_date || '',
+        expectedMoveIn: t.move_in_date || t.expected_move_in_date || t.ExpectedMoveInDate || t.expectedMoveIn || '',
+        status: t.status || t.Status || '',
+        confidenceScore: parseInt(t.confidence_score || t.confidenceScore || 0, 10) || 0,
+        confidenceLabel: t.confidence_label || t.confidenceLabel || 'low',
+        depositStatus: t.deposit_status || t.DepositStatus || '',
+        depositAmount: t.deposit_amount || t.DepositAmount || '',
+        depositReturnDeadline: t.deposit_return_deadline || t.DepositReturnDeadline || '',
+        totalBilled: t.total_billed || t.TotalBilled || '',
+        laborCost: t.labor_cost || t.LaborCost || '',
+        siteManager: t.site_manager || t.SiteManager || '',
+        targetDays: parseInt(t.target_days_to_complete || t.TargetDaysToComplete || 0, 10) || 0,
+        turnEnd: t.turn_end_date || t.TurnEndDate || t.turnEnd || '',
+        link: t.link || t.Link || '',
+        milestones: t.milestones || {},
+        linkedWorkOrders: linked.map(function(w) {
+          return {
+            id: w.wo_id || w.id || '',
+            dbApiId: w.wo_db_uuid || '',
+            source: w.source || 'manual',
+            status: w.status || '',
+            created: w.created_at || ''
+          };
+        })
       };
+      if (normalized.turnKey) UNIT_TURN_TRACKER_BY_KEY[normalized.turnKey] = normalized;
+      return normalized;
     });
-    // Merge DB API data into TURNS array by unitId+property key
+
+    // Merge tracker data into TURNS array by unit_turn_id or unit/property key
     if (UNIT_TURNS_DB.length > 0 && TURNS.length > 0) {
       var dbById = {};
-      UNIT_TURNS_DB.forEach(function(u) { if (u.id) dbById[String(u.id)] = u; });
+      UNIT_TURNS_DB.forEach(function(u) {
+        if (u.id) dbById[String(u.id)] = u;
+        if (u.unitTurnId) dbById[String(u.unitTurnId)] = u;
+      });
       var dbByUnitProp = {};
       UNIT_TURNS_DB.forEach(function(u) {
         var k = String(u.unitId || '').toLowerCase() + '|' + String(u.propertyId || '').toLowerCase();
@@ -5085,6 +5119,7 @@ async function fetchUnitTurnsDB() {
         if (!turn.depositAmount) turn.depositAmount = dbMatch.depositAmount;
         if (!turn.depositReturnDeadline) turn.depositReturnDeadline = dbMatch.depositReturnDeadline;
         if (!turn.expectedMoveIn && dbMatch.expectedMoveIn) turn.expectedMoveIn = dbMatch.expectedMoveIn;
+        if (!turn.moveIn && dbMatch.moveIn) turn.moveIn = dbMatch.moveIn;
         if (!turn.turnEnd && dbMatch.turnEnd) turn.turnEnd = dbMatch.turnEnd;
         if (dbMatch.link) turn.dbLink = dbMatch.link;
       });
@@ -7302,6 +7337,113 @@ async function saveTurnRecord(record) {
   }
 }
 
+function computeTurnConfidence(turnData, stages, matchingWOs, matchingInsp) {
+  var score = 0;
+  if (turnData) score += 45;
+  if (stages && stages.moveout && stages.moveout.done) score += 15;
+  if (matchingInsp && stages && stages.inspection && stages.inspection.done) score += 25;
+  if (Array.isArray(matchingWOs) && matchingWOs.length > 0) score += Math.min(15, matchingWOs.length * 5);
+  if (stages && stages.est_requested && stages.est_requested.done) score += 5;
+  if (stages && stages.est_received && stages.est_received.done) score += 5;
+  if (stages && stages.work_done && stages.work_done.done) score += 5;
+  if (score > 100) score = 100;
+  var label = score >= 80 ? 'high' : score >= 50 ? 'medium' : 'low';
+  return { score: score, label: label };
+}
+
+function turnMilestonesFromPipeline(p) {
+  return {
+    moveout: { date: p.moveOut || '', source: p.turn ? 'reports' : 'inferred' },
+    inspection: { date: p.stages && p.stages.inspection ? p.stages.inspection.date || '' : '', source: (p.stages && p.stages.inspection && p.stages.inspection.manual) ? 'manual' : 'inferred' },
+    wo_created: { date: p.stages && p.stages.wo_created ? p.stages.wo_created.date || '' : '', source: 'inferred' },
+    est_requested: { date: p.stages && p.stages.est_requested ? p.stages.est_requested.date || '' : '', source: 'inferred' },
+    est_received: { date: p.stages && p.stages.est_received ? p.stages.est_received.date || '' : '', source: 'inferred' },
+    movein: { date: p.expectedMoveIn || '', source: p.expectedMoveIn ? 'reports' : 'manual' }
+  };
+}
+
+function buildTurnTrackerSyncPayload() {
+  return TURN_PIPE_DATA.map(function(p) {
+    return {
+      turn_key: p.id,
+      unit_turn_id: (p.turn && p.turn.unitTurnId) || p.registeredUnitTurnId || '',
+      unit_id: p.unitId || '',
+      property_id: p.propertyId || '',
+      unit_name: p.unit || '',
+      property_name: p.property || '',
+      move_out_date: p.moveOut || '',
+      move_in_date: p.expectedMoveIn || '',
+      inspection_date: (p.stages && p.stages.inspection && p.stages.inspection.date) || '',
+      first_wo_date: (p.stages && p.stages.wo_created && p.stages.wo_created.date) || '',
+      estimate_requested_date: (p.stages && p.stages.est_requested && p.stages.est_requested.date) || '',
+      estimate_received_date: (p.stages && p.stages.est_received && p.stages.est_received.date) || '',
+      status: p.isClosed ? 'closed' : p.isCompleted ? 'completed' : p.isConfirmed ? 'active' : 'on_radar',
+      confidence_score: p.confidenceScore || 0,
+      confidence_label: p.confidenceLabel || 'low',
+      site_manager: p.siteManager || '',
+      source_flags: {
+        from_turn_report: !!p.turn,
+        from_inspection: !!(p.matchingInsp && p.stages && p.stages.inspection && p.stages.inspection.done),
+        from_work_orders: !!(p.matchingWOs && p.matchingWOs.length),
+        is_on_radar: !!p.isOnRadar
+      },
+      milestones: turnMilestonesFromPipeline(p),
+      replace_work_orders: true,
+      work_orders: (p.matchingWOs || []).map(function(w) {
+        return {
+          wo_id: String(w.id || ''),
+          wo_db_uuid: w.dbApiId || '',
+          source: w.source || 'inferred',
+          status: w.status || '',
+          created_at: w.created || ''
+        };
+      })
+    };
+  });
+}
+
+async function syncTurnTrackerFromPipeline() {
+  if (!API_PROXY || _turnTrackerSyncInFlight || TURN_PIPE_DATA.length === 0) return;
+  var payload = { records: buildTurnTrackerSyncPayload() };
+  var hash = JSON.stringify(payload.records.map(function(r) {
+    return [r.turn_key, r.status, r.confidence_score, r.work_orders.length, r.move_out_date, r.move_in_date].join('|');
+  }));
+  if (hash === _lastTurnTrackerSyncHash) return;
+  _turnTrackerSyncInFlight = true;
+  try {
+    await proxyPost('unit_turns_sync', payload);
+    _lastTurnTrackerSyncHash = hash;
+  } catch (err) {
+    console.log('syncTurnTrackerFromPipeline error: ' + (err.message || err));
+  } finally {
+    _turnTrackerSyncInFlight = false;
+  }
+}
+
+async function linkTurnWorkOrder(turnKey, woId) {
+  if (!turnKey || !woId) return;
+  var wo = WORK_ORDERS.find(function(w) { return String(w.id) === String(woId); }) ||
+    TURN_WORK_ORDERS.find(function(w) { return String(w.woNumber || w.id) === String(woId); }) || null;
+  var payload = {
+    turn_key: turnKey,
+    wo_id: String(woId),
+    wo_db_uuid: wo && (wo.dbApiId || wo.id) ? String(wo.dbApiId || wo.id) : '',
+    source: 'manual',
+    status: wo && wo.status ? wo.status : '',
+    created_at: wo && (wo.created || wo.createdAt) ? (wo.created || wo.createdAt) : ''
+  };
+  await proxyPost('unit_turn_wo_link', payload);
+  await fetchUnitTurnsDB();
+  renderTurnBoard();
+}
+
+async function unlinkTurnWorkOrder(turnKey, woId) {
+  if (!turnKey || !woId) return;
+  await proxyPost('unit_turn_wo_unlink', { turn_key: turnKey, wo_id: String(woId) });
+  await fetchUnitTurnsDB();
+  renderTurnBoard();
+}
+
 // ---- Auto-correlation engine ----
 // Builds a unified pipeline entry for each turn by matching WOs + inspections
 // ---- Hybrid Turn Pipeline Builder ----
@@ -7368,7 +7510,7 @@ function buildTurnPipeline() {
   }
 
   // Helper: find matching WOs for a unit+property pair using pre-built indexes
-  function findMatchingWOs(unit, property, propId, unitId, moveOutDate) {
+  function findMatchingWOs(turnKey, unit, property, propId, unitId, moveOutDate) {
     var wos = [];
     // From Reports API work orders — O(1) lookup by composite key
     var lookupKey = (unit && property) ? String(unit).toLowerCase() + '|' + String(property).toLowerCase() : null;
@@ -7408,6 +7550,30 @@ function buildTurnPipeline() {
       wos.push({ source: 'db_api', id: wo.woNumber || wo.id, dbApiId: wo.id, status: wo.status,
         description: wo.description || '', created: wo.createdAt, vendor: wo.vendorTrade || '', priority: wo.priority });
     });
+
+    var tracked = UNIT_TURN_TRACKER_BY_KEY[String(turnKey || '')];
+    if (tracked && Array.isArray(tracked.linkedWorkOrders)) {
+      tracked.linkedWorkOrders.forEach(function(w) {
+        var idVal = String(w.id || '').trim();
+        if (!idVal) return;
+        var dupe = wos.find(function(x) { return String(x.id) === idVal; });
+        if (dupe) {
+          if (w.status) dupe.status = w.status;
+          if (w.dbApiId) dupe.dbApiId = w.dbApiId;
+          return;
+        }
+        wos.push({
+          source: w.source || 'manual',
+          id: idVal,
+          dbApiId: w.dbApiId || '',
+          status: w.status || '',
+          description: '',
+          created: w.created || '',
+          vendor: '',
+          priority: ''
+        });
+      });
+    }
     return wos;
   }
 
@@ -7459,10 +7625,20 @@ function buildTurnPipeline() {
     var doneCount = woStatuses.filter(function(s) { return terminalStatuses.indexOf(s) !== -1; }).length;
 
     // Progressive — later stages imply earlier ones
+    var firstEstReq = null;
+    var firstEstimated = null;
+    var firstAssigned = null;
+    matchingWOs.forEach(function(w) {
+      var st = String(w.status || '');
+      if (!firstEstReq && (st === 'Estimate Requested' || st === 'Estimated' || st === 'Assigned' || st === 'Scheduled' || terminalStatuses.indexOf(st) !== -1)) firstEstReq = w.created || null;
+      if (!firstEstimated && (st === 'Estimated' || st === 'Assigned' || st === 'Scheduled' || terminalStatuses.indexOf(st) !== -1)) firstEstimated = w.created || null;
+      if (!firstAssigned && (st === 'Assigned' || st === 'Scheduled' || terminalStatuses.indexOf(st) !== -1)) firstAssigned = w.created || null;
+    });
+
     stages.wo_created = { done: hasWO, date: woCreatedDate, woIds: matchingWOs.map(function(w) { return w.id; }) };
-    stages.est_requested = { done: hasEstReq || hasEstimated || hasAssigned || hasAnyWorkDone, date: null };
-    stages.est_received = { done: hasEstimated || hasAssigned || hasAnyWorkDone, date: null, vendors: [] };
-    stages.assigned = { done: hasAssigned || hasAnyWorkDone, date: null };
+    stages.est_requested = { done: hasEstReq || hasEstimated || hasAssigned || hasAnyWorkDone, date: firstEstReq };
+    stages.est_received = { done: hasEstimated || hasAssigned || hasAnyWorkDone, date: firstEstimated, vendors: [] };
+    stages.assigned = { done: hasAssigned || hasAnyWorkDone, date: firstAssigned };
     // work_done requires ALL WOs complete, not just one
     stages.work_done = { done: allWorkDone, date: null, doneCount: doneCount, totalCount: matchingWOs.length };
 
@@ -7498,7 +7674,7 @@ function buildTurnPipeline() {
     if (moveOutDate && !isNaN(moveOutDate.getTime()) && moveOutDate < turnYearStart) {
       return; // Exclude prior-year turns from active board and badge counts
     }
-    var matchingWOs = findMatchingWOs(unit, property, propId, unitId, moveOutDate);
+    var matchingWOs = findMatchingWOs(key, unit, property, propId, unitId, moveOutDate);
     var matchingInsp = findMatchingInsp(unit, property);
     var stages = deriveStages(moveOut, matchingWOs, matchingInsp, isUpcoming);
 
@@ -7605,6 +7781,8 @@ function buildTurnPipeline() {
     var totalBilledStr = (dbTurnMatch && dbTurnMatch.totalBilled) || (turnData && turnData.totalBilled) || '$0';
     costNum = parseFloat(String(totalBilledStr).replace(/[^0-9.\-]/g, '')) || 0;
 
+    var confidence = computeTurnConfidence(turnData, stages, matchingWOs, matchingInsp);
+
     TURN_PIPE_DATA.push({
       id: key,
       turn: turnData || null,
@@ -7628,6 +7806,10 @@ function buildTurnPipeline() {
       isCompleted: isCompleted,
       isClosed: CLOSED_TURNS.has(key), // manually closed from turn board
       allWOsDone: allWOsDone,
+      confidenceScore: (dbTurnMatch && dbTurnMatch.confidenceScore) || confidence.score,
+      confidenceLabel: (dbTurnMatch && dbTurnMatch.confidenceLabel) || confidence.label,
+      trackingUuid: (dbTurnMatch && dbTurnMatch.trackingUuid) || '',
+      trackingCode: (dbTurnMatch && dbTurnMatch.trackingCode) || '',
       siteManager: (turnData && turnData.siteManager) || (propMeta && propMeta.siteManager) || '',
       maintenanceLimit: (turnData && turnData.maintenanceLimit) || (propMeta && propMeta.maintenanceLimit) || '',
       propertyNotes: (turnData && turnData.propertyNotes) || (propMeta && (propMeta.maintenanceNotes || propMeta.propertyNotes)) || '',
@@ -7694,6 +7876,7 @@ function renderTurnBoard() {
   } catch (e) {
     console.log('renderTurnKPIs error: ' + (e.message || e));
   }
+  syncTurnTrackerFromPipeline().catch(function() {});
 }
 
 function renderTurnKPIs() {
@@ -7921,8 +8104,9 @@ function renderTurnPipelineUI() {
         // Prefer DB API Link field (direct AppFolio URL), fall back to constructed URL
         var dbWo = wo.dbApiId ? TURN_WORK_ORDERS.find(function(tw) { return tw.id === wo.dbApiId; }) : null;
         var woLink = (dbWo && dbWo.link) ? dbWo.link : appfolioUrl('work_order', wo.id);
-        html += '<div class="pipe-wo-item"><div><span class="pipe-wo-id">#' + wo.id + '</span> <span class="tag ' + String(wo.status).toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(wo.status) + '</span>';
+        html += '<div class="pipe-wo-item"><div><span class="pipe-wo-id">#' + wo.id + '</span> <span class="tag ' + String(wo.status || 'Linked').toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(wo.status || 'Linked') + '</span>';
         if (woLink) html += ' <a href="' + escapeHtml(woLink) + '" target="_blank" rel="noopener noreferrer" style="font-size:9px;color:var(--accent);text-decoration:none" title="View WO in AppFolio" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i></a>';
+        html += ' <button class="action-btn" data-unlink-wo="' + escapeHtml(p.id) + '" data-woid="' + escapeHtml(String(wo.id)) + '" style="padding:1px 6px;font-size:10px" onclick="event.stopPropagation()"><i class="fas fa-unlink"></i></button>';
         html += '</div>';
         html += '<div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml((wo.description || '').substring(0, 60)) + '</div></div>';
       });
@@ -7930,10 +8114,16 @@ function renderTurnPipelineUI() {
     } else {
       html += '<div style="font-size:12px;color:var(--text-muted);padding:8px 0">No linked work orders found</div>';
     }
+    html += '<div style="display:flex;gap:6px;margin-top:8px">';
+    html += '<input class="form-input" data-add-wo-input="' + escapeHtml(p.id) + '" placeholder="Add WO # (manual)" style="font-size:11px;max-width:170px" onclick="event.stopPropagation()">';
+    html += '<button class="action-btn" data-add-wo="' + escapeHtml(p.id) + '" style="font-size:11px;padding:4px 8px" onclick="event.stopPropagation()"><i class="fas fa-link"></i> Add WO</button>';
+    html += '</div>';
 
     // Turn details
     html += '<div class="detail-section-title" style="margin-top:12px"><i class="fas fa-info-circle"></i> Turn Details</div>';
     html += '<div class="detail-grid">';
+    html += '<div class="detail-row"><div class="detail-row-label">Tracking</div><div class="detail-row-value">' + escapeHtml(p.trackingCode || p.id) + '</div></div>';
+    html += '<div class="detail-row"><div class="detail-row-label">Confidence</div><div class="detail-row-value"><span class="tag">' + escapeHtml(String((p.confidenceLabel || 'low')).toUpperCase()) + '</span> ' + escapeHtml(String(p.confidenceScore || 0)) + '%</div></div>';
     html += '<div class="detail-row"><div class="detail-row-label">Move-Out</div><div class="detail-row-value">' + (p.moveOut ? formatDate(p.moveOut) : '\u2014') + '</div></div>';
     html += '<div class="detail-row"><div class="detail-row-label">Expected Move-In</div><div class="detail-row-value">' + (p.expectedMoveIn ? formatDate(p.expectedMoveIn) : '\u2014') + '</div></div>';
     if (p.unitTurnStatus) html += '<div class="detail-row"><div class="detail-row-label">Turn Status</div><div class="detail-row-value">' + escapeHtml(p.unitTurnStatus) + '</div></div>';
@@ -8579,6 +8769,31 @@ function wireUpUI() {
   (function() {
     var pipeline = $('#turnPipeline');
     if (pipeline) pipeline.addEventListener('click', function(e) {
+      var addWoBtn = e.target.closest('[data-add-wo]');
+      if (addWoBtn) {
+        e.stopPropagation();
+        var turnKey = addWoBtn.getAttribute('data-add-wo');
+        var input = pipeline.querySelector('input[data-add-wo-input="' + turnKey + '"]');
+        var woId = input ? String(input.value || '').trim() : '';
+        if (!woId) {
+          showToast('Enter a WO number first');
+          return;
+        }
+        linkTurnWorkOrder(turnKey, woId)
+          .then(function() { showToast('WO #' + woId + ' linked to turn'); })
+          .catch(function(err) { showToast('Link failed: ' + (err.message || err)); });
+        return;
+      }
+      var unlinkBtn = e.target.closest('[data-unlink-wo]');
+      if (unlinkBtn) {
+        e.stopPropagation();
+        var tk = unlinkBtn.getAttribute('data-unlink-wo');
+        var woid = unlinkBtn.getAttribute('data-woid');
+        unlinkTurnWorkOrder(tk, woid)
+          .then(function() { showToast('WO #' + woid + ' removed from turn'); })
+          .catch(function(err) { showToast('Remove failed: ' + (err.message || err)); });
+        return;
+      }
       var advBtn = e.target.closest('[data-advance]');
       if (advBtn) {
         e.stopPropagation();
@@ -9370,6 +9585,9 @@ async function sectionRefresh(section, btn) {
     if (section === 'turns' || section === 'dashboard') {
       showToast('Refreshing turn data\u2026');
       await fetchTurns();
+      await fetchUpcomingMoveouts();
+      await fetchTurnWorkOrders();
+      await fetchUnitTurnsDB();
       loadClosedTurns().catch(function() {});
       renderTurnBoard();
     }
