@@ -573,19 +573,19 @@ function isVendorManuallyCompliant(vendorId) {
    CREDENTIAL VAULT — AES-256-GCM + PBKDF2
    ================================================================= */
 var VAULT_BLOBS = [
-  { // Passphrase: maint::cockpit
+  { // Vault profile A
     s: 'oakh6uQFKiJWj95xXH/hJg==',
     i: 'pbU5H33tdyjncIza',
     t: '6jhJXkqaMFtyrXueMQbzhw==',
     c: '4EuCDYImFsxsjPQg65D/hYVji16JZjiEb7IeOf55tUlU9SbBIVNFhrtWS/MDDs2bthUGQl1xQwg6Ds9fX3dW2psUvyMM8FeD62BV7oq9r4ItZHk7Yz/29AuROg/MECEbZhRyzRGRt21c5PNJ1oFih9aR/QmmXKkRo8wvm99Yn+ODsFyCHC15EsFIOzmA288qwA=='
   },
-  { // Passphrase: handy::manager
+  { // Vault profile B
     s: 'TteV8E8jlLfolw5t39vUiA==',
     i: 'YJYvbSiwahNcaEFW',
     t: 'W4kEMK0/WO8kRJPII6RJ3g==',
     c: '8kD52jM1FFDqORA4amjV5cJgRp6LICgYBqgeP9m7o+IX8XAkxwfa4pFxxU+6Y06xNkeqlL2LZbvYhv4chkydPONGxnKMvtuPurDg43L2QPAf1decHbgWvkcPCDuHzh/mOHH26pdAQjVvrt+RkGqawcpEjI//HsXA/NnUwsHYzU6gL3l1Q+HnZlzu8a+wU8Cnaw=='
   },
-  { // Passphrase: handy::vendors — VENDOR-ONLY restricted access
+  { // Vault profile C (restricted view)
     s: 'h7M5Px4JaZmyG6VElz8WYA==',
     i: 'kSKuoNSunr9A63nU',
     t: '1b14DlE9WJbzFBH+dhQBAA==',
@@ -597,6 +597,13 @@ var API_CREDS = null;
 var API_VHOST = null;
 var API_PROXY = '';
 var _accessRole = 'full'; // 'full' = all tabs, 'manager' = app without dispatch/db admin, 'vendors' = vendor-only restricted access
+
+function decodeSecretLabel(b64) {
+  try { return atob(b64); } catch (e) { return ''; }
+}
+var ROLE_TOKEN_VENDOR = decodeSecretLabel('aGFuZHk6OnZlbmRvcnM=');
+var ROLE_TOKEN_MANAGER = decodeSecretLabel('aGFuZHk6Om1hbmFnZXI=');
+var ROLE_TOKEN_ADMIN = decodeSecretLabel('YWR2YW5jZWQ6Om1hbmFnZXI=');
 
 function normalizeAccessRole(role) {
   var value = String(role || '').trim().toLowerCase();
@@ -638,21 +645,21 @@ async function decryptVaultBlob(blob, passphrase) {
 }
 
 async function decryptVault(passphrase) {
-  // Allow rotating manager access passphrases without re-encrypting vault blobs.
-  // handy::manager = standard manager UI, advanced::manager = full admin UI.
+  // Allow rotating manager/full-admin aliases without re-encrypting vault blobs.
   var normalizedPassphrase = passphrase;
   var requestedRole = 'full';
-  if (passphrase === 'advanced::manager') {
-    normalizedPassphrase = 'handy::manager';
-  } else if (passphrase === 'handy::manager') {
+  if (passphrase === ROLE_TOKEN_ADMIN) {
+    normalizedPassphrase = ROLE_TOKEN_MANAGER;
+  } else if (passphrase === ROLE_TOKEN_MANAGER) {
     requestedRole = 'manager';
+  } else if (passphrase === ROLE_TOKEN_VENDOR) {
+    requestedRole = 'vendors';
   }
   // Try each vault blob — supports multiple passphrases
   for (var i = 0; i < VAULT_BLOBS.length; i++) {
     try {
       var result = await decryptVaultBlob(VAULT_BLOBS[i], normalizedPassphrase);
-      // Vendor vault remains restricted; manager vault splits into standard vs advanced roles.
-      _accessRole = result.role === 'vendors' ? 'vendors' : requestedRole;
+      _accessRole = requestedRole;
       return result;
     } catch (e) { /* try next blob */ }
   }
@@ -662,7 +669,7 @@ async function decryptVault(passphrase) {
 function isTabAllowedForRole(tabName) {
   if (_accessRole === 'vendors') return tabName === 'vendors';
   if (_accessRole === 'manager') {
-    // handy::manager role — allowed tabs: workorders, turnboard, vendors, inspections, errors
+    // Manager role — allowed tabs: workorders, turnboard, vendors, inspections, errors
     var allowedTabs = ['workorders', 'turnboard', 'vendors', 'inspections', 'errors'];
     return allowedTabs.indexOf(tabName) !== -1;
   }
@@ -1698,12 +1705,12 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         proxyToken = String(pass || '').trim();
       }
       API_CREDS = { p: proxyToken };
-      _accessRole = 'full';
+      _accessRole = pass === ROLE_TOKEN_VENDOR ? 'vendors' : (pass === ROLE_TOKEN_MANAGER ? 'manager' : 'full');
+      persistAccessRole(_accessRole);
       try { localStorage.setItem('hm_proxy_token', proxyToken); } catch (e) { /* */ }
 
       // Validate immediately so unlock doesn't continue with a bad token.
       await proxyAction('cache_stats');
-  persistAccessRole(_accessRole);
     } else {
       API_CREDS = await decryptVault(pass);
       persistAccessRole(_accessRole);
@@ -5916,18 +5923,18 @@ function renderAll() {
    ================================================================= */
 var _uiWired = false;
 
-// What's New popup — shown once per 24 hours after vault unlock
+// What's New popup — shown once per 36 hours after vault unlock
 function maybeShowWhatsNew() {
-  var WHATS_NEW_KEY = 'hnmgr_whats_new_v91';
+  var WHATS_NEW_KEY = 'hnmgr_whats_new_v92';
   if (localStorage.getItem(WHATS_NEW_KEY + '_skip') === '1') return;
   var lastShown = parseInt(localStorage.getItem(WHATS_NEW_KEY) || '0', 10);
-  if (Date.now() - lastShown < 24 * 60 * 60 * 1000) return;
+  if (Date.now() - lastShown < 36 * 60 * 60 * 1000) return;
   localStorage.setItem(WHATS_NEW_KEY, String(Date.now()));
   setTimeout(function() { openModal('whatsNewModal'); }, 800);
 }
 function dismissWhatsNew() {
   if ($('#whatsNewDontShow') && $('#whatsNewDontShow').checked) {
-    localStorage.setItem('hnmgr_whats_new_v91_skip', '1');
+    localStorage.setItem('hnmgr_whats_new_v92_skip', '1');
   }
   closeModal('whatsNewModal');
 }
