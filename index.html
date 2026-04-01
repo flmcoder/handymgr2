@@ -529,9 +529,9 @@ body.role-vendors .cache-badge { display: none; }
   border: 1px solid rgba(224,84,78,0.2);
 }
 .refresh-btn {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
+  background: rgba(16,185,129,0.08);
+  border: 1px solid rgba(16,185,129,0.35);
+  color: #10b981;
   font-family: var(--font-mono);
   font-size: 10px;
   padding: 3px 10px;
@@ -541,7 +541,7 @@ body.role-vendors .cache-badge { display: none; }
   transition: var(--transition);
   white-space: nowrap;
 }
-.refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+.refresh-btn:hover { background: rgba(16,185,129,0.16); border-color: #10b981; color: #34d399; }
 .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .refresh-btn.spinning i { animation: spin 1s linear infinite; }
 .sync-timestamp {
@@ -1000,13 +1000,13 @@ body.role-vendors .cache-badge { display: none; }
 
 /* Section refresh button */
 .sec-refresh {
-  background: var(--bg-input); border: 1px solid var(--border);
-  color: var(--text-secondary); font-family: var(--font-mono);
+  background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.35);
+  color: #10b981; font-family: var(--font-mono);
   font-size: 10px; padding: 5px 10px; border-radius: 6px;
   cursor: pointer; display: flex; align-items: center; gap: 5px;
   transition: var(--transition);
 }
-.sec-refresh:hover { border-color: var(--accent); color: var(--accent); }
+.sec-refresh:hover { background: rgba(16,185,129,0.16); border-color: #10b981; color: #34d399; }
 .sec-refresh:disabled { opacity: 0.4; cursor: not-allowed; }
 .sec-refresh.spinning i { animation: spin 1s linear infinite; }
 
@@ -1839,6 +1839,7 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
         <option value="stalled">Stalled (7d+)</option>
         <option value="all">All Pipeline</option>
         <option value="completed">Completed</option>
+        <option value="closed">Closed</option>
       </select>
       <select class="form-select" id="turnPipeGroup" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
         <option value="">All Properties</option>
@@ -2370,7 +2371,7 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
       <button class="modal-close" id="whatsNewClose">&times;</button>
     </div>
     <div class="modal-body">
-      <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px">v9.2 — April 2026 • Highlights (next 36h)</div>
+      <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px">v9.0c — April 2026 • Highlights (next 36h)</div>
       <div style="max-height:290px;overflow-y:auto;padding-right:4px">
       <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px">
         <li style="display:flex;gap:10px;align-items:flex-start">
@@ -2991,9 +2992,10 @@ var VENDOR_OVERRIDES = {};
 var VENDOR_CATEGORIES = ['Employee', 'In-House Tech', 'Vendor', 'Subcontractor', 'Utilities', 'HOA', 'Insurance', 'Uncategorized'];
 
 async function loadVendorOverrides() {
+  // 1. Load from IndexedDB first (fast, local cache)
   try {
     var db = await openCacheDB();
-    return new Promise(function(resolve) {
+    await new Promise(function(resolve) {
       var tx = db.transaction('vendor_overrides', 'readonly');
       var store = tx.objectStore('vendor_overrides');
       var req = store.getAll();
@@ -3005,16 +3007,40 @@ async function loadVendorOverrides() {
       req.onerror = function() { resolve(); };
     });
   } catch (e) { /* IndexedDB unavailable */ }
+
+  // 2. Layer in SQL overrides (authoritative — survives device change)
+  if (API_PROXY) {
+    try {
+      var sqlData = await proxyAction('vendor_override');
+      if (sqlData && sqlData.ok && Array.isArray(sqlData.results)) {
+        sqlData.results.forEach(function(row) {
+          var vid = row.vendor_id;
+          var existing = VENDOR_OVERRIDES[vid] || { vendorId: vid };
+          if (row.category !== null && row.category !== undefined) existing.category = row.category;
+          if (row.compliant !== null && row.compliant !== undefined) existing.compliant = !!row.compliant;
+          VENDOR_OVERRIDES[vid] = existing;
+        });
+      }
+    } catch (e) { console.warn('vendor_override SQL load failed (non-fatal):', e.message || e); }
+  }
 }
 
 async function saveVendorOverride(vendorId, overrides) {
   var existing = VENDOR_OVERRIDES[vendorId] || { vendorId: vendorId };
   VENDOR_OVERRIDES[vendorId] = Object.assign(existing, overrides, { ts: Date.now() });
+  // Write to IndexedDB (local cache)
   try {
     var db = await openCacheDB();
     var tx = db.transaction('vendor_overrides', 'readwrite');
     tx.objectStore('vendor_overrides').put(VENDOR_OVERRIDES[vendorId]);
   } catch (e) { /* best-effort */ }
+  // Write to SQL (authoritative, cross-device)
+  if (API_PROXY) {
+    var payload = { vendor_id: vendorId };
+    if (overrides.category !== undefined) payload.category = overrides.category;
+    if (overrides.compliant !== undefined) payload.compliant = overrides.compliant === true ? 1 : (overrides.compliant === false ? 0 : null);
+    try { await proxyPost('vendor_override', payload); } catch (e) { /* best-effort */ }
+  }
 }
 
 function getVendorOverride(vendorId) {
@@ -3160,14 +3186,44 @@ function wipeCredentials() {
   _accessRole = 'full';
 }
 
+// ── Auto-sync: selective background refresh every 30 min ───────────────────
+var AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+
+function startAutoSync() {
+  stopAutoSync(); // clear any existing
+  _autoSyncTimer = setInterval(async function() {
+    if (!API_CREDS || !API_VHOST) return; // not unlocked
+    try {
+      await fetchWorkOrders();
+      await fetchTurns();
+      await fetchInspections();
+      renderWorkOrders();
+      renderTurnBoard();
+      renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+      renderDashboardKPIs();
+      var now = new Date();
+      var timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      showToast('Auto-synced at ' + timeStr);
+    } catch (err) {
+      console.warn('Auto-sync failed:', err.message || err);
+    }
+  }, AUTO_SYNC_INTERVAL_MS);
+}
+
+function stopAutoSync() {
+  if (_autoSyncTimer) { clearInterval(_autoSyncTimer); _autoSyncTimer = null; }
+}
+
 function lockVault() {
   wipeCredentials();
   appInitialized = false;
   WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
+  CLOSED_TURNS = new Set();
   _nameToGroups = {}; _idToGroups = {}; _uuidToGroups = {};
   detailCacheClear();
   _vendorsLazyLoaded = false; _inspLazyLoaded = false;
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
+  stopAutoSync();
   // Note: IndexedDB cache is NOT cleared on lock — data persists for next unlock
   updateCacheBadge('offline');
   $('#appShell').classList.remove('unlocked');
@@ -3739,6 +3795,7 @@ var BILLS = []; // from DB API — AP bills for WO close-assist
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
 var _webhookPollTimer = null;
+var _autoSyncTimer = null;      // 30-min background selective refresh
 var _vendorsLazyLoaded = false; // lazy-load flag — vendors fetched on tab click
 var _inspLazyLoaded = false;   // lazy-load flag — inspections fetched on tab click
 var _whLazyLoaded = false;     // lazy-load flag — webhook data loaded on tab click
@@ -4196,6 +4253,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     applyAccessRole();
     await initApp();
     applyAccessRole();
+    startAutoSync();
     var proxyInfo = API_PROXY ? ' via proxy' : ' (direct)';
     if (_accessRole === 'vendors') {
       showToast('Vendor access \u2014 connecting to ' + vhost + '.appfolio.com' + proxyInfo);
@@ -7154,6 +7212,7 @@ function showWODetail(id) {
    ================================================================= */
 var TURN_RECORDS = []; // persisted stage overrides from proxy blob
 var TURN_PIPE_DATA = []; // computed pipeline entries
+var CLOSED_TURNS = new Set(); // turn IDs marked as closed (stored in SQL)
 var currentTurnPipeFilter = 'active';
 var currentTurnPipeGroup = '';
 var _inspSortCol = 'daysSince'; // default sort column
@@ -7179,6 +7238,37 @@ async function fetchTurnRecords() {
     if (data && Array.isArray(data.records)) TURN_RECORDS = data.records;
   } catch (err) {
     console.log('Turn records fetch error: ' + (err.message || err));
+  }
+}
+
+// Fetch closed turns from proxy and populate CLOSED_TURNS set
+async function loadClosedTurns() {
+  if (!API_PROXY) return;
+  try {
+    var data = await proxyAction('closed_turns');
+    if (data && data.ok && Array.isArray(data.results)) {
+      CLOSED_TURNS = new Set(data.results.map(function(r) { return r.turn_id; }));
+    }
+  } catch (err) {
+    console.warn('loadClosedTurns failed (non-fatal):', err.message || err);
+  }
+}
+
+// Close a turn — POST to proxy, then re-render
+async function closeTurn(turnId) {
+  if (!turnId) return;
+  if (!confirm('Close this turn? It will be hidden from the active board.')) return;
+  try {
+    var r = await proxyPost('closed_turns', { turn_id: turnId });
+    if (r && r.ok) {
+      CLOSED_TURNS.add(turnId);
+      renderTurnBoard();
+      showToast('Turn closed and removed from active board');
+    } else {
+      showToast('Could not close turn: ' + (r && r.error ? r.error : 'Unknown error'));
+    }
+  } catch (e) {
+    showToast('Close turn failed: ' + (e.message || e));
   }
 }
 
@@ -7536,6 +7626,7 @@ function buildTurnPipeline() {
       target: target,
       isStalled: isStalled && !isCompleted,
       isCompleted: isCompleted,
+      isClosed: CLOSED_TURNS.has(key), // manually closed from turn board
       allWOsDone: allWOsDone,
       siteManager: (turnData && turnData.siteManager) || (propMeta && propMeta.siteManager) || '',
       maintenanceLimit: (turnData && turnData.maintenanceLimit) || (propMeta && propMeta.maintenanceLimit) || '',
@@ -7672,6 +7763,9 @@ function renderTurnPipelineUI() {
   if (turnGfSel && turnGfSel.value !== currentPropertyGroup) turnGfSel.value = currentPropertyGroup;
 
   var filtered = TURN_PIPE_DATA.filter(function(p) {
+    // Closed turns only show in 'closed' filter
+    if (p.isClosed && filter !== 'closed') return false;
+    if (filter === 'closed' && !p.isClosed) return false;
     // 'active' = confirmed turns that aren't yet complete
     if (filter === 'active' && (!p.isConfirmed || p.isCompleted)) return false;
     // 'on_radar' = unconfirmed (possible) turns
@@ -7915,7 +8009,10 @@ function renderTurnPipelineUI() {
     if (turnAfUrl) {
       html += '<a class="action-btn" href="' + escapeHtml(turnAfUrl) + '" target="_blank" rel="noopener noreferrer" style="text-decoration:none" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i> View in AppFolio</a>';
     }
-    html += '<button class="action-btn" onclick="this.closest(\'.pipe-detail\').classList.remove(\'show\')"><i class="fas fa-times"></i> Close</button>';
+    if (!p.isClosed) {
+      html += '<button class="action-btn" style="color:var(--danger);border-color:rgba(239,68,68,0.4)" data-close-turn="' + escapeHtml(p.id) + '" onclick="event.stopPropagation()"><i class="fas fa-times-circle"></i> Close Turn</button>';
+    }
+    html += '<button class="action-btn" onclick="this.closest(\'.pipe-detail\').classList.remove(\'show\')"><i class="fas fa-times"></i> Dismiss</button>';
     html += '</div>';
 
     html += '</div>'; // end pipe-detail
@@ -8478,7 +8575,7 @@ function wireUpUI() {
     });
   })();
 
-  // Turn pipeline — card clicks + stage advance buttons
+  // Turn pipeline — card clicks + stage advance buttons + close turn
   (function() {
     var pipeline = $('#turnPipeline');
     if (pipeline) pipeline.addEventListener('click', function(e) {
@@ -8486,6 +8583,12 @@ function wireUpUI() {
       if (advBtn) {
         e.stopPropagation();
         confirmTurnStage(advBtn.getAttribute('data-advance'), advBtn.getAttribute('data-stage'));
+        return;
+      }
+      var closeBtn = e.target.closest('[data-close-turn]');
+      if (closeBtn) {
+        e.stopPropagation();
+        closeTurn(closeBtn.getAttribute('data-close-turn'));
         return;
       }
       var card = e.target.closest('.pipe-card');
@@ -9267,6 +9370,7 @@ async function sectionRefresh(section, btn) {
     if (section === 'turns' || section === 'dashboard') {
       showToast('Refreshing turn data\u2026');
       await fetchTurns();
+      loadClosedTurns().catch(function() {});
       renderTurnBoard();
     }
     if (section === 'inspections' || section === 'dashboard') {
@@ -9564,6 +9668,8 @@ async function fetchAllLive() {
       return fetchTurnRecords().then(function() { return true; });
     }, 30000);
     updateProgress(7, trkOk ? 'done' : 'error', trkOk ? TURN_RECORDS.length + ' tracked' : 'Tracker skipped');
+    // Load closed turns (non-blocking, best-effort)
+    loadClosedTurns().catch(function() {});
 
     // Final re-render: turns with all available correlated data
     renderTurnBoard();
