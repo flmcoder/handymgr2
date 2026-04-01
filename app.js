@@ -1324,7 +1324,10 @@ var PROPERTY_GROUPS = [];
 var TURNS = [];
 var UPCOMING_MOVEOUTS = []; // from tenant_directory — tenants on notice
 var TURN_WORK_ORDERS = []; // from DB API — unit turn WOs with real-time status
-var UNIT_TURNS_DB = [];    // from DB API unit_turns endpoint — live deposit/scheduling data
+var UNIT_TURNS_DB = [];    // SQL-backed unit turn tracker records
+var UNIT_TURN_TRACKER_BY_KEY = {};
+var _turnTrackerSyncInFlight = false;
+var _lastTurnTrackerSyncHash = '';
 var BILLS = []; // from DB API — AP bills for WO close-assist
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
@@ -2561,41 +2564,68 @@ async function fetchTurnWorkOrders() {
   }
 }
 
-// Unit Turns (DB API): Proxy ?action=unit_turns — live turn records from DB API v0
-// Provides richer status / scheduling data not in the Reports API unit_turn_detail.
-// Merged into TURNS by unitTurnId after fetch so buildTurnPipeline picks it up.
-var UNIT_TURNS_DB = []; // raw DB API unit turn records
+// Unit Turns (SQL tracker): Proxy ?action=unit_turns
+// Stores inferred + manual turn tracking records synced from the pipeline.
 
 async function fetchUnitTurnsDB() {
   try {
-    setApiStatus('loading', 'Loading unit turns (live)\u2026');
+    setApiStatus('loading', 'Loading unit turn tracker…');
     var data = await proxyAction('unit_turns', { days: '180' });
     var results = data.results || data.data || [];
+    UNIT_TURN_TRACKER_BY_KEY = {};
     UNIT_TURNS_DB = results.map(function(t) {
-      return {
-        id: t.Id || t.id || '',
-        unitId: t.UnitId || t.unit_id || t.unitId || '',
-        propertyId: t.PropertyId || t.property_id || t.propertyId || '',
-        unit: t.UnitName || t.unit_name || t.unit || '',
-        property: t.PropertyName || t.property_name || t.property || '',
-        moveOut: t.MoveOutDate || t.move_out_date || t.moveOut || '',
-        expectedMoveIn: t.ExpectedMoveInDate || t.expected_move_in_date || t.expectedMoveIn || '',
-        status: t.Status || t.status || '',
-        depositStatus: t.DepositStatus || t.deposit_status || '',
-        depositAmount: t.DepositAmount || t.deposit_amount || '',
-        depositReturnDeadline: t.DepositReturnDeadline || t.deposit_return_deadline || '',
-        totalBilled: t.TotalBilled || t.total_billed || '',
-        laborCost: t.LaborCost || t.labor_cost || '',
-        siteManager: t.SiteManager || t.site_manager || '',
-        targetDays: parseInt(t.TargetDaysToComplete || t.target_days_to_complete || 0, 10) || 0,
-        turnEnd: t.TurnEndDate || t.turn_end_date || t.turnEnd || '',
-        link: t.Link || ''
+      var linked = Array.isArray(t.linked_work_orders) ? t.linked_work_orders : [];
+      var normalized = {
+        id: t.tracking_uuid || t.Id || t.id || '',
+        trackingUuid: t.tracking_uuid || '',
+        trackingCode: t.tracking_code || '',
+        turnKey: t.turn_key || '',
+        unitTurnId: t.unit_turn_id || t.UnitTurnId || '',
+        unitId: t.unit_id || t.UnitId || t.unitId || '',
+        propertyId: t.property_id || t.PropertyId || t.propertyId || '',
+        unit: t.unit_name || t.UnitName || t.unit || '',
+        property: t.property_name || t.PropertyName || t.property || '',
+        moveOut: t.move_out_date || t.MoveOutDate || t.moveOut || '',
+        moveIn: t.move_in_date || t.MoveInDate || t.moveIn || '',
+        inspectionDate: t.inspection_date || '',
+        firstWoDate: t.first_wo_date || '',
+        estimateRequestedDate: t.estimate_requested_date || '',
+        estimateReceivedDate: t.estimate_received_date || '',
+        expectedMoveIn: t.move_in_date || t.expected_move_in_date || t.ExpectedMoveInDate || t.expectedMoveIn || '',
+        status: t.status || t.Status || '',
+        confidenceScore: parseInt(t.confidence_score || t.confidenceScore || 0, 10) || 0,
+        confidenceLabel: t.confidence_label || t.confidenceLabel || 'low',
+        depositStatus: t.deposit_status || t.DepositStatus || '',
+        depositAmount: t.deposit_amount || t.DepositAmount || '',
+        depositReturnDeadline: t.deposit_return_deadline || t.DepositReturnDeadline || '',
+        totalBilled: t.total_billed || t.TotalBilled || '',
+        laborCost: t.labor_cost || t.LaborCost || '',
+        siteManager: t.site_manager || t.SiteManager || '',
+        targetDays: parseInt(t.target_days_to_complete || t.TargetDaysToComplete || 0, 10) || 0,
+        turnEnd: t.turn_end_date || t.TurnEndDate || t.turnEnd || '',
+        link: t.link || t.Link || '',
+        milestones: t.milestones || {},
+        linkedWorkOrders: linked.map(function(w) {
+          return {
+            id: w.wo_id || w.id || '',
+            dbApiId: w.wo_db_uuid || '',
+            source: w.source || 'manual',
+            status: w.status || '',
+            created: w.created_at || ''
+          };
+        })
       };
+      if (normalized.turnKey) UNIT_TURN_TRACKER_BY_KEY[normalized.turnKey] = normalized;
+      return normalized;
     });
-    // Merge DB API data into TURNS array by unitId+property key
+
+    // Merge tracker data into TURNS array by unit_turn_id or unit/property key
     if (UNIT_TURNS_DB.length > 0 && TURNS.length > 0) {
       var dbById = {};
-      UNIT_TURNS_DB.forEach(function(u) { if (u.id) dbById[String(u.id)] = u; });
+      UNIT_TURNS_DB.forEach(function(u) {
+        if (u.id) dbById[String(u.id)] = u;
+        if (u.unitTurnId) dbById[String(u.unitTurnId)] = u;
+      });
       var dbByUnitProp = {};
       UNIT_TURNS_DB.forEach(function(u) {
         var k = String(u.unitId || '').toLowerCase() + '|' + String(u.propertyId || '').toLowerCase();
@@ -2610,6 +2640,7 @@ async function fetchUnitTurnsDB() {
         if (!turn.depositAmount) turn.depositAmount = dbMatch.depositAmount;
         if (!turn.depositReturnDeadline) turn.depositReturnDeadline = dbMatch.depositReturnDeadline;
         if (!turn.expectedMoveIn && dbMatch.expectedMoveIn) turn.expectedMoveIn = dbMatch.expectedMoveIn;
+        if (!turn.moveIn && dbMatch.moveIn) turn.moveIn = dbMatch.moveIn;
         if (!turn.turnEnd && dbMatch.turnEnd) turn.turnEnd = dbMatch.turnEnd;
         if (dbMatch.link) turn.dbLink = dbMatch.link;
       });
