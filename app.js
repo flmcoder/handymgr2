@@ -528,9 +528,10 @@ var VENDOR_OVERRIDES = {};
 var VENDOR_CATEGORIES = ['Employee', 'In-House Tech', 'Vendor', 'Subcontractor', 'Utilities', 'HOA', 'Insurance', 'Uncategorized'];
 
 async function loadVendorOverrides() {
+  // 1. Load from IndexedDB first (fast, local cache)
   try {
     var db = await openCacheDB();
-    return new Promise(function(resolve) {
+    await new Promise(function(resolve) {
       var tx = db.transaction('vendor_overrides', 'readonly');
       var store = tx.objectStore('vendor_overrides');
       var req = store.getAll();
@@ -542,16 +543,40 @@ async function loadVendorOverrides() {
       req.onerror = function() { resolve(); };
     });
   } catch (e) { /* IndexedDB unavailable */ }
+
+  // 2. Layer in SQL overrides (authoritative — survives device change)
+  if (API_PROXY) {
+    try {
+      var sqlData = await proxyAction('vendor_override');
+      if (sqlData && sqlData.ok && Array.isArray(sqlData.results)) {
+        sqlData.results.forEach(function(row) {
+          var vid = row.vendor_id;
+          var existing = VENDOR_OVERRIDES[vid] || { vendorId: vid };
+          if (row.category !== null && row.category !== undefined) existing.category = row.category;
+          if (row.compliant !== null && row.compliant !== undefined) existing.compliant = !!row.compliant;
+          VENDOR_OVERRIDES[vid] = existing;
+        });
+      }
+    } catch (e) { console.warn('vendor_override SQL load failed (non-fatal):', e.message || e); }
+  }
 }
 
 async function saveVendorOverride(vendorId, overrides) {
   var existing = VENDOR_OVERRIDES[vendorId] || { vendorId: vendorId };
   VENDOR_OVERRIDES[vendorId] = Object.assign(existing, overrides, { ts: Date.now() });
+  // Write to IndexedDB (local cache)
   try {
     var db = await openCacheDB();
     var tx = db.transaction('vendor_overrides', 'readwrite');
     tx.objectStore('vendor_overrides').put(VENDOR_OVERRIDES[vendorId]);
   } catch (e) { /* best-effort */ }
+  // Write to SQL (authoritative, cross-device)
+  if (API_PROXY) {
+    var payload = { vendor_id: vendorId };
+    if (overrides.category !== undefined) payload.category = overrides.category;
+    if (overrides.compliant !== undefined) payload.compliant = overrides.compliant === true ? 1 : (overrides.compliant === false ? 0 : null);
+    try { await proxyPost('vendor_override', payload); } catch (e) { /* best-effort */ }
+  }
 }
 
 function getVendorOverride(vendorId) {
@@ -696,6 +721,34 @@ function wipeCredentials() {
   _accessRole = 'full';
 }
 
+// ── Auto-sync: selective background refresh every 30 min ───────────────────
+var AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000;
+
+function startAutoSync() {
+  stopAutoSync();
+  _autoSyncTimer = setInterval(async function() {
+    if (!API_CREDS || !API_VHOST) return;
+    try {
+      await fetchWorkOrders();
+      await fetchTurns();
+      await fetchInspections();
+      renderWorkOrders();
+      renderTurnBoard();
+      renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+      renderDashboardKPIs();
+      var now = new Date();
+      var timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      showToast('Auto-synced at ' + timeStr);
+    } catch (err) {
+      console.warn('Auto-sync failed:', err.message || err);
+    }
+  }, AUTO_SYNC_INTERVAL_MS);
+}
+
+function stopAutoSync() {
+  if (_autoSyncTimer) { clearInterval(_autoSyncTimer); _autoSyncTimer = null; }
+}
+
 function lockVault() {
   wipeCredentials();
   appInitialized = false;
@@ -704,6 +757,7 @@ function lockVault() {
   detailCacheClear();
   _vendorsLazyLoaded = false; _inspLazyLoaded = false;
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
+  stopAutoSync();
   // Note: IndexedDB cache is NOT cleared on lock — data persists for next unlock
   updateCacheBadge('offline');
   $('#appShell').classList.remove('unlocked');
@@ -1275,6 +1329,7 @@ var BILLS = []; // from DB API — AP bills for WO close-assist
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
 var _webhookPollTimer = null;
+var _autoSyncTimer = null;      // 30-min background selective refresh
 var _vendorsLazyLoaded = false; // lazy-load flag — vendors fetched on tab click
 var _inspLazyLoaded = false;   // lazy-load flag — inspections fetched on tab click
 var _whLazyLoaded = false;     // lazy-load flag — webhook data loaded on tab click
@@ -1725,6 +1780,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     applyAccessRole();
     await initApp();
     applyAccessRole();
+    startAutoSync();
     var proxyInfo = API_PROXY ? ' via proxy' : ' (direct)';
     if (_accessRole === 'vendors') {
       showToast('Vendor access \u2014 connecting to ' + vhost + '.appfolio.com' + proxyInfo);
