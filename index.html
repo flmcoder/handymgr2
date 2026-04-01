@@ -2362,7 +2362,7 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
   </div>
 </div>
 
-<!-- What's New Modal (shown once per 24h after vault unlock) -->
+<!-- What's New Modal (shown once per 36h after vault unlock) -->
 <div class="modal-overlay" id="whatsNewModal">
   <div class="modal" style="max-width:560px">
     <div class="modal-head">
@@ -2370,25 +2370,35 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
       <button class="modal-close" id="whatsNewClose">&times;</button>
     </div>
     <div class="modal-body">
-      <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:14px">v9.1 — March 2026</div>
+      <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px">v9.2 — April 2026 • Highlights (next 36h)</div>
+      <div style="max-height:290px;overflow-y:auto;padding-right:4px">
       <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px">
         <li style="display:flex;gap:10px;align-items:flex-start">
+          <span style="color:var(--warning);flex-shrink:0;margin-top:1px"><i class="fas fa-clipboard-check"></i></span>
+          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Inspections refined</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Only move-ins from this year that are missing a move-in inspection, or move-outs for current residents, are surfaced.</div></div>
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start">
           <span style="color:var(--accent);flex-shrink:0;margin-top:1px"><i class="fas fa-exchange-alt"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Turn Pipeline — unit turns endpoint integrated</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">The board now pulls live turn data from the unit turns DB endpoint alongside the report, giving you richer status and timing detail.</div></div>
-        </li>
-        <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--warning);flex-shrink:0;margin-top:1px"><i class="fas fa-calendar-check"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Deposit deadline updated to 21 business days</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">The countdown bar on every turn card now reflects the correct 21-business-day window from move-out. Overdue indicators remain on any turns past that mark.</div></div>
-        </li>
-        <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--success);flex-shrink:0;margin-top:1px"><i class="fas fa-flag"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">WO Follow-Up Queue</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">A new panel below WO Close Assist collects all work orders you've flagged. Add notes, clear flags, and track follow-up status in one place.</div></div>
+          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Turn board logic aligned</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Similar current-resident and current-year filtering has been applied to the turn board to reduce stale noise.</div></div>
         </li>
         <li style="display:flex;gap:10px;align-items:flex-start">
           <span style="color:#60a5fa;flex-shrink:0;margin-top:1px"><i class="fas fa-shield-alt"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Advanced manager access split</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Normal manager login hides Dispatch and Database admin tabs. Use the <code style="font-family:var(--font-mono);font-size:11px;background:var(--bg-input);padding:1px 5px;border-radius:3px">advanced::manager</code> passphrase to access those panels.</div></div>
+          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Backend security tightened</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">How the program shares information across backend services has been locked down and secured.</div></div>
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start">
+          <span style="color:var(--success);flex-shrink:0;margin-top:1px"><i class="fas fa-check-double"></i></span>
+          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Work Order Closure Assistant added</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">A new WO closure workflow is live to speed completion reviews and closeout actions.</div></div>
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start">
+          <span style="color:var(--accent);flex-shrink:0;margin-top:1px"><i class="fas fa-users-cog"></i></span>
+          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Technician dashboard + dispatch population</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Features were added to populate technician roster data and support dispatch operations.</div></div>
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start">
+          <span style="color:var(--warning);flex-shrink:0;margin-top:1px"><i class="fas fa-comment-dots"></i></span>
+          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">RingCentral SMS integration</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">SMS abilities tied to RingCentral are now integrated into the communication flow.</div></div>
         </li>
       </ul>
+      </div>
     </div>
     <div class="modal-footer" style="justify-content:space-between;align-items:center">
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:pointer">
@@ -3026,19 +3036,19 @@ function isVendorManuallyCompliant(vendorId) {
    CREDENTIAL VAULT — AES-256-GCM + PBKDF2
    ================================================================= */
 var VAULT_BLOBS = [
-  { // Passphrase: maint::cockpit
+  { // Vault profile A
     s: 'oakh6uQFKiJWj95xXH/hJg==',
     i: 'pbU5H33tdyjncIza',
     t: '6jhJXkqaMFtyrXueMQbzhw==',
     c: '4EuCDYImFsxsjPQg65D/hYVji16JZjiEb7IeOf55tUlU9SbBIVNFhrtWS/MDDs2bthUGQl1xQwg6Ds9fX3dW2psUvyMM8FeD62BV7oq9r4ItZHk7Yz/29AuROg/MECEbZhRyzRGRt21c5PNJ1oFih9aR/QmmXKkRo8wvm99Yn+ODsFyCHC15EsFIOzmA288qwA=='
   },
-  { // Passphrase: handy::manager
+  { // Vault profile B
     s: 'TteV8E8jlLfolw5t39vUiA==',
     i: 'YJYvbSiwahNcaEFW',
     t: 'W4kEMK0/WO8kRJPII6RJ3g==',
     c: '8kD52jM1FFDqORA4amjV5cJgRp6LICgYBqgeP9m7o+IX8XAkxwfa4pFxxU+6Y06xNkeqlL2LZbvYhv4chkydPONGxnKMvtuPurDg43L2QPAf1decHbgWvkcPCDuHzh/mOHH26pdAQjVvrt+RkGqawcpEjI//HsXA/NnUwsHYzU6gL3l1Q+HnZlzu8a+wU8Cnaw=='
   },
-  { // Passphrase: handy::vendors — VENDOR-ONLY restricted access
+  { // Vault profile C (restricted view)
     s: 'h7M5Px4JaZmyG6VElz8WYA==',
     i: 'kSKuoNSunr9A63nU',
     t: '1b14DlE9WJbzFBH+dhQBAA==',
@@ -3050,6 +3060,13 @@ var API_CREDS = null;
 var API_VHOST = null;
 var API_PROXY = '';
 var _accessRole = 'full'; // 'full' = all tabs, 'manager' = app without dispatch/db admin, 'vendors' = vendor-only restricted access
+
+function decodeSecretLabel(b64) {
+  try { return atob(b64); } catch (e) { return ''; }
+}
+var ROLE_TOKEN_VENDOR = decodeSecretLabel('aGFuZHk6OnZlbmRvcnM=');
+var ROLE_TOKEN_MANAGER = decodeSecretLabel('aGFuZHk6Om1hbmFnZXI=');
+var ROLE_TOKEN_ADMIN = decodeSecretLabel('YWR2YW5jZWQ6Om1hbmFnZXI=');
 
 function normalizeAccessRole(role) {
   var value = String(role || '').trim().toLowerCase();
@@ -3091,18 +3108,15 @@ async function decryptVaultBlob(blob, passphrase) {
 }
 
 async function decryptVault(passphrase) {
-  // Passphrase-to-role mapping:
-  //   handy::vendors   → vendor-only restricted view (Vendors tab only)
-  //   handy::manager   → standard manager view (limited tabs)
-  //   advanced::manager → full admin view (all tabs)
+  // Access-token mapping: restricted, manager, and full-admin aliases.
   var normalizedPassphrase = passphrase;
   var requestedRole = 'full';
-  if (passphrase === 'advanced::manager') {
-    normalizedPassphrase = 'handy::manager'; // reuse same vault blob
+  if (passphrase === ROLE_TOKEN_ADMIN) {
+    normalizedPassphrase = ROLE_TOKEN_MANAGER; // reuse manager vault blob
     requestedRole = 'full'; // admin = all tabs
-  } else if (passphrase === 'handy::manager') {
+  } else if (passphrase === ROLE_TOKEN_MANAGER) {
     requestedRole = 'manager'; // standard manager = limited tabs
-  } else if (passphrase === 'handy::vendors') {
+  } else if (passphrase === ROLE_TOKEN_VENDOR) {
     requestedRole = 'vendors'; // vendor = vendors tab only
   }
   // Try each vault blob — supports multiple passphrases
@@ -3119,7 +3133,7 @@ async function decryptVault(passphrase) {
 function isTabAllowedForRole(tabName) {
   if (_accessRole === 'vendors') return tabName === 'vendors';
   if (_accessRole === 'manager') {
-    // handy::manager role — allowed tabs: workorders, turnboard, vendors, inspections, errors
+    // Manager role allowed tabs: workorders, turnboard, vendors, inspections, errors
     var allowedTabs = ['workorders', 'turnboard', 'vendors', 'inspections', 'errors'];
     return allowedTabs.indexOf(tabName) !== -1;
   }
@@ -4143,9 +4157,8 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
 
     // Resolve role from passphrase keyword before going into proxy/direct flow.
     function resolveRoleFromPass(p) {
-      if (p === 'handy::vendors') return 'vendors';
-      if (p === 'handy::manager') return 'manager';
-      // advanced::manager or any real bearer token = full admin
+      if (p === ROLE_TOKEN_VENDOR) return 'vendors';
+      if (p === ROLE_TOKEN_MANAGER) return 'manager';
       return 'full';
     }
 
@@ -8385,18 +8398,18 @@ function renderAll() {
    ================================================================= */
 var _uiWired = false;
 
-// What's New popup — shown once per 24 hours after vault unlock
+// What's New popup — shown once per 36 hours after vault unlock
 function maybeShowWhatsNew() {
-  var WHATS_NEW_KEY = 'hnmgr_whats_new_v91';
+  var WHATS_NEW_KEY = 'hnmgr_whats_new_v92';
   if (localStorage.getItem(WHATS_NEW_KEY + '_skip') === '1') return;
   var lastShown = parseInt(localStorage.getItem(WHATS_NEW_KEY) || '0', 10);
-  if (Date.now() - lastShown < 24 * 60 * 60 * 1000) return;
+  if (Date.now() - lastShown < 36 * 60 * 60 * 1000) return;
   localStorage.setItem(WHATS_NEW_KEY, String(Date.now()));
   setTimeout(function() { openModal('whatsNewModal'); }, 800);
 }
 function dismissWhatsNew() {
   if ($('#whatsNewDontShow') && $('#whatsNewDontShow').checked) {
-    localStorage.setItem('hnmgr_whats_new_v91_skip', '1');
+    localStorage.setItem('hnmgr_whats_new_v92_skip', '1');
   }
   closeModal('whatsNewModal');
 }
