@@ -189,10 +189,25 @@ function populateGroupFilters() {
   }
   var grps = {};
   PROPERTIES.forEach(function(p) {
-    if (p.portfolio) {
-      var pf = p.portfolio.trim();
+    var candidates = [
+      p.portfolio,
+      p.portfolioName,
+      p.propertyGroup,
+      p.group,
+      p.groupName,
+    ];
+    candidates.forEach(function(raw) {
+      var pf = String(raw || '').trim();
       if (pf && !existingNames[pf.toLowerCase()]) grps[pf] = true;
-    }
+    });
+  });
+  // Secondary fallback: any groups already discovered from UUID/name maps.
+  Object.keys(_nameToGroups || {}).forEach(function(k) {
+    var groups = _nameToGroups[k] || [];
+    groups.forEach(function(g) {
+      var gn = String(g || '').trim();
+      if (gn && !existingNames[gn.toLowerCase()]) grps[gn] = true;
+    });
   });
   var pfKeys = Object.keys(grps).sort();
   if (pfKeys.length > 0) {
@@ -2088,7 +2103,11 @@ async function fetchProperties() {
         zip: p.property_zip || p.zip || '',
         propertyType: p.property_type || p.type || '',
         portfolioId: p.portfolio_id || p.portfolioId || '',
-        portfolio: p.portfolio || '',
+        portfolio: p.portfolio || p.portfolio_name || p.portfolioName || p.group_name || p.property_group || '',
+        portfolioName: p.portfolio_name || p.portfolioName || '',
+        propertyGroup: p.property_group || p.group_name || p.group || '',
+        group: p.group || '',
+        groupName: p.group_name || '',
         maintenanceLimit: p.maintenance_limit || p.maintenanceLimit || '',
         maintenanceNotes: p.maintenance_notes || p.maintenanceNotes || '',
         siteManager: p.site_manager || p.siteManager || '',
