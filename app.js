@@ -1814,8 +1814,8 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       persistAccessRole(_accessRole);
       try { localStorage.setItem('hm_proxy_token', proxyToken); } catch (e) { /* */ }
 
-      // Validate immediately so unlock doesn't continue with a bad token.
-      await proxyAction('cache_stats');
+      // Validate auth with lightweight ping. cache_stats can fail on schema drift.
+      await proxyAction('ping');
     } else {
       API_CREDS = await decryptVault(pass);
       persistAccessRole(_accessRole);
@@ -1839,9 +1839,13 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       maybeShowWhatsNew();
     }
   } catch (err) {
+    var errMsg = (err && (err.message || String(err))) || '';
+    var schemaErr = /no such table|no such column|SQLITE_UNKNOWN|SQL_INPUT_ERROR/i.test(errMsg);
     wipeCredentials();
     if (API_PROXY) {
-      $('#vaultError').textContent = 'Proxy auth failed \u2014 enter Setup PIN or static bearer token.';
+      $('#vaultError').textContent = schemaErr
+        ? 'Proxy connected, but database schema is out of date (missing tables/columns). Deploy latest proxy migrations and retry.'
+        : 'Proxy auth failed \u2014 enter Setup PIN or static bearer token.';
     } else {
       $('#vaultError').textContent = 'Decryption failed \u2014 incorrect passphrase or corrupted vault.';
     }
