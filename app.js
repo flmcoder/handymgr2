@@ -2298,6 +2298,7 @@ async function fetchInspections() {
 // DB API returns { data: [ { Id, Name, PropertyIds, Type, LastUpdatedAt } ] }
 // UUID→Name resolution via separate ?action=property_map (non-blocking)
 async function fetchPropertyGroups() {
+  var previousGroups = Array.isArray(PROPERTY_GROUPS) ? PROPERTY_GROUPS.slice() : [];
   try {
     setApiStatus('loading', 'Loading property groups\u2026');
     var pgParams = buildPropertyGroupsQueryParams();
@@ -2348,6 +2349,44 @@ async function fetchPropertyGroups() {
     return true;
   } catch (err) {
     console.log('[PG] fetchPropertyGroups FATAL error: ' + (err.message || err));
+    // Keep last-known-good groups on transient failures.
+    if (previousGroups.length > 0) {
+      PROPERTY_GROUPS = previousGroups;
+      console.log('[PG] preserving previous property groups: ' + previousGroups.length);
+      return true;
+    }
+
+    // Final fallback: synthesize group names from loaded property metadata.
+    var synthetic = {};
+    (PROPERTIES || []).forEach(function(p) {
+      var candidates = [
+        p.portfolio,
+        p.portfolioName,
+        p.propertyGroup,
+        p.group,
+        p.groupName,
+      ];
+      candidates.forEach(function(raw) {
+        var name = String(raw || '').trim();
+        if (name) synthetic[name] = true;
+      });
+    });
+
+    var names = Object.keys(synthetic).sort();
+    if (names.length > 0) {
+      PROPERTY_GROUPS = names.map(function(name, idx) {
+        return {
+          id: 'synthetic-' + idx,
+          name: name,
+          properties: [],
+          propertyNames: [],
+          resolvedNames: [],
+        };
+      });
+      console.log('[PG] synthesized property groups from properties: ' + PROPERTY_GROUPS.length);
+      return true;
+    }
+
     PROPERTY_GROUPS = [];
     return false;
   }
