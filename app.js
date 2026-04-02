@@ -1301,6 +1301,53 @@ function setApiStatus(state, text) {
   textEl.textContent = text;
 }
 
+var APP_VERSION = 'v9.0d';
+var APP_VERSION_UPDATED = 'April 2';
+var SERVER_VERSION = '';
+
+function applyVersionBadge(serverVersion) {
+  var badge = document.getElementById('versionBadge');
+  if (!badge) return;
+  var txt = APP_VERSION + ' (updated ' + APP_VERSION_UPDATED + ')';
+  if (serverVersion && String(serverVersion).trim() && String(serverVersion).trim() !== APP_VERSION) {
+    txt += ' \u2022 server ' + String(serverVersion).trim();
+  }
+  txt += ' \u2022 Highlights (next 36h)';
+  badge.textContent = txt;
+}
+
+function enforceServerVersionGuard(pingData) {
+  var serverVersion = String((pingData && (pingData.version || pingData.proxy)) || '').trim();
+  if (!serverVersion) {
+    applyVersionBadge('');
+    return false;
+  }
+
+  SERVER_VERSION = serverVersion;
+  applyVersionBadge(serverVersion);
+  if (serverVersion === APP_VERSION) return false;
+
+  var seenKey = 'hm_force_refresh_seen_' + serverVersion;
+  try {
+    if (sessionStorage.getItem(seenKey) !== '1') {
+      sessionStorage.setItem(seenKey, '1');
+      alert('A newer HandyManager build (' + serverVersion + ') is available. The app will refresh now.');
+      window.location.reload();
+      return true;
+    }
+  } catch (_) {
+    alert('A newer HandyManager build (' + serverVersion + ') is available. Please refresh now.');
+    window.location.reload();
+    return true;
+  }
+
+  setApiStatus('error', 'Update required \u2014 refresh the app');
+  showToast('New build detected (' + serverVersion + '). Please hard refresh.', {
+    kind: 'warning', iconClass: 'fa-triangle-exclamation', duration: 7000,
+  });
+  return true;
+}
+
 /* =================================================================
    API Error Log
    ================================================================= */
@@ -6902,6 +6949,7 @@ async function sectionRefresh(section, btn) {
 async function initApp() {
   if (appInitialized) return;
   appInitialized = true;
+  applyVersionBadge('');
 
   // ================================================================
   // VENDOR-ONLY MODE: streamlined init — only load vendor data
@@ -6937,7 +6985,7 @@ async function initApp() {
       }
       if (vOk) {
         renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-        setApiStatus('', 'Vendor Access [v8] \u2014 ' + VENDORS.length + ' vendors');
+        setApiStatus('', 'Vendor Access [' + APP_VERSION + '] \u2014 ' + VENDORS.length + ' vendors');
         $('#apiStatus').className = 'topbar-status';
         showToast('Vendors loaded \u2014 ' + VENDORS.length);
         await saveAllToCache();
@@ -7031,6 +7079,7 @@ async function initApp() {
 
     // Detect proxy version when the proxy includes a version field
     _proxyVersion = pingData.version || 'v7';
+    if (enforceServerVersionGuard(pingData)) return;
 
     // Check APIs individually — be lenient: continue loading if Reports API is reachable
     var rptOk = pingData.reports_api ? pingData.reports_api.ok : pingData.ok;
@@ -7785,7 +7834,7 @@ renderDashboardKPIs = function() {
 
 // ── Module-level state ──────────────────────────────────────────
 var DISPATCH = {
-  queue: [], techs: [], audit: [], blasts: [], claims: [], comms: [], stats: {},
+  queue: [], techs: [], audit: [], blasts: [], claims: [], comms: [], stats: {}, monitored: [],
   initialized: false, activePanel: 'grades',
   cronSecret: '', queueFilter: '', queueStatus: '',
   auditFilter: '', auditWoFilter: '',
@@ -7892,6 +7941,13 @@ function parseHiddenAssigneeMap(raw) {
   } catch (_) {
     return {};
   }
+}
+function isMonitoredWorkOrder(woId) {
+  var id = String(woId || '').trim();
+  if (!id) return false;
+  return (DISPATCH.monitored || []).some(function(m) {
+    return String((m && m.wo_id) || '').trim() === id;
+  });
 }
 async function saveDispatchConfigKey(key, value) {
   var adminKey = getDispatchAdminKey();
@@ -8062,6 +8118,7 @@ function renderDispatchQueue(queue) {
     if(status==='escalated'&&!r.escalated)return false;
     if(status==='grace'&&!r.grace_used)return false;
     if(status==='reassigned'&&!r.reassignment_count)return false;
+    if(status==='monitoring'&&!isMonitoredWorkOrder(r.wo_id))return false;
     return true;
   });
   if(filtered.length===0){
@@ -8071,7 +8128,8 @@ function renderDispatchQueue(queue) {
   var html='';
   filtered.forEach(function(r){
     var rowBranch = getDispatchQueueBranch(r);
-    var icon=r.auto_exempt?'🔕':r.escalated?'🚨':r.warning_sent?'⚠️':r.grace_used?'🔵':'⚪';
+    var monitored = isMonitoredWorkOrder(r.wo_id);
+    var icon=monitored?'🟢':r.auto_exempt?'🔕':r.escalated?'🚨':r.warning_sent?'⚠️':r.grace_used?'🔵':'⚪';
     var woId=escapeHtml(String(r.wo_id||''));
     var woNum=escapeHtml(String(r.wo_number||r.wo_id||'').substring(0,20));
     var addr=escapeHtml(String(r.property_address||'—').substring(0,40));
@@ -8082,6 +8140,9 @@ function renderDispatchQueue(queue) {
     var exemptBtn=!r.auto_exempt
       ?'<button class="btn-dispatch-secondary btn-xs-dispatch" onclick="DispatchQueue.markExempt(\''+woId+'\',\''+woNum+'\')">🔕 Exempt</button>'
       :'<button class="btn-dispatch-danger btn-xs-dispatch" onclick="DispatchQueue.clearExempt(\''+woId+'\')">🔓 Clear</button>';
+    var monitorBtn=monitored
+      ?'<button class="btn-dispatch-primary btn-xs-dispatch" onclick="DispatchQueue.unmonitor(\''+woId+'\')">🟢 Monitored</button>'
+      :'<button class="btn-dispatch-secondary btn-xs-dispatch" onclick="DispatchQueue.monitor(\''+woId+'\')">⭐ Monitor</button>';
     html+='<tr style="'+(r.escalated?'background:rgba(209,59,59,.04)':'')+(r.auto_exempt?';opacity:.55':'')+'">'+
       '<td style="text-align:center;font-size:1rem">'+icon+'</td>'+
       '<td style="font-family:var(--font-mono);font-size:.8rem;color:var(--accent)">#'+woNum+'</td>'+
@@ -8090,7 +8151,7 @@ function renderDispatchQueue(queue) {
       '<td>'+(Number(r.reassignment_count)>0?'<span style="background:var(--danger-dim);color:var(--danger);padding:1px 6px;border-radius:4px;font-family:var(--font-mono);font-size:.72rem;font-weight:700">'+r.reassignment_count+'×</span>':'<span style="color:var(--text-muted)">—</span>')+'</td>'+
       '<td style="font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted)">'+firstSeen+'</td>'+
       '<td style="font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted)">'+lastAct+'</td>'+
-      '<td style="display:flex;gap:4px;flex-wrap:wrap">'+exemptBtn+
+      '<td style="display:flex;gap:4px;flex-wrap:wrap">'+monitorBtn+exemptBtn+
         '<button class="btn-dispatch-secondary btn-xs-dispatch" onclick="DispatchQueue.viewAudit(\''+woId+'\')">📋 Audit</button>'+
       '</td>'+
       '</tr>';
@@ -8362,6 +8423,32 @@ function renderDispatchComms(comms) {
 // ══════════════════════════════════════════════════════════════════
 
 var DispatchQueue = {
+  monitor: async function(woId) {
+    try {
+      var res = await dispatchPost('add_monitored_work_order', { wo_id: String(woId || '').trim() });
+      if (!res || !res.ok) {
+        v9Toast('Monitor failed', (res && res.error) || 'Unknown error', 'danger');
+        return;
+      }
+      v9Toast('Monitoring enabled', 'WO ' + woId + ' added to monitored queue', 'success');
+      DispatchControl.refresh();
+    } catch (e) {
+      v9Toast('Monitor failed', e.message || String(e), 'danger');
+    }
+  },
+  unmonitor: async function(woId) {
+    try {
+      var res = await dispatchPost('remove_monitored_work_order', { wo_id: String(woId || '').trim() });
+      if (!res || !res.ok) {
+        v9Toast('Unmonitor failed', (res && res.error) || 'Unknown error', 'danger');
+        return;
+      }
+      v9Toast('Monitoring removed', 'WO ' + woId + ' removed from monitored queue', 'success');
+      DispatchControl.refresh();
+    } catch (e) {
+      v9Toast('Unmonitor failed', e.message || String(e), 'danger');
+    }
+  },
   markExempt: async function(woId, woNum) {
     if (!confirm('Mark WO #'+woNum+' as exempt?\n\nThis writes a system note to AppFolio and stops automated reassignment for this WO.')) return;
     try {
@@ -8757,6 +8844,7 @@ var DispatchControl = {
         DISPATCH.blasts=queueData.blasts       ||[];
         DISPATCH.claims=queueData.tier2_claims ||[];
         DISPATCH.stats =queueData.stats        ||{};
+        DISPATCH.monitored = queueData.monitored_work_orders || [];
         updateDispatchStats(queueData);
       }
       if(commsData.ok)DISPATCH.comms=commsData.results||[];
@@ -8877,6 +8965,7 @@ var DispatchControl = {
       DISPATCH.queue=data.queue||[]; DISPATCH.techs=data.tech_roster||[];
       DISPATCH.audit=data.audit||[]; DISPATCH.blasts=data.blasts||[];
       DISPATCH.claims=data.tier2_claims||[]; DISPATCH.stats=data.stats||{};
+      DISPATCH.monitored = data.monitored_work_orders || [];
       updateDispatchStats(data);
       // Toast new important audit events
       var newAudit=(data.audit||[]).filter(function(a){return a.id&&a.id>DISPATCH._lastAuditMax;});
