@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HandyManager - AppFolio Utility</title>
+<title>HandyManager - An AppFolio Utility</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -887,6 +887,13 @@ body.role-vendors .cache-badge { display: none; }
 .kanban-card.urgent { border-left-color: var(--danger); }
 .kanban-card.normal { border-left-color: var(--info); }
 .kanban-card.low { border-left-color: var(--text-muted); }
+.kanban-card.age-yellow { background: linear-gradient(0deg, rgba(245,158,11,0.06), rgba(245,158,11,0.06)), var(--bg-card); }
+.kanban-card.age-orange { background: linear-gradient(0deg, rgba(249,115,22,0.10), rgba(249,115,22,0.10)), var(--bg-card); border-color: rgba(249,115,22,0.55); }
+.kanban-card.age-red { background: linear-gradient(0deg, rgba(239,68,68,0.11), rgba(239,68,68,0.11)), var(--bg-card); border-color: rgba(239,68,68,0.65); }
+.wo-age-pill { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: 9px; padding: 1px 6px; border-radius: 999px; border: 1px solid transparent; }
+.wo-age-pill.age-yellow { color: #f59e0b; background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.35); }
+.wo-age-pill.age-orange { color: #f97316; background: rgba(249,115,22,0.12); border-color: rgba(249,115,22,0.35); }
+.wo-age-pill.age-red { color: #ef4444; background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.38); }
 .kanban-card .kc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
 .kanban-card .kc-id { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--accent); }
 .kanban-card .kc-priority { font-size: 9px; }
@@ -1649,6 +1656,19 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
     <div class="kpi-card green kpi-clickable" data-kpi="moveouts"><div class="kpi-label">Upcoming Move-Outs</div><div class="kpi-value" id="kpiMoveOuts">—</div><div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div></div>
     <div class="kpi-card purple kpi-clickable" data-kpi="flagged"><div class="kpi-label">Flagged for Follow-Up</div><div class="kpi-value" id="kpiFlagged">—</div><div class="kpi-sub" id="kpiFlaggedSub">Loading…</div></div>
   </div>
+
+  <div class="table-wrapper" style="margin-bottom:20px" id="managerOverviewSection">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-chart-line" style="color:var(--info)"></i> Handy::Manager Overview (Handy::Manager + Advanced::Manager)</div>
+    </div>
+    <div class="kpi-grid" style="padding:12px 12px 16px">
+      <div class="kpi-card red"><div class="kpi-label">Avg Turnover Completion</div><div class="kpi-value" id="kpiMgrAvgTurnCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div></div>
+      <div class="kpi-card amber"><div class="kpi-label">Avg Days Since Inspection</div><div class="kpi-value" id="kpiMgrAvgInspectionAge">—</div><div class="kpi-sub" id="kpiMgrAvgInspectionAgeSub">Loading…</div></div>
+      <div class="kpi-card blue"><div class="kpi-label">Avg WO Open Days</div><div class="kpi-value" id="kpiMgrAvgWOCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgWOCompletionSub">Loading…</div></div>
+      <div class="kpi-card green"><div class="kpi-label">Recent Completed Turns</div><div class="kpi-value" id="kpiMgrCompletedTurns">—</div><div class="kpi-sub" id="kpiMgrCompletedTurnsSub">Loading…</div></div>
+    </div>
+  </div>
+
   <!-- Attention Required — Stalled Turns + Overdue Inspections + Vendor Alerts -->
   <div class="table-wrapper" style="margin-bottom:20px" id="attentionSection">
     <div class="table-header">
@@ -1720,6 +1740,26 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
     <select id="woPriorityFilter"><option value="">All Priorities</option><option value="Urgent">Urgent</option><option value="Normal">Normal</option><option value="Low">Low</option></select>
     <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
     <select id="woPropertyFilter"><option value="">All Properties</option></select>
+    <select id="woAgeFilter">
+      <option value="">Any Age</option>
+      <option value="7">7+ days old</option>
+      <option value="14">14+ days old</option>
+      <option value="30">30+ days old</option>
+      <option value="60">60+ days old</option>
+      <option value="90">90+ days old</option>
+    </select>
+    <select id="woSort">
+      <option value="oldest">Oldest First</option>
+      <option value="newest">Newest First</option>
+      <option value="priority">Priority (Urgent First)</option>
+    </select>
+    <div style="display:inline-flex;align-items:center;gap:4px;padding:4px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
+      <span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Aging</span>
+      <input id="woAgeYellow" type="number" min="1" step="1" value="14" title="Yellow threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
+      <input id="woAgeOrange" type="number" min="1" step="1" value="30" title="Orange threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
+      <input id="woAgeRed" type="number" min="1" step="1" value="60" title="Red threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
+      <button class="filter-btn" id="btnSaveWOAging" style="padding:6px 8px"><i class="fas fa-save"></i> Save</button>
+    </div>
     <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
     <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
     <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
@@ -1822,7 +1862,7 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
     <div class="kpi-card" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;border-top:3px solid #60a5fa"><div class="kpi-label">On Radar</div><div class="kpi-value" id="kpiOnRadar">0</div><div class="kpi-sub" id="kpiOnRadarSub">awaiting confirmation</div></div>
     <div class="kpi-card red"><div class="kpi-label">Avg Days</div><div class="kpi-value" id="kpiAvgTurnDays">—</div><div class="kpi-sub" id="kpiAvgTurnSub">elapsed on active turns</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Awaiting Estimates</div><div class="kpi-value" id="kpiAwaitEst">0</div><div class="kpi-sub" id="kpiAwaitEstSub">turns pending vendor bids</div></div>
-    <div class="kpi-card green"><div class="kpi-label">Total Billed</div><div class="kpi-value" id="kpiTurnBilled">$0</div><div class="kpi-sub" id="kpiTurnBilledSub">active turns combined</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Turns In Scope</div><div class="kpi-value" id="kpiTurnBilled">0</div><div class="kpi-sub" id="kpiTurnBilledSub">all pipeline records</div></div>
   </div>
 
   <!-- Stage Legend + Controls -->
@@ -2084,6 +2124,20 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
       <h3><i class="fas fa-comment-dots" style="color:var(--success)"></i> Tenant Communications Log</h3>
       <span class="dispatch-panel-hint">Magic-link tenant SMS plus warning and blast dispatch message history.</span>
     </div>
+    <div class="dispatch-test-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));align-items:start">
+      <input type="text" id="dispatchLiveWoId" placeholder="WO UUID">
+      <input type="text" id="dispatchLiveWoNumber" placeholder="WO # (optional)">
+      <input type="text" id="dispatchLiveTechId" placeholder="Tech UUID">
+      <input type="text" id="dispatchLiveTechName" placeholder="Tech name">
+      <input type="text" id="dispatchLiveTechPhone" placeholder="Tech phone +1555...">
+      <input type="text" id="dispatchLiveTenantName" placeholder="Resident name">
+      <input type="text" id="dispatchLiveTenantPhone" placeholder="Resident phone +1555...">
+      <input type="text" id="dispatchLiveAddress" placeholder="Property address">
+      <button class="btn-dispatch-secondary" id="btnDispatchGenerateLiveLink"><i class="fas fa-link"></i> Generate Link</button>
+      <button class="btn-dispatch-primary" id="btnDispatchSendLiveLink"><i class="fas fa-paper-plane"></i> Generate + Send</button>
+      <div class="dispatch-test-hint" style="grid-column:1/-1">Use this to create a real technician portal link from the web app. Generate-only returns the short link; Generate + Send also delivers it by RingCentral SMS to the tech phone.</div>
+    </div>
+    <div class="dispatch-test-result" id="dispatchLiveLinkResult"></div>
     <div class="dispatch-test-row">
       <input type="text" id="dispatchTestPhone" placeholder="Send test portal to +15551234567">
       <button class="btn-dispatch-primary" id="btnDispatchSendTestSms"><i class="fas fa-paper-plane"></i> Send Test Link</button>
@@ -2142,6 +2196,13 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
     <div class="dbadmin-results" id="dbResultsPanel">
       <div class="dbadmin-results-head"><span>Results</span><span id="dbResultsMeta" style="font-size:10px;color:var(--text-muted)"></span></div>
       <div class="dbadmin-results-body" id="dbResultsBody"><div class="dbadmin-msg">Run a query to see results here</div></div>
+    </div>
+    <div class="dbadmin-results" id="turnHistoryPanel">
+      <div class="dbadmin-results-head">
+        <span>Turn Closure History</span>
+        <button class="dbadmin-btn" id="btnRefreshTurnHistory" style="padding:3px 10px;font-size:10px"><i class="fas fa-sync-alt"></i> Refresh</button>
+      </div>
+      <div class="dbadmin-results-body" id="turnHistoryBody"><div class="dbadmin-msg">Loading turn history…</div></div>
     </div>
     <details class="dbadmin-history" id="dbHistoryWrap"><summary><i class="fas fa-history"></i> Query History</summary><div class="dbadmin-history-list" id="dbHistoryList"></div></details>
   </div>
@@ -2262,7 +2323,7 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
   <div class="modal" style="max-width:520px">
     <div class="modal-head"><h3><i class="fas fa-plug" style="color:var(--accent);margin-right:8px"></i> Webhook Configuration</h3><button class="modal-close" id="webhookModalClose">&times;</button></div>
     <div class="modal-body">
-      <p style="font-size:12px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6">Push real-time events into the activity feed via <strong>HTTP POST</strong>. Use <strong>Make.com</strong>, <strong>Zapier</strong>, or any automation tool to send JSON payloads to the webhook URL below.</p>
+      <p style="font-size:12px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6">AppFolio sends signed webhook events to this endpoint via <strong>HTTP POST</strong>. This endpoint is intended for AppFolio webhook delivery only.</p>
       <div class="form-group">
         <label class="form-label">Webhook Endpoint (POST)</label>
         <div style="display:flex;gap:6px">
@@ -2284,10 +2345,8 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
         </select>
       </div>
       <div style="font-size:11px;color:var(--text-muted);line-height:1.6;margin-top:8px">
-        <strong>Make.com:</strong> HTTP module → POST to webhook URL above<br>
-        <strong>Zapier / n8n:</strong> Webhook action → POST JSON to URL above<br>
-        <strong>cURL:</strong> <code>curl -X POST [URL] -H "Content-Type: application/json" -d '{"type":"...","title":"...","body":"..."}'</code><br>
-        <strong>Payload format:</strong> <code>{"type":"wo_update","title":"...","body":"...","priority":"normal"}</code>
+        <strong>Security:</strong> Requests must include a valid AppFolio detached JWS signature header (<code>X-JWS-Signature</code>).<br>
+        <strong>Tip:</strong> Configure this URL in AppFolio Admin → Webhooks and use AppFolio “Send Test Event” to validate connectivity.
       </div>
     </div>
     <div class="modal-footer">
@@ -2371,7 +2430,7 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
       <button class="modal-close" id="whatsNewClose">&times;</button>
     </div>
     <div class="modal-body">
-      <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px">v9.0c — April 2026 • Highlights (next 36h)</div>
+      <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.0d (updated April 2) • Highlights (next 36h)</div>
       <div style="max-height:290px;overflow-y:auto;padding-right:4px">
       <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px">
         <li style="display:flex;gap:10px;align-items:flex-start">
@@ -2448,8 +2507,39 @@ function updateThemeIcon() {
 function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
 
+var BRAND_NAME_DEFAULT = 'Fort Lowell Realty';
 var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
+var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
+var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
+var APP_VERSION = 'v9.0d';
+var SERVER_VERSION = '';
+var VERSION_MISMATCH_TIMER = null;
+
+function compareVersions(v1, v2) {
+  var p1 = String(v1).toLowerCase().replace(/^v/, '').split(/[\.\-]/);
+  var p2 = String(v2).toLowerCase().replace(/^v/, '').split(/[\.\-]/);
+  for (var i = 0; i < Math.max(p1.length, p2.length); i++) {
+    var n1 = parseInt(p1[i] || 0, 10);
+    var n2 = parseInt(p2[i] || 0, 10);
+    if (n1 > n2) return 1;
+    if (n1 < n2) return -1;
+  }
+  return 0;
+}
+
+function applyBrandConfig(brand) {
+  if (!brand || typeof brand !== 'object') return;
+  try {
+    if (brand.logo_url !== undefined) {
+      localStorage.setItem('hm_brand_logo', String(brand.logo_url || '').trim());
+    }
+    if (brand.name !== undefined) {
+      localStorage.setItem('hm_brand_name', String(brand.name || '').trim());
+    }
+  } catch (_) {}
+  applyBrandLogo();
+}
 
 function resolveBrandLogo() {
   var logoFromQuery = '';
@@ -2483,6 +2573,11 @@ function applyBrandLogo() {
 
     img.src = src;
   });
+
+  try {
+    var storedName = String(localStorage.getItem('hm_brand_name') || '').trim();
+    document.title = (storedName || BRAND_NAME_DEFAULT) + ' - AppFolio Utility';
+  } catch (_) {}
 }
 
 applyBrandLogo();
@@ -3797,6 +3892,9 @@ var UNIT_TURNS_DB = [];    // SQL-backed unit turn tracker records
 var UNIT_TURN_TRACKER_BY_KEY = {};
 var _turnTrackerSyncInFlight = false;
 var _lastTurnTrackerSyncHash = '';
+var _turnAutoCloseSyncInFlight = false;
+var _lastTurnAutoCloseHash = '';
+var UNIT_TURN_HISTORY = [];
 var BILLS = []; // from DB API — AP bills for WO close-assist
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
@@ -3864,7 +3962,12 @@ var CONFIG = {
     { label: '8–30d', max: 30,  cls: 'fresh' },
     { label: '31–60d', max: 60, cls: 'moderate' },
     { label: '60d+',  max: Infinity, cls: 'old' }
-  ]
+  ],
+  WO_AGE_COLOR_DAYS: {
+    yellow: 14,
+    orange: 30,
+    red: 60
+  }
 };
 
 /* =================================================================
@@ -4504,6 +4607,13 @@ async function fetchProperties() {
     var data = await proxyAction('properties');
     var results = data.results || data.data || [];
     PROPERTIES = results.map(function(p) {
+      var siteManager = '';
+      if (p.site_manager && typeof p.site_manager === 'object') {
+        siteManager = [p.site_manager.FirstName, p.site_manager.LastName].filter(Boolean).join(' ').trim();
+      }
+      if (!siteManager && p.SiteManager && typeof p.SiteManager === 'object') {
+        siteManager = [p.SiteManager.FirstName, p.SiteManager.LastName].filter(Boolean).join(' ').trim();
+      }
       return {
         id: p.property_id || p.id || '',
         name: p.property_name || p.property || p.name || '',
@@ -4516,7 +4626,7 @@ async function fetchProperties() {
         portfolio: p.portfolio || '',
         maintenanceLimit: p.maintenance_limit || p.maintenanceLimit || '',
         maintenanceNotes: p.maintenance_notes || p.maintenanceNotes || '',
-        siteManager: p.site_manager || p.siteManager || '',
+        siteManager: siteManager || p.site_manager || p.siteManager || p.SiteManager || '',
         units: p.units || '',
         sqft: p.sqft || '',
         marketRent: p.market_rent || p.marketRent || '',
@@ -5133,8 +5243,8 @@ async function fetchUnitTurnsDB() {
 }
 
 /* =================================================================
-   WEBHOOK EVENTS — HTTP POST relay for Make.com / Zapier / etc.
-   ================================================================= */
+  WEBHOOK EVENTS — AppFolio signed webhook ingest feed
+  ================================================================= */
 async function pollWebhookEvents() {
   try {
     var data = await proxyAction('webhook_events');
@@ -5647,7 +5757,7 @@ function renderWebhookEventList() {
   if (countEl) countEl.textContent = WEBHOOK_EVENTS.length;
   if (!el) return;
   if (WEBHOOK_EVENTS.length === 0) {
-    el.innerHTML = 'No events yet \u2014 POST to the webhook URL to push events.';
+    el.innerHTML = 'No events yet \u2014 waiting for signed AppFolio webhook deliveries.';
     return;
   }
   var html = '';
@@ -6513,6 +6623,69 @@ function renderDashboardKPIs() {
   var moveOuts = getUpcomingMoveOuts();
   var flaggedCount = Object.keys(WO_FLAGS).length;
 
+  var completedTurns = TURNS.filter(function(t) {
+    var endDate = t.turnEnd || t.moveIn;
+    if (!endDate || !t.moveOut) return false;
+    if (!isInPropertyGroup(t.propertyId, t.property, currentPropertyGroup)) return false;
+    return true;
+  });
+  var turnDurations = completedTurns.map(function(t) {
+    var start = new Date(t.moveOut);
+    var end = new Date(t.turnEnd || t.moveIn);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
+    var days = daysBetween(start, end);
+    return days >= 0 ? days : null;
+  }).filter(function(v) { return v !== null; });
+
+  var inspectionAges = INSPECTIONS.map(function(i) {
+    if (!i.lastInspection) return null;
+    if (!isInPropertyGroup(i.propertyId, i.propertyName, currentPropertyGroup)) return null;
+    var d = new Date(i.lastInspection);
+    if (isNaN(d.getTime())) return null;
+    return Math.max(0, daysBetween(d, new Date()));
+  }).filter(function(v) { return v !== null; });
+
+  var woCompletionStatuses = {
+    'work done': true,
+    'work completed': true,
+    'completed': true,
+    'canceled': true,
+    'cancelled': true
+  };
+  var woCompletionDurations = WORK_ORDERS.map(function(w) {
+    if (!isInPropertyGroup(w.propertyId, w.propertyName, currentPropertyGroup)) return null;
+    var statusKey = String(w.status || '').trim().toLowerCase();
+    if (!woCompletionStatuses[statusKey]) return null;
+    var start = getWOCreatedDate(w);
+    var endCandidates = [
+      w.workCompletedOn,
+      w.completedOn,
+      w.cancelledOn,
+      w.canceledOn,
+      w.cancelledAt,
+      w.canceledAt,
+      w.updated
+    ];
+    var end = null;
+    for (var i = 0; i < endCandidates.length; i++) {
+      var d = new Date(endCandidates[i]);
+      if (!isNaN(d.getTime())) { end = d; break; }
+    }
+    if (!start || !end) return null;
+    var delta = daysBetween(start, end);
+    return delta >= 0 ? delta : null;
+  }).filter(function(v) { return v !== null; });
+
+  function averageDays(values) {
+    if (!values || values.length === 0) return null;
+    var sum = values.reduce(function(s, v) { return s + v; }, 0);
+    return Math.round((sum / values.length) * 10) / 10;
+  }
+
+  var avgTurnCompletion = averageDays(turnDurations);
+  var avgInspectionAge = averageDays(inspectionAges);
+  var avgWOCompletion = averageDays(woCompletionDurations);
+
   // WO aging buckets
   var agingCounts = CONFIG.WO_AGING_BUCKETS.map(function() { return 0; });
   var today = new Date();
@@ -6545,6 +6718,26 @@ function renderDashboardKPIs() {
   $('#kpiMoveOutsSub').textContent = moveOuts.length > 0 ? moveOuts[0].daysLeft + 'd until next' : 'None in ' + CONFIG.MOVEOUT_WINDOW_DAYS + ' days';
   $('#kpiFlagged').textContent = flaggedCount;
   $('#kpiFlaggedSub').textContent = flaggedCount > 0 ? flaggedCount + ' items flagged' : 'No flagged items';
+
+  var mgrTurn = $('#kpiMgrAvgTurnCompletion');
+  var mgrTurnSub = $('#kpiMgrAvgTurnCompletionSub');
+  if (mgrTurn) mgrTurn.textContent = avgTurnCompletion !== null ? avgTurnCompletion + 'd' : '—';
+  if (mgrTurnSub) mgrTurnSub.textContent = turnDurations.length + ' completed turn(s) measured';
+
+  var mgrInsp = $('#kpiMgrAvgInspectionAge');
+  var mgrInspSub = $('#kpiMgrAvgInspectionAgeSub');
+  if (mgrInsp) mgrInsp.textContent = avgInspectionAge !== null ? avgInspectionAge + 'd' : '—';
+  if (mgrInspSub) mgrInspSub.textContent = inspectionAges.length + ' records with last inspection date';
+
+  var mgrWo = $('#kpiMgrAvgWOCompletion');
+  var mgrWoSub = $('#kpiMgrAvgWOCompletionSub');
+  if (mgrWo) mgrWo.textContent = avgWOCompletion !== null ? avgWOCompletion + 'd' : '—';
+  if (mgrWoSub) mgrWoSub.textContent = woCompletionDurations.length + ' closed WO(s): created -> terminal status';
+
+  var mgrComp = $('#kpiMgrCompletedTurns');
+  var mgrCompSub = $('#kpiMgrCompletedTurnsSub');
+  if (mgrComp) mgrComp.textContent = completedTurns.length;
+  if (mgrCompSub) mgrCompSub.textContent = completedTurns.length > 0 ? 'completed turnover records in scope' : 'No completed turnover records in scope';
 
   $('#woBadge').textContent = openWOs.length || '0';
   $('#turnBadge').textContent = activeTurns.length || '0';
@@ -6741,6 +6934,8 @@ var currentWOFilter = 'all';
 var currentWOPriority = '';
 var currentWOType = '';
 var currentWOProperty = '';
+var currentWOAgeFilter = '';
+var currentWOSort = 'oldest';
 var currentActivityFilter = 'all';
 
 // Kanban status columns and their display labels
@@ -6766,6 +6961,13 @@ function getFilteredWOs() {
     if (currentWOType && wo.type !== currentWOType) return false;
     // Property dropdown
     if (currentWOProperty && wo.propertyName !== currentWOProperty) return false;
+    // Age filter (minimum age in days)
+    if (currentWOAgeFilter) {
+      var createdDate = getWOCreatedDate(wo);
+      if (!createdDate) return false;
+      var woAgeDays = daysBetween(createdDate, new Date());
+      if (woAgeDays < Number(currentWOAgeFilter)) return false;
+    }
     // Property group filter — shared helper
     if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return false;
     // Flagged filter
@@ -6780,10 +6982,37 @@ function getFilteredWOs() {
   });
 }
 
+function getWOSortRank(wo) {
+  var p = String(wo.priority || '').toLowerCase();
+  if (p === 'urgent') return 0;
+  if (p === 'normal') return 1;
+  if (p === 'low') return 2;
+  return 3;
+}
+
+function sortWorkOrders(rows) {
+  return rows.slice().sort(function(a, b) {
+    if (currentWOSort === 'priority') {
+      var prDiff = getWOSortRank(a) - getWOSortRank(b);
+      if (prDiff !== 0) return prDiff;
+      var aTimeP = getWOCreatedDate(a);
+      var bTimeP = getWOCreatedDate(b);
+      var aMsP = aTimeP ? aTimeP.getTime() : 0;
+      var bMsP = bTimeP ? bTimeP.getTime() : 0;
+      return aMsP - bMsP;
+    }
+    var aTime = getWOCreatedDate(a);
+    var bTime = getWOCreatedDate(b);
+    var aMs = aTime ? aTime.getTime() : 0;
+    var bMs = bTime ? bTime.getTime() : 0;
+    return currentWOSort === 'newest' ? (bMs - aMs) : (aMs - bMs);
+  });
+}
+
 function renderWorkOrders() {
   var board = $('#kanbanBoard');
   if (!board) return;
-  var filtered = getFilteredWOs();
+  var filtered = sortWorkOrders(getFilteredWOs());
 
   // Populate property dropdown with unique properties from current WOs
   var propSel = $('#woPropertyFilter');
@@ -6834,10 +7063,12 @@ function renderWorkOrders() {
     wos.forEach(function(wo) {
       var pc = String(wo.priority || 'normal').toLowerCase();
       var flagged = isWOFlagged(wo.id);
-      html += '<div class="kanban-card ' + pc + (flagged ? ' flagged-card' : '') + '" data-woid="' + escapeHtml(String(wo.id)) + '">';
+      var ageMeta = getWOAgeMeta(wo);
+      html += '<div class="kanban-card ' + pc + (ageMeta.cls ? (' ' + ageMeta.cls) : '') + (flagged ? ' flagged-card' : '') + '" data-woid="' + escapeHtml(String(wo.id)) + '">';
       html += '<div class="kc-top"><span class="kc-id">#' + escapeHtml(String(wo.id)) + (flagged ? ' <i class="fas fa-flag kc-flag"></i>' : '') + '</span><span class="kc-priority"><span class="tag ' + pc + '">' + escapeHtml(wo.priority) + '</span></span></div>';
       html += '<div class="kc-desc">' + escapeHtml(wo.description || 'No description') + '</div>';
       html += '<div class="kc-meta">';
+      if (ageMeta.days !== null) html += '<span class="wo-age-pill ' + ageMeta.cls + '"><i class="fas fa-hourglass-half"></i> ' + escapeHtml(ageMeta.label) + '</span>';
       if (wo.propertyName) html += '<span><i class="fas fa-building"></i> ' + escapeHtml(wo.propertyName) + '</span>';
       if (wo.unit) html += '<span><i class="fas fa-door-open"></i> ' + escapeHtml(wo.unit) + '</span>';
       if (wo.vendorName) {
@@ -6860,9 +7091,11 @@ function renderWorkOrders() {
     html += '<div class="kanban-col"><div class="kanban-col-head"><span class="kanban-col-title">Other</span><span class="kanban-col-count">' + otherWos.length + '</span></div><div class="kanban-col-body">';
     otherWos.forEach(function(wo) {
       var pc = String(wo.priority || 'normal').toLowerCase();
-      html += '<div class="kanban-card ' + pc + '" data-woid="' + escapeHtml(String(wo.id)) + '"><div class="kc-top"><span class="kc-id">#' + escapeHtml(String(wo.id)) + '</span><span class="kc-priority"><span class="tag ' + pc + '">' + escapeHtml(wo.priority) + '</span></span></div>';
+      var ageMeta = getWOAgeMeta(wo);
+      html += '<div class="kanban-card ' + pc + (ageMeta.cls ? (' ' + ageMeta.cls) : '') + '" data-woid="' + escapeHtml(String(wo.id)) + '"><div class="kc-top"><span class="kc-id">#' + escapeHtml(String(wo.id)) + '</span><span class="kc-priority"><span class="tag ' + pc + '">' + escapeHtml(wo.priority) + '</span></span></div>';
       html += '<div class="kc-desc">' + escapeHtml(wo.description || 'No description') + '</div>';
       html += '<div class="kc-meta"><span>' + escapeHtml(wo.status) + '</span>';
+      if (ageMeta.days !== null) html += '<span class="wo-age-pill ' + ageMeta.cls + '"><i class="fas fa-hourglass-half"></i> ' + escapeHtml(ageMeta.label) + '</span>';
       if (wo.propertyName) html += '<span><i class="fas fa-building"></i> ' + escapeHtml(wo.propertyName) + '</span>';
       html += '</div></div>';
     });
@@ -6887,6 +7120,57 @@ function getWOCreatedDate(wo) {
     if (!isNaN(d.getTime())) return d;
   }
   return null;
+}
+
+function normalizeWOAgeThresholds(raw) {
+  var y = Math.max(1, Number(raw && raw.yellow) || 14);
+  var o = Math.max(y + 1, Number(raw && raw.orange) || 30);
+  var r = Math.max(o + 1, Number(raw && raw.red) || 60);
+  return { yellow: y, orange: o, red: r };
+}
+
+function loadWOAgeThresholds() {
+  try {
+    var saved = localStorage.getItem('hm_wo_age_thresholds');
+    if (!saved) return;
+    var parsed = JSON.parse(saved);
+    CONFIG.WO_AGE_COLOR_DAYS = normalizeWOAgeThresholds(parsed || {});
+  } catch (_) {}
+}
+
+function syncWOAgeInputs() {
+  var t = normalizeWOAgeThresholds(CONFIG.WO_AGE_COLOR_DAYS || {});
+  var yEl = $('#woAgeYellow');
+  var oEl = $('#woAgeOrange');
+  var rEl = $('#woAgeRed');
+  if (yEl) yEl.value = String(t.yellow);
+  if (oEl) oEl.value = String(t.orange);
+  if (rEl) rEl.value = String(t.red);
+}
+
+function saveWOAgeThresholdsFromInputs() {
+  var yEl = $('#woAgeYellow');
+  var oEl = $('#woAgeOrange');
+  var rEl = $('#woAgeRed');
+  var next = normalizeWOAgeThresholds({
+    yellow: yEl ? yEl.value : 14,
+    orange: oEl ? oEl.value : 30,
+    red: rEl ? rEl.value : 60
+  });
+  CONFIG.WO_AGE_COLOR_DAYS = next;
+  try { localStorage.setItem('hm_wo_age_thresholds', JSON.stringify(next)); } catch (_) {}
+  syncWOAgeInputs();
+}
+
+function getWOAgeMeta(wo) {
+  var createdDate = getWOCreatedDate(wo);
+  if (!createdDate) return { days: null, cls: '', label: 'No date' };
+  var days = Math.max(0, daysBetween(createdDate, new Date()));
+  var t = normalizeWOAgeThresholds(CONFIG.WO_AGE_COLOR_DAYS || {});
+  if (days >= t.red) return { days: days, cls: 'age-red', label: days + 'd old' };
+  if (days >= t.orange) return { days: days, cls: 'age-orange', label: days + 'd old' };
+  if (days >= t.yellow) return { days: days, cls: 'age-yellow', label: days + 'd old' };
+  return { days: days, cls: '', label: days + 'd old' };
 }
 
 function woAgeBucket(days) {
@@ -7188,7 +7472,15 @@ function showWODetail(id) {
     } else {
       fetchPropertyDetail(wo.propertyId).then(function(data) {
         var smEl = document.getElementById('detailSiteMgr');
-        if (smEl) smEl.textContent = (data && (data.site_manager || data.SiteManager)) || '\u2014';
+        var sm = '';
+        if (data && data.site_manager && typeof data.site_manager === 'object') {
+          sm = [data.site_manager.FirstName, data.site_manager.LastName].filter(Boolean).join(' ').trim();
+        }
+        if (!sm && data && data.SiteManager && typeof data.SiteManager === 'object') {
+          sm = [data.SiteManager.FirstName, data.SiteManager.LastName].filter(Boolean).join(' ').trim();
+        }
+        if (!sm && data) sm = data.site_manager || data.SiteManager || '';
+        if (smEl) smEl.textContent = sm || '\u2014';
       });
     }
   } else {
@@ -7289,15 +7581,62 @@ async function loadClosedTurns() {
   }
 }
 
+async function fetchUnitTurnHistory() {
+  if (!API_PROXY) return;
+  try {
+    var data = await proxyAction('unit_turns_history', { days: '540', limit: '300' });
+    if (data && data.ok && Array.isArray(data.results)) {
+      UNIT_TURN_HISTORY = data.results;
+    }
+  } catch (err) {
+    console.warn('fetchUnitTurnHistory failed (non-fatal):', err.message || err);
+  }
+}
+
+function renderTurnHistoryPanel() {
+  var body = document.getElementById('turnHistoryBody');
+  if (!body) return;
+  if (!UNIT_TURN_HISTORY || UNIT_TURN_HISTORY.length === 0) {
+    body.innerHTML = '<div class="dbadmin-msg">No closed turn history yet</div>';
+    return;
+  }
+  var cols = ['closed_at', 'close_source', 'close_reason', 'property_name', 'unit_name', 'move_out_date', 'move_in_date', 'site_manager', 'tracking_code'];
+  var thead = '<thead><tr>' + cols.map(function(c) {
+    return '<th>' + escapeHtml(c.replace(/_/g, ' '));
+  }).join('') + '</tr></thead>';
+  var tbody = '<tbody>' + UNIT_TURN_HISTORY.map(function(r) {
+    return '<tr>' + cols.map(function(c) {
+      var v = r[c];
+      if (!v) return '<td class="db-null">—</td>';
+      if (c.indexOf('date') !== -1 || c === 'closed_at') return '<td title="' + escapeHtml(String(v)) + '">' + escapeHtml(formatDate(v)) + '</td>';
+      return '<td title="' + escapeHtml(String(v)) + '">' + escapeHtml(String(v)) + '</td>';
+    }).join('') + '</tr>';
+  }).join('') + '</tbody>';
+  body.innerHTML = '<table>' + thead + tbody + '</table>';
+}
+
 // Close a turn — POST to proxy, then re-render
 async function closeTurn(turnId) {
   if (!turnId) return;
   if (!confirm('Close this turn? It will be hidden from the active board.')) return;
   try {
-    var r = await proxyPost('closed_turns', { turn_id: turnId });
+    var entry = TURN_PIPE_DATA.find(function(p) { return p.id === turnId; }) || null;
+    var r = await proxyPost('closed_turns', {
+      turn_id: turnId,
+      close_reason: 'manual_close',
+      close_source: 'manual',
+      closed_by: 'ui',
+      property_id: entry ? String(entry.propertyId || '') : '',
+      property_name: entry ? String(entry.property || '') : '',
+      unit_id: entry ? String(entry.unitId || '') : '',
+      unit_name: entry ? String(entry.unit || '') : '',
+      move_out_date: entry ? String(entry.moveOut || '') : '',
+      move_in_date: entry ? String(entry.expectedMoveIn || '') : ''
+    });
     if (r && r.ok) {
       CLOSED_TURNS.add(turnId);
       renderTurnBoard();
+      fetchUnitTurnHistory().then(function() { renderTurnHistoryPanel(); }).catch(function() {});
       showToast('Turn closed and removed from active board');
     } else {
       showToast('Could not close turn: ' + (r && r.error ? r.error : 'Unknown error'));
@@ -7364,6 +7703,14 @@ function turnMilestonesFromPipeline(p) {
 
 function buildTurnTrackerSyncPayload() {
   return TURN_PIPE_DATA.map(function(p) {
+    var shouldAutoClose = !!(p.expectedMoveIn && (new Date(p.expectedMoveIn)).getTime() <= Date.now());
+    var status = p.isClosed || shouldAutoClose
+      ? 'closed'
+      : p.isCompleted
+      ? 'completed'
+      : p.isConfirmed
+      ? 'active'
+      : 'on_radar';
     return {
       turn_key: p.id,
       unit_turn_id: (p.turn && p.turn.unitTurnId) || p.registeredUnitTurnId || '',
@@ -7377,7 +7724,8 @@ function buildTurnTrackerSyncPayload() {
       first_wo_date: (p.stages && p.stages.wo_created && p.stages.wo_created.date) || '',
       estimate_requested_date: (p.stages && p.stages.est_requested && p.stages.est_requested.date) || '',
       estimate_received_date: (p.stages && p.stages.est_received && p.stages.est_received.date) || '',
-      status: p.isClosed ? 'closed' : p.isCompleted ? 'completed' : p.isConfirmed ? 'active' : 'on_radar',
+      status: status,
+      closed_at: (status === 'closed' || status === 'completed') ? new Date().toISOString() : '',
       confidence_score: p.confidenceScore || 0,
       confidence_label: p.confidenceLabel || 'low',
       site_manager: p.siteManager || '',
@@ -7385,7 +7733,12 @@ function buildTurnTrackerSyncPayload() {
         from_turn_report: !!p.turn,
         from_inspection: !!(p.matchingInsp && p.stages && p.stages.inspection && p.stages.inspection.done),
         from_work_orders: !!(p.matchingWOs && p.matchingWOs.length),
-        is_on_radar: !!p.isOnRadar
+        is_on_radar: !!p.isOnRadar,
+        auto_closed_by_move_in: shouldAutoClose
+      },
+      metadata: {
+        close_reason: p.isClosed ? 'manual_close' : (shouldAutoClose ? 'move_in_detected' : ''),
+        close_source: p.isClosed ? 'manual' : (shouldAutoClose ? 'system_move_in' : 'pipeline')
       },
       milestones: turnMilestonesFromPipeline(p),
       replace_work_orders: true,
@@ -7400,6 +7753,23 @@ function buildTurnTrackerSyncPayload() {
       })
     };
   });
+}
+
+async function syncAutoClosedTurns(records) {
+  if (!API_PROXY || _turnAutoCloseSyncInFlight || !Array.isArray(records) || records.length === 0) return;
+  var hash = JSON.stringify(records.map(function(r) {
+    return [r.turn_key, r.move_in_date, r.move_out_date, r.property_id, r.unit_id].join('|');
+  }));
+  if (hash === _lastTurnAutoCloseHash) return;
+  _turnAutoCloseSyncInFlight = true;
+  try {
+    await proxyPost('unit_turns_sync', { records: records });
+    _lastTurnAutoCloseHash = hash;
+  } catch (err) {
+    console.log('syncAutoClosedTurns error: ' + (err.message || err));
+  } finally {
+    _turnAutoCloseSyncInFlight = false;
+  }
 }
 
 async function syncTurnTrackerFromPipeline() {
@@ -7454,6 +7824,7 @@ function buildTurnPipeline() {
   TURN_PIPE_DATA = [];
   var today = new Date();
   var seenKeys = {};
+  var autoClosedCandidates = [];
 
   function isTurnWorkOrderCandidate(woLike, moveOutDate, source) {
     var type = String((woLike && (woLike.type || woLike.Type)) || '').toLowerCase();
@@ -7487,11 +7858,18 @@ function buildTurnPipeline() {
   // ---- Pre-build lookup indexes for O(1) matching (avoids O(n*m) iteration) ----
   // Index WORK_ORDERS by composite key: "unit_lower|prop_lower"
   var _woByUnitProp = {};
+  var _woByProperty = {};
   WORK_ORDERS.forEach(function(wo) {
-    if (!wo.unit || !wo.propertyName) return;
-    var key = String(wo.unit).toLowerCase() + '|' + String(wo.propertyName).toLowerCase();
-    if (!_woByUnitProp[key]) _woByUnitProp[key] = [];
-    _woByUnitProp[key].push(wo);
+    if (wo.unit && wo.propertyName) {
+      var key = String(wo.unit).toLowerCase() + '|' + String(wo.propertyName).toLowerCase();
+      if (!_woByUnitProp[key]) _woByUnitProp[key] = [];
+      _woByUnitProp[key].push(wo);
+    }
+    var propIdKey = String(wo.propertyId || '').trim();
+    if (propIdKey) {
+      if (!_woByProperty[propIdKey]) _woByProperty[propIdKey] = [];
+      _woByProperty[propIdKey].push(wo);
+    }
   });
   // Index TURN_WORK_ORDERS by unitId + propertyId
   var _turnWoByUnit = {};
@@ -7524,6 +7902,24 @@ function buildTurnPipeline() {
       wos.push({ source: 'reports', id: wo.id, status: wo.status, description: wo.description || '',
         created: wo.created, vendor: wo.vendor || '', unit: wo.unit, property: wo.propertyName, priority: wo.priority });
     });
+
+    // Property-level fallback for vacancy window:
+    // if unit-level matching misses WOs, include property WOs from move-out date to now.
+    if (propId && moveOutDate) {
+      var propWos = _woByProperty[String(propId)] || [];
+      var windowStart = new Date(moveOutDate);
+      var windowEnd = new Date();
+      propWos.forEach(function(wo) {
+        if (!wo.created) return;
+        var createdAt = new Date(wo.created);
+        if (isNaN(createdAt.getTime())) return;
+        if (createdAt < windowStart || createdAt > windowEnd) return;
+        var dupe = wos.find(function(w) { return String(w.id) === String(wo.id); });
+        if (dupe) return;
+        wos.push({ source: 'reports_property_window', id: wo.id, status: wo.status, description: wo.description || '',
+          created: wo.created, vendor: wo.vendor || '', unit: wo.unit, property: wo.propertyName, priority: wo.priority });
+      });
+    }
     // From DB API turn work orders — O(1) lookup by unit/property ID
     var dbCandidates = [];
     if (unitId && _turnWoByUnit[unitId]) dbCandidates = dbCandidates.concat(_turnWoByUnit[unitId]);
@@ -7664,6 +8060,35 @@ function buildTurnPipeline() {
     if (actualMoveIn) {
       var miDate = new Date(actualMoveIn);
       if (!isNaN(miDate.getTime()) && miDate <= today) {
+        autoClosedCandidates.push({
+          turn_key: key,
+          unit_turn_id: (turnData && turnData.unitTurnId) || '',
+          unit_id: unitId || '',
+          property_id: propId || '',
+          unit_name: unit || '',
+          property_name: property || '',
+          move_out_date: moveOut || '',
+          move_in_date: actualMoveIn,
+          status: 'closed',
+          closed_at: new Date().toISOString(),
+          confidence_score: 100,
+          confidence_label: 'high',
+          site_manager: (turnData && turnData.siteManager) || '',
+          source_flags: {
+            auto_closed_by_move_in: true,
+            from_turn_report: !!turnData
+          },
+          metadata: {
+            close_reason: 'move_in_detected',
+            close_source: 'system_move_in'
+          },
+          milestones: {
+            moveout: { date: moveOut || '', source: turnData ? 'reports' : 'inferred' },
+            movein: { date: actualMoveIn, source: 'reports' }
+          },
+          replace_work_orders: false,
+          work_orders: []
+        });
         return; // Unit has a confirmed past move-in — exclude from turn board
       }
     }
@@ -7857,6 +8282,10 @@ function buildTurnPipeline() {
     }
     return b.elapsed - a.elapsed; // completed: most recent first
   });
+
+  if (autoClosedCandidates.length > 0) {
+    syncAutoClosedTurns(autoClosedCandidates).catch(function() {});
+  }
 }
 
 function renderTurnBoard() {
@@ -7888,8 +8317,6 @@ function renderTurnKPIs() {
   var awaitEst  = confirmed.filter(function(p) {
     return p.stages.wo_created && p.stages.wo_created.done && p.stages.est_received && !p.stages.est_received.done;
   });
-  var totalBilled = 0;
-  confirmed.forEach(function(p) { totalBilled += p.costNum; });
   var avgDays = 0;
   if (confirmed.length > 0) {
     var totalDays = 0;
@@ -7908,8 +8335,8 @@ function renderTurnKPIs() {
   e('kpiAvgTurnSub', avgDays > 0 ? 'avg days elapsed' : 'no active turns');
   e('kpiAwaitEst', awaitEst.length);
   e('kpiAwaitEstSub', awaitEst.length + ' turns pending vendor bids');
-  e('kpiTurnBilled', currency(totalBilled));
-  e('kpiTurnBilledSub', 'active turns combined');
+  e('kpiTurnBilled', TURN_PIPE_DATA.length);
+  e('kpiTurnBilledSub', 'active + on radar + completed');
 
   var tb = $('#turnBadge');
   if (tb) tb.textContent = active.length + upcoming.length;
@@ -8031,7 +8458,7 @@ function renderTurnPipelineUI() {
     if (p.isCompleted) {
       var completeDays = (p.turn && p.turn.totalDays) || p.elapsed;
       html += '<span class="pipe-card-elapsed" style="color:var(--success)">' + completeDays + 'd</span>';
-      html += '<span class="pipe-card-cost">' + escapeHtml(p.totalBilled) + ' &bull; Complete</span>';
+      html += '<span class="pipe-card-cost">Complete</span>';
     } else if (p.isUpcoming) {
       var daysUntil = Math.abs(p.elapsed);
       html += '<span class="pipe-card-elapsed" style="color:var(--info,#60a5fa)">' + daysUntil + 'd</span>';
@@ -8044,8 +8471,9 @@ function renderTurnPipelineUI() {
       var eColor = p.elapsed > p.target ? 'var(--danger)' : p.elapsed > CONFIG.TURN_WARNING_DAYS ? 'var(--warning)' : 'var(--text-primary)';
       html += '<span class="pipe-card-elapsed" style="color:' + eColor + '">' + p.elapsed + 'd</span>';
       var nextStage = p.currentStageIdx < PIPE_STAGES.length - 1 ? PIPE_STAGES[p.currentStageIdx + 1] : null;
-      html += '<span class="pipe-card-cost">' + escapeHtml(p.totalBilled);
-      if (nextStage) html += ' &bull; Next: ' + nextStage.label;
+      html += '<span class="pipe-card-cost">';
+      if (nextStage) html += 'Next: ' + nextStage.label;
+      else html += 'In progress';
       // WO progress: show X/Y done when there are multiple WOs
       if (p.stages.work_done && p.stages.work_done.totalCount > 0) {
         html += ' <span style="color:var(--text-muted);font-size:10px">(' + p.stages.work_done.doneCount + '/' + p.stages.work_done.totalCount + ' WOs)</span>';
@@ -8154,8 +8582,6 @@ function renderTurnPipelineUI() {
         var woCompStyle = doneCount === p.matchingWOs.length ? 'color:var(--success)' : 'color:var(--warning)';
         html += '<div class="detail-row"><div class="detail-row-label">WO Completion</div><div class="detail-row-value" style="' + woCompStyle + '">' + doneCount + '/' + p.matchingWOs.length + ' complete</div></div>';
       }
-      html += '<div class="detail-row"><div class="detail-row-label">Total Billed</div><div class="detail-row-value">' + escapeHtml(p.totalBilled) + '</div></div>';
-      html += '<div class="detail-row"><div class="detail-row-label">Labor</div><div class="detail-row-value">' + escapeHtml(p.turn.laborCost || '$0') + '</div></div>';
       html += '<div class="detail-row"><div class="detail-row-label">Reference</div><div class="detail-row-value">' + escapeHtml(p.turn.referenceUser || '\u2014') + '</div></div>';
     } else {
       html += '<div class="detail-row"><div class="detail-row-label">Status</div><div class="detail-row-value" style="color:var(--info,#60a5fa)">Upcoming — awaiting move-out</div></div>';
@@ -8168,7 +8594,7 @@ function renderTurnPipelineUI() {
       p.relatedTurns.forEach(function(rt) {
         html += '<div class="pipe-wo-item">';
         html += '<div><span class="pipe-wo-id">' + escapeHtml(rt.unitTurnId || 'turn') + '</span> <span class="tag ' + (rt.turnEnd ? 'completed' : 'waiting') + '">' + escapeHtml(rt.status || (rt.turnEnd ? 'Completed' : 'In Progress')) + '</span></div>';
-        html += '<div style="font-size:11px;color:var(--text-secondary)">Move-out: ' + (rt.moveOut ? formatDate(rt.moveOut) : '\u2014') + ' • Move-in: ' + (rt.expectedMoveIn ? formatDate(rt.expectedMoveIn) : '\u2014') + ' • Billed: ' + escapeHtml(rt.totalBilled || '$0') + '</div>';
+        html += '<div style="font-size:11px;color:var(--text-secondary)">Move-out: ' + (rt.moveOut ? formatDate(rt.moveOut) : '\u2014') + ' • Move-in: ' + (rt.expectedMoveIn ? formatDate(rt.expectedMoveIn) : '\u2014') + '</div>';
         html += '</div>';
       });
     }
@@ -9077,6 +9503,27 @@ function wireUpUI() {
   if ($('#woPropertyFilter')) {
     $('#woPropertyFilter').addEventListener('change', function() { currentWOProperty = this.value; renderWorkOrders(); });
   }
+  if ($('#woAgeFilter')) {
+    $('#woAgeFilter').addEventListener('change', function() { currentWOAgeFilter = this.value; renderWorkOrders(); });
+  }
+  if ($('#woSort')) {
+    $('#woSort').addEventListener('change', function() { currentWOSort = this.value || 'oldest'; renderWorkOrders(); });
+  }
+  if ($('#btnSaveWOAging')) {
+    $('#btnSaveWOAging').addEventListener('click', function() {
+      saveWOAgeThresholdsFromInputs();
+      renderWorkOrders();
+      showToast('Saved WO aging thresholds', { kind: 'success' });
+    });
+  }
+  ['woAgeYellow', 'woAgeOrange', 'woAgeRed'].forEach(function(id) {
+    var el = $('#' + id);
+    if (!el) return;
+    el.addEventListener('change', function() {
+      saveWOAgeThresholdsFromInputs();
+      renderWorkOrders();
+    });
+  });
   if ($('#woCloseAge')) {
     $('#woCloseAge').addEventListener('change', function() {
       currentWOCloseAssistAge = parseInt(this.value || '14', 10) || 14;
@@ -9397,7 +9844,7 @@ function wireUpUI() {
   if ($('#btnWebhookConfig')) {
     $('#btnWebhookConfig').addEventListener('click', function() {
       var urlEl = $('#webhookUrl');
-      if (urlEl) urlEl.value = API_PROXY + '?action=webhook';
+      if (urlEl) urlEl.value = API_PROXY;
       openModal('webhookModal');
       renderWebhookEventList();
     });
@@ -9589,6 +10036,7 @@ async function sectionRefresh(section, btn) {
       await fetchTurnWorkOrders();
       await fetchUnitTurnsDB();
       loadClosedTurns().catch(function() {});
+      fetchUnitTurnHistory().then(function() { renderTurnHistoryPanel(); }).catch(function() {});
       renderTurnBoard();
     }
     if (section === 'inspections' || section === 'dashboard') {
@@ -9672,6 +10120,7 @@ async function initApp() {
   // Load flags + vendor overrides from IndexedDB
   await loadFlags();
   await loadVendorOverrides();
+  loadWOAgeThresholds();
 
   // Show skeleton loading states
   if ($('#kanbanBoard')) $('#kanbanBoard').innerHTML = loadingHtml('Checking cache\u2026');
@@ -9681,6 +10130,7 @@ async function initApp() {
   renderTemplates();
   renderErrorLog();
   wireUpUI();
+  syncWOAgeInputs();
 
   // ================================================================
   // STEP 1: Check IndexedDB cache for fresh work order data
@@ -9738,6 +10188,17 @@ async function initApp() {
   try {
     setApiStatus('loading', 'Pinging proxy\u2026');
     var pingData = await proxyAction('ping');
+    if (pingData && pingData.brand) applyBrandConfig(pingData.brand);
+
+    // Cache server version and detect version mismatch (force refresh if needed)
+    if (pingData && pingData.version) {
+      SERVER_VERSION = String(pingData.version);
+      localStorage.setItem('hm_server_version', SERVER_VERSION);
+      if (SERVER_VERSION !== APP_VERSION && compareVersions(SERVER_VERSION, APP_VERSION) > 0) {
+        localStorage.setItem('hm_version_mismatch', '1');
+        setTimeout(function() { location.reload(); }, 2000);
+      }
+    }
 
     // Detect proxy version when the proxy includes a version field
     _proxyVersion = pingData.version || 'v7';
@@ -9888,6 +10349,7 @@ async function fetchAllLive() {
     updateProgress(7, trkOk ? 'done' : 'error', trkOk ? TURN_RECORDS.length + ' tracked' : 'Tracker skipped');
     // Load closed turns (non-blocking, best-effort)
     loadClosedTurns().catch(function() {});
+    fetchUnitTurnHistory().then(function() { renderTurnHistoryPanel(); }).catch(function() {});
 
     // Final re-render: turns with all available correlated data
     renderTurnBoard();
@@ -10139,6 +10601,7 @@ renderDashboardKPIs = function() {
   var confirmSQL = document.getElementById('dbConfirmSQL');
   var confirmCancel = document.getElementById('dbConfirmCancel');
   var confirmExec = document.getElementById('dbConfirmExec');
+  var turnHistoryRefreshBtn = document.getElementById('btnRefreshTurnHistory');
   if (!editor || !runBtn) return;
 
   var _dbHistory = [];
@@ -10310,6 +10773,14 @@ renderDashboardKPIs = function() {
     var a = document.createElement('a'); a.href = url; a.download = 'db_query_' + new Date().toISOString().slice(0, 10) + '.json';
     document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
   });
+
+  if (turnHistoryRefreshBtn) {
+    turnHistoryRefreshBtn.addEventListener('click', function() {
+      fetchUnitTurnHistory().then(function() { renderTurnHistoryPanel(); }).catch(function() {});
+    });
+  }
+
+  fetchUnitTurnHistory().then(function() { renderTurnHistoryPanel(); }).catch(function() {});
 
   renderHistory();
 })();
@@ -10791,9 +11262,13 @@ function renderDispatchQueue(queue) {
     var branchLabel = rowBranch === 'unknown' ? 'Unknown' : (rowBranch === 'phoenix' ? 'Phoenix' : 'Tucson');
     var firstSeen=r.first_seen_at?timeAgo(r.first_seen_at):'—';
     var lastAct=r.last_reassigned_at?timeAgo(r.last_reassigned_at):(r.warning_sent_at?timeAgo(r.warning_sent_at):'—');
+    var isMonitored = (DISPATCH.monitored||[]).some(function(m){return String(m.wo_id)===String(r.wo_id);});
     var exemptBtn=!r.auto_exempt
       ?'<button class="btn-dispatch-secondary btn-xs-dispatch" onclick="DispatchQueue.markExempt(\''+woId+'\',\''+woNum+'\')">🔕 Exempt</button>'
       :'<button class="btn-dispatch-danger btn-xs-dispatch" onclick="DispatchQueue.clearExempt(\''+woId+'\')">🔓 Clear</button>';
+    var monBtn = isMonitored
+      ? '<button class="btn-dispatch-danger btn-xs-dispatch" onclick="DispatchQueue.removeMonitored(\''+woId+'\')"><i class="fas fa-star"></i> Monitored</button>'
+      : '<button class="btn-dispatch-secondary btn-xs-dispatch" onclick="DispatchQueue.addMonitored(\''+woId+'\',\''+woNum+'\')"><i class="fas fa-star-o"></i> Monitor</button>';
     html+='<tr style="'+(r.escalated?'background:rgba(209,59,59,.04)':'')+(r.auto_exempt?';opacity:.55':'')+'">'+
       '<td style="text-align:center;font-size:1rem">'+icon+'</td>'+
       '<td style="font-family:var(--font-mono);font-size:.8rem;color:var(--accent)">#'+woNum+'</td>'+
@@ -10802,7 +11277,7 @@ function renderDispatchQueue(queue) {
       '<td>'+(Number(r.reassignment_count)>0?'<span style="background:var(--danger-dim);color:var(--danger);padding:1px 6px;border-radius:4px;font-family:var(--font-mono);font-size:.72rem;font-weight:700">'+r.reassignment_count+'×</span>':'<span style="color:var(--text-muted)">—</span>')+'</td>'+
       '<td style="font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted)">'+firstSeen+'</td>'+
       '<td style="font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted)">'+lastAct+'</td>'+
-      '<td style="display:flex;gap:4px;flex-wrap:wrap">'+exemptBtn+
+      '<td style="display:flex;gap:4px;flex-wrap:wrap">'+exemptBtn+monBtn+
         '<button class="btn-dispatch-secondary btn-xs-dispatch" onclick="DispatchQueue.viewAudit(\''+woId+'\')">📋 Audit</button>'+
       '</td>'+
       '</tr>';
@@ -10820,11 +11295,12 @@ function renderDispatchRoster(techs) {
   var html='';
   (techs || []).forEach(function(t){
     var branch = normalizeTechBranch(t);
-    if (DISPATCH.activeBranch !== 'all' && branch !== DISPATCH.activeBranch) return;
+    var hidden = isTechHidden(t.tech_id);
+    // Hidden assignees stay visible in roster so managers can edit/unhide them.
+    if (DISPATCH.activeBranch !== 'all' && branch !== DISPATCH.activeBranch && !hidden) return;
     var sn=Number(t.performance_score||100);
     var scoreColor=sn>=80?'var(--success)':sn>=60?'var(--warning)':'var(--danger)';
     var scoreBg=sn>=80?'var(--success-dim)':sn>=60?'var(--warning-dim)':'var(--danger-dim)';
-    var hidden = isTechHidden(t.tech_id);
     var rowOpacity = (!t.active || hidden) ? '.5' : '1';
     var tid=escapeHtml(t.tech_id||'');
     var tname=escapeHtml(t.tech_name||'');
@@ -10867,6 +11343,11 @@ function renderDispatchConfig(configRows) {
   DISPATCH.activeBranch = ['all','phoenix','tucson'].indexOf(savedBranch) !== -1 ? savedBranch : 'all';
   var hiddenRaw = localStorage.getItem('hm_dispatch_hidden_assignees') || configMap.dispatch_hidden_assignees || '{}';
   DISPATCH.hiddenAssignees = parseHiddenAssigneeMap(hiddenRaw);
+  var savedBrandName = localStorage.getItem('hm_brand_name') || configMap.brand_name || BRAND_NAME_DEFAULT;
+  var savedBrandLogo = localStorage.getItem('hm_brand_logo') || configMap.brand_logo_url || '';
+  var savedPortalBrandName = localStorage.getItem('hm_portal_brand_name') || configMap.portal_brand_name || PORTAL_BRAND_NAME_DEFAULT;
+  var savedPortalBrandLogo = localStorage.getItem('hm_portal_brand_logo') || configMap.portal_brand_logo_url || PORTAL_BRAND_LOGO_DEFAULT;
+  var savedPortalBrandTitle = localStorage.getItem('hm_portal_brand_title') || configMap.portal_brand_title || 'Dispatch Portal';
   var savedSecret=localStorage.getItem('hm_cron_secret')||'';
   var html=
     '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap">'+
@@ -10905,6 +11386,29 @@ function renderDispatchConfig(configRows) {
     '<span style="font-size:.72rem;color:var(--text-muted)">Keep AppFolio users available but hide them from active dispatch controls.</span></div>'+
     '<div style="font-family:var(--font-mono);font-size:.76rem;color:var(--text-muted)">'+Object.keys(DISPATCH.hiddenAssignees).length+' hidden</div>'+
     '</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap">'+
+    '<div><label style="font-weight:700;font-size:.85rem;display:block">Web App Branding</label>'+
+    '<span style="font-size:.72rem;color:var(--text-muted)">Set the logo URL used by the main HandyManager web app.</span></div>'+
+    '<div style="display:flex;flex-direction:column;gap:6px;min-width:300px">'+
+      '<input type="text" id="cfgBrandName" value="'+escapeHtml(savedBrandName)+'" placeholder="Brand name" style="font-family:var(--font-mono);font-size:.74rem;padding:5px 9px;border-radius:7px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">'+
+      '<input type="text" id="cfgBrandLogoUrl" value="'+escapeHtml(savedBrandLogo)+'" placeholder="https://.../logo.png" style="font-family:var(--font-mono);font-size:.74rem;padding:5px 9px;border-radius:7px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+        '<button class="btn-dispatch-secondary btn-xs-dispatch" onclick="DispatchConfig.saveBranding()"><i class="fas fa-save"></i> Save Web App Branding</button>'+
+        '<button class="btn-dispatch-warning btn-xs-dispatch" onclick="DispatchConfig.clearBranding()"><i class="fas fa-eraser"></i> Reset</button>'+
+      '</div>'+
+    '</div></div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap">'+
+    '<div><label style="font-weight:700;font-size:.85rem;display:block">Portal Branding</label>'+
+    '<span style="font-size:.72rem;color:var(--text-muted)">Set the logo, name, and title used only by the tech magic-link portal.</span></div>'+
+    '<div style="display:flex;flex-direction:column;gap:6px;min-width:300px">'+
+      '<input type="text" id="cfgPortalBrandTitle" value="'+escapeHtml(savedPortalBrandTitle)+'" placeholder="Portal title (e.g. Dispatch Portal)" style="font-family:var(--font-mono);font-size:.74rem;padding:5px 9px;border-radius:7px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">'+
+      '<input type="text" id="cfgPortalBrandName" value="'+escapeHtml(savedPortalBrandName)+'" placeholder="Portal brand name" style="font-family:var(--font-mono);font-size:.74rem;padding:5px 9px;border-radius:7px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">'+
+      '<input type="text" id="cfgPortalBrandLogoUrl" value="'+escapeHtml(savedPortalBrandLogo)+'" placeholder="https://.../portal-logo.png" style="font-family:var(--font-mono);font-size:.74rem;padding:5px 9px;border-radius:7px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+        '<button class="btn-dispatch-secondary btn-xs-dispatch" onclick="DispatchConfig.savePortalBranding()"><i class="fas fa-save"></i> Save Portal Branding</button>'+
+        '<button class="btn-dispatch-warning btn-xs-dispatch" onclick="DispatchConfig.resetPortalBranding()"><i class="fas fa-eraser"></i> Reset Portal Branding</button>'+
+      '</div>'+
+    '</div></div>'+
     '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap">'+
     '<div><label style="font-weight:700;font-size:.85rem;display:block">Cron Secret</label>'+
     '<span style="font-size:.72rem;color:var(--text-muted)">CRON_SECRET env var — required to trigger manual cron passes</span></div>'+
@@ -11047,10 +11551,14 @@ function renderDispatchComms(comms) {
     el.innerHTML='<div class="dispatch-empty"><i class="fas fa-comment-slash"></i>No tenant communications logged yet.</div>';
     return;
   }
-  var ICONS={"I'm On My Way":'🚗',"Let's Schedule a Visit":'📅','Arriving Today':'📬'};
+  var ICONS={"I'm On My Way":'🚗',"Let's Schedule a Visit":'📅','Arriving Today':'📬','Portal Opened':'👀','Magic Link Generated':'🔗','Scheduled Visit':'🗓️','Rescheduled Visit':'🔁','Portal Note':'📝','No Contact Reported':'📵','Reassign Requested':'🔄','Pre-Reassign Warning':'⚠️','Tier 2 Blast':'📣','Auto Reassigned':'♻️'};
   var html='';
   comms.slice(0,80).forEach(function(c){
     var icon=ICONS[c.template_used]||'💬';
+    var metaParts=[];
+    if (c.tenant_phone) metaParts.push('To: ' + escapeHtml(c.tenant_phone));
+    if (c.rc_message_id) metaParts.push('RC: ' + escapeHtml(String(c.rc_message_id).substring(0,12)));
+    if (c.magic_link) metaParts.push('<a href="' + escapeHtml(c.magic_link) + '" target="_blank" rel="noopener noreferrer">Open</a>');
     html+='<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:.82rem">'+
       '<div style="font-size:1.1rem;margin-top:1px">'+icon+'</div>'+
       '<div style="flex:1;min-width:0">'+
@@ -11059,9 +11567,9 @@ function renderDispatchComms(comms) {
         '</div>'+
         '<div style="font-size:.72rem;color:var(--text-muted);font-family:var(--font-mono);margin-top:2px">'+
           'WO: <strong style="color:var(--accent)">'+escapeHtml(String(c.wo_id||'').substring(0,20))+'</strong>'+
-          ' · To: '+escapeHtml(c.tenant_phone||'—')+
-          (c.rc_message_id?' · RC: '+escapeHtml(String(c.rc_message_id).substring(0,12)):'')+
+          (metaParts.length?' · '+metaParts.join(' · '):'')+
         '</div>'+
+        (c.message_body?'<div style="margin-top:5px;color:var(--text-secondary);font-size:.75rem;line-height:1.45">'+escapeHtml(String(c.message_body).substring(0,180))+'</div>':'')+
       '</div>'+
       '<div style="font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted);white-space:nowrap">'+(c.sent_at?timeAgo(c.sent_at):'—')+'</div>'+
       '</div>';
@@ -11104,6 +11612,31 @@ var DispatchQueue = {
     document.querySelectorAll('#sec-dispatch .dispatch-subpanel').forEach(function(p){p.classList.toggle('active',p.id==='dispatch-panel-audit');});
     DISPATCH.activePanel='audit';
     renderDispatchAudit(DISPATCH.audit);
+  },
+  addMonitored: async function(woId, woNum) {
+    try {
+      var resp = await proxyAction('add_monitored_work_order', { wo_id: woId });
+      if (resp.ok) {
+        if (!DISPATCH.monitored) DISPATCH.monitored = [];
+        DISPATCH.monitored.push({ wo_id: woId, created_at: new Date().toISOString() });
+        v9Toast('WO monitored', 'Now tracking WO #' + woNum, 'success');
+        renderDispatchQueue(DISPATCH.queue);
+      } else {
+        v9Toast('Monitor failed', resp.error || 'Unknown error', 'danger');
+      }
+    } catch(e) { v9Toast('Monitor failed', e.message, 'danger'); }
+  },
+  removeMonitored: async function(woId) {
+    try {
+      var resp = await proxyAction('remove_monitored_work_order', { wo_id: woId });
+      if (resp.ok) {
+        DISPATCH.monitored = (DISPATCH.monitored || []).filter(function(m) { return String(m.wo_id) !== String(woId); });
+        v9Toast('Monitoring stopped', 'Removed WO from monitoring', 'success');
+        renderDispatchQueue(DISPATCH.queue);
+      } else {
+        v9Toast('Remove failed', resp.error || 'Unknown error', 'danger');
+      }
+    } catch(e) { v9Toast('Remove failed', e.message, 'danger'); }
   }
 };
 
@@ -11187,6 +11720,64 @@ var DispatchRoster = {
 };
 
 var DispatchComms = {
+  _readLivePayload: function() {
+    return {
+      wo_id: String((document.getElementById('dispatchLiveWoId')||{}).value || '').trim(),
+      wo_number: String((document.getElementById('dispatchLiveWoNumber')||{}).value || '').trim(),
+      tech_id: String((document.getElementById('dispatchLiveTechId')||{}).value || '').trim(),
+      tech_name: String((document.getElementById('dispatchLiveTechName')||{}).value || '').trim(),
+      tech_phone: String((document.getElementById('dispatchLiveTechPhone')||{}).value || '').trim(),
+      tenant_name: String((document.getElementById('dispatchLiveTenantName')||{}).value || '').trim(),
+      tenant_phone: String((document.getElementById('dispatchLiveTenantPhone')||{}).value || '').trim(),
+      property_address: String((document.getElementById('dispatchLiveAddress')||{}).value || '').trim()
+    };
+  },
+  generateLiveLink: async function(sendSms) {
+    var resultEl = document.getElementById('dispatchLiveLinkResult');
+    var btn = document.getElementById(sendSms ? 'btnDispatchSendLiveLink' : 'btnDispatchGenerateLiveLink');
+    var payload = this._readLivePayload();
+    if (!payload.wo_id || !payload.tech_id || !payload.tech_name || !payload.tenant_phone || !payload.property_address) {
+      if (resultEl) resultEl.textContent = 'Required: WO UUID, Tech UUID, Tech name, Resident phone, and Property address.';
+      v9Toast('Missing portal fields', 'Fill the required work order, tech, resident, and address fields first', 'warning');
+      return;
+    }
+    if (sendSms && !/^\+\d{10,15}$/.test(payload.tech_phone)) {
+      if (resultEl) resultEl.textContent = 'Generate + Send requires a valid tech phone in E.164 format.';
+      v9Toast('Invalid tech phone', 'Use a format like +15551234567', 'warning');
+      return;
+    }
+
+    var originalLabel = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Working…';
+    }
+    if (resultEl) resultEl.textContent = sendSms ? 'Generating and sending live magic link…' : 'Generating live magic link…';
+
+    try {
+      var response = await dispatchPost('generate_magic_link', Object.assign({}, payload, {
+        send_sms: !!sendSms
+      }));
+      if (!response || !response.ok) throw new Error((response && response.error) || 'Magic link generation failed');
+      if (resultEl) {
+        var openLink = response.magic_link
+          ? ' <a href="' + escapeHtml(response.magic_link) + '" target="_blank" rel="noopener noreferrer">Open portal</a>'
+          : '';
+        var shortLabel = response.short_code ? 'Short code: ' + escapeHtml(response.short_code) + '. ' : '';
+        resultEl.innerHTML = shortLabel + (sendSms ? 'Sent live link to tech.' : 'Generated live link.') + openLink;
+      }
+      v9Toast(sendSms ? 'Live link sent' : 'Live link generated', payload.tech_name, 'success');
+      DispatchControl.refresh();
+    } catch (e) {
+      if (resultEl) resultEl.textContent = 'Action failed: ' + (e.message || e);
+      v9Toast('Magic link action failed', e.message || String(e), 'danger');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalLabel;
+      }
+    }
+  },
   sendMagicLinkTest: async function() {
     var phoneEl = document.getElementById('dispatchTestPhone');
     var btn = document.getElementById('btnDispatchSendTestSms');
@@ -11239,6 +11830,82 @@ var DispatchConfig = {
     var t1=(document.getElementById('cfgTier1GroupUuid')||{}).value||'';
     var t2=(document.getElementById('cfgTier2GroupUuid')||{}).value||'';
     return { tier1:t1.trim(), tier2:t2.trim() };
+  },
+  saveBranding: async function() {
+    var nameEl = document.getElementById('cfgBrandName');
+    var logoEl = document.getElementById('cfgBrandLogoUrl');
+    var brandName = nameEl ? String(nameEl.value || '').trim() : '';
+    var brandLogo = logoEl ? String(logoEl.value || '').trim() : '';
+    try {
+      if (brandName) {
+        localStorage.setItem('hm_brand_name', brandName);
+        await saveDispatchConfigKey('brand_name', brandName);
+      }
+      localStorage.setItem('hm_brand_logo', brandLogo);
+      await saveDispatchConfigKey('brand_logo_url', brandLogo);
+      applyBrandLogo();
+      v9Toast('Web app branding saved', brandLogo ? 'Main webapp logo updated' : 'Brand name updated', 'success');
+    } catch (e) {
+      v9Toast('Branding save failed', e.message || String(e), 'danger');
+    }
+  },
+  clearBranding: async function() {
+    var nameEl = document.getElementById('cfgBrandName');
+    var logoEl = document.getElementById('cfgBrandLogoUrl');
+    if (nameEl) nameEl.value = BRAND_NAME_DEFAULT;
+    if (logoEl) logoEl.value = '';
+    try {
+      localStorage.setItem('hm_brand_name', BRAND_NAME_DEFAULT);
+      localStorage.removeItem('hm_brand_logo');
+      await saveDispatchConfigKey('brand_name', BRAND_NAME_DEFAULT);
+      await saveDispatchConfigKey('brand_logo_url', '');
+      applyBrandLogo();
+      v9Toast('Web app branding reset', 'Default main logo and brand name restored', 'success');
+    } catch (e) {
+      v9Toast('Branding reset failed', e.message || String(e), 'danger');
+    }
+  },
+  savePortalBranding: async function() {
+    var titleEl = document.getElementById('cfgPortalBrandTitle');
+    var nameEl = document.getElementById('cfgPortalBrandName');
+    var logoEl = document.getElementById('cfgPortalBrandLogoUrl');
+    var brandTitle = titleEl ? String(titleEl.value || '').trim() : '';
+    var brandName = nameEl ? String(nameEl.value || '').trim() : '';
+    var brandLogo = logoEl ? String(logoEl.value || '').trim() : '';
+    try {
+      if (brandTitle) {
+        localStorage.setItem('hm_portal_brand_title', brandTitle);
+        await saveDispatchConfigKey('portal_brand_title', brandTitle);
+      }
+      if (brandName) {
+        localStorage.setItem('hm_portal_brand_name', brandName);
+        await saveDispatchConfigKey('portal_brand_name', brandName);
+      }
+      localStorage.setItem('hm_portal_brand_logo', brandLogo);
+      await saveDispatchConfigKey('portal_brand_logo_url', brandLogo);
+      v9Toast('Portal branding saved', 'Magic-link portal branding updated', 'success');
+    } catch (e) {
+      v9Toast('Portal branding save failed', e.message || String(e), 'danger');
+    }
+  },
+  resetPortalBranding: async function() {
+    var titleEl = document.getElementById('cfgPortalBrandTitle');
+    var nameEl = document.getElementById('cfgPortalBrandName');
+    var logoEl = document.getElementById('cfgPortalBrandLogoUrl');
+    if (titleEl) titleEl.value = 'Dispatch Portal';
+    if (nameEl) nameEl.value = PORTAL_BRAND_NAME_DEFAULT;
+    if (logoEl) logoEl.value = PORTAL_BRAND_LOGO_DEFAULT;
+    try {
+      localStorage.setItem('hm_portal_brand_title', 'Dispatch Portal');
+      localStorage.setItem('hm_portal_brand_name', PORTAL_BRAND_NAME_DEFAULT);
+      localStorage.setItem('hm_portal_brand_logo', PORTAL_BRAND_LOGO_DEFAULT);
+      await saveDispatchConfigKey('portal_brand_title', 'Dispatch Portal');
+      await saveDispatchConfigKey('portal_brand_name', PORTAL_BRAND_NAME_DEFAULT);
+      await saveDispatchConfigKey('portal_brand_logo_url', PORTAL_BRAND_LOGO_DEFAULT);
+      v9Toast('Portal branding reset', 'Portal branding restored to configured defaults', 'success');
+    } catch (e) {
+      v9Toast('Portal branding reset failed', e.message || String(e), 'danger');
+    }
   },
   applyPauseUi: function() {
     var paused=!!DISPATCH.paused;
@@ -11526,6 +12193,7 @@ var DispatchControl = {
         DISPATCH.audit =queueData.audit        ||[];
         DISPATCH.blasts=queueData.blasts       ||[];
         DISPATCH.claims=queueData.tier2_claims ||[];
+        DISPATCH.monitored=queueData.monitored_work_orders||[];
         DISPATCH.stats =queueData.stats        ||{};
         updateDispatchStats(queueData);
       }
@@ -11600,6 +12268,10 @@ var DispatchControl = {
     if(mr)mr.addEventListener('click',function(){DispatchConfig.runCron('midnight_reassign_cron',mr);});
     var testBtn=document.getElementById('btnDispatchSendTestSms');
     if(testBtn)testBtn.addEventListener('click',function(){DispatchComms.sendMagicLinkTest();});
+    var liveGenerateBtn=document.getElementById('btnDispatchGenerateLiveLink');
+    if(liveGenerateBtn)liveGenerateBtn.addEventListener('click',function(){DispatchComms.generateLiveLink(false);});
+    var liveSendBtn=document.getElementById('btnDispatchSendLiveLink');
+    if(liveSendBtn)liveSendBtn.addEventListener('click',function(){DispatchComms.generateLiveLink(true);});
     var testPhone=document.getElementById('dispatchTestPhone');
     if(testPhone)testPhone.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();DispatchComms.sendMagicLinkTest();}});
     // Queue filters
@@ -11952,6 +12624,13 @@ function decodeWebhookEventV9(evt) {
 
   // Boot
   function _boot(){
+    // Check for version mismatch before initializing
+    if (localStorage.getItem('hm_version_mismatch') === '1') {
+      localStorage.removeItem('hm_version_mismatch');
+      location.reload();
+      return;
+    }
+
     _seedLastId().then(function(){
       _pollTimer=setInterval(function(){if(!document.hidden)_poll();},POLL_MS);
       setTimeout(_poll,1600);
