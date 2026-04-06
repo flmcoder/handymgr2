@@ -99,9 +99,15 @@ function appfolioUrl(type, id) {
       woNum = woNum.replace(/-\d+$/, '');
       return base + '/maintenance/service_requests/' + encodeURIComponent(woNum) + '/';
     case 'vendor': return base + '/vendor_details?vendor_id=' + encodeURIComponent(id);
-    case 'property': return base + '/property_details?property_id=' + encodeURIComponent(id);
-    case 'unit_turn': return base + '/tasks/unit_turns/' + encodeURIComponent(id);
-    case 'inspection': return base + '/tasks/unit_inspections/' + encodeURIComponent(id);
+    case 'property': return base + '/properties/' + encodeURIComponent(id) + '/';
+    case 'unit_turn': return base + '/maintenance/unit_turns/' + encodeURIComponent(id) + '/';
+    case 'inspection_property':
+    case 'inspection':
+      var propertyId = (typeof id === 'object' && id)
+        ? (id.propertyId || id.id || '')
+        : String(id || '');
+      propertyId = String(propertyId || '').replace(/^p_/i, '');
+      return propertyId ? (base + '/maintenance/inspections?filters%5Bproperty_ids_list%5D=p_' + encodeURIComponent(propertyId)) : '';
     case 'tenant': return base + '/tenant_details?occupancy_id=' + encodeURIComponent(id);
     default: return base + '/' + type + '/' + encodeURIComponent(id);
   }
@@ -710,7 +716,7 @@ function isTabAllowedForRole(tabName) {
   if (_accessRole === 'vendors') return tabName === 'vendors';
   if (_accessRole === 'manager') {
     // Manager role — allowed tabs: workorders, turnboard, vendors, inspections, errors
-    var allowedTabs = ['workorders', 'turnboard', 'vendors', 'inspections', 'errors'];
+    var allowedTabs = ['dashboard', 'workorders', 'turnboard', 'vendors', 'inspections', 'errors'];
     return allowedTabs.indexOf(tabName) !== -1;
   }
   return true;
@@ -858,6 +864,56 @@ async function setupTrustedDevice(setupPin, userName) {
   try { data = await res.json(); } catch (e) { /* */ }
   if (!res.ok || !data.ok || !data.token) {
     throw new Error(data.error || ('Device setup failed (HTTP ' + res.status + ')'));
+  }
+  return data.token;
+}
+
+function normalizeOtpEmail(raw) {
+  var email = String(raw || '').trim().toLowerCase();
+  if (!email) return '';
+  var m = email.match(/^[a-z0-9._%+\-]+@flraz\.com$/i);
+  return m ? email : '';
+}
+
+async function requestDeviceOtp(email, userName) {
+  if (!API_PROXY) throw new Error('No proxy configured');
+  var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
+  var url = API_PROXY + sep + 'action=device_otp_request';
+  var payload = {
+    email: email,
+    user_name: userName || ('hm-' + (navigator && navigator.platform ? navigator.platform : 'device'))
+  };
+  var res = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify(payload)
+  }, 30000);
+  var data = {};
+  try { data = await res.json(); } catch (e) { /* */ }
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || ('OTP request failed (HTTP ' + res.status + ')'));
+  }
+  return data;
+}
+
+async function verifyDeviceOtp(email, code, userName) {
+  if (!API_PROXY) throw new Error('No proxy configured');
+  var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
+  var url = API_PROXY + sep + 'action=device_otp_verify';
+  var payload = {
+    email: email,
+    code: code,
+    user_name: userName || ('hm-' + (navigator && navigator.platform ? navigator.platform : 'device'))
+  };
+  var res = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify(payload)
+  }, 30000);
+  var data = {};
+  try { data = await res.json(); } catch (e) { /* */ }
+  if (!res.ok || !data.ok || !data.token) {
+    throw new Error(data.error || ('OTP verify failed (HTTP ' + res.status + ')'));
   }
   return data.token;
 }
@@ -1317,7 +1373,7 @@ function setApiStatus(state, text) {
 }
 
 var APP_VERSION = 'v9.0d';
-var APP_VERSION_UPDATED = 'April 2';
+var APP_VERSION_UPDATED = 'April 2026';
 var SERVER_VERSION = '';
 
 function applyVersionBadge(serverVersion) {
@@ -1548,12 +1604,21 @@ function buildVendorComplianceMap() {
   return map;
 }
 
+function isClosedTurnWorkOrderStatus(status) {
+  var normalized = String(status || '').trim().toLowerCase();
+  return normalized === 'completed' || normalized === 'work completed' || normalized === 'canceled' || normalized === 'cancelled';
+}
+
+function isTurnWorkDoneStatus(status) {
+  var normalized = String(status || '').trim().toLowerCase();
+  return normalized === 'work done' || normalized === 'ready to bill' || isClosedTurnWorkOrderStatus(normalized);
+}
+
 // Aggregate turn completion: check ALL Unit Turn WOs for a unit
 function isTurnFullyComplete(matchingWOs) {
   if (!matchingWOs || matchingWOs.length === 0) return false;
-  var terminalStatuses = ['Completed', 'Work Completed', 'Canceled', 'Work Done', 'Ready to Bill'];
   return matchingWOs.every(function(wo) {
-    return terminalStatuses.indexOf(wo.status) !== -1;
+    return isClosedTurnWorkOrderStatus(wo.status);
   });
 }
 
@@ -1760,6 +1825,78 @@ $$('.vault-proxy-preset').forEach(function(btn) {
   });
 });
 
+if ($('#btnSendOtp')) {
+  $('#btnSendOtp').addEventListener('click', async function() {
+    var emailRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
+    var email = normalizeOtpEmail(emailRaw);
+    if (!email) {
+      $('#vaultError').textContent = 'Enter a valid @flraz.com email to receive OTP.';
+      $('#vaultError').classList.add('show');
+      return;
+    }
+    API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
+    if (!API_PROXY) {
+      $('#vaultError').textContent = 'Proxy URL is required before requesting OTP.';
+      $('#vaultError').classList.add('show');
+      return;
+    }
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    $('#vaultError').classList.remove('show');
+    try {
+      await requestDeviceOtp(email, 'dispatcher');
+      showToast('OTP sent to ' + email, { kind: 'success' });
+    } catch (err) {
+      $('#vaultError').textContent = err.message || String(err);
+      $('#vaultError').classList.add('show');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Send OTP';
+    }
+  });
+}
+
+if ($('#btnVerifyOtp')) {
+  $('#btnVerifyOtp').addEventListener('click', async function() {
+    var email = normalizeOtpEmail($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
+    var code = String(($('#vaultOtpCode') && $('#vaultOtpCode').value) || '').trim();
+    if (!email) {
+      $('#vaultError').textContent = 'Enter a valid @flraz.com email first.';
+      $('#vaultError').classList.add('show');
+      return;
+    }
+    if (!/^\d{6}$/.test(code)) {
+      $('#vaultError').textContent = 'Enter the 6-digit OTP code.';
+      $('#vaultError').classList.add('show');
+      return;
+    }
+    API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
+    if (!API_PROXY) {
+      $('#vaultError').textContent = 'Proxy URL is required before verifying OTP.';
+      $('#vaultError').classList.add('show');
+      return;
+    }
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Verifying...';
+    $('#vaultError').classList.remove('show');
+    try {
+      var token = await verifyDeviceOtp(email, code, 'dispatcher');
+      try { localStorage.setItem('hm_device_token', token); } catch (e) { /* */ }
+      try { localStorage.setItem('hm_proxy_token', token); } catch (e2) { /* */ }
+      if ($('#vaultPassphrase')) $('#vaultPassphrase').value = '';
+      showToast('Device verified — you can now connect without setup PIN.', { kind: 'success' });
+    } catch (err) {
+      $('#vaultError').textContent = err.message || String(err);
+      $('#vaultError').classList.add('show');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Verify Device';
+    }
+  });
+}
+
 // Sanitize proxy URL — ensure https:// prefix, trim whitespace
 function sanitizeProxy(raw) {
   var val = (raw || '').trim();
@@ -1794,7 +1931,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     return;
   }
   if (!pass && !existingDeviceToken) {
-    $('#vaultError').textContent = 'Enter Setup Pin (first-time device trust) or use an already trusted device.';
+    $('#vaultError').textContent = 'Use Setup PIN or verify this device with @flraz.com OTP before connecting.';
     $('#vaultError').classList.add('show');
     return;
   }
@@ -4032,6 +4169,156 @@ function renderMoveOuts() {
   body.innerHTML = html;
 }
 
+function getDashboardTurnPageSize() {
+  if (document.body && document.body.classList.contains('tv-mode')) return 3;
+  if (window.matchMedia && window.matchMedia('(max-width: 700px)').matches) return 1;
+  if (window.matchMedia && window.matchMedia('(max-width: 1100px)').matches) return 2;
+  return 4;
+}
+
+function applyTvMode(enabled) {
+  if (!document.body) return;
+  document.body.classList.toggle('tv-mode', !!enabled);
+  try { localStorage.setItem('hm_tv_mode', enabled ? '1' : '0'); } catch (e) { /* */ }
+  var btn = $('#dashTvMode');
+  if (btn) {
+    btn.innerHTML = enabled
+      ? '<i class="fas fa-tv"></i> Exit TV Mode'
+      : '<i class="fas fa-tv"></i> TV Mode';
+  }
+  DASH_TURN_PAGE = 0;
+  renderTurnDashboardStrip();
+}
+
+function getDashboardTurnEntries() {
+  return TURN_PIPE_DATA.filter(function(p) {
+    if (p.isClosed || p.isCompleted) return false;
+    if (!isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup)) return false;
+    var pmName = String(p.siteManager || 'Unassigned PM').trim() || 'Unassigned PM';
+    if (DASH_TURN_PM_FILTER && pmName !== DASH_TURN_PM_FILTER) return false;
+    return true;
+  }).sort(function(a, b) {
+    if (a.isStalled !== b.isStalled) return a.isStalled ? -1 : 1;
+    if (a.isUpcoming !== b.isUpcoming) return a.isUpcoming ? 1 : -1;
+    return b.elapsed - a.elapsed;
+  });
+}
+
+function syncDashboardTurnPmFilter(entries) {
+  var sel = $('#dashTurnPmFilter');
+  if (!sel) return;
+  var counts = {};
+  entries.forEach(function(p) {
+    var pmName = String(p.siteManager || 'Unassigned PM').trim() || 'Unassigned PM';
+    counts[pmName] = (counts[pmName] || 0) + 1;
+  });
+  var current = DASH_TURN_PM_FILTER;
+  sel.innerHTML = '<option value="">All PMs</option>';
+  Object.keys(counts).sort(function(a, b) { return a.localeCompare(b); }).forEach(function(name) {
+    var opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name + ' (' + counts[name] + ')';
+    sel.appendChild(opt);
+  });
+  if (current && !counts[current]) DASH_TURN_PM_FILTER = '';
+  sel.value = DASH_TURN_PM_FILTER;
+}
+
+function resetDashboardTurnRotator(totalPages) {
+  if (DASH_TURN_ROTATOR) {
+    clearInterval(DASH_TURN_ROTATOR);
+    DASH_TURN_ROTATOR = null;
+  }
+  var dashSection = document.getElementById('sec-dashboard');
+  if (!dashSection || !dashSection.classList.contains('active') || totalPages <= 1) return;
+  DASH_TURN_ROTATOR = setInterval(function() {
+    DASH_TURN_PAGE = (DASH_TURN_PAGE + 1) % totalPages;
+    renderTurnDashboardStrip();
+  }, DASH_TURN_ROTATE_MS);
+}
+
+function openTurnBoardDetail(turnId) {
+  if (!turnId) return;
+  OPEN_TURN_DETAIL_ID = turnId;
+  currentTurnPipeFilter = 'all';
+  if ($('#turnPipeFilter')) $('#turnPipeFilter').value = 'all';
+  $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+  var turnTab = document.querySelector('[data-tab="turnboard"]');
+  if (turnTab) turnTab.classList.add('active');
+  $$('.section').forEach(function(s) { s.classList.remove('active'); });
+  var turnSection = document.getElementById('sec-turnboard');
+  if (turnSection) turnSection.classList.add('active');
+  renderTurnBoard();
+  requestAnimationFrame(function() {
+    var card = Array.prototype.find.call(document.querySelectorAll('#turnPipeline .pipe-card'), function(node) {
+      return node.getAttribute('data-pipeid') === turnId;
+    });
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+}
+
+function renderTurnDashboardStrip() {
+  var strip = $('#dashTurnStrip');
+  var summary = $('#dashTurnSummary');
+  var pageLabel = $('#dashTurnPageLabel');
+  var prevBtn = $('#dashTurnPrev');
+  var nextBtn = $('#dashTurnNext');
+  if (!strip || !summary || !pageLabel || !prevBtn || !nextBtn) return;
+
+  var baseEntries = TURN_PIPE_DATA.filter(function(p) {
+    return !p.isClosed && !p.isCompleted && isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup);
+  });
+  syncDashboardTurnPmFilter(baseEntries);
+
+  var entries = getDashboardTurnEntries();
+  var pageSize = getDashboardTurnPageSize();
+  var totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
+  if (DASH_TURN_PAGE >= totalPages) DASH_TURN_PAGE = 0;
+
+  var activeOpenWOs = entries.reduce(function(sum, p) {
+    return sum + p.matchingWOs.filter(function(wo) { return !isClosedTurnWorkOrderStatus(wo.status); }).length;
+  }, 0);
+  var stalledCount = entries.filter(function(p) { return p.isStalled; }).length;
+  var avgElapsed = entries.length ? Math.round(entries.reduce(function(sum, p) { return sum + Math.max(0, p.elapsed); }, 0) / entries.length) : 0;
+  summary.textContent = entries.length + ' active turns • ' + activeOpenWOs + ' open WOs • avg ' + avgElapsed + 'd elapsed • ' + stalledCount + ' stalled • ' + (DASH_TURN_PM_FILTER || 'All PMs');
+
+  prevBtn.disabled = totalPages <= 1;
+  nextBtn.disabled = totalPages <= 1;
+  pageLabel.textContent = totalPages <= 1 ? '1 / 1' : ((DASH_TURN_PAGE + 1) + ' / ' + totalPages);
+
+  if (entries.length === 0) {
+    strip.innerHTML = '<div class="turn-dash-empty"><i class="fas fa-layer-group"></i><div>No active turns for this filter.</div></div>';
+    resetDashboardTurnRotator(1);
+    return;
+  }
+
+  var pageStart = DASH_TURN_PAGE * pageSize;
+  var pageItems = entries.slice(pageStart, pageStart + pageSize);
+  strip.innerHTML = pageItems.map(function(p) {
+    var completedStages = PIPE_STAGES.filter(function(ps) { return p.stages[ps.key] && p.stages[ps.key].done; }).length;
+    var progressPct = Math.max(12, Math.round((completedStages / PIPE_STAGES.length) * 100));
+    var nextStage = p.currentStageIdx < PIPE_STAGES.length - 1 ? PIPE_STAGES[p.currentStageIdx + 1] : null;
+    var pmName = escapeHtml(String(p.siteManager || 'Unassigned PM').trim() || 'Unassigned PM');
+    var openWOs = p.matchingWOs.filter(function(wo) { return !isClosedTurnWorkOrderStatus(wo.status); }).length;
+    var closedWOs = p.matchingWOs.length - openWOs;
+    var statusTone = p.isStalled ? 'danger' : p.isOnRadar ? 'info' : p.isUpcoming ? 'cool' : 'ok';
+    var statusLabel = p.isUpcoming ? ('Move-out ' + formatDate(p.moveOut)) : p.isOnRadar ? 'Awaiting inspection' : nextStage ? ('Next: ' + nextStage.title) : 'In progress';
+    return '<button class="turn-dash-card ' + statusTone + '" data-turndash-open="' + escapeHtml(p.id) + '">' +
+      '<div class="turn-dash-card-head"><div><div class="turn-dash-unit">' + escapeHtml(p.unit || 'Unit') + '</div><div class="turn-dash-property">' + escapeHtml(p.property || '') + '</div></div><span class="turn-dash-pm">' + pmName + '</span></div>' +
+      '<div class="turn-dash-status">' + escapeHtml(statusLabel) + '</div>' +
+      '<div class="turn-dash-progress"><div class="turn-dash-progress-fill" style="width:' + progressPct + '%"></div></div>' +
+      '<div class="turn-dash-metrics">' +
+        '<span class="turn-dash-metric"><strong>' + Math.max(0, p.elapsed) + 'd</strong> elapsed</span>' +
+        '<span class="turn-dash-metric"><strong>' + closedWOs + '/' + p.matchingWOs.length + '</strong> closed WOs</span>' +
+        '<span class="turn-dash-metric"><strong>' + completedStages + '/' + PIPE_STAGES.length + '</strong> stages</span>' +
+      '</div>' +
+      (openWOs > 0 ? '<div class="turn-dash-alert"><i class="fas fa-exclamation-circle"></i> ' + openWOs + ' open work order' + (openWOs === 1 ? '' : 's') + '</div>' : '<div class="turn-dash-alert ok"><i class="fas fa-check-circle"></i> No open work orders</div>') +
+    '</button>';
+  }).join('');
+
+  resetDashboardTurnRotator(totalPages);
+}
+
 function getPayrollWeek(offset) {
   var now = new Date();
   var day = now.getDay(); // 0=Sun
@@ -4206,6 +4493,8 @@ function renderDashboardKPIs() {
       fiEl.style.display = 'none';
     }
   }
+
+  renderTurnDashboardStrip();
 }
 
 function renderActivityFeed() {
@@ -4880,6 +5169,11 @@ function showWODetail(id) {
    ================================================================= */
 var TURN_RECORDS = []; // persisted stage overrides from proxy blob
 var TURN_PIPE_DATA = []; // computed pipeline entries
+var OPEN_TURN_DETAIL_ID = '';
+var DASH_TURN_PM_FILTER = '';
+var DASH_TURN_PAGE = 0;
+var DASH_TURN_ROTATOR = null;
+var DASH_TURN_ROTATE_MS = 8000;
 var currentTurnPipeFilter = 'active';
 var currentTurnPipeGroup = '';
 var _inspSortCol = 'daysSince'; // default sort column
@@ -5088,11 +5382,10 @@ function buildTurnPipeline() {
     var hasEstReq = woStatuses.some(function(s) { return s === 'Estimate Requested'; });
     var hasEstimated = woStatuses.some(function(s) { return s === 'Estimated'; });
     var hasAssigned = woStatuses.some(function(s) { return s === 'Assigned' || s === 'Scheduled'; });
-    var terminalStatuses = ['Work Done', 'Work Completed', 'Ready to Bill', 'Completed'];
-    var hasAnyWorkDone = woStatuses.some(function(s) { return terminalStatuses.indexOf(s) !== -1; });
+    var hasAnyWorkDone = woStatuses.some(function(s) { return isTurnWorkDoneStatus(s); });
     // ALL WOs must be in terminal status for work_done to be truly "done"
-    var allWorkDone = hasWO && woStatuses.every(function(s) { return terminalStatuses.indexOf(s) !== -1; });
-    var doneCount = woStatuses.filter(function(s) { return terminalStatuses.indexOf(s) !== -1; }).length;
+    var allWorkDone = hasWO && woStatuses.every(function(s) { return isClosedTurnWorkOrderStatus(s); });
+    var doneCount = woStatuses.filter(function(s) { return isClosedTurnWorkOrderStatus(s); }).length;
 
     // Progressive — later stages imply earlier ones
     stages.wo_created = { done: hasWO, date: woCreatedDate, woIds: matchingWOs.map(function(w) { return w.id; }) };
@@ -5183,12 +5476,6 @@ function buildTurnPipeline() {
       return uLow && pLow && (t.indexOf(uLow) !== -1 || b.indexOf(uLow) !== -1) && (t.indexOf(pLow) !== -1 || b.indexOf(pLow) !== -1);
     });
 
-    // Compute current stage index (highest completed)
-    var currentStageIdx = -1;
-    PIPE_STAGES.forEach(function(ps, i) {
-      if (stages[ps.key] && stages[ps.key].done) currentStageIdx = i;
-    });
-
     // Elapsed days since move-out (or days until move-out for upcoming)
     var elapsed = 0;
     if (moveOutDate) {
@@ -5216,6 +5503,11 @@ function buildTurnPipeline() {
       stages.work_done.done = false;
       isCompleted = false;
     }
+    // Compute current stage index after work-order completion safety checks.
+    var currentStageIdx = -1;
+    PIPE_STAGES.forEach(function(ps, i) {
+      if (stages[ps.key] && stages[ps.key].done) currentStageIdx = i;
+    });
     // Look up DB API unit turn data for this entry
     var dbTurnMatch = null;
     if (UNIT_TURNS_DB.length > 0) {
@@ -5507,7 +5799,7 @@ function renderTurnPipelineUI() {
     html += '</div>'; // end pipe-card
 
     // Detail panel (hidden by default)
-    html += '<div class="pipe-detail" id="pipeDetail_' + idx + '">';
+    html += '<div class="pipe-detail" id="pipeDetail_' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
     html += '<div class="pipe-detail-grid">';
 
     // Left column: stage timeline
@@ -5587,7 +5879,7 @@ function renderTurnPipelineUI() {
       }
       // WO completion aggregate
       if (p.matchingWOs.length > 0) {
-        var doneCount = p.matchingWOs.filter(function(w) { return ['Completed','Work Completed','Canceled','Work Done','Ready to Bill'].indexOf(w.status) !== -1; }).length;
+        var doneCount = p.matchingWOs.filter(function(w) { return isClosedTurnWorkOrderStatus(w.status); }).length;
         var woCompStyle = doneCount === p.matchingWOs.length ? 'color:var(--success)' : 'color:var(--warning)';
         html += '<div class="detail-row"><div class="detail-row-label">WO Completion</div><div class="detail-row-value" style="' + woCompStyle + '">' + doneCount + '/' + p.matchingWOs.length + ' complete</div></div>';
       }
@@ -5632,17 +5924,29 @@ function renderTurnPipelineUI() {
       html += '<button class="action-btn primary" data-advance="' + escapeHtml(p.id) + '" data-stage="' + PIPE_STAGES[nextIdx].key + '"><i class="fas fa-arrow-right"></i> Confirm ' + PIPE_STAGES[nextIdx].title + '</button>';
     }
     // AppFolio deep link — prefer DB API direct link, then unitTurnId, then property
-    var turnAfUrl = p.dbLink || (p.turn ? appfolioUrl('unit_turn', p.turn.unitTurnId) : '') || appfolioUrl('property', p.propertyId);
+    var turnAfUrl = p.dbLink || appfolioUrl('unit_turn', p.registeredUnitTurnId || (p.turn && p.turn.unitTurnId) || '') || appfolioUrl('property', p.propertyId);
     if (turnAfUrl) {
       html += '<a class="action-btn" href="' + escapeHtml(turnAfUrl) + '" target="_blank" rel="noopener noreferrer" style="text-decoration:none" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i> View in AppFolio</a>';
     }
-    html += '<button class="action-btn" onclick="this.closest(\'.pipe-detail\').classList.remove(\'show\')"><i class="fas fa-times"></i> Close</button>';
+    html += '<button class="action-btn" data-close-detail="' + escapeHtml(p.id) + '"><i class="fas fa-times"></i> Close</button>';
     html += '</div>';
 
     html += '</div>'; // end pipe-detail
   });
 
   container.innerHTML = html;
+  if (OPEN_TURN_DETAIL_ID) {
+    var openCard = Array.prototype.find.call(container.querySelectorAll('.pipe-card'), function(card) {
+      return card.getAttribute('data-pipeid') === OPEN_TURN_DETAIL_ID;
+    });
+    if (openCard) {
+      var openIdx = openCard.getAttribute('data-pipeidx');
+      var openDetail = document.getElementById('pipeDetail_' + openIdx);
+      if (openDetail) openDetail.classList.add('show');
+    } else {
+      OPEN_TURN_DETAIL_ID = '';
+    }
+  }
   // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
 }
 
@@ -6203,6 +6507,14 @@ function wireUpUI() {
   (function() {
     var pipeline = $('#turnPipeline');
     if (pipeline) pipeline.addEventListener('click', function(e) {
+      var closeDetailBtn = e.target.closest('[data-close-detail]');
+      if (closeDetailBtn) {
+        e.stopPropagation();
+        OPEN_TURN_DETAIL_ID = '';
+        var detailPanel = closeDetailBtn.closest('.pipe-detail');
+        if (detailPanel) detailPanel.classList.remove('show');
+        return;
+      }
       var advBtn = e.target.closest('[data-advance]');
       if (advBtn) {
         e.stopPropagation();
@@ -6216,6 +6528,7 @@ function wireUpUI() {
         if (detail) {
           var isOpen = detail.classList.contains('show');
           pipeline.querySelectorAll('.pipe-detail').forEach(function(d) { d.classList.remove('show'); });
+          OPEN_TURN_DETAIL_ID = isOpen ? '' : card.getAttribute('data-pipeid');
           if (!isOpen) detail.classList.add('show');
         }
       }
@@ -6244,7 +6557,7 @@ function wireUpUI() {
         { label: 'Move-In', value: r.moveIn ? formatDate(r.moveIn) : '\u2014' },
         { label: 'Move-Out', value: r.moveOut ? formatDate(r.moveOut) : '\u2014' },
         { label: 'Tags', value: r.tags || '\u2014' }
-      ], appfolioUrl('property', r.propertyId));
+      ], appfolioUrl('inspection_property', r.propertyId));
     });
   })();
 
@@ -6530,6 +6843,43 @@ function wireUpUI() {
     $('#turnPipeSearch').addEventListener('input', debounce(function() {
       renderTurnPipelineUI();
     }, CONFIG.DEBOUNCE_MS));
+  }
+  if ($('#dashTurnPmFilter')) {
+    $('#dashTurnPmFilter').addEventListener('change', function() {
+      DASH_TURN_PM_FILTER = this.value;
+      DASH_TURN_PAGE = 0;
+      renderTurnDashboardStrip();
+    });
+  }
+  if ($('#dashTurnPrev')) {
+    $('#dashTurnPrev').addEventListener('click', function() {
+      var totalPages = Math.max(1, Math.ceil(getDashboardTurnEntries().length / getDashboardTurnPageSize()));
+      DASH_TURN_PAGE = (DASH_TURN_PAGE - 1 + totalPages) % totalPages;
+      renderTurnDashboardStrip();
+    });
+  }
+  if ($('#dashTurnNext')) {
+    $('#dashTurnNext').addEventListener('click', function() {
+      var totalPages = Math.max(1, Math.ceil(getDashboardTurnEntries().length / getDashboardTurnPageSize()));
+      DASH_TURN_PAGE = (DASH_TURN_PAGE + 1) % totalPages;
+      renderTurnDashboardStrip();
+    });
+  }
+  if ($('#dashTvMode')) {
+    $('#dashTvMode').addEventListener('click', function() {
+      var isEnabled = document.body && document.body.classList.contains('tv-mode');
+      applyTvMode(!isEnabled);
+    });
+    try {
+      if (localStorage.getItem('hm_tv_mode') === '1') applyTvMode(true);
+    } catch (e) { /* */ }
+  }
+  if ($('#dashTurnStrip')) {
+    $('#dashTurnStrip').addEventListener('click', function(e) {
+      var card = e.target.closest('[data-turndash-open]');
+      if (!card) return;
+      openTurnBoardDetail(card.getAttribute('data-turndash-open'));
+    });
   }
 
   // Inspection status filter
