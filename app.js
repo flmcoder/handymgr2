@@ -8592,12 +8592,52 @@ function updateDispatchStats(d) {
 }
 
 // ── Proxy POST helper ───────────────────────────────────────────
+function resolveDispatchProxyBaseUrl() {
+  var base = sanitizeProxy(API_PROXY || '');
+  if (base) {
+    API_PROXY = base;
+    try { localStorage.setItem('hm_proxy_url', base); } catch (e) { /* */ }
+    return base;
+  }
+
+  var proxyInput = $('#vaultProxy');
+  if (proxyInput && proxyInput.value) {
+    base = sanitizeProxy(proxyInput.value || '');
+    if (base) {
+      API_PROXY = base;
+      try { localStorage.setItem('hm_proxy_url', base); } catch (e2) { /* */ }
+      return base;
+    }
+  }
+
+  try {
+    base = sanitizeProxy(localStorage.getItem('hm_proxy_url') || '');
+    if (base) {
+      API_PROXY = base;
+      return base;
+    }
+  } catch (e3) { /* */ }
+
+  return '';
+}
+
 function dispatchPost(action, body) {
-  var sep = API_PROXY.indexOf('?')!==-1?'&':'?';
-  var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
+  var base = resolveDispatchProxyBaseUrl();
+  if (!base) {
+    return Promise.reject(new Error('Dispatch system: proxy base URL not configured. Open Vault and set Proxy URL.'));
+  }
+  var sep = base.indexOf('?')!==-1?'&':'?';
+  var url = base + sep + 'action=' + encodeURIComponent(action);
   return fetch(url, {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
-  }).then(function(r){ return r.json(); });
+  }).then(function(r){
+    if (!r.ok) {
+      return r.text().then(function(t) {
+        throw new Error('Dispatch ' + action + ' failed: HTTP ' + r.status + (t ? ' — ' + t.substring(0, 200) : ''));
+      });
+    }
+    return r.json();
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════
