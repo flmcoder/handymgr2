@@ -721,6 +721,31 @@ body.role-vendors .cache-badge { display: none; }
 .tag.pending-tag { background: var(--warning-dim); color: var(--warning); }
 .tag.paid { background: var(--accent-dim); color: var(--accent); }
 
+/* Routing monitor */
+.routing-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 0 0 12px; }
+.routing-kpi { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.routing-kpi-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 5px; }
+.routing-kpi-value { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--text-primary); }
+.routing-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 7px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.routing-badge.high { background: var(--danger-dim); color: var(--danger); }
+.routing-badge.medium { background: var(--warning-dim); color: var(--warning); }
+.routing-badge.low { background: var(--info-dim); color: var(--info); }
+.routing-review.pending { color: var(--warning); }
+.routing-review.approved_external { color: var(--info); }
+.routing-review.reassign_inhouse { color: var(--success); }
+.routing-review.dismissed { color: var(--text-muted); }
+
 /* Turn Board */
 .turn-board { display: flex; flex-direction: column; gap: 12px; }
 .turn-col-header { font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
@@ -1327,8 +1352,21 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 .turn-dash-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .turn-dash-page-label{min-width:52px;text-align:center;font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
 .turn-dash-summary{padding:0 14px 12px;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono)}
+.turn-dash-ticker{margin:0 14px 10px;padding:6px 10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-secondary);overflow:hidden}
+.turn-dash-ticker-track{display:flex;gap:22px;white-space:nowrap;animation:dashTickerMove 28s linear infinite}
+.turn-dash-ticker-track.no-anim{animation:none}
+.turn-dash-ticker-item{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-family:var(--font-mono);color:var(--text-secondary)}
+.turn-dash-ticker-dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.turn-dash-ticker-dot.stalled{background:var(--danger)}
+.turn-dash-ticker-dot.upcoming{background:var(--info,#60a5fa)}
+.turn-dash-ticker-dot.active{background:var(--success)}
+@keyframes dashTickerMove{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+html.dark .turn-dash-ticker{background:#0e1118;border-color:#2a2f3e}
+html.dark .turn-dash-ticker-item{color:#d0d5e8}
+html.dark .turn-dash-ticker-item strong{color:#e8ecf5}
 .turn-dash-strip-wrap{padding:0 12px 14px}
 .turn-dash-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.turn-dash-strip.compact-mode{display:flex;flex-direction:column;gap:8px}
 .turn-dash-card{display:flex;flex-direction:column;gap:10px;text-align:left;padding:14px;border-radius:14px;border:1px solid var(--border);background:linear-gradient(180deg,var(--bg-card),var(--bg-secondary));color:var(--text-primary);cursor:pointer;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
 .turn-dash-card:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--accent) 50%,var(--border) 50%);box-shadow:0 12px 28px rgba(0,0,0,.08)}
 .turn-dash-card.ok{border-top:3px solid var(--accent)}
@@ -1349,36 +1387,82 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 .turn-dash-alert.ok{color:var(--success)}
 .turn-dash-empty{min-height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:1px dashed var(--border);border-radius:14px;color:var(--text-muted);font-size:12px;background:var(--bg-secondary)}
 .turn-dash-empty i{font-size:18px;color:var(--accent)}
+.turn-dash-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);cursor:pointer;transition:var(--transition)}
+.turn-dash-row:hover{border-color:var(--accent);transform:translateY(-1px)}
+.turn-dash-row-left{display:flex;flex-direction:column;gap:2px;min-width:0}
+.turn-dash-row-title{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.turn-dash-row-sub{font-size:10px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.turn-dash-row-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.turn-dash-row-pill{font-family:var(--font-mono);font-size:10px;padding:2px 7px;border-radius:999px;background:var(--bg-input);color:var(--text-muted)}
+.turn-dash-row-pill.stalled{background:var(--danger-dim);color:var(--danger)}
+.turn-dash-row-pill.upcoming{background:var(--info-dim);color:var(--info)}
+.turn-dash-row-pill.active{background:var(--success-dim);color:var(--success)}
 @media(max-width:1100px){.turn-dash-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.turn-dash-strip{grid-template-columns:1fr}.turn-dash-controls{width:100%;justify-content:space-between}}
 
-/* TV oversight mode */
-body.tv-mode .topbar,
-body.tv-mode .nav-tabs,
-body.tv-mode .global-filter-bar,
-body.tv-mode #managerOverviewSection,
-body.tv-mode #moveOutSection,
-body.tv-mode #attentionSection,
-body.tv-mode .activity-filters,
-body.tv-mode #activityTable thead,
-body.tv-mode #btnRefreshDash,
-body.tv-mode #btnWebhookConfig {
+/* TV oversight mode (dashboard-focused, navigation always visible) */
+body.tv-mode .main-content { max-width: 100vw; }
+body.tv-mode-dashboard .main-content {
+  padding: 8px 12px;
+  height: calc(100dvh - 156px);
+  overflow: hidden;
+}
+body.tv-mode-dashboard #sec-dashboard {
+  height: 100%;
+  overflow: hidden;
+}
+body.tv-mode-dashboard #sec-dashboard > .kpi-grid,
+body.tv-mode-dashboard #managerOverviewSection,
+body.tv-mode-dashboard #attentionSection,
+body.tv-mode-dashboard #sec-dashboard .dash-columns {
   display: none !important;
 }
-body.tv-mode .main-content { max-width: 100vw; padding: 10px 16px; }
-body.tv-mode #turnDashboardSection { margin-top: 0; }
-body.tv-mode .turn-dash-summary { font-size: 14px; padding-bottom: 16px; }
-body.tv-mode .turn-dash-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-body.tv-mode .turn-dash-card { min-height: 240px; }
-body.tv-mode .turn-dash-unit { font-size: 22px; }
-body.tv-mode .turn-dash-property { font-size: 14px; }
-body.tv-mode .turn-dash-status,
-body.tv-mode .turn-dash-metric,
-body.tv-mode .turn-dash-alert { font-size: 13px; }
-body.tv-mode .turn-dash-metrics { gap: 10px; }
-body.tv-mode .turn-dash-controls .form-select,
-body.tv-mode .turn-dash-controls .action-btn,
-body.tv-mode .turn-dash-page-label { font-size: 14px; }
+body.tv-mode-dashboard #turnDashboardSection {
+  margin: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+body.tv-mode-dashboard #turnDashboardSection .table-header {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+body.tv-mode-dashboard #turnDashboardSection .section-subtitle {
+  font-size: 11px;
+}
+body.tv-mode-dashboard .turn-dash-summary {
+  font-size: 12px;
+  padding: 0 12px 8px;
+}
+body.tv-mode-dashboard .turn-dash-ticker { margin: 0 10px 8px; }
+body.tv-mode-dashboard .turn-dash-strip-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 10px 10px;
+}
+body.tv-mode-dashboard .turn-dash-strip {
+  height: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 10px;
+}
+body.tv-mode-dashboard .turn-dash-card {
+  min-height: 0;
+  height: 100%;
+  padding: 10px;
+  gap: 7px;
+}
+body.tv-mode-dashboard .turn-dash-strip.compact-mode { height: 100%; overflow-y: auto; }
+body.tv-mode-dashboard .turn-dash-row { padding: 8px 10px; }
+body.tv-mode-dashboard .turn-dash-unit { font-size: 18px; }
+body.tv-mode-dashboard .turn-dash-property,
+body.tv-mode-dashboard .turn-dash-status,
+body.tv-mode-dashboard .turn-dash-metric,
+body.tv-mode-dashboard .turn-dash-alert,
+body.tv-mode-dashboard .turn-dash-page-label,
+body.tv-mode-dashboard .turn-dash-controls .form-select,
+body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 
 @media (max-width: 900px) {
   .topbar { flex-wrap: wrap; height: auto; gap: 8px; padding: 10px 12px; }
@@ -1690,6 +1774,7 @@ body.tv-mode .turn-dash-page-label { font-size: 14px; }
 <nav class="nav-tabs" id="navTabs">
   <button class="nav-tab active" data-tab="dashboard"><i class="fas fa-th-large"></i> Dashboard</button>
   <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="badge" id="woBadge">—</span></button>
+  <button class="nav-tab" data-tab="routing"><i class="fas fa-route"></i> Routing <span class="badge" id="routingBadge" style="display:none">0</span></button>
   <button class="nav-tab" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
   <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
   <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
@@ -1761,11 +1846,20 @@ body.tv-mode .turn-dash-page-label { font-size: 14px; }
         <select id="dashTurnPmFilter" class="form-select" style="font-size:12px;padding:5px 10px;min-width:150px;font-family:var(--font-mono)">
           <option value="">All PMs</option>
         </select>
+        <select id="dashTurnViewMode" class="form-select" style="font-size:12px;padding:5px 10px;min-width:140px;font-family:var(--font-mono)">
+          <option value="cards">Card View</option>
+          <option value="compact">Compact View</option>
+        </select>
+        <button class="action-btn" id="dashTurnSync" type="button"><i class="fas fa-bolt"></i> Sync</button>
+        <span id="dashTurnSyncAgo" style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Never synced</span>
         <button class="action-btn" id="dashTvMode" type="button"><i class="fas fa-tv"></i> TV Mode</button>
         <button class="action-btn" id="dashTurnPrev" type="button"><i class="fas fa-chevron-left"></i></button>
         <div class="turn-dash-page-label" id="dashTurnPageLabel">1 / 1</div>
         <button class="action-btn" id="dashTurnNext" type="button"><i class="fas fa-chevron-right"></i></button>
       </div>
+    </div>
+    <div class="turn-dash-ticker" id="dashTurnTicker" style="display:none">
+      <div class="turn-dash-ticker-track" id="dashTurnTickerTrack"></div>
     </div>
     <div class="turn-dash-summary" id="dashTurnSummary">Loading active turns…</div>
     <div class="turn-dash-strip-wrap">
@@ -1929,6 +2023,113 @@ body.tv-mode .turn-dash-page-label { font-size: 14px; }
   </div>
 </section>
 
+<section class="section" id="sec-routing">
+  <div class="section-header">
+    <div>
+      <div class="section-title"><i class="fas fa-route" style="color:var(--accent)"></i> PM Routing Monitor</div>
+      <div class="section-subtitle">Flags external vendor assignments that match enabled in-house work types, grouped by PM portfolio mapping.</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <select id="routingStatusFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:130px">
+        <option value="pending">Pending</option>
+        <option value="all">All Statuses</option>
+        <option value="approved_external">Approved External</option>
+        <option value="reassign_inhouse">Reassign In-House</option>
+        <option value="dismissed">Dismissed</option>
+      </select>
+      <select id="routingPmFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:150px">
+        <option value="all">All PMs</option>
+      </select>
+      <select id="routingDaysFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px">
+        <option value="30">30 Days</option>
+        <option value="60">60 Days</option>
+        <option value="90">90 Days</option>
+        <option value="180">180 Days</option>
+      </select>
+      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search flagged events…" id="routingSearch" style="min-width:180px"></div>
+      <button class="action-btn" id="btnRoutingMapToggle"><i class="fas fa-user-tag"></i> PM Map</button>
+      <button class="action-btn" id="btnRoutingCapToggle"><i class="fas fa-sliders-h"></i> Work Types</button>
+      <select id="routingMinConfidence" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:130px" title="Minimum confidence to flag events">
+        <option value="medium">Flag medium+</option>
+        <option value="high">Flag high only</option>
+        <option value="low">Flag all</option>
+      </select>
+      <select id="routingHighThreshold" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:130px" title="Keywords/trade hits needed for high confidence">
+        <option value="2">High at 2+ hits</option>
+        <option value="3">High at 3+ hits</option>
+        <option value="4">High at 4+ hits</option>
+      </select>
+      <button class="sec-refresh" id="btnRoutingRefresh"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <button class="action-btn primary" id="btnRoutingScan"><i class="fas fa-search"></i> Scan Loaded WOs</button>
+    </div>
+  </div>
+
+  <div class="routing-kpi-grid">
+    <div class="routing-kpi"><div class="routing-kpi-label">Flagged</div><div class="routing-kpi-value" id="routingKpiFlagged">0</div></div>
+    <div class="routing-kpi"><div class="routing-kpi-label">Pending</div><div class="routing-kpi-value" id="routingKpiPending">0</div></div>
+    <div class="routing-kpi"><div class="routing-kpi-label">High Confidence</div><div class="routing-kpi-value" id="routingKpiHigh">0</div></div>
+    <div class="routing-kpi"><div class="routing-kpi-label">Reviewed</div><div class="routing-kpi-value" id="routingKpiReviewed">0</div></div>
+    <div class="routing-kpi"><div class="routing-kpi-label">Last Scan</div><div class="routing-kpi-value" id="routingKpiLast">—</div></div>
+  </div>
+
+  <div class="table-wrapper" style="margin-bottom:12px">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-trophy" style="color:var(--warning)"></i> PM Scorecard (by portfolio routing)</div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>PM</th><th>Flagged</th><th>High</th><th>Pending</th><th>Approved</th><th>Reassigned</th><th>Last Flagged</th></tr></thead>
+        <tbody id="routingPmBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="table-wrapper" style="margin-bottom:12px">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-list-check" style="color:var(--accent)"></i> Flagged Routing Events</div>
+      <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="routingSummary">—</div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>WO</th><th>Property</th><th>Group</th><th>PM</th><th>Vendor</th><th>Trade Match</th><th>Confidence</th><th>Status</th><th>Flagged</th><th>Review</th><th>Actions</th></tr></thead>
+        <tbody id="routingEventsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="table-wrapper" id="routingCapabilitiesWrap" style="display:none;margin-bottom:12px">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-sliders-h" style="color:var(--info)"></i> In-House Work Type Toggles</div>
+      <button class="action-btn" id="btnRoutingCapAdd"><i class="fas fa-plus"></i> Add Work Type</button>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Work Type</th><th>Keywords</th><th>Enabled</th><th>Actions</th></tr></thead>
+        <tbody id="routingCapabilitiesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="table-wrapper" id="routingPmMapWrap" style="display:none">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-user-tag" style="color:var(--purple)"></i> Portfolio Group to PM Mapping</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="action-btn" id="btnRoutingMapAutofill"><i class="fas fa-wand-magic-sparkles"></i> Auto-Fill from Site Managers</button>
+        <button class="action-btn primary" id="btnRoutingMapSave"><i class="fas fa-save"></i> Save Mapping</button>
+      </div>
+    </div>
+    <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">
+      PM attribution comes from property group. Update names here so leaderboard reflects PM owners.
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Property Group</th><th>PM Name</th></tr></thead>
+        <tbody id="routingPmMapBody"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
 <!-- ==================== PAYROLL ==================== -->
 <section class="section" id="sec-payroll">
   <div class="section-header">
@@ -2058,6 +2259,13 @@ body.tv-mode .turn-dash-page-label { font-size: 14px; }
         <option value="HOA">HOA</option>
         <option value="Insurance">Insurance</option>
         <option value="Uncategorized">Uncategorized</option>
+      </select>
+      <select id="vendorTradeFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:140px">
+        <option value="">All Trade Categories</option>
+      </select>
+      <select id="vendorSortMode" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:160px">
+        <option value="name">Sort: Name (A-Z)</option>
+        <option value="trade">Sort: Trade Category</option>
       </select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search vendors by name, email, trade…" id="vendorSearch" style="min-width:220px"></div>
       <button class="sec-refresh" id="btnRefreshVendors"><i class="fas fa-sync-alt"></i> Refresh</button>
@@ -2534,7 +2742,7 @@ body.tv-mode .turn-dash-page-label { font-size: 14px; }
       <button class="modal-close" id="whatsNewClose">&times;</button>
     </div>
     <div class="modal-body">
-        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.0d (updated April 2026) • Highlights (next 36h)</div>
+        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.1a (updated April 2026) • Highlights (next 36h)</div>
       <div style="max-height:290px;overflow-y:auto;padding-right:4px">
       <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px">
         <li style="display:flex;gap:10px;align-items:flex-start">
@@ -2616,7 +2824,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.0d';
+var APP_VERSION = 'v9.1a';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 
@@ -3210,6 +3418,36 @@ function isWOFlagged(woId) { return !!WO_FLAGS[woId]; }
    ================================================================= */
 var VENDOR_OVERRIDES = {};
 var VENDOR_CATEGORIES = ['Employee', 'In-House Tech', 'Vendor', 'Subcontractor', 'Utilities', 'HOA', 'Insurance', 'Uncategorized'];
+var VENDOR_TRADE_CATEGORIES = ['General', 'HVAC', 'Plumbing', 'Electrical', 'Appliance', 'Flooring', 'Painting', 'Landscaping', 'Cleaning', 'Roofing', 'Pest Control', 'Pool/Spa', 'Locksmith', 'Security', 'Other'];
+
+function normalizeVendorTradeCategory(value) {
+  var raw = String(value || '').trim().toLowerCase();
+  if (!raw) return 'General';
+  if (raw.indexOf('hvac') !== -1 || raw.indexOf('air') !== -1 || raw.indexOf('ac') === 0) return 'HVAC';
+  if (raw.indexOf('plumb') !== -1 || raw.indexOf('drain') !== -1 || raw.indexOf('sewer') !== -1) return 'Plumbing';
+  if (raw.indexOf('elect') !== -1 || raw.indexOf('wiring') !== -1) return 'Electrical';
+  if (raw.indexOf('appliance') !== -1) return 'Appliance';
+  if (raw.indexOf('floor') !== -1 || raw.indexOf('tile') !== -1 || raw.indexOf('carpet') !== -1) return 'Flooring';
+  if (raw.indexOf('paint') !== -1 || raw.indexOf('drywall') !== -1) return 'Painting';
+  if (raw.indexOf('landscape') !== -1 || raw.indexOf('tree') !== -1 || raw.indexOf('irrig') !== -1) return 'Landscaping';
+  if (raw.indexOf('clean') !== -1 || raw.indexOf('janitor') !== -1 || raw.indexOf('maid') !== -1) return 'Cleaning';
+  if (raw.indexOf('roof') !== -1) return 'Roofing';
+  if (raw.indexOf('pest') !== -1 || raw.indexOf('termite') !== -1) return 'Pest Control';
+  if (raw.indexOf('pool') !== -1 || raw.indexOf('spa') !== -1) return 'Pool/Spa';
+  if (raw.indexOf('lock') !== -1 || raw.indexOf('key') !== -1) return 'Locksmith';
+  if (raw.indexOf('security') !== -1 || raw.indexOf('alarm') !== -1 || raw.indexOf('camera') !== -1) return 'Security';
+  if (raw.indexOf('general') !== -1 || raw.indexOf('handyman') !== -1 || raw.indexOf('maintenance') !== -1) return 'General';
+  return 'Other';
+}
+
+function inferVendorTradeCategory(vendor) {
+  var trades = String((vendor && vendor.trades) || '').trim();
+  if (trades) {
+    var primary = trades.split(',')[0].split('/')[0];
+    return normalizeVendorTradeCategory(primary);
+  }
+  return 'General';
+}
 
 async function loadVendorOverrides() {
   // 1. Load from IndexedDB first (fast, local cache)
@@ -3237,6 +3475,7 @@ async function loadVendorOverrides() {
           var vid = row.vendor_id;
           var existing = VENDOR_OVERRIDES[vid] || { vendorId: vid };
           if (row.category !== null && row.category !== undefined) existing.category = row.category;
+          if (row.trade_category !== null && row.trade_category !== undefined) existing.tradeCategory = row.trade_category;
           if (row.compliant !== null && row.compliant !== undefined) existing.compliant = !!row.compliant;
           VENDOR_OVERRIDES[vid] = existing;
         });
@@ -3258,6 +3497,7 @@ async function saveVendorOverride(vendorId, overrides) {
   if (API_PROXY) {
     var payload = { vendor_id: vendorId };
     if (overrides.category !== undefined) payload.category = overrides.category;
+    if (overrides.tradeCategory !== undefined) payload.trade_category = overrides.tradeCategory;
     if (overrides.compliant !== undefined) payload.compliant = overrides.compliant === true ? 1 : (overrides.compliant === false ? 0 : null);
     try { await proxyPost('vendor_override', payload); } catch (e) { /* best-effort */ }
   }
@@ -3270,6 +3510,13 @@ function getVendorOverride(vendorId) {
 function getVendorCategory(vendorId) {
   var ov = VENDOR_OVERRIDES[vendorId];
   return (ov && ov.category) ? ov.category : '';
+}
+
+function getVendorTradeCategory(vendor) {
+  if (!vendor) return 'General';
+  var ov = VENDOR_OVERRIDES[vendor.id];
+  if (ov && ov.tradeCategory) return normalizeVendorTradeCategory(ov.tradeCategory);
+  return inferVendorTradeCategory(vendor);
 }
 
 function isVendorManuallyCompliant(vendorId) {
@@ -3380,7 +3627,7 @@ function isTabAllowedForRole(tabName) {
   if (_accessRole === 'vendors') return tabName === 'vendors';
   if (_accessRole === 'manager') {
     // Manager role allowed tabs: workorders, turnboard, vendors, inspections, errors
-    var allowedTabs = ['dashboard', 'workorders', 'turnboard', 'vendors', 'inspections', 'errors'];
+    var allowedTabs = ['dashboard', 'workorders', 'routing', 'turnboard', 'vendors', 'inspections', 'errors'];
     return allowedTabs.indexOf(tabName) !== -1;
   }
   return true;
@@ -4100,6 +4347,16 @@ var _vendorRenderLimit = 0;
 var currentVendorInitial = '';
 var _vendorRenderKey = '';
 var _vendorsNeedRender = false;
+var ROUTING_EVENTS = [];
+var ROUTING_PM_STATS = [];
+var ROUTING_CAPABILITIES = [];
+var ROUTING_PM_MAP = {};
+var _routingInitDone = false;
+var _routingLastScanAt = '';
+var ROUTING_SETTINGS = {
+  minConfidence: 'medium',
+  highThreshold: 2
+};
 
 /* =================================================================
    CONFIG — Consolidated thresholds (edit here, not scattered in code)
@@ -4905,6 +5162,42 @@ async function fetchProperties() {
   }
 }
 
+function normalizeTurnRecord(t) {
+  var moveOut = t.move_out_date || t.move_out || t.moveOutDate || t.moveOut || '';
+  var turnEnd = t.turn_end_date || t.turn_end || t.turnEndDate || t.completed_at || '';
+  var daysToComplete = parseInt(t.total_days_to_complete || t.totalDays || 0, 10) || 0;
+  if (!daysToComplete && moveOut && turnEnd) {
+    var d1 = new Date(moveOut), d2 = new Date(turnEnd);
+    if (!isNaN(d1) && !isNaN(d2)) { daysToComplete = Math.round((d2 - d1) / 86400000); }
+  }
+  return {
+    unitTurnId: t.unit_turn_id || t.unit_turn_uuid || t.unitTurnId || t.id || '',
+    unit: t.unit || t.unit_name || t.unit_number || t.unitName || '',
+    property: t.property || t.property_name || t.propertyName || '',
+    propertyId: t.property_id || t.property_uuid || t.propertyId || 0,
+    unitId: t.unit_id || t.unit_uuid || t.unitId || 0,
+    notes: t.notes || '',
+    referenceUser: t.reference_user || t.referenceUser || t.created_by || '',
+    moveOut: moveOut,
+    turnEnd: turnEnd,
+    expectedMoveIn: t.expected_move_in_date || t.expected_move_in || t.expectedMoveIn || '',
+    targetDays: parseInt(t.target_days_to_complete || t.targetDays || 0, 10) || 0,
+    totalDays: daysToComplete,
+    laborCost: t.labor_from_work_orders || t.labor_cost || '$0.00',
+    purchaseOrders: t.purchase_orders_from_work_orders || t.purchase_orders || '$0.00',
+    billables: t.billables_from_work_orders || t.billables || '$0.00',
+    inventory: t.inventory_from_work_orders || t.inventory || '$0.00',
+    totalBilled: t.total_billed || t.totalBilled || '$0.00',
+    status: t.unit_turn_status || t.status || '',
+    siteManager: t.site_manager || t.property_site_manager || '',
+    maintenanceLimit: t.maintenance_limit || t.property_maintenance_limit || '',
+    propertyNotes: t.property_notes || t.maintenance_notes || '',
+    isRegisteredUnitTurn: !!(t.registered_unit_turn || t.is_registered_unit_turn || t.registered_turn || t.registered_unit_turn_id),
+    registeredUnitTurnId: t.registered_unit_turn_id || t.registered_turn_id || '',
+    registrationSource: t.registered_unit_turn_source || t.registration_source || ''
+  };
+}
+
 // Turns: Proxy ?action=turns — merged In Progress + Completed for richer detail context
 async function fetchTurns() {
   try {
@@ -4926,41 +5219,8 @@ async function fetchTurns() {
     });
     var results = Object.keys(mergedById).map(function(k) { return mergedById[k]; });
 
-    TURNS = results.map(function(t) {
-      var moveOut = t.move_out_date || t.move_out || t.moveOutDate || t.moveOut || '';
-      var turnEnd = t.turn_end_date || t.turn_end || t.turnEndDate || t.completed_at || '';
-      var daysToComplete = parseInt(t.total_days_to_complete || t.totalDays || 0, 10) || 0;
-      if (!daysToComplete && moveOut && turnEnd) {
-        var d1 = new Date(moveOut), d2 = new Date(turnEnd);
-        if (!isNaN(d1) && !isNaN(d2)) { daysToComplete = Math.round((d2 - d1) / 86400000); }
-      }
-      return {
-        unitTurnId: t.unit_turn_id || t.unit_turn_uuid || t.unitTurnId || t.id || '',
-        unit: t.unit || t.unit_name || t.unit_number || t.unitName || '',
-        property: t.property || t.property_name || t.propertyName || '',
-        propertyId: t.property_id || t.property_uuid || t.propertyId || 0,
-        unitId: t.unit_id || t.unit_uuid || t.unitId || 0,
-        notes: t.notes || '',
-        referenceUser: t.reference_user || t.referenceUser || t.created_by || '',
-        moveOut: moveOut,
-        turnEnd: turnEnd,
-        expectedMoveIn: t.expected_move_in_date || t.expected_move_in || t.expectedMoveIn || '',
-        targetDays: parseInt(t.target_days_to_complete || t.targetDays || 0, 10) || 0,
-        totalDays: daysToComplete,
-        laborCost: t.labor_from_work_orders || t.labor_cost || '$0.00',
-        purchaseOrders: t.purchase_orders_from_work_orders || t.purchase_orders || '$0.00',
-        billables: t.billables_from_work_orders || t.billables || '$0.00',
-        inventory: t.inventory_from_work_orders || t.inventory || '$0.00',
-        totalBilled: t.total_billed || t.totalBilled || '$0.00',
-        status: t.unit_turn_status || t.status || '',
-        siteManager: t.site_manager || t.property_site_manager || '',
-        maintenanceLimit: t.maintenance_limit || t.property_maintenance_limit || '',
-        propertyNotes: t.property_notes || t.maintenance_notes || '',
-        isRegisteredUnitTurn: !!(t.registered_unit_turn || t.is_registered_unit_turn || t.registered_turn || t.registered_unit_turn_id),
-        registeredUnitTurnId: t.registered_unit_turn_id || t.registered_turn_id || '',
-        registrationSource: t.registered_unit_turn_source || t.registration_source || ''
-      };
-    });
+    TURNS = results.map(normalizeTurnRecord);
+    DASH_TURN_LAST_SYNC_AT = new Date().toISOString();
     return true;
   } catch (err) {
     TURNS = [];
@@ -6816,15 +7076,121 @@ function renderMoveOuts() {
 }
 
 function getDashboardTurnPageSize() {
-  if (document.body && document.body.classList.contains('tv-mode')) return 3;
+  if (DASH_TURN_VIEW_MODE === 'compact') {
+    if (document.body && document.body.classList.contains('tv-mode')) return 12;
+    if (window.matchMedia && window.matchMedia('(max-width: 700px)').matches) return 8;
+    return 10;
+  }
+  if (document.body && document.body.classList.contains('tv-mode')) return 6;
   if (window.matchMedia && window.matchMedia('(max-width: 700px)').matches) return 1;
   if (window.matchMedia && window.matchMedia('(max-width: 1100px)').matches) return 2;
   return 4;
 }
 
+function renderDashboardTurnSyncLabel() {
+  var el = $('#dashTurnSyncAgo');
+  if (!el) return;
+  if (!DASH_TURN_LAST_SYNC_AT) {
+    el.textContent = 'Never synced';
+    return;
+  }
+  var ms = new Date(DASH_TURN_LAST_SYNC_AT).getTime();
+  if (isNaN(ms)) {
+    el.textContent = 'Synced';
+    return;
+  }
+  var mins = Math.floor((Date.now() - ms) / 60000);
+  if (mins <= 0) el.textContent = 'Just now';
+  else el.textContent = mins + 'm ago';
+}
+
+function renderTurnDashboardTicker(entries) {
+  var wrap = $('#dashTurnTicker');
+  var track = $('#dashTurnTickerTrack');
+  if (!wrap || !track) return;
+  if (!entries || !entries.length) {
+    wrap.style.display = 'none';
+    track.innerHTML = '';
+    return;
+  }
+  var top = entries.slice(0, Math.min(entries.length, 12));
+  var doubled = top.concat(top);
+  var html = doubled.map(function(p) {
+    var tone = p.isStalled ? 'stalled' : (p.isUpcoming ? 'upcoming' : 'active');
+    var woOpen = p.matchingWOs.filter(function(wo) { return !isClosedTurnWorkOrderStatus(wo.status); }).length;
+    return '<span class="turn-dash-ticker-item">' +
+      '<span class="turn-dash-ticker-dot ' + tone + '"></span>' +
+      '<strong>' + escapeHtml(p.unit || 'Unit') + '</strong>' +
+      '<span>' + escapeHtml(p.property || '') + '</span>' +
+      '<span>' + Math.max(0, p.elapsed) + 'd</span>' +
+      '<span>' + woOpen + ' open WO</span>' +
+      '</span>';
+  }).join('');
+  track.innerHTML = html;
+  track.classList.toggle('no-anim', top.length <= 3);
+  wrap.style.display = '';
+}
+
+async function syncTurnDashboardIncremental(showMsg) {
+  if (!API_PROXY) return false;
+  var btn = $('#dashTurnSync');
+  if (btn) { btn.disabled = true; btn.classList.add('spinning'); }
+  try {
+    var sinceIso = DASH_TURN_LAST_SYNC_AT || new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+    var data = await proxyAction('turns_incremental', { since: sinceIso, limit: '800' });
+    var rows = data.results || [];
+    var merged = 0;
+    if (rows.length) {
+      var byId = {};
+      TURNS.forEach(function(t) {
+        byId[String(t.unitTurnId || '')] = t;
+      });
+      rows.forEach(function(raw) {
+        var normalized = normalizeTurnRecord(raw);
+        var key = String(normalized.unitTurnId || '');
+        if (!key) return;
+        byId[key] = Object.assign({}, byId[key] || {}, normalized);
+        merged++;
+      });
+      TURNS = Object.keys(byId).map(function(k) { return byId[k]; });
+      renderTurnBoard();
+    }
+    DASH_TURN_LAST_SYNC_AT = data.synced_at || new Date().toISOString();
+    renderDashboardTurnSyncLabel();
+    if (showMsg) {
+      showToast('Turn sync complete — ' + merged + ' updated');
+    }
+    return true;
+  } catch (err) {
+    if (showMsg) showToast('Turn sync failed: ' + (err.message || err), 'warning');
+    return false;
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
+  }
+}
+
+function ensureNavigationChromeVisible() {
+  var topbar = document.querySelector('.topbar');
+  var navTabs = document.getElementById('navTabs') || document.querySelector('.nav-tabs');
+  if (topbar) topbar.style.display = '';
+  if (navTabs) navTabs.style.display = '';
+}
+
+function syncTvModeScope() {
+  if (!document.body) return;
+  var dashSection = document.getElementById('sec-dashboard');
+  var onDashboard = !!(dashSection && dashSection.classList.contains('active'));
+  document.body.classList.toggle('tv-mode-dashboard', document.body.classList.contains('tv-mode') && onDashboard);
+}
+
 function applyTvMode(enabled) {
   if (!document.body) return;
+  if (enabled) {
+    forceActiveTab('dashboard');
+  }
   document.body.classList.toggle('tv-mode', !!enabled);
+  syncTvModeScope();
+  if (!enabled) ensureNavigationChromeVisible();
   try { localStorage.setItem('hm_tv_mode', enabled ? '1' : '0'); } catch (e) { /* */ }
   var btn = $('#dashTvMode');
   if (btn) {
@@ -6917,9 +7283,13 @@ function renderTurnDashboardStrip() {
   syncDashboardTurnPmFilter(baseEntries);
 
   var entries = getDashboardTurnEntries();
+  var isCompact = DASH_TURN_VIEW_MODE === 'compact';
   var pageSize = getDashboardTurnPageSize();
   var totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
   if (DASH_TURN_PAGE >= totalPages) DASH_TURN_PAGE = 0;
+  strip.classList.toggle('compact-mode', isCompact);
+  renderTurnDashboardTicker(entries);
+  renderDashboardTurnSyncLabel();
 
   var activeOpenWOs = entries.reduce(function(sum, p) {
     return sum + p.matchingWOs.filter(function(wo) { return !isClosedTurnWorkOrderStatus(wo.status); }).length;
@@ -6949,6 +7319,20 @@ function renderTurnDashboardStrip() {
     var closedWOs = p.matchingWOs.length - openWOs;
     var statusTone = p.isStalled ? 'danger' : p.isOnRadar ? 'info' : p.isUpcoming ? 'cool' : 'ok';
     var statusLabel = p.isUpcoming ? ('Move-out ' + formatDate(p.moveOut)) : p.isOnRadar ? 'Awaiting inspection' : nextStage ? ('Next: ' + nextStage.title) : 'In progress';
+    if (isCompact) {
+      var compactTone = p.isStalled ? 'stalled' : (p.isUpcoming ? 'upcoming' : 'active');
+      return '<button class="turn-dash-row" data-turndash-open="' + escapeHtml(p.id) + '">' +
+        '<span class="turn-dash-row-left">' +
+          '<span class="turn-dash-row-title">' + escapeHtml(p.unit || 'Unit') + '</span>' +
+          '<span class="turn-dash-row-sub">' + escapeHtml(p.property || '') + ' • ' + pmName + '</span>' +
+        '</span>' +
+        '<span class="turn-dash-row-right">' +
+          '<span class="turn-dash-row-pill ' + compactTone + '">' + escapeHtml(statusLabel) + '</span>' +
+          '<span class="turn-dash-row-pill">' + Math.max(0, p.elapsed) + 'd</span>' +
+          '<span class="turn-dash-row-pill">' + openWOs + ' open</span>' +
+        '</span>' +
+      '</button>';
+    }
     return '<button class="turn-dash-card ' + statusTone + '" data-turndash-open="' + escapeHtml(p.id) + '">' +
       '<div class="turn-dash-card-head"><div><div class="turn-dash-unit">' + escapeHtml(p.unit || 'Unit') + '</div><div class="turn-dash-property">' + escapeHtml(p.property || '') + '</div></div><span class="turn-dash-pm">' + pmName + '</span></div>' +
       '<div class="turn-dash-status">' + escapeHtml(statusLabel) + '</div>' +
@@ -7996,10 +8380,13 @@ var TURN_RECORDS = []; // persisted stage overrides from proxy blob
 var TURN_PIPE_DATA = []; // computed pipeline entries
 var CLOSED_TURNS = new Set(); // turn IDs marked as closed (stored in SQL)
 var OPEN_TURN_DETAIL_ID = '';
-var DASH_TURN_PM_FILTER = '';
+var DASH_TURN_PM_FILTER = (function(){ try { return localStorage.getItem('flr_turn_dash_filter') || ''; } catch(e){ return ''; } })();
+var DASH_TURN_VIEW_MODE = 'cards';
 var DASH_TURN_PAGE = 0;
 var DASH_TURN_ROTATOR = null;
 var DASH_TURN_ROTATE_MS = 8000;
+var DASH_TURN_LAST_SYNC_AT = '';
+var DASH_TURN_SYNC_TIMER = null;
 var currentTurnPipeFilter = 'active';
 var currentTurnPipeGroup = '';
 var _inspSortCol = 'daysSince'; // default sort column
@@ -9303,7 +9690,30 @@ function renderVendors(search) {
 
   // Read filter states
   var catFilter = $('#vendorCategoryFilter') ? $('#vendorCategoryFilter').value : '';
+  var tradeFilter = $('#vendorTradeFilter') ? $('#vendorTradeFilter').value : '';
+  var sortMode = $('#vendorSortMode') ? $('#vendorSortMode').value : 'name';
   var compFilter = $('#vendorComplianceFilter') ? $('#vendorComplianceFilter').value : '';
+
+  var tradeCounts = {};
+  VENDORS.forEach(function(v) {
+    var tc = getVendorTradeCategory(v);
+    tradeCounts[tc] = (tradeCounts[tc] || 0) + 1;
+  });
+  var tradeSel = $('#vendorTradeFilter');
+  if (tradeSel) {
+    var currentTradeFilter = tradeFilter;
+    tradeSel.innerHTML = '<option value="">All Trade Categories</option>';
+    VENDOR_TRADE_CATEGORIES.slice().sort(function(a, b) { return a.localeCompare(b); }).forEach(function(tc) {
+      if (!tradeCounts[tc]) return;
+      var opt = document.createElement('option');
+      opt.value = tc;
+      opt.textContent = tc + ' (' + tradeCounts[tc] + ')';
+      tradeSel.appendChild(opt);
+    });
+    if (currentTradeFilter && !tradeCounts[currentTradeFilter]) currentTradeFilter = '';
+    tradeSel.value = currentTradeFilter;
+    tradeFilter = currentTradeFilter;
+  }
 
   // Note: Vendors don't have a direct property association for group filtering,
   // but we can filter by checking which vendors have WOs in the group
@@ -9336,6 +9746,11 @@ function renderVendors(search) {
       if (compFilter === 'manual-compliant' && !(res.compliant && res.isManual)) return false;
     }
 
+    if (tradeFilter) {
+      var vTradeCat = getVendorTradeCategory(v);
+      if (vTradeCat !== tradeFilter) return false;
+    }
+
     if (!searchText) return true;
     var s = searchLower;
     var vCatStr = getVendorCategory(v.id) || '';
@@ -9343,6 +9758,17 @@ function renderVendors(search) {
       || (v.email || '').toLowerCase().indexOf(s) !== -1
       || (v.trades || '').toLowerCase().indexOf(s) !== -1
       || vCatStr.toLowerCase().indexOf(s) !== -1;
+  });
+
+  baseFiltered.sort(function(a, b) {
+    var aName = String(a.name || '').toLowerCase();
+    var bName = String(b.name || '').toLowerCase();
+    if (sortMode === 'trade') {
+      var aTrade = getVendorTradeCategory(a);
+      var bTrade = getVendorTradeCategory(b);
+      if (aTrade !== bTrade) return aTrade.localeCompare(bTrade);
+    }
+    return aName.localeCompare(bName);
   });
 
   var availableInitials = {};
@@ -9357,7 +9783,7 @@ function renderVendors(search) {
     return;
   }
 
-  var renderKey = [currentPropertyGroup || '', catFilter || '', compFilter || '', searchLower, currentVendorInitial || ''].join('|');
+  var renderKey = [currentPropertyGroup || '', catFilter || '', tradeFilter || '', sortMode || 'name', compFilter || '', searchLower, currentVendorInitial || ''].join('|');
   if (_vendorRenderKey !== renderKey) {
     _vendorRenderKey = renderKey;
     _vendorRenderLimit = isConstrainedDevice() ? CONFIG.VENDOR_GRID_INITIAL_LIMIT_MOBILE : CONFIG.VENDOR_GRID_INITIAL_LIMIT_DESKTOP;
@@ -9405,6 +9831,12 @@ function renderVendors(search) {
     html += '<div class="vendor-row vendor-row-compact" style="align-items:center"><span class="vendor-row-label">Category</span><select class="vendor-cat-select" data-vid="' + escapeHtml(String(v.id)) + '" onclick="event.stopPropagation()">';
     VENDOR_CATEGORIES.forEach(function(c) {
       html += '<option value="' + escapeHtml(c) + '"' + ((vCat || 'Uncategorized') === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+    });
+    html += '</select></div>';
+    var vTradeCat = getVendorTradeCategory(v);
+    html += '<div class="vendor-row vendor-row-compact" style="align-items:center"><span class="vendor-row-label">Trade Cat.</span><select class="vendor-trade-cat-select" data-vid="' + escapeHtml(String(v.id)) + '" onclick="event.stopPropagation()">';
+    VENDOR_TRADE_CATEGORIES.forEach(function(tc) {
+      html += '<option value="' + escapeHtml(tc) + '"' + (vTradeCat === tc ? ' selected' : '') + '>' + escapeHtml(tc) + '</option>';
     });
     html += '</select></div>';
     var compLabel = cRes.compliant ? 'Compliant' : (v.compliantStatus || 'Non-Compliant');
@@ -9488,6 +9920,558 @@ function renderNewWOVendorOptions(filterText) {
   }
 
   hint.textContent = 'Showing ' + visible.length + ' vendor' + (visible.length === 1 ? '' : 's') + '.';
+}
+
+var ROUTING_DEFAULT_CAPABILITIES = [
+  { trade: 'HVAC', keywords: ['hvac', 'ac', 'air', 'thermostat', 'filter', 'condenser', 'compressor', 'heat'] },
+  { trade: 'Plumbing', keywords: ['plumb', 'toilet', 'faucet', 'sink', 'drain', 'pipe', 'leak', 'water heater', 'shower'] },
+  { trade: 'Electrical', keywords: ['electrical', 'outlet', 'switch', 'breaker', 'circuit', 'wiring', 'fixture'] },
+  { trade: 'Appliances', keywords: ['appliance', 'refrigerator', 'dishwasher', 'washer', 'dryer', 'oven', 'stove', 'microwave'] },
+  { trade: 'Painting', keywords: ['paint', 'painting', 'touch up', 'touch-up', 'repaint'] },
+  { trade: 'Landscaping', keywords: ['landscape', 'lawn', 'grass', 'sprinkler', 'irrigation', 'tree', 'yard'] },
+  { trade: 'General', keywords: ['handyman', 'maintenance', 'minor repair', 'caulk', 'hinge', 'door handle'] }
+];
+
+function getRoutingPropertyGroup(wo) {
+  if (!wo) return '';
+  if (wo.propertyId && _idToGroups[String(wo.propertyId)] && _idToGroups[String(wo.propertyId)].length) {
+    return _idToGroups[String(wo.propertyId)][0] || '';
+  }
+  if (wo.propertyName) {
+    var byName = _nameToGroups[String(wo.propertyName).trim().toLowerCase()];
+    if (byName && byName.length) return byName[0] || '';
+  }
+  var prop = PROPERTIES.find(function(p) {
+    if (wo.propertyId && String(p.id) === String(wo.propertyId)) return true;
+    if (wo.propertyName && p.name && p.name.trim().toLowerCase() === String(wo.propertyName).trim().toLowerCase()) return true;
+    return false;
+  });
+  return (prop && (prop.portfolio || prop.groupName || prop.group || '')) || '';
+}
+
+function getRoutingPmForGroup(groupName) {
+  if (!groupName) return 'Unmapped PM';
+  return ROUTING_PM_MAP[groupName] || groupName;
+}
+
+function getRoutingVendorCategory(wo) {
+  if (!wo) return '';
+  var cat = wo.vendorId ? (getVendorCategory(wo.vendorId) || '') : '';
+  if (!cat) {
+    var byName = VENDORS.find(function(v) { return String(v.name || '').trim().toLowerCase() === String(wo.vendorName || '').trim().toLowerCase(); });
+    if (byName) cat = getVendorCategory(byName.id) || '';
+  }
+  return cat || 'Vendor';
+}
+
+function getRoutingConfidenceRank(level) {
+  var l = String(level || '').toLowerCase();
+  if (l === 'high') return 3;
+  if (l === 'medium') return 2;
+  return 1;
+}
+
+function computeRoutingConfidence(matchCount) {
+  var count = Number(matchCount || 0);
+  var highThreshold = Math.max(2, Number(ROUTING_SETTINGS.highThreshold || 2));
+  if (count >= highThreshold) return 'high';
+  if (count >= 1) return 'medium';
+  return 'low';
+}
+
+function detectRoutingEventsFromLoadedWorkOrders() {
+  var activeCaps = ROUTING_CAPABILITIES.filter(function(c) { return Number(c.active) === 1; });
+  if (!activeCaps.length) return [];
+
+  var out = [];
+  WORK_ORDERS.forEach(function(wo) {
+    var st = String(wo.status || '').toLowerCase();
+    if (st.indexOf('cancel') !== -1 || st.indexOf('complete') !== -1) return;
+    if (!wo.vendorId && !wo.vendorName) return;
+
+    var vCat = getRoutingVendorCategory(wo);
+    if (vCat === 'Employee' || vCat === 'In-House Tech') return;
+
+    var text = (String(wo.description || '') + ' ' + String(wo.type || '') + ' ' + String(wo.priority || '')).toLowerCase();
+    var matches = [];
+    activeCaps.forEach(function(cap) {
+      var kws = [];
+      if (Array.isArray(cap.keywords)) kws = cap.keywords;
+      else if (typeof cap.keywords === 'string') {
+        try { kws = JSON.parse(cap.keywords); } catch (e) { kws = []; }
+      }
+      var tradeHit = text.indexOf(String(cap.trade || '').toLowerCase()) !== -1;
+      var keywordHit = kws.some(function(kw) { return text.indexOf(String(kw || '').toLowerCase()) !== -1; });
+      if (tradeHit || keywordHit) matches.push(String(cap.trade || 'General'));
+    });
+    if (!matches.length) return;
+
+    var confidence = computeRoutingConfidence(matches.length);
+    if (getRoutingConfidenceRank(confidence) < getRoutingConfidenceRank(ROUTING_SETTINGS.minConfidence)) {
+      return;
+    }
+
+    var groupName = getRoutingPropertyGroup(wo);
+    var pmName = getRoutingPmForGroup(groupName);
+
+    out.push({
+      wo_uuid: String(wo.uuid || ''),
+      wo_number: String(wo.id || ''),
+      property_id: String(wo.propertyId || ''),
+      property_name: String(wo.propertyName || ''),
+      unit_name: String(wo.unit || ''),
+      property_group: String(groupName || ''),
+      pm_name: String(pmName || 'Unmapped PM'),
+      vendor_id: String(wo.vendorId || ''),
+      vendor_name: String(wo.vendorName || ''),
+      vendor_category: String(vCat || 'Vendor'),
+      wo_status: String(wo.status || ''),
+      wo_priority: String(wo.priority || ''),
+      wo_created_at: String(wo.created || ''),
+      description: String(wo.description || ''),
+      matched_trade: matches.join(', '),
+      confidence: confidence,
+      source: 'client_scan'
+    });
+  });
+
+  return out;
+}
+
+async function loadRoutingCapabilities() {
+  var data = await proxyAction('routing_monitor', { op: 'capabilities' });
+  ROUTING_CAPABILITIES = data.results || [];
+
+  if (!ROUTING_CAPABILITIES.length) {
+    for (var i = 0; i < ROUTING_DEFAULT_CAPABILITIES.length; i++) {
+      var cap = ROUTING_DEFAULT_CAPABILITIES[i];
+      await proxyPost('routing_monitor', {
+        op: 'capability_upsert',
+        trade: cap.trade,
+        keywords: cap.keywords,
+        active: 1
+      });
+    }
+    var seeded = await proxyAction('routing_monitor', { op: 'capabilities' });
+    ROUTING_CAPABILITIES = seeded.results || [];
+  }
+
+  renderRoutingCapabilities();
+}
+
+async function loadRoutingPmMap() {
+  var data = await proxyAction('routing_monitor', { op: 'pm_map' });
+  ROUTING_PM_MAP = {};
+  (data.results || []).forEach(function(r) {
+    ROUTING_PM_MAP[String(r.group_name)] = String(r.pm_name || '');
+  });
+  renderRoutingPmMapEditor();
+}
+
+async function loadRoutingEventsAndStats() {
+  var status = $('#routingStatusFilter') ? $('#routingStatusFilter').value : 'pending';
+  var pm = $('#routingPmFilter') ? $('#routingPmFilter').value : 'all';
+  var days = $('#routingDaysFilter') ? $('#routingDaysFilter').value : '30';
+
+  var evData = await proxyAction('routing_monitor', {
+    op: 'events',
+    status: status,
+    pm: pm,
+    days: days,
+    limit: '500'
+  });
+  ROUTING_EVENTS = evData.results || [];
+
+  var stData = await proxyAction('routing_monitor', { op: 'pm_stats', days: days });
+  ROUTING_PM_STATS = stData.results || [];
+
+  renderRoutingPmFilter();
+  renderRoutingScorecard();
+  renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+  renderRoutingKpis();
+}
+
+function renderRoutingPmFilter() {
+  var sel = $('#routingPmFilter');
+  if (!sel) return;
+  var current = sel.value || 'all';
+  var seen = {};
+  var opts = ['<option value="all">All PMs</option>'];
+  ROUTING_PM_STATS.forEach(function(r) {
+    var pm = String(r.pm_name || '').trim();
+    if (!pm || seen[pm]) return;
+    seen[pm] = true;
+    opts.push('<option value="' + escapeHtml(pm) + '">' + escapeHtml(pm) + '</option>');
+  });
+  sel.innerHTML = opts.join('');
+  sel.value = seen[current] ? current : 'all';
+}
+
+function renderRoutingKpis() {
+  var total = ROUTING_EVENTS.length;
+  var pending = ROUTING_EVENTS.filter(function(e) { return String(e.review_status || 'pending') === 'pending'; }).length;
+  var high = ROUTING_EVENTS.filter(function(e) { return String(e.confidence || '') === 'high'; }).length;
+  var reviewed = ROUTING_EVENTS.filter(function(e) { return String(e.review_status || 'pending') !== 'pending'; }).length;
+
+  if ($('#routingKpiFlagged')) $('#routingKpiFlagged').textContent = String(total);
+  if ($('#routingKpiPending')) $('#routingKpiPending').textContent = String(pending);
+  if ($('#routingKpiHigh')) $('#routingKpiHigh').textContent = String(high);
+  if ($('#routingKpiReviewed')) $('#routingKpiReviewed').textContent = String(reviewed);
+  if ($('#routingKpiLast')) $('#routingKpiLast').textContent = _routingLastScanAt || '-';
+
+  var badge = $('#routingBadge');
+  if (badge) {
+    badge.textContent = String(pending);
+    badge.style.display = pending > 0 ? '' : 'none';
+  }
+}
+
+function renderRoutingScorecard() {
+  var body = $('#routingPmBody');
+  if (!body) return;
+  if (!ROUTING_PM_STATS.length) {
+    body.innerHTML = '<tr><td colspan="7" style="color:var(--text-muted)">No PM routing data yet. Run scan.</td></tr>';
+    return;
+  }
+  var html = '';
+  ROUTING_PM_STATS.forEach(function(r) {
+    var last = r.last_flagged ? formatDate(r.last_flagged) : '-';
+    html += '<tr>' +
+      '<td><strong>' + escapeHtml(String(r.pm_name || 'Unmapped PM')) + '</strong></td>' +
+      '<td>' + escapeHtml(String(r.total_flagged || '0')) + '</td>' +
+      '<td>' + escapeHtml(String(r.high_confidence || '0')) + '</td>' +
+      '<td>' + escapeHtml(String(r.pending || '0')) + '</td>' +
+      '<td>' + escapeHtml(String(r.approved_external || '0')) + '</td>' +
+      '<td>' + escapeHtml(String(r.reassigned || '0')) + '</td>' +
+      '<td style="font-family:var(--font-mono);font-size:11px">' + escapeHtml(last) + '</td>' +
+      '</tr>';
+  });
+  body.innerHTML = html;
+}
+
+function renderRoutingEventsTable(query) {
+  var body = $('#routingEventsBody');
+  if (!body) return;
+  var q = String(query || '').trim().toLowerCase();
+  var rows = ROUTING_EVENTS.filter(function(r) {
+    if (!q) return true;
+    var hay = [r.wo_number, r.property_name, r.property_group, r.pm_name, r.vendor_name, r.matched_trade, r.description].join(' ').toLowerCase();
+    return hay.indexOf(q) !== -1;
+  });
+
+  if ($('#routingSummary')) {
+    $('#routingSummary').textContent = 'Showing ' + rows.length + ' of ' + ROUTING_EVENTS.length + ' flagged events';
+  }
+
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="11" style="color:var(--text-muted)">No flagged routing events match current filters.</td></tr>';
+    return;
+  }
+
+  var html = '';
+  rows.forEach(function(r) {
+    var conf = String(r.confidence || 'medium');
+    var rev = String(r.review_status || 'pending');
+    var flaggedAt = r.detected_at ? timeAgo(r.detected_at) : '-';
+    html += '<tr data-routing-id="' + escapeHtml(String(r.id)) + '">' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(String(r.wo_number || '').replace(/^.*(\d{4,})$/, '$1')) + '</td>' +
+      '<td>' + escapeHtml(String(r.property_name || '-')) + '</td>' +
+      '<td>' + escapeHtml(String(r.property_group || '-')) + '</td>' +
+      '<td><strong>' + escapeHtml(String(r.pm_name || 'Unmapped PM')) + '</strong></td>' +
+      '<td>' + escapeHtml(String(r.vendor_name || '-')) + '</td>' +
+      '<td>' + escapeHtml(String(r.matched_trade || '-')) + '</td>' +
+      '<td><span class="routing-badge ' + conf + '">' + escapeHtml(conf) + '</span></td>' +
+      '<td>' + escapeHtml(String(r.wo_status || '-')) + '</td>' +
+      '<td style="font-family:var(--font-mono);font-size:11px">' + escapeHtml(flaggedAt) + '</td>' +
+      '<td class="routing-review ' + rev + '">' + escapeHtml(rev.replace('_', ' ')) + '</td>' +
+      '<td>' +
+      '<button class="filter-btn" data-routing-review="approved_external" data-routing-id="' + escapeHtml(String(r.id)) + '" style="padding:4px 6px">Approve</button> ' +
+      '<button class="filter-btn" data-routing-review="reassign_inhouse" data-routing-id="' + escapeHtml(String(r.id)) + '" style="padding:4px 6px;color:var(--success)">Reassign</button> ' +
+      '<button class="filter-btn" data-routing-review="dismissed" data-routing-id="' + escapeHtml(String(r.id)) + '" style="padding:4px 6px;color:var(--text-muted)">Dismiss</button>' +
+      '</td>' +
+      '</tr>';
+  });
+  body.innerHTML = html;
+}
+
+function renderRoutingCapabilities() {
+  var body = $('#routingCapabilitiesBody');
+  if (!body) return;
+  if (!ROUTING_CAPABILITIES.length) {
+    body.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">No capability rules configured.</td></tr>';
+    return;
+  }
+  var html = '';
+  ROUTING_CAPABILITIES.forEach(function(c) {
+    var kws = [];
+    if (Array.isArray(c.keywords)) kws = c.keywords;
+    else if (typeof c.keywords === 'string') {
+      try { kws = JSON.parse(c.keywords); } catch (e) { kws = []; }
+    }
+    html += '<tr>' +
+      '<td><strong>' + escapeHtml(String(c.trade || '')) + '</strong></td>' +
+      '<td style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(kws.join(', ')) + '</td>' +
+      '<td><label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" data-routing-cap-toggle="' + escapeHtml(String(c.id)) + '"' + (Number(c.active) === 1 ? ' checked' : '') + '> ' + (Number(c.active) === 1 ? 'On' : 'Off') + '</label></td>' +
+      '<td><button class="filter-btn" data-routing-cap-edit="' + escapeHtml(String(c.id)) + '" style="padding:4px 6px">Edit</button> <button class="filter-btn" data-routing-cap-del="' + escapeHtml(String(c.id)) + '" style="padding:4px 6px;color:var(--danger)">Delete</button></td>' +
+      '</tr>';
+  });
+  body.innerHTML = html;
+}
+
+function renderRoutingPmMapEditor() {
+  var body = $('#routingPmMapBody');
+  if (!body) return;
+
+  var groups = [];
+  (PROPERTY_GROUPS || []).forEach(function(g) {
+    if (!g || !g.name) return;
+    groups.push(String(g.name));
+  });
+  Object.keys(ROUTING_PM_MAP).forEach(function(g) {
+    if (groups.indexOf(g) === -1) groups.push(g);
+  });
+  groups.sort(function(a, b) { return a.localeCompare(b); });
+
+  if (!groups.length) {
+    body.innerHTML = '<tr><td colspan="2" style="color:var(--text-muted)">No property groups available yet. Load property groups first.</td></tr>';
+    return;
+  }
+
+  var html = '';
+  groups.forEach(function(group) {
+    var pm = ROUTING_PM_MAP[group] || group;
+    html += '<tr>' +
+      '<td>' + escapeHtml(group) + '</td>' +
+      '<td><input class="form-input routing-pm-map-input" data-group-name="' + escapeHtml(group) + '" value="' + escapeHtml(pm) + '" style="min-width:200px"></td>' +
+      '</tr>';
+  });
+  body.innerHTML = html;
+}
+
+function guessPmNameForGroup(groupName) {
+  var group = String(groupName || '').trim();
+  if (!group) return '';
+
+  var byManager = {};
+  (PROPERTIES || []).forEach(function(p) {
+    var pName = String(p && p.name || '').trim().toLowerCase();
+    var gCandidates = [];
+    if (p && p.id && _idToGroups[String(p.id)]) gCandidates = gCandidates.concat(_idToGroups[String(p.id)]);
+    if (pName && _nameToGroups[pName]) gCandidates = gCandidates.concat(_nameToGroups[pName]);
+    var direct = [p && p.portfolio, p && p.portfolioName, p && p.groupName, p && p.propertyGroup, p && p.group]
+      .map(function(v) { return String(v || '').trim(); })
+      .filter(Boolean);
+    gCandidates = gCandidates.concat(direct);
+    var inGroup = gCandidates.some(function(g) { return String(g || '').trim().toLowerCase() === group.toLowerCase(); });
+    if (!inGroup) return;
+
+    var siteManager = String((p && p.siteManager) || '').trim();
+    if (!siteManager) return;
+    byManager[siteManager] = (byManager[siteManager] || 0) + 1;
+  });
+
+  var best = '';
+  var bestCount = 0;
+  Object.keys(byManager).forEach(function(name) {
+    if (byManager[name] > bestCount) {
+      best = name;
+      bestCount = byManager[name];
+    }
+  });
+  return best;
+}
+
+function autoFillRoutingPmMap() {
+  var updated = 0;
+  $$('.routing-pm-map-input').forEach(function(input) {
+    var groupName = String(input.getAttribute('data-group-name') || '').trim();
+    if (!groupName) return;
+    var current = String(input.value || '').trim();
+    if (current && current.toLowerCase() !== groupName.toLowerCase()) return;
+    var guess = guessPmNameForGroup(groupName);
+    if (guess) {
+      input.value = guess;
+      updated++;
+    }
+  });
+  if (updated > 0) showToast('Auto-filled ' + updated + ' PM mapping row' + (updated === 1 ? '' : 's'));
+  else showToast('No PM names inferred yet. Load properties/work orders first.', 'warning');
+}
+
+async function saveRoutingPmMapFromUi() {
+  var rows = [];
+  $$('.routing-pm-map-input').forEach(function(input) {
+    var groupName = input.getAttribute('data-group-name') || '';
+    var pmName = String(input.value || '').trim();
+    if (groupName && pmName) rows.push({ group_name: groupName, pm_name: pmName });
+  });
+  if (!rows.length) {
+    showToast('No PM map rows to save');
+    return;
+  }
+  await proxyPost('routing_monitor', { op: 'pm_map_bulk', entries: rows });
+  await loadRoutingPmMap();
+  await loadRoutingEventsAndStats();
+  showToast('PM map saved (' + rows.length + ' groups)');
+}
+
+async function runRoutingScan() {
+  var btn = $('#btnRoutingScan');
+  if (btn) { btn.disabled = true; btn.classList.add('spinning'); }
+  try {
+    if (!WORK_ORDERS.length) {
+      showToast('No work orders loaded yet. Refresh data first.');
+      return;
+    }
+    if (!ROUTING_CAPABILITIES.length) await loadRoutingCapabilities();
+    if (!Object.keys(ROUTING_PM_MAP).length) await loadRoutingPmMap();
+
+    var events = detectRoutingEventsFromLoadedWorkOrders();
+    var resp = await proxyPost('routing_monitor', { op: 'scan', events: events });
+    _routingLastScanAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    await loadRoutingEventsAndStats();
+    showToast('Routing scan complete — ' + events.length + ' matched, ' + (resp.upserted || 0) + ' saved');
+  } catch (e) {
+    showToast('Routing scan failed: ' + (e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
+  }
+}
+
+async function initRoutingMonitor() {
+  if (!_routingInitDone) {
+    _routingInitDone = true;
+
+    if ($('#btnRoutingRefresh')) {
+      $('#btnRoutingRefresh').addEventListener('click', function() { loadRoutingEventsAndStats(); });
+    }
+    if ($('#btnRoutingScan')) {
+      $('#btnRoutingScan').addEventListener('click', function() { runRoutingScan(); });
+    }
+    if ($('#routingSearch')) {
+      $('#routingSearch').addEventListener('input', debounce(function() {
+        renderRoutingEventsTable(this.value);
+      }, CONFIG.DEBOUNCE_MS));
+    }
+    if ($('#routingStatusFilter')) {
+      $('#routingStatusFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+    }
+    if ($('#routingPmFilter')) {
+      $('#routingPmFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+    }
+    if ($('#routingDaysFilter')) {
+      $('#routingDaysFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+    }
+    if ($('#btnRoutingCapToggle')) {
+      $('#btnRoutingCapToggle').addEventListener('click', function() {
+        var wrap = $('#routingCapabilitiesWrap');
+        if (!wrap) return;
+        wrap.style.display = wrap.style.display === 'none' ? '' : 'none';
+      });
+    }
+    if ($('#btnRoutingMapToggle')) {
+      $('#btnRoutingMapToggle').addEventListener('click', function() {
+        var wrap = $('#routingPmMapWrap');
+        if (!wrap) return;
+        wrap.style.display = wrap.style.display === 'none' ? '' : 'none';
+      });
+    }
+    if ($('#btnRoutingMapSave')) {
+      $('#btnRoutingMapSave').addEventListener('click', function() { saveRoutingPmMapFromUi(); });
+    }
+    if ($('#btnRoutingMapAutofill')) {
+      $('#btnRoutingMapAutofill').addEventListener('click', function() { autoFillRoutingPmMap(); });
+    }
+    if ($('#routingMinConfidence')) {
+      $('#routingMinConfidence').value = ROUTING_SETTINGS.minConfidence;
+      $('#routingMinConfidence').addEventListener('change', function() {
+        ROUTING_SETTINGS.minConfidence = String(this.value || 'medium');
+      });
+    }
+    if ($('#routingHighThreshold')) {
+      $('#routingHighThreshold').value = String(ROUTING_SETTINGS.highThreshold);
+      $('#routingHighThreshold').addEventListener('change', function() {
+        var next = Number(this.value || '2');
+        ROUTING_SETTINGS.highThreshold = isNaN(next) ? 2 : Math.max(2, next);
+      });
+    }
+    if ($('#btnRoutingCapAdd')) {
+      $('#btnRoutingCapAdd').addEventListener('click', async function() {
+        var trade = prompt('Work type name (example: Locksmith):', '');
+        if (!trade) return;
+        var kwRaw = prompt('Keywords (comma separated):', '');
+        var keywords = String(kwRaw || '').split(',').map(function(k) { return k.trim(); }).filter(Boolean);
+        await proxyPost('routing_monitor', { op: 'capability_upsert', trade: trade.trim(), keywords: keywords, active: 1 });
+        await loadRoutingCapabilities();
+      });
+    }
+    var eventsBody = $('#routingEventsBody');
+    if (eventsBody) {
+      eventsBody.addEventListener('click', async function(e) {
+        var btn = e.target.closest('[data-routing-review]');
+        if (!btn) return;
+        var id = Number(btn.getAttribute('data-routing-id') || '0');
+        var review = btn.getAttribute('data-routing-review') || 'pending';
+        if (!id) return;
+        await proxyPost('routing_monitor', { op: 'review', id: id, review_status: review });
+        await loadRoutingEventsAndStats();
+      });
+    }
+    var capBody = $('#routingCapabilitiesBody');
+    if (capBody) {
+      capBody.addEventListener('change', async function(e) {
+        var chk = e.target.closest('[data-routing-cap-toggle]');
+        if (!chk) return;
+        var capId = Number(chk.getAttribute('data-routing-cap-toggle') || '0');
+        var cap = ROUTING_CAPABILITIES.find(function(c) { return Number(c.id) === capId; });
+        if (!cap) return;
+        var parsedKeywords = [];
+        if (typeof cap.keywords === 'string') {
+          try { parsedKeywords = JSON.parse(cap.keywords || '[]'); } catch (er) { parsedKeywords = []; }
+        } else {
+          parsedKeywords = cap.keywords || [];
+        }
+        await proxyPost('routing_monitor', {
+          op: 'capability_upsert',
+          id: cap.id,
+          trade: cap.trade,
+          keywords: parsedKeywords,
+          active: chk.checked ? 1 : 0
+        });
+        await loadRoutingCapabilities();
+      });
+      capBody.addEventListener('click', async function(e) {
+        var editBtn = e.target.closest('[data-routing-cap-edit]');
+        var delBtn = e.target.closest('[data-routing-cap-del]');
+        if (editBtn) {
+          var cid = Number(editBtn.getAttribute('data-routing-cap-edit') || '0');
+          var cur = ROUTING_CAPABILITIES.find(function(c) { return Number(c.id) === cid; });
+          if (!cur) return;
+          var trade = prompt('Work type name:', String(cur.trade || ''));
+          if (!trade) return;
+          var kws = [];
+          try { kws = typeof cur.keywords === 'string' ? JSON.parse(cur.keywords) : (cur.keywords || []); } catch (er) { kws = []; }
+          var kwRaw = prompt('Keywords (comma separated):', kws.join(', '));
+          if (kwRaw === null) return;
+          var nextKws = String(kwRaw).split(',').map(function(k) { return k.trim(); }).filter(Boolean);
+          await proxyPost('routing_monitor', { op: 'capability_upsert', id: cur.id, trade: trade.trim(), keywords: nextKws, active: Number(cur.active) === 1 ? 1 : 0 });
+          await loadRoutingCapabilities();
+          return;
+        }
+        if (delBtn) {
+          var did = Number(delBtn.getAttribute('data-routing-cap-del') || '0');
+          if (!did) return;
+          if (!confirm('Delete this work type rule?')) return;
+          await proxyPost('routing_monitor', { op: 'capability_delete', id: did });
+          await loadRoutingCapabilities();
+        }
+      });
+    }
+  }
+
+  await loadRoutingCapabilities();
+  await loadRoutingPmMap();
+  await loadRoutingEventsAndStats();
 }
 
 /* renderReconciliation — Removed (billing stripped to lighten payload) */
@@ -9804,7 +10788,7 @@ function wireUpUI() {
       }
       // Vendor card click (detail modal)
       var card = e.target.closest('.vendor-card');
-      if (card && !e.target.closest('.vendor-cat-select')) {
+      if (card && !e.target.closest('.vendor-cat-select') && !e.target.closest('.vendor-trade-cat-select')) {
         var vid2 = card.getAttribute('data-vendorid');
         var v = VENDORS.find(function(vn) { return String(vn.id) === vid2; });
         if (!v) return;
@@ -9817,6 +10801,7 @@ function wireUpUI() {
           { label: 'Name', value: v.name },
           { label: 'ID', value: String(v.id) },
           { label: 'Category', value: vCat },
+          { label: 'Trade Category', value: getVendorTradeCategory(v) },
           { label: 'Type (API)', value: v.vendorType || '\u2014' },
           { label: 'Trades', value: v.trades || '\u2014' },
           { section: 'Contact', icon: 'fa-phone' },
@@ -9840,6 +10825,17 @@ function wireUpUI() {
         saveVendorOverride(vid, { category: sel.value }).then(function() {
           renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
           showToast('Category \u2192 ' + sel.value);
+        });
+        return;
+      }
+
+      var tradeSel = e.target.closest('.vendor-trade-cat-select');
+      if (tradeSel) {
+        e.stopPropagation();
+        var tvid = tradeSel.getAttribute('data-vid');
+        saveVendorOverride(tvid, { tradeCategory: tradeSel.value }).then(function() {
+          renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+          showToast('Trade category \u2192 ' + tradeSel.value);
         });
       }
     });
@@ -9878,6 +10874,10 @@ function wireUpUI() {
       $$('.section').forEach(function(s) { s.classList.remove('active'); });
       var sec = document.getElementById('sec-' + tabName);
       if (sec) sec.classList.add('active');
+      if (document.body && document.body.classList.contains('tv-mode') && tabName !== 'dashboard') {
+        applyTvMode(false);
+      }
+      syncTvModeScope();
 
       // DOM cleanup — free heavy inner HTML of deactivated tabs to reduce memory
       // (they'll re-render when next activated)
@@ -9957,6 +10957,11 @@ function wireUpUI() {
       if (tabName === 'webhooks' && !_whLazyLoaded) {
         _whLazyLoaded = true;
         loadWebhookData();
+      }
+
+      // Initialize Routing Monitor on tab open
+      if (tabName === 'routing') {
+        try { await initRoutingMonitor(); } catch (e) { showToast('Routing monitor load failed: ' + (e.message || e)); }
       }
     });
   });
@@ -10057,8 +11062,27 @@ function wireUpUI() {
   if ($('#dashTurnPmFilter')) {
     $('#dashTurnPmFilter').addEventListener('change', function() {
       DASH_TURN_PM_FILTER = this.value;
+      try { localStorage.setItem('flr_turn_dash_filter', this.value); } catch(e){ /* */ }
       DASH_TURN_PAGE = 0;
       renderTurnDashboardStrip();
+    });
+  }
+  if ($('#dashTurnViewMode')) {
+    try {
+      var savedView = localStorage.getItem('hm_dash_turn_view_mode');
+      if (savedView === 'cards' || savedView === 'compact') DASH_TURN_VIEW_MODE = savedView;
+    } catch (e) { /* */ }
+    $('#dashTurnViewMode').value = DASH_TURN_VIEW_MODE;
+    $('#dashTurnViewMode').addEventListener('change', function() {
+      DASH_TURN_VIEW_MODE = this.value === 'compact' ? 'compact' : 'cards';
+      DASH_TURN_PAGE = 0;
+      try { localStorage.setItem('hm_dash_turn_view_mode', DASH_TURN_VIEW_MODE); } catch (e) { /* */ }
+      renderTurnDashboardStrip();
+    });
+  }
+  if ($('#dashTurnSync')) {
+    $('#dashTurnSync').addEventListener('click', function() {
+      syncTurnDashboardIncremental(true);
     });
   }
   if ($('#dashTurnPrev')) {
@@ -10084,6 +11108,15 @@ function wireUpUI() {
       if (localStorage.getItem('hm_tv_mode') === '1') applyTvMode(true);
     } catch (e) { /* */ }
   }
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape' && e.key !== 'Esc') return;
+    if (document.body && document.body.classList.contains('tv-mode')) {
+      applyTvMode(false);
+      showToast('TV mode disabled — full navigation restored');
+      return;
+    }
+    ensureNavigationChromeVisible();
+  });
   if ($('#dashTurnStrip')) {
     $('#dashTurnStrip').addEventListener('click', function(e) {
       var card = e.target.closest('[data-turndash-open]');
@@ -10091,6 +11124,19 @@ function wireUpUI() {
       openTurnBoardDetail(card.getAttribute('data-turndash-open'));
     });
   }
+  renderDashboardTurnSyncLabel();
+  if (DASH_TURN_SYNC_TIMER) {
+    clearInterval(DASH_TURN_SYNC_TIMER);
+    DASH_TURN_SYNC_TIMER = null;
+  }
+  DASH_TURN_SYNC_TIMER = setInterval(function() {
+    if (document.hidden) return;
+    var sec = document.getElementById('sec-dashboard');
+    var isDashboardActive = !!(sec && sec.classList.contains('active'));
+    var isTv = !!(document.body && document.body.classList.contains('tv-mode-dashboard'));
+    if (isDashboardActive || isTv) syncTurnDashboardIncremental(false);
+    renderDashboardTurnSyncLabel();
+  }, 5 * 60 * 1000);
 
   // Inspection status filter
   if ($('#inspStatusFilter')) {
@@ -10166,6 +11212,12 @@ function wireUpUI() {
   if ($('#vendorComplianceFilter')) {
     $('#vendorComplianceFilter').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
   }
+  if ($('#vendorTradeFilter')) {
+    $('#vendorTradeFilter').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+  }
+  if ($('#vendorSortMode')) {
+    $('#vendorSortMode').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+  }
   document.addEventListener('visibilitychange', function() {
     if (!document.hidden && _vendorsNeedRender) {
       renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
@@ -10234,6 +11286,7 @@ function wireUpUI() {
   var _tabRenderMap = {
     dashboard: function() { renderDashboardKPIs(); },
     workorders: function() { renderWorkOrders(); },
+    routing: function() { loadRoutingEventsAndStats().catch(function() {}); },
     payroll: function() { renderPayroll(); },
     turnboard: function() { renderTurnPipelineUI(); },
     inspections: function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
@@ -11474,7 +12527,7 @@ renderDashboardKPIs = function() {
 })();
 
 /* ================================================================
-   HANDYMANAGER v9.0 — PART 3: DISPATCH CONTROL MODULE
+  HANDYMANAGER v9.1a — PART 3: DISPATCH CONTROL MODULE
    All proxy calls use existing proxyAction() + API_PROXY.
    Tech UUIDs must hold "Maintenance Tech" role in AppFolio or
    every automated PATCH returns 422 "User not found".
@@ -12908,7 +13961,7 @@ document.addEventListener('keydown',function(e){
 });
 
 /* ================================================================
-   HANDYMANAGER v9.0 — PART 4: LIVE WEBHOOK EVENT ENGINE
+  HANDYMANAGER v9.1a — PART 4: LIVE WEBHOOK EVENT ENGINE
 
    Decodes every webhook event into human-readable labels,
    fires v9Toast for important events (completions/escalations),
@@ -13073,7 +14126,7 @@ function decodeWebhookEventV9(evt) {
             if(!keyArr.some(function(k){return SECMAP[secId].indexOf(k)!==-1;}))return;
             if(secId==='sec-workorders'){try{renderWorkOrders();}catch(e){}}
             else if(secId==='sec-turnboard'){try{renderTurnBoard();}catch(e){}}
-            else if(secId==='sec-dashboard'){try{renderDashboardKPIs();}catch(e){} try{renderActivityFeed();}catch(e){}}
+            else if(secId==='sec-dashboard'){try{renderDashboardKPIs();}catch(e){} try{renderTurnDashboardStrip();}catch(e){} try{renderActivityFeed();}catch(e){}}
             else if(secId==='sec-inspections'){try{renderInspections('');}catch(e){}}
             else if(secId==='sec-vendors'){try{renderVendors('');}catch(e){}}
           });
