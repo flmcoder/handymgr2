@@ -1267,33 +1267,66 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 @media(max-width:1100px){.turn-dash-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.turn-dash-strip{grid-template-columns:1fr}.turn-dash-controls{width:100%;justify-content:space-between}}
 
-/* TV oversight mode */
-body.tv-mode .topbar,
-body.tv-mode .nav-tabs,
-body.tv-mode .global-filter-bar,
-body.tv-mode #managerOverviewSection,
-body.tv-mode #moveOutSection,
-body.tv-mode #attentionSection,
-body.tv-mode .activity-filters,
-body.tv-mode #activityTable thead,
-body.tv-mode #btnRefreshDash,
-body.tv-mode #btnWebhookConfig {
+/* TV oversight mode (dashboard-focused, navigation always visible) */
+body.tv-mode .main-content { max-width: 100vw; }
+body.tv-mode-dashboard .main-content {
+  padding: 8px 12px;
+  height: calc(100dvh - 156px);
+  overflow: hidden;
+}
+body.tv-mode-dashboard #sec-dashboard {
+  height: 100%;
+  overflow: hidden;
+}
+body.tv-mode-dashboard #sec-dashboard > .kpi-grid,
+body.tv-mode-dashboard #managerOverviewSection,
+body.tv-mode-dashboard #attentionSection,
+body.tv-mode-dashboard #sec-dashboard .dash-columns {
   display: none !important;
 }
-body.tv-mode .main-content { max-width: 100vw; padding: 10px 16px; }
-body.tv-mode #turnDashboardSection { margin-top: 0; }
-body.tv-mode .turn-dash-summary { font-size: 14px; padding-bottom: 16px; }
-body.tv-mode .turn-dash-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-body.tv-mode .turn-dash-card { min-height: 240px; }
-body.tv-mode .turn-dash-unit { font-size: 22px; }
-body.tv-mode .turn-dash-property { font-size: 14px; }
-body.tv-mode .turn-dash-status,
-body.tv-mode .turn-dash-metric,
-body.tv-mode .turn-dash-alert { font-size: 13px; }
-body.tv-mode .turn-dash-metrics { gap: 10px; }
-body.tv-mode .turn-dash-controls .form-select,
-body.tv-mode .turn-dash-controls .action-btn,
-body.tv-mode .turn-dash-page-label { font-size: 14px; }
+body.tv-mode-dashboard #turnDashboardSection {
+  margin: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+body.tv-mode-dashboard #turnDashboardSection .table-header {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+body.tv-mode-dashboard #turnDashboardSection .section-subtitle {
+  font-size: 11px;
+}
+body.tv-mode-dashboard .turn-dash-summary {
+  font-size: 12px;
+  padding: 0 12px 8px;
+}
+body.tv-mode-dashboard .turn-dash-strip-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 10px 10px;
+}
+body.tv-mode-dashboard .turn-dash-strip {
+  height: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 10px;
+}
+body.tv-mode-dashboard .turn-dash-card {
+  min-height: 0;
+  height: 100%;
+  padding: 10px;
+  gap: 7px;
+}
+body.tv-mode-dashboard .turn-dash-unit { font-size: 18px; }
+body.tv-mode-dashboard .turn-dash-property,
+body.tv-mode-dashboard .turn-dash-status,
+body.tv-mode-dashboard .turn-dash-metric,
+body.tv-mode-dashboard .turn-dash-alert,
+body.tv-mode-dashboard .turn-dash-page-label,
+body.tv-mode-dashboard .turn-dash-controls .form-select,
+body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 
 @media (max-width: 900px) {
   .topbar { flex-wrap: wrap; height: auto; gap: 8px; padding: 10px 12px; }
