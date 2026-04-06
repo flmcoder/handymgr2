@@ -547,6 +547,36 @@ function isWOFlagged(woId) { return !!WO_FLAGS[woId]; }
    ================================================================= */
 var VENDOR_OVERRIDES = {};
 var VENDOR_CATEGORIES = ['Employee', 'In-House Tech', 'Vendor', 'Subcontractor', 'Utilities', 'HOA', 'Insurance', 'Uncategorized'];
+var VENDOR_TRADE_CATEGORIES = ['General', 'HVAC', 'Plumbing', 'Electrical', 'Appliance', 'Flooring', 'Painting', 'Landscaping', 'Cleaning', 'Roofing', 'Pest Control', 'Pool/Spa', 'Locksmith', 'Security', 'Other'];
+
+function normalizeVendorTradeCategory(value) {
+  var raw = String(value || '').trim().toLowerCase();
+  if (!raw) return 'General';
+  if (raw.indexOf('hvac') !== -1 || raw.indexOf('air') !== -1 || raw.indexOf('ac') === 0) return 'HVAC';
+  if (raw.indexOf('plumb') !== -1 || raw.indexOf('drain') !== -1 || raw.indexOf('sewer') !== -1) return 'Plumbing';
+  if (raw.indexOf('elect') !== -1 || raw.indexOf('wiring') !== -1) return 'Electrical';
+  if (raw.indexOf('appliance') !== -1) return 'Appliance';
+  if (raw.indexOf('floor') !== -1 || raw.indexOf('tile') !== -1 || raw.indexOf('carpet') !== -1) return 'Flooring';
+  if (raw.indexOf('paint') !== -1 || raw.indexOf('drywall') !== -1) return 'Painting';
+  if (raw.indexOf('landscape') !== -1 || raw.indexOf('tree') !== -1 || raw.indexOf('irrig') !== -1) return 'Landscaping';
+  if (raw.indexOf('clean') !== -1 || raw.indexOf('janitor') !== -1 || raw.indexOf('maid') !== -1) return 'Cleaning';
+  if (raw.indexOf('roof') !== -1) return 'Roofing';
+  if (raw.indexOf('pest') !== -1 || raw.indexOf('termite') !== -1) return 'Pest Control';
+  if (raw.indexOf('pool') !== -1 || raw.indexOf('spa') !== -1) return 'Pool/Spa';
+  if (raw.indexOf('lock') !== -1 || raw.indexOf('key') !== -1) return 'Locksmith';
+  if (raw.indexOf('security') !== -1 || raw.indexOf('alarm') !== -1 || raw.indexOf('camera') !== -1) return 'Security';
+  if (raw.indexOf('general') !== -1 || raw.indexOf('handyman') !== -1 || raw.indexOf('maintenance') !== -1) return 'General';
+  return 'Other';
+}
+
+function inferVendorTradeCategory(vendor) {
+  var trades = String((vendor && vendor.trades) || '').trim();
+  if (trades) {
+    var primary = trades.split(',')[0].split('/')[0];
+    return normalizeVendorTradeCategory(primary);
+  }
+  return 'General';
+}
 
 async function loadVendorOverrides() {
   // 1. Load from IndexedDB first (fast, local cache)
@@ -574,6 +604,7 @@ async function loadVendorOverrides() {
           var vid = row.vendor_id;
           var existing = VENDOR_OVERRIDES[vid] || { vendorId: vid };
           if (row.category !== null && row.category !== undefined) existing.category = row.category;
+          if (row.trade_category !== null && row.trade_category !== undefined) existing.tradeCategory = row.trade_category;
           if (row.compliant !== null && row.compliant !== undefined) existing.compliant = !!row.compliant;
           VENDOR_OVERRIDES[vid] = existing;
         });
@@ -595,6 +626,7 @@ async function saveVendorOverride(vendorId, overrides) {
   if (API_PROXY) {
     var payload = { vendor_id: vendorId };
     if (overrides.category !== undefined) payload.category = overrides.category;
+    if (overrides.tradeCategory !== undefined) payload.trade_category = overrides.tradeCategory;
     if (overrides.compliant !== undefined) payload.compliant = overrides.compliant === true ? 1 : (overrides.compliant === false ? 0 : null);
     try { await proxyPost('vendor_override', payload); } catch (e) { /* best-effort */ }
   }
@@ -607,6 +639,13 @@ function getVendorOverride(vendorId) {
 function getVendorCategory(vendorId) {
   var ov = VENDOR_OVERRIDES[vendorId];
   return (ov && ov.category) ? ov.category : '';
+}
+
+function getVendorTradeCategory(vendor) {
+  if (!vendor) return 'General';
+  var ov = VENDOR_OVERRIDES[vendor.id];
+  if (ov && ov.tradeCategory) return normalizeVendorTradeCategory(ov.tradeCategory);
+  return inferVendorTradeCategory(vendor);
 }
 
 function isVendorManuallyCompliant(vendorId) {
@@ -1372,7 +1411,7 @@ function setApiStatus(state, text) {
   textEl.textContent = text;
 }
 
-var APP_VERSION = 'v9.0d';
+var APP_VERSION = 'v9.1a';
 var APP_VERSION_UPDATED = 'April 2026';
 var SERVER_VERSION = '';
 
@@ -4170,15 +4209,34 @@ function renderMoveOuts() {
 }
 
 function getDashboardTurnPageSize() {
-  if (document.body && document.body.classList.contains('tv-mode')) return 3;
+  if (document.body && document.body.classList.contains('tv-mode')) return 6;
   if (window.matchMedia && window.matchMedia('(max-width: 700px)').matches) return 1;
   if (window.matchMedia && window.matchMedia('(max-width: 1100px)').matches) return 2;
   return 4;
 }
 
+function ensureNavigationChromeVisible() {
+  var topbar = document.querySelector('.topbar');
+  var navTabs = document.getElementById('navTabs') || document.querySelector('.nav-tabs');
+  if (topbar) topbar.style.display = '';
+  if (navTabs) navTabs.style.display = '';
+}
+
+function syncTvModeScope() {
+  if (!document.body) return;
+  var dashSection = document.getElementById('sec-dashboard');
+  var onDashboard = !!(dashSection && dashSection.classList.contains('active'));
+  document.body.classList.toggle('tv-mode-dashboard', document.body.classList.contains('tv-mode') && onDashboard);
+}
+
 function applyTvMode(enabled) {
   if (!document.body) return;
+  if (enabled) {
+    forceActiveTab('dashboard');
+  }
   document.body.classList.toggle('tv-mode', !!enabled);
+  syncTvModeScope();
+  if (!enabled) ensureNavigationChromeVisible();
   try { localStorage.setItem('hm_tv_mode', enabled ? '1' : '0'); } catch (e) { /* */ }
   var btn = $('#dashTvMode');
   if (btn) {
@@ -6145,7 +6203,30 @@ function renderVendors(search) {
 
   // Read filter states
   var catFilter = $('#vendorCategoryFilter') ? $('#vendorCategoryFilter').value : '';
+  var tradeFilter = $('#vendorTradeFilter') ? $('#vendorTradeFilter').value : '';
+  var sortMode = $('#vendorSortMode') ? $('#vendorSortMode').value : 'name';
   var compFilter = $('#vendorComplianceFilter') ? $('#vendorComplianceFilter').value : '';
+
+  var tradeCounts = {};
+  VENDORS.forEach(function(v) {
+    var tc = getVendorTradeCategory(v);
+    tradeCounts[tc] = (tradeCounts[tc] || 0) + 1;
+  });
+  var tradeSel = $('#vendorTradeFilter');
+  if (tradeSel) {
+    var currentTradeFilter = tradeFilter;
+    tradeSel.innerHTML = '<option value="">All Trade Categories</option>';
+    VENDOR_TRADE_CATEGORIES.slice().sort(function(a, b) { return a.localeCompare(b); }).forEach(function(tc) {
+      if (!tradeCounts[tc]) return;
+      var opt = document.createElement('option');
+      opt.value = tc;
+      opt.textContent = tc + ' (' + tradeCounts[tc] + ')';
+      tradeSel.appendChild(opt);
+    });
+    if (currentTradeFilter && !tradeCounts[currentTradeFilter]) currentTradeFilter = '';
+    tradeSel.value = currentTradeFilter;
+    tradeFilter = currentTradeFilter;
+  }
 
   // Note: Vendors don't have a direct property association for group filtering,
   // but we can filter by checking which vendors have WOs in the group
@@ -6178,6 +6259,11 @@ function renderVendors(search) {
       if (compFilter === 'manual-compliant' && !(res.compliant && res.isManual)) return false;
     }
 
+    if (tradeFilter) {
+      var vTradeCat = getVendorTradeCategory(v);
+      if (vTradeCat !== tradeFilter) return false;
+    }
+
     if (!searchText) return true;
     var s = searchLower;
     var vCatStr = getVendorCategory(v.id) || '';
@@ -6185,6 +6271,17 @@ function renderVendors(search) {
       || (v.email || '').toLowerCase().indexOf(s) !== -1
       || (v.trades || '').toLowerCase().indexOf(s) !== -1
       || vCatStr.toLowerCase().indexOf(s) !== -1;
+  });
+
+  baseFiltered.sort(function(a, b) {
+    var aName = String(a.name || '').toLowerCase();
+    var bName = String(b.name || '').toLowerCase();
+    if (sortMode === 'trade') {
+      var aTrade = getVendorTradeCategory(a);
+      var bTrade = getVendorTradeCategory(b);
+      if (aTrade !== bTrade) return aTrade.localeCompare(bTrade);
+    }
+    return aName.localeCompare(bName);
   });
 
   var availableInitials = {};
@@ -6199,7 +6296,7 @@ function renderVendors(search) {
     return;
   }
 
-  var renderKey = [currentPropertyGroup || '', catFilter || '', compFilter || '', searchLower, currentVendorInitial || ''].join('|');
+  var renderKey = [currentPropertyGroup || '', catFilter || '', tradeFilter || '', sortMode || 'name', compFilter || '', searchLower, currentVendorInitial || ''].join('|');
   if (_vendorRenderKey !== renderKey) {
     _vendorRenderKey = renderKey;
     _vendorRenderLimit = isConstrainedDevice() ? CONFIG.VENDOR_GRID_INITIAL_LIMIT_MOBILE : CONFIG.VENDOR_GRID_INITIAL_LIMIT_DESKTOP;
@@ -6247,6 +6344,12 @@ function renderVendors(search) {
     html += '<div class="vendor-row vendor-row-compact" style="align-items:center"><span class="vendor-row-label">Category</span><select class="vendor-cat-select" data-vid="' + escapeHtml(String(v.id)) + '" onclick="event.stopPropagation()">';
     VENDOR_CATEGORIES.forEach(function(c) {
       html += '<option value="' + escapeHtml(c) + '"' + ((vCat || 'Uncategorized') === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+    });
+    html += '</select></div>';
+    var vTradeCat = getVendorTradeCategory(v);
+    html += '<div class="vendor-row vendor-row-compact" style="align-items:center"><span class="vendor-row-label">Trade Cat.</span><select class="vendor-trade-cat-select" data-vid="' + escapeHtml(String(v.id)) + '" onclick="event.stopPropagation()">';
+    VENDOR_TRADE_CATEGORIES.forEach(function(tc) {
+      html += '<option value="' + escapeHtml(tc) + '"' + (vTradeCat === tc ? ' selected' : '') + '>' + escapeHtml(tc) + '</option>';
     });
     html += '</select></div>';
     var compLabel = cRes.compliant ? 'Compliant' : (v.compliantStatus || 'Non-Compliant');
@@ -6615,7 +6718,7 @@ function wireUpUI() {
       }
       // Vendor card click (detail modal)
       var card = e.target.closest('.vendor-card');
-      if (card && !e.target.closest('.vendor-cat-select')) {
+      if (card && !e.target.closest('.vendor-cat-select') && !e.target.closest('.vendor-trade-cat-select')) {
         var vid2 = card.getAttribute('data-vendorid');
         var v = VENDORS.find(function(vn) { return String(vn.id) === vid2; });
         if (!v) return;
@@ -6628,6 +6731,7 @@ function wireUpUI() {
           { label: 'Name', value: v.name },
           { label: 'ID', value: String(v.id) },
           { label: 'Category', value: vCat },
+          { label: 'Trade Category', value: getVendorTradeCategory(v) },
           { label: 'Type (API)', value: v.vendorType || '\u2014' },
           { label: 'Trades', value: v.trades || '\u2014' },
           { section: 'Contact', icon: 'fa-phone' },
@@ -6651,6 +6755,17 @@ function wireUpUI() {
         saveVendorOverride(vid, { category: sel.value }).then(function() {
           renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
           showToast('Category \u2192 ' + sel.value);
+        });
+        return;
+      }
+
+      var tradeSel = e.target.closest('.vendor-trade-cat-select');
+      if (tradeSel) {
+        e.stopPropagation();
+        var tvid = tradeSel.getAttribute('data-vid');
+        saveVendorOverride(tvid, { tradeCategory: tradeSel.value }).then(function() {
+          renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+          showToast('Trade category \u2192 ' + tradeSel.value);
         });
       }
     });
@@ -6689,6 +6804,10 @@ function wireUpUI() {
       $$('.section').forEach(function(s) { s.classList.remove('active'); });
       var sec = document.getElementById('sec-' + tabName);
       if (sec) sec.classList.add('active');
+      if (document.body && document.body.classList.contains('tv-mode') && tabName !== 'dashboard') {
+        applyTvMode(false);
+      }
+      syncTvModeScope();
 
       // DOM cleanup — free heavy inner HTML of deactivated tabs to reduce memory
       // (they'll re-render when next activated)
@@ -6874,6 +6993,15 @@ function wireUpUI() {
       if (localStorage.getItem('hm_tv_mode') === '1') applyTvMode(true);
     } catch (e) { /* */ }
   }
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape' && e.key !== 'Esc') return;
+    if (document.body && document.body.classList.contains('tv-mode')) {
+      applyTvMode(false);
+      showToast('TV mode disabled — full navigation restored');
+      return;
+    }
+    ensureNavigationChromeVisible();
+  });
   if ($('#dashTurnStrip')) {
     $('#dashTurnStrip').addEventListener('click', function(e) {
       var card = e.target.closest('[data-turndash-open]');
@@ -6955,6 +7083,12 @@ function wireUpUI() {
   }
   if ($('#vendorComplianceFilter')) {
     $('#vendorComplianceFilter').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+  }
+  if ($('#vendorTradeFilter')) {
+    $('#vendorTradeFilter').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+  }
+  if ($('#vendorSortMode')) {
+    $('#vendorSortMode').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
   }
   document.addEventListener('visibilitychange', function() {
     if (!document.hidden && _vendorsNeedRender) {
