@@ -9175,6 +9175,9 @@ var DispatchComms = {
       if (!response || !response.ok) {
         throw new Error((response && response.error) || 'Test SMS send failed');
       }
+      if (!response.magic_link || response.magic_link.indexOf('/s/') === -1) {
+        throw new Error('Dispatch short link was not created. Raw portal URLs are blocked.');
+      }
       if (resultEl) {
         var linkHtml = response.magic_link
           ? ' <a href="' + escapeHtml(response.magic_link) + '" target="_blank" rel="noopener noreferrer">Open portal</a>'
