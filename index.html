@@ -2266,6 +2266,9 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
         <option value="90">90 Days</option>
         <option value="180">180 Days</option>
       </select>
+      <select id="routingTradeFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:140px">
+        <option value="all">All Work Types</option>
+      </select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search flagged events…" id="routingSearch" style="min-width:180px"></div>
       <button class="action-btn" id="btnRoutingMapToggle"><i class="fas fa-user-tag"></i> PM Map</button>
       <button class="action-btn" id="btnRoutingCapToggle"><i class="fas fa-sliders-h"></i> Work Types</button>
@@ -3430,6 +3433,8 @@ function populateGroupFilters() {
   }
   // Update the active indicator badge
   updateGlobalGroupIndicator();
+  // Refresh PM user group dropdown if the dbadmin panel exposed its populate hook
+  if (typeof window._repopulatePMGroupDropdown === 'function') window._repopulatePMGroupDropdown();
 }
 
 function updateGlobalGroupIndicator() {
@@ -4114,7 +4119,8 @@ function applyAccessRole() {
       forceActiveTab('dashboard');
     }
     var gfBar2 = document.getElementById('globalFilterBar');
-    if (gfBar2) gfBar2.style.display = '';
+    // pm_readonly users are auto-scoped to their property group UUID — no manual filter needed
+    if (gfBar2) gfBar2.style.display = _accessRole === 'pm_readonly' ? 'none' : '';
   }
   persistAccessRole(_accessRole);
 }
@@ -10906,6 +10912,22 @@ function renderRoutingPmFilter() {
   });
   sel.innerHTML = opts.join('');
   sel.value = seen[current] ? current : 'all';
+
+  // Also populate trade filter from loaded events
+  var tradeSel = $('#routingTradeFilter');
+  if (tradeSel) {
+    var currentTrade = tradeSel.value || 'all';
+    var tradesSeen = {};
+    var tradeOpts = ['<option value="all">All Work Types</option>'];
+    ROUTING_EVENTS.forEach(function(e) {
+      var t = String(e.matched_trade || '').trim();
+      if (!t || tradesSeen[t]) return;
+      tradesSeen[t] = true;
+      tradeOpts.push('<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>');
+    });
+    tradeSel.innerHTML = tradeOpts.join('');
+    tradeSel.value = tradesSeen[currentTrade] ? currentTrade : 'all';
+  }
 }
 
 function renderRoutingKpis() {
@@ -10954,7 +10976,9 @@ function renderRoutingEventsTable(query) {
   var body = $('#routingEventsBody');
   if (!body) return;
   var q = String(query || '').trim().toLowerCase();
+  var tradeFilter = ($('#routingTradeFilter') && $('#routingTradeFilter').value) || 'all';
   var rows = ROUTING_EVENTS.filter(function(r) {
+    if (tradeFilter !== 'all' && String(r.matched_trade || '').trim() !== tradeFilter) return false;
     if (!q) return true;
     var hay = [r.wo_number, r.property_name, r.property_group, r.pm_name, r.vendor_name, r.matched_trade, r.description].join(' ').toLowerCase();
     return hay.indexOf(q) !== -1;
@@ -11162,6 +11186,11 @@ async function initRoutingMonitor() {
     }
     if ($('#routingDaysFilter')) {
       $('#routingDaysFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+    }
+    if ($('#routingTradeFilter')) {
+      $('#routingTradeFilter').addEventListener('change', function() {
+        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+      });
     }
     if ($('#btnRoutingCapToggle')) {
       $('#btnRoutingCapToggle').addEventListener('click', function() {
@@ -13307,8 +13336,13 @@ renderDashboardKPIs = function() {
 
   function loadPmUsers() {
     if (!pmUsersBody) return Promise.resolve();
+    var adminKey = (document.getElementById('dbAdminKey') && document.getElementById('dbAdminKey').value || '').trim();
+    if (!adminKey) {
+      pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-key"></i> Enter Admin Key above to load PM users</div>';
+      return Promise.resolve();
+    }
     pmUsersBody.innerHTML = '<div class="dbadmin-msg">Loading PM users…</div>';
-    return proxyAction('pm_proxy_users').then(function(data) {
+    return proxyAction('pm_proxy_users', { key: adminKey }).then(function(data) {
       renderPmUsers(data.results || []);
     }).catch(function(err) {
       pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--danger)"><i class="fas fa-exclamation-circle"></i> ' + escapeHtml(err.message || String(err)) + '</div>';
@@ -13429,6 +13463,15 @@ renderDashboardKPIs = function() {
 
   fetchUnitTurnHistory().then(function() { renderTurnHistoryPanel(); }).catch(function() {});
   populatePMGroupDropdown('');
+  // Expose a re-populate hook so populateGroupFilters() can call it once groups load
+  window._repopulatePMGroupDropdown = function() { populatePMGroupDropdown(''); };
+  // Also re-run when admin key is entered (groups may already be loaded by then)
+  var dbKeyInput = document.getElementById('dbAdminKey');
+  if (dbKeyInput) {
+    dbKeyInput.addEventListener('change', function() {
+      if (dbKeyInput.value.trim()) { populatePMGroupDropdown(''); loadPmUsers(); }
+    });
+  }
   loadPmUsers();
 
   // ── OTP Settings Panel ──────────────────────────────────────────────────
