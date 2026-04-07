@@ -35,6 +35,20 @@ function formatDate(d) {
   var m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return m[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
 }
+function formatNoteDateTime(d) {
+  if (!d) return '—';
+  if (typeof d === 'string') d = new Date(d);
+  if (!d || isNaN(d.getTime())) return '—';
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  var yyyy = d.getFullYear();
+  var mins = String(d.getMinutes()).padStart(2, '0');
+  var h24 = d.getHours();
+  var ampm = h24 >= 12 ? 'PM' : 'AM';
+  var hour = h24 % 12;
+  if (hour === 0) hour = 12;
+  return mm + '/' + dd + '/' + yyyy + ' ' + hour + ':' + mins + ' ' + ampm;
+}
 function daysBetween(a, b) {
   var da = typeof a === 'string' ? new Date(a) : a;
   var db = typeof b === 'string' ? new Date(b) : b;
@@ -239,6 +253,9 @@ function populateGroupFilters() {
   }
   // Update the active indicator badge
   updateGlobalGroupIndicator();
+  if (forcedPropertyGroupUuid) {
+    enforceScopedPropertyGroup();
+  }
 }
 
 function updateGlobalGroupIndicator() {
@@ -681,7 +698,9 @@ var VAULT_BLOBS = [
 var API_CREDS = null;
 var API_VHOST = null;
 var API_PROXY = '';
-var _accessRole = 'full'; // 'full' = all tabs, 'manager' = app without dispatch/db admin, 'vendors' = vendor-only restricted access
+var _accessRole = 'full'; // 'full' | 'manager' | 'vendors' | 'pm_readonly'
+var _pmScopeGroupUuid = '';
+var _pmScopeEmail = '';
 
 function decodeSecretLabel(b64) {
   try { return atob(b64); } catch (e) { return ''; }
@@ -692,8 +711,12 @@ var ROLE_TOKEN_ADMIN = decodeSecretLabel('YWR2YW5jZWQ6Om1hbmFnZXI=');
 
 function normalizeAccessRole(role) {
   var value = String(role || '').trim().toLowerCase();
-  if (value === 'vendors' || value === 'manager' || value === 'full') return value;
+  if (value === 'vendors' || value === 'manager' || value === 'full' || value === 'pm_readonly') return value;
   return 'full';
+}
+
+function isReadOnlyAccessMode() {
+  return _accessRole === 'pm_readonly';
 }
 
 function persistAccessRole(role) {
@@ -753,9 +776,13 @@ async function decryptVault(passphrase) {
 
 function isTabAllowedForRole(tabName) {
   if (_accessRole === 'vendors') return tabName === 'vendors';
+  if (_accessRole === 'pm_readonly') {
+    var pmAllowedTabs = ['dashboard', 'workorders', 'routing', 'turnboard', 'vendors', 'inspections', 'errors'];
+    return pmAllowedTabs.indexOf(tabName) !== -1;
+  }
   if (_accessRole === 'manager') {
-    // Manager role — allowed tabs: workorders, turnboard, vendors, inspections, errors
-    var allowedTabs = ['dashboard', 'workorders', 'turnboard', 'vendors', 'inspections', 'errors'];
+    // Manager role allowed tabs: workorders, turnboard, vendors, inspections, errors
+    var allowedTabs = ['dashboard', 'workorders', 'routing', 'turnboard', 'vendors', 'inspections', 'errors'];
     return allowedTabs.indexOf(tabName) !== -1;
   }
   return true;
@@ -779,6 +806,8 @@ function wipeCredentials() {
   API_VHOST = null;
   API_PROXY = '';
   _accessRole = 'full';
+  _pmScopeGroupUuid = '';
+  _pmScopeEmail = '';
 }
 
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
@@ -954,7 +983,7 @@ async function verifyDeviceOtp(email, code, userName) {
   if (!res.ok || !data.ok || !data.token) {
     throw new Error(data.error || ('OTP verify failed (HTTP ' + res.status + ')'));
   }
-  return data.token;
+  return data;
 }
 
 // ---- Timeout helper ----
@@ -1050,6 +1079,9 @@ async function proxyAction(action, params) {
 // Sends { action } in the query string only; all payload (including key/secret)
 // travels as a JSON body. Attaches the same bearer token as proxyAction.
 async function proxyPost(action, bodyObj, extraHeaders) {
+  if (isReadOnlyAccessMode()) {
+    throw new Error('Read-only access mode: updates are disabled');
+  }
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
@@ -1165,6 +1197,10 @@ function updateRateBadge() {
 
 // Core fetch wrapper with auth, retries, and error logging
 async function apiFetch(path, options) {
+  var methodCheck = ((options && options.method) || 'GET').toUpperCase();
+  if (isReadOnlyAccessMode() && methodCheck !== 'GET' && methodCheck !== 'HEAD') {
+    throw new Error('Read-only access mode: updates are disabled');
+  }
   if (!API_PROXY) {
     // Direct mode needs vault credentials
     var auth = getAuthHeader();
@@ -1474,11 +1510,11 @@ function logApiError(code, msg, action) {
 /* =================================================================
    DATA STORES — populated from live API
    ================================================================= */
-var WORK_ORDERS = [];
-var VENDORS = [];
-var PROPERTIES = [];
+if (typeof WORK_ORDERS === 'undefined') globalThis.WORK_ORDERS = [];
+if (typeof VENDORS === 'undefined') globalThis.VENDORS = [];
+if (typeof PROPERTIES === 'undefined') globalThis.PROPERTIES = [];
 var PROPERTY_GROUPS = [];
-var TURNS = [];
+if (typeof TURNS === 'undefined') globalThis.TURNS = [];
 var UPCOMING_MOVEOUTS = []; // from tenant_directory — tenants on notice
 var TURN_WORK_ORDERS = []; // from DB API — unit turn WOs with real-time status
 var UNIT_TURNS_DB = [];    // SQL-backed unit turn tracker records
@@ -1507,6 +1543,8 @@ var WO_DETAIL_CACHE_MAX = 50;  // max cached entries
 var CURRENT_WO_MODAL = null;
 var PAYROLL_WEEK_OFFSET = 0;
 var currentPropertyGroup = '';
+var forcedPropertyGroupUuid = '';
+var forcedPropertyGroupName = '';
 var currentTurnFilter = 'open';
 var currentWOCloseAssistAge = 14;
 var _billsLoading = false;
@@ -1515,6 +1553,48 @@ var _vendorRenderLimit = 0;
 var currentVendorInitial = '';
 var _vendorRenderKey = '';
 var _vendorsNeedRender = false;
+var ROUTING_EVENTS = [];
+var ROUTING_PM_STATS = [];
+var ROUTING_CAPABILITIES = [];
+var ROUTING_PM_MAP = {};
+var _routingInitDone = false;
+var _routingLastScanAt = '';
+var ROUTING_SETTINGS = {
+  minConfidence: 'medium',
+  highThreshold: 2
+};
+
+try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || ''; } catch (e) { /* */ }
+try { _pmScopeEmail = localStorage.getItem('hm_scope_email') || ''; } catch (e) { /* */ }
+
+function resolveGroupNameFromUuid(groupUuid) {
+  var gid = String(groupUuid || '').trim();
+  if (!gid) return '';
+  var g = (PROPERTY_GROUPS || []).find(function(x) {
+    return String((x && x.id) || '').trim() === gid;
+  });
+  return g && g.name ? String(g.name) : '';
+}
+
+function enforceScopedPropertyGroup() {
+  if (!forcedPropertyGroupUuid) return;
+  var scopedName = resolveGroupNameFromUuid(forcedPropertyGroupUuid) || forcedPropertyGroupName;
+  if (!scopedName) return;
+  forcedPropertyGroupName = scopedName;
+  currentPropertyGroup = scopedName;
+  var sel = document.getElementById('globalGroupFilter');
+  if (sel) {
+    for (var i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value === scopedName) {
+        sel.value = scopedName;
+        break;
+      }
+    }
+    sel.disabled = true;
+  }
+  var clearBtn = document.getElementById('globalGroupClear');
+  if (clearBtn) clearBtn.style.display = 'none';
+}
 
 /* =================================================================
    CONFIG — Consolidated thresholds (edit here, not scattered in code)
@@ -1646,6 +1726,11 @@ function buildVendorComplianceMap() {
 function isClosedTurnWorkOrderStatus(status) {
   var normalized = String(status || '').trim().toLowerCase();
   return normalized === 'completed' || normalized === 'work completed' || normalized === 'canceled' || normalized === 'cancelled';
+}
+
+function isTerminalWOStatus(status) {
+  var s = String(status || '').trim().toLowerCase();
+  return s === 'completed' || s === 'work completed' || s === 'canceled' || s === 'cancelled';
 }
 
 function isTurnWorkDoneStatus(status) {
@@ -1921,9 +2006,23 @@ if ($('#btnVerifyOtp')) {
     btn.textContent = 'Verifying...';
     $('#vaultError').classList.remove('show');
     try {
-      var token = await verifyDeviceOtp(email, code, 'dispatcher');
+      var verifyData = await verifyDeviceOtp(email, code, 'dispatcher');
+      var token = verifyData.token;
       try { localStorage.setItem('hm_device_token', token); } catch (e) { /* */ }
       try { localStorage.setItem('hm_proxy_token', token); } catch (e2) { /* */ }
+      if (verifyData.role) {
+        _accessRole = normalizeAccessRole(verifyData.role);
+        persistAccessRole(_accessRole);
+      }
+      if (verifyData.property_group_uuid) {
+        forcedPropertyGroupUuid = String(verifyData.property_group_uuid);
+        forcedPropertyGroupName = '';
+        try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (e3) { /* */ }
+      }
+      if (verifyData.email) {
+        _pmScopeEmail = String(verifyData.email || '');
+        try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (e4) { /* */ }
+      }
       if ($('#vaultPassphrase')) $('#vaultPassphrase').value = '';
       showToast('Device verified — you can now connect without setup PIN.', { kind: 'success' });
     } catch (err) {
@@ -1987,9 +2086,32 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     API_VHOST = vhost;
     API_PROXY = proxyUrl;
 
+    // Resolve role from passphrase keyword before going into proxy/direct flow.
+    function resolveRoleFromPass(p) {
+      if (p === ROLE_TOKEN_VENDOR) return 'vendors';
+      if (p === ROLE_TOKEN_MANAGER) return 'manager';
+      return 'full';
+    }
+
     if (API_PROXY && existingDeviceToken && !pass) {
       API_CREDS = { p: existingDeviceToken };
       _accessRole = getStoredAccessRole();
+      try {
+        var sess = await proxyAction('session_info');
+        if (sess && sess.ok && sess.session) {
+          _accessRole = normalizeAccessRole(sess.session.role || _accessRole);
+          if (sess.session.property_group_uuid) {
+            forcedPropertyGroupUuid = String(sess.session.property_group_uuid);
+            forcedPropertyGroupName = '';
+            try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (scopeErr) { /* */ }
+          }
+          if (sess.session.login_email) {
+            _pmScopeEmail = String(sess.session.login_email);
+            try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeEmailErr) { /* */ }
+          }
+        }
+      } catch (sessErr) { /* non-fatal; fallback to stored role */ }
+      persistAccessRole(_accessRole);
       try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
     } else if (API_PROXY) {
       var proxyToken = '';
@@ -2001,12 +2123,30 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         proxyToken = String(pass || '').trim();
       }
       API_CREDS = { p: proxyToken };
-      _accessRole = pass === ROLE_TOKEN_VENDOR ? 'vendors' : (pass === ROLE_TOKEN_MANAGER ? 'manager' : 'full');
+      _accessRole = resolveRoleFromPass(pass); // role is determined by what the user typed
       persistAccessRole(_accessRole);
       try { localStorage.setItem('hm_proxy_token', proxyToken); } catch (e) { /* */ }
 
       // Validate auth with lightweight ping. cache_stats can fail on schema drift.
       await proxyAction('ping');
+
+      // Load scoped role/session metadata when proxy issues role-bearing tokens.
+      try {
+        var proxySess = await proxyAction('session_info');
+        if (proxySess && proxySess.ok && proxySess.session) {
+          _accessRole = normalizeAccessRole(proxySess.session.role || _accessRole);
+          persistAccessRole(_accessRole);
+          if (proxySess.session.property_group_uuid) {
+            forcedPropertyGroupUuid = String(proxySess.session.property_group_uuid);
+            forcedPropertyGroupName = '';
+            try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (scopeSetErr) { /* */ }
+          }
+          if (proxySess.session.login_email) {
+            _pmScopeEmail = String(proxySess.session.login_email || '');
+            try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeSetErr2) { /* */ }
+          }
+        }
+      } catch (ignoredSessionErr) { /* non-fatal */ }
     } else {
       API_CREDS = await decryptVault(pass);
       persistAccessRole(_accessRole);
@@ -2020,6 +2160,10 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     $('#appShell').classList.add('unlocked');
     applyAccessRole();
     await initApp();
+    if (_accessRole === 'pm_readonly') {
+      try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (eScope) { /* */ }
+      enforceScopedPropertyGroup();
+    }
     applyAccessRole();
     startAutoSync();
     var proxyInfo = API_PROXY ? ' via proxy' : ' (direct)';
@@ -2164,6 +2308,7 @@ async function fetchWorkOrders() {
         propertyName: r.property_name || r.property || r.PropertyName || '',
         propertyAddress: ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
         unitId: r.unit_id || r.UnitId || '',
+        unitTurnId: r.unit_turn_id || r.UnitTurnId || '',
         unit: r.unit_name || r.UnitName || r.unit_id || '',
         priority: r.priority || r.Priority || 'Normal',
         status: r.status || r.Status || 'New',
@@ -2196,6 +2341,32 @@ async function fetchWorkOrders() {
     WORK_ORDERS = [];
     return false;
   }
+}
+
+async function fetchCompletedWorkOrdersHistory(days) {
+  var lookback = parseInt(days || 365, 10) || 365;
+  var data = await proxyAction('completed_work_orders_history', { days: String(lookback) });
+  var results = data.results || [];
+  completedWOHistoryRows = results.map(function(r) {
+    return {
+      id: r.work_order_number || r.WorkOrderNumber || r.service_request_number || '',
+      uuid: r.work_order_id || r.Id || '',
+      propertyId: r.property_id || r.PropertyId || '',
+      propertyName: r.property_name || r.property || r.PropertyName || '',
+      unit: r.unit_name || r.UnitName || r.unit_id || '',
+      vendorName: r.vendor || r.VendorName || '',
+      vendorId: r.vendor_id || r.VendorId || '',
+      status: r.status || r.Status || '',
+      completedOn: r.completed_on || r.CompletedOn || r.work_completed_on || r.WorkCompletedOn || r.status_date || r.StatusDate || '',
+      amountBilled: r.amount_billed || r.AmountBilled || r.amount || r.Amount || r.total || r.Total || '',
+      priority: r.priority || r.Priority || 'Normal',
+      type: r.work_order_type || r.Type || '',
+      description: r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
+      tenant: r.primary_tenant || r.PrimaryTenant || ''
+    };
+  });
+  completedWOHistoryPage = 0;
+  return true;
 }
 
 // Bills: Proxy ?action=bills — DB API v0
@@ -2825,6 +2996,7 @@ async function fetchTurnWorkOrders() {
       return {
         id: wo.Id || wo.id || '',
         unitId: wo.UnitId || wo.unit_id || '',
+        unitTurnId: wo.UnitTurnId || wo.unit_turn_id || '',
         propertyId: wo.PropertyId || wo.property_id || '',
         status: wo.Status || wo.status || '',
         type: wo.Type || wo.type || '',
@@ -3200,6 +3372,20 @@ function extractWebhookMeta(e) {
   };
 }
 
+function webhookEventInCurrentGroup(e, meta) {
+  if (!currentPropertyGroup) return true;
+  meta = meta || extractWebhookMeta(e || {});
+  var payload = (meta && meta.payload) || {};
+  var propertyId = payload.property_id || payload.propertyId || payload.PropertyId || '';
+  var propertyName = payload.property_name || payload.propertyName || payload.PropertyName || '';
+  if (!propertyName && meta && meta.resourceType === 'property') {
+    propertyName = meta.resourceName || '';
+    if (!propertyId) propertyId = meta.resourceId || '';
+  }
+  if (!propertyId && !propertyName) return true;
+  return isInPropertyGroup(propertyId, propertyName, currentPropertyGroup);
+}
+
 var WEBHOOK_INVALIDATION_MAP = {
   work_order: ['work_orders', 'turn_work_orders', 'recent_tasks', 'labor'],
   unit_turn: ['turns', 'turn_work_orders'],
@@ -3450,14 +3636,17 @@ function dedupeWebhookEvents(list) {
 function renderWebhookEventList() {
   var el = $('#webhookEventList');
   var countEl = $('#webhookEventCount');
-  if (countEl) countEl.textContent = WEBHOOK_EVENTS.length;
+  var visibleEvents = WEBHOOK_EVENTS.filter(function(evt) {
+    return webhookEventInCurrentGroup(evt);
+  });
+  if (countEl) countEl.textContent = visibleEvents.length;
   if (!el) return;
-  if (WEBHOOK_EVENTS.length === 0) {
+  if (visibleEvents.length === 0) {
     el.innerHTML = 'No events yet \u2014 POST to the webhook URL to push events.';
     return;
   }
   var html = '';
-  WEBHOOK_EVENTS.slice(0, 25).forEach(function(e, idx) {
+  visibleEvents.slice(0, 25).forEach(function(e, idx) {
     var isPri = e.priority === 'urgent' || e.priority === 'high';
     var iconClass = 'fa-plug';
     var iconColor = 'var(--purple)';
@@ -3513,8 +3702,8 @@ function renderWebhookEventList() {
     html += '</div>';
     html += '</div>';
   });
-  if (WEBHOOK_EVENTS.length > 25) {
-    html += '<div style="padding:4px 0;color:var(--text-muted);text-align:center;font-size:10px">\u2026 and ' + (WEBHOOK_EVENTS.length - 25) + ' more</div>';
+  if (visibleEvents.length > 25) {
+    html += '<div style="padding:4px 0;color:var(--text-muted);text-align:center;font-size:10px">\u2026 and ' + (visibleEvents.length - 25) + ' more</div>';
   }
   el.innerHTML = html;
 
@@ -3663,6 +3852,7 @@ function renderWebhookDataTable(events) {
     html += '<tr class="wh-detail-row hidden" id="whDetail_' + (e.id || idx) + '">';
     html += '<td colspan="7" style="padding:10px 14px;background:var(--bg-input);border-bottom:2px solid var(--accent)">';
     html += '<div style="font-size:11px;font-family:var(--font-mono);line-height:1.5">';
+    var httpStatus = e.http_status || e.response_code || e.status_code || e.httpCode || 'N/A';
     html += '<strong>Object:</strong> ';
     if (resolved && resolved.record) {
       var richObj = buildAppFolioStyleTitle(meta.resourceType, meta.eventType, resolved.record);
@@ -3693,6 +3883,7 @@ function renderWebhookDataTable(events) {
       html += '(unknown)';
     }
     html += '<br>';
+    html += '<strong>HTTP Status:</strong> ' + escapeHtml(String(httpStatus)) + '<br>';
     html += '<strong>Change:</strong> ' + escapeHtml(changeSummary) + '<br>';
     html += '<strong>Body:</strong> ' + escapeHtml(e.body || '(empty)') + '<br>';
     if (e.raw) {
@@ -4074,30 +4265,53 @@ async function fetchPropertyDetail(propId) {
 // while DB API v0 endpoints require UUIDs
 function resolveWODbUuid(wo) {
   if (!wo) return '';
+  if (isUuidString(wo.dbApiId || '')) return String(wo.dbApiId);
   // 1. Check if wo already has a DB API link (contains UUID in path)
   if (wo.link) {
     var linkMatch = String(wo.link).match(/work_orders\/([0-9a-f\-]{36})/i);
     if (linkMatch) return linkMatch[1];
   }
-  // 2. Look up matching DB API work order by WO number
+  // 2. Look up matching DB API work order by WO number and turn context
   if (wo.id) {
+    var requiredWoNumber = String(wo.id || '').trim();
+    var requiredUnitTurnId = String(wo.unitTurnId || '').trim();
+    var requiredUnitId = String(wo.unitId || '').trim();
     var dbWo = TURN_WORK_ORDERS.find(function(tw) {
-      return String(tw.woNumber) === String(wo.id);
+      if (String(tw.woNumber || '').trim() !== requiredWoNumber) return false;
+      if (requiredUnitTurnId && String(tw.unitTurnId || '').trim() !== requiredUnitTurnId) return false;
+      if (requiredUnitId && String(tw.unitId || '').trim() !== requiredUnitId) return false;
+      return isUuidString(tw.id || '');
     });
     if (dbWo && dbWo.id) return dbWo.id;
+    var fallback = TURN_WORK_ORDERS.find(function(tw) {
+      return String(tw.woNumber || '').trim() === requiredWoNumber && isUuidString(tw.id || '');
+    });
+    if (fallback && fallback.id) return fallback.id;
   }
   // 3. Fallback: use wo.uuid (may be numeric — DB API may reject it)
   return wo.uuid || '';
 }
 
-async function fetchWONotes(woIdOrUuid) {
+async function fetchWONotes(woIdOrUuid, woContext) {
   if (!woIdOrUuid) return [];
   var woRef = String(woIdOrUuid || '').trim();
   if (!isUuidString(woRef)) {
+    var requiredUnitTurnId = String((woContext && woContext.unitTurnId) || '').trim();
+    var requiredUnitId = String((woContext && woContext.unitId) || '').trim();
     var dbWo = TURN_WORK_ORDERS.find(function(tw) {
-      return String(tw.woNumber || '') === woRef && isUuidString(tw.id);
+      if (String(tw.woNumber || '').trim() !== woRef) return false;
+      if (requiredUnitTurnId && String(tw.unitTurnId || '').trim() !== requiredUnitTurnId) return false;
+      if (requiredUnitId && String(tw.unitId || '').trim() !== requiredUnitId) return false;
+      return isUuidString(tw.id || '');
     });
-    woRef = dbWo ? String(dbWo.id) : '';
+    if (dbWo && dbWo.id) {
+      woRef = String(dbWo.id);
+    } else {
+      var fallback = TURN_WORK_ORDERS.find(function(tw) {
+        return String(tw.woNumber || '').trim() === woRef && isUuidString(tw.id || '');
+      });
+      woRef = fallback ? String(fallback.id) : '';
+    }
   }
   if (!woRef || !isUuidString(woRef)) return [];
   var notesCached = detailCacheGet('notes_' + woRef);
@@ -4117,7 +4331,7 @@ function renderWONotesList(notes) {
   var nl = document.getElementById('detailNotesList');
   if (!nl) return;
   if (!notes || notes.length === 0) {
-    nl.innerHTML = '<div style="text-align:center;padding:10px;color:var(--text-muted);font-size:12px">No notes</div>';
+    nl.innerHTML = '<div style="text-align:center;padding:10px;color:var(--text-muted);font-size:12px">No notes yet.</div>';
     return;
   }
   var nh = '';
@@ -4125,8 +4339,8 @@ function renderWONotesList(notes) {
     var createdBy = n.CreatedBy || n.created_by || n.Author || n.author || n.UserName || '—';
     var createdAt = n.CreatedAt || n.created_at || n.UpdatedAt || n.updated_at || '';
     var body = n.Body || n.body || n.Content || n.content || n.Note || n.note || n.Message || n.message || '';
-    nh += '<div class="note-item"><div class="note-item-header"><span>' + escapeHtml(createdBy) + '</span><span>' + formatDate(createdAt) + '</span></div>';
-    nh += '<div class="note-item-body">' + escapeHtml(body) + '</div></div>';
+    nh += '<div class="note-item"><div class="note-item-header"><span>' + escapeHtml(createdBy) + '</span><span>' + escapeHtml(formatNoteDateTime(createdAt)) + '</span></div>';
+    nh += '<div class="note-item-body">' + escapeHtml(body || '—') + '</div></div>';
   });
   nl.innerHTML = nh;
 }
@@ -4143,6 +4357,40 @@ function refreshCurrentWONotes(forceUuid) {
   });
 }
 
+async function postWONoteViaProxy(woDbUuid, noteText) {
+  if (!woDbUuid) return { ok: false, status: 0, message: 'Missing work order UUID' };
+  var path = '/api/v0/work_orders/' + encodeURIComponent(String(woDbUuid)) + '/notes';
+  var headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+  if (API_PROXY) {
+    var token = getProxyAccessToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+  } else {
+    var auth = getAuthHeader();
+    var devId = getDevId();
+    if (auth) headers['Authorization'] = auth;
+    if (devId) headers['X-AppFolio-Developer-ID'] = devId;
+  }
+  var res = await fetchWithTimeout(resolveUrl(path, 'POST'), {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify({ Body: String(noteText || '') })
+  }, 30000);
+  if (res.ok) return { ok: true };
+  var raw = '';
+  try { raw = await res.text(); } catch (e) { /* empty */ }
+  var msg = raw || res.statusText || 'Request failed';
+  try {
+    var parsed = JSON.parse(raw || '{}');
+    msg = parsed.error || parsed.message || parsed.detail || parsed.title || msg;
+  } catch (e) { /* keep raw body */ }
+  return { ok: false, status: res.status, message: String(msg || 'Request failed') };
+}
+
+async function fetchWOBilledAmount(woNumber) {
+  if (!woNumber) return { ok: true, total_billed: 0 };
+  return await proxyAction('wo_billed_amount', { wo_number: String(woNumber) });
+}
+
 /* =================================================================
    RENDER FUNCTIONS — All use live data
    ================================================================= */
@@ -4156,6 +4404,7 @@ function getUpcomingMoveOuts() {
 
   // Primary: use UPCOMING_MOVEOUTS from tenant directory (most accurate)
   UPCOMING_MOVEOUTS.forEach(function(mo) {
+    if (!isInPropertyGroup(mo.propertyId, mo.property, currentPropertyGroup)) return;
     if (!mo.moveOut) return;
     var moDate = new Date(mo.moveOut);
     if (isNaN(moDate.getTime())) return;
@@ -4170,6 +4419,7 @@ function getUpcomingMoveOuts() {
 
   // Fallback: also check inspections for move-outs not in UPCOMING_MOVEOUTS
   INSPECTIONS.forEach(function(r) {
+    if (!isInPropertyGroup(r.propertyId, r.propertyName, currentPropertyGroup)) return;
     if (!r.moveOut) return;
     var moDate = new Date(r.moveOut);
     if (isNaN(moDate.getTime())) return;
@@ -4487,6 +4737,14 @@ function renderDashboardKPIs() {
 
   var moveOuts = getUpcomingMoveOuts();
   var flaggedCount = Object.keys(WO_FLAGS).length;
+  var pendingBillApprovals = (BILLS || []).filter(function(b) {
+    if (!isInPropertyGroup(b.propertyId, b.propertyName, currentPropertyGroup)) return false;
+    var raw = b.raw || {};
+    var statusText = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || raw.State || raw.state || '').toLowerCase();
+    var approvalText = String(raw.ApprovalState || raw.approval_state || raw.PendingApproval || raw.pending_approval || '').toLowerCase();
+    var combined = statusText + ' ' + approvalText;
+    return combined.indexOf('pending') !== -1 || combined.indexOf('awaiting approval') !== -1 || combined.indexOf('needs approval') !== -1;
+  });
 
   // WO aging buckets
   var agingCounts = CONFIG.WO_AGING_BUCKETS.map(function() { return 0; });
@@ -4520,6 +4778,12 @@ function renderDashboardKPIs() {
   $('#kpiMoveOutsSub').textContent = moveOuts.length > 0 ? moveOuts[0].daysLeft + 'd until next' : 'None in ' + CONFIG.MOVEOUT_WINDOW_DAYS + ' days';
   $('#kpiFlagged').textContent = flaggedCount;
   $('#kpiFlaggedSub').textContent = flaggedCount > 0 ? flaggedCount + ' items flagged' : 'No flagged items';
+  if ($('#kpiPendingBills')) $('#kpiPendingBills').textContent = String(pendingBillApprovals.length);
+  if ($('#kpiPendingBillsSub')) {
+    $('#kpiPendingBillsSub').textContent = pendingBillApprovals.length > 0
+      ? pendingBillApprovals.length + ' bill(s) awaiting approval'
+      : (BILLS.length > 0 ? 'No pending approvals in scope' : 'AP bills not loaded yet');
+  }
 
   $('#woBadge').textContent = openWOs.length || '0';
   $('#turnBadge').textContent = activeTurns.length || '0';
@@ -4540,6 +4804,10 @@ function renderDashboardKPIs() {
       var clearBtn = document.getElementById('fiClearBtn');
       if (clearBtn) {
         clearBtn.onclick = function() {
+          if (forcedPropertyGroupUuid) {
+            enforceScopedPropertyGroup();
+            return;
+          }
           currentPropertyGroup = '';
           var ggf = document.getElementById('globalGroupFilter');
           if (ggf) ggf.value = '';
@@ -4564,6 +4832,7 @@ function renderActivityFeed() {
 
   // === v0 API Tasks — real-time activity (highest priority) ===
   RECENT_TASKS.slice(0, 40).forEach(function(task) {
+    if (!isInPropertyGroup(task.propertyId, task.propertyName, currentPropertyGroup)) return;
     var dateStr = task.updatedAt || task.createdAt || '';
     var isComplete = task.status === 'Completed' || task.status === 'Done';
     var taskIcon = 'fa-tasks';
@@ -4600,6 +4869,7 @@ function renderActivityFeed() {
 
   // === Webhook events — decoded from AppFolio webhook relay ===
   WEBHOOK_EVENTS.slice(0, 20).forEach(function(wh) {
+    if (!webhookEventInCurrentGroup(wh)) return;
     var isPri = wh.priority === 'urgent' || wh.priority === 'high';
     // Pick icon based on resource type
     var whIcon = 'fa-plug'; var whColor = 'var(--purple)';
@@ -4628,6 +4898,7 @@ function renderActivityFeed() {
     return new Date(b.created || 0) - new Date(a.created || 0);
   });
   sortedWOs.slice(0, 20).forEach(function(wo) {
+    if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return;
     var isUrgent = wo.priority === 'Urgent' || wo.priority === 'Emergency';
     activities.push({
       sortDate: new Date(wo.created || 0).getTime(),
@@ -4647,6 +4918,7 @@ function renderActivityFeed() {
 
   // Turn events
   TURNS.slice(0, 10).forEach(function(t) {
+    if (!isInPropertyGroup(t.propertyId, t.property, currentPropertyGroup)) return;
     var isActive = !t.turnEnd;
     activities.push({
       sortDate: new Date(t.moveOut || 0).getTime(),
@@ -4665,6 +4937,7 @@ function renderActivityFeed() {
   // Inspection events — overdue only
   var today = new Date();
   INSPECTIONS.filter(function(r) {
+    if (!isInPropertyGroup(r.propertyId, r.propertyName, currentPropertyGroup)) return false;
     var lastDate = r.lastInspection ? new Date(r.lastInspection) : null;
     return !lastDate || daysBetween(lastDate, today) > 365;
   }).slice(0, 8).forEach(function(r) {
@@ -4717,8 +4990,18 @@ function renderActivityFeed() {
 var currentWOFilter = 'all';
 var currentWOPriority = '';
 var currentWOType = '';
+var currentWOVendor = '';
 var currentWOProperty = '';
 var currentActivityFilter = 'all';
+var expandedWOColumn = '';
+var kanbanBoardScrollState = { left: 0, top: 0 };
+var woCloseAssist = { currentPage: 0, pageSize: 10 };
+var showCompletedWOHistory = false;
+var completedWOHistoryRows = [];
+var completedWOHistoryLoading = false;
+var completedWOHistoryPage = 0;
+var completedWOHistoryPageSize = 20;
+var _lastWOScopedFilterGroup = '__init__';
 
 // Kanban status columns and their display labels
 var KANBAN_STATUSES = [
@@ -4741,6 +5024,8 @@ function getFilteredWOs() {
     if (currentWOPriority && wo.priority !== currentWOPriority) return false;
     // Type dropdown
     if (currentWOType && wo.type !== currentWOType) return false;
+    // Vendor dropdown
+    if (currentWOVendor && String(wo.vendorName || '') !== currentWOVendor) return false;
     // Property dropdown
     if (currentWOProperty && wo.propertyName !== currentWOProperty) return false;
     // Property group filter — shared helper
@@ -4757,22 +5042,137 @@ function getFilteredWOs() {
   });
 }
 
+function rebuildWOScopedFilters() {
+  var groupKey = currentPropertyGroup || '';
+  var groupChanged = groupKey !== _lastWOScopedFilterGroup;
+  _lastWOScopedFilterGroup = groupKey;
+
+  if (groupChanged) {
+    currentWOVendor = '';
+    currentWOProperty = '';
+    completedWOHistoryPage = 0;
+  }
+
+  var vendorSel = $('#woVendorFilter');
+  if (vendorSel) {
+    var vendors = {};
+    WORK_ORDERS.forEach(function(wo) {
+      if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return;
+      var vendorName = String(wo.vendorName || '').trim();
+      if (vendorName) vendors[vendorName] = true;
+    });
+    var vendorOptions = ['<option value="">All Vendors</option>'];
+    Object.keys(vendors).sort().forEach(function(vendorName) {
+      vendorOptions.push('<option value="' + escapeHtml(vendorName) + '">' + escapeHtml(vendorName) + '</option>');
+    });
+    vendorSel.innerHTML = vendorOptions.join('');
+    if (currentWOVendor && vendors[currentWOVendor]) vendorSel.value = currentWOVendor;
+    else { currentWOVendor = ''; vendorSel.value = ''; }
+  }
+
+  var propSel = $('#woPropertyFilter');
+  if (propSel) {
+    var props = {};
+    PROPERTIES.forEach(function(p) {
+      if (!isInPropertyGroup(p.id, p.name, currentPropertyGroup)) return;
+      if (p.name) props[p.name] = true;
+    });
+    if (Object.keys(props).length === 0) {
+      WORK_ORDERS.forEach(function(wo) {
+        if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return;
+        if (wo.propertyName) props[wo.propertyName] = true;
+      });
+    }
+    var propOptions = ['<option value="">All Properties</option>'];
+    Object.keys(props).sort().forEach(function(name) {
+      propOptions.push('<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>');
+    });
+    propSel.innerHTML = propOptions.join('');
+    if (currentWOProperty && props[currentWOProperty]) propSel.value = currentWOProperty;
+    else { currentWOProperty = ''; propSel.value = ''; }
+  }
+}
+
+function getFilteredCompletedWOHistoryRows() {
+  var search = $('#woSearch') ? $('#woSearch').value : '';
+  return completedWOHistoryRows.filter(function(wo) {
+    if (currentWOPriority && wo.priority !== currentWOPriority) return false;
+    if (currentWOType && wo.type !== currentWOType) return false;
+    if (currentWOVendor && String(wo.vendorName || '') !== currentWOVendor) return false;
+    if (currentWOProperty && wo.propertyName !== currentWOProperty) return false;
+    if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return false;
+    if (search) {
+      var s = search.toLowerCase();
+      var haystack = [String(wo.id), String(wo.description || ''), String(wo.propertyName || ''), String(wo.vendorName || ''), String(wo.unit || ''), String(wo.tenant || '')].join(' ').toLowerCase();
+      return haystack.indexOf(s) !== -1;
+    }
+    return true;
+  });
+}
+
+function renderCompletedWOHistorySection() {
+  var mount = $('#woCompletedHistoryMount');
+  if (!mount) return;
+  if (!showCompletedWOHistory) {
+    mount.innerHTML = '';
+    return;
+  }
+  if (completedWOHistoryLoading) {
+    mount.innerHTML = '<div class="table-wrapper" style="margin-top:12px"><div class="table-header"><div class="table-title"><i class="fas fa-history" style="color:var(--info)"></i> Completed Work Order History</div></div><div class="wo-history-scroll" style="padding:24px;text-align:center;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> Loading completed history...</div></div>';
+    return;
+  }
+
+  var rows = getFilteredCompletedWOHistoryRows();
+  var totalPages = Math.max(1, Math.ceil(rows.length / completedWOHistoryPageSize));
+  if (completedWOHistoryPage >= totalPages) completedWOHistoryPage = totalPages - 1;
+  if (completedWOHistoryPage < 0) completedWOHistoryPage = 0;
+  var start = completedWOHistoryPage * completedWOHistoryPageSize;
+  var pageRows = rows.slice(start, start + completedWOHistoryPageSize);
+  var bodyHtml = '';
+  if (!rows.length) {
+    bodyHtml = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No completed work orders match the current filters.</td></tr>';
+  } else {
+    pageRows.forEach(function(wo) {
+      bodyHtml += '<tr>' +
+        '<td>#' + escapeHtml(String(wo.id || '—')) + '</td>' +
+        '<td>' + escapeHtml(String(wo.unit || '—')) + '</td>' +
+        '<td>' + escapeHtml(String(wo.propertyName || '—')) + '</td>' +
+        '<td>' + escapeHtml(String(wo.vendorName || '—')) + '</td>' +
+        '<td>' + escapeHtml(String(wo.status || '—')) + '</td>' +
+        '<td>' + escapeHtml(formatDate(wo.completedOn)) + '</td>' +
+        '<td>' + escapeHtml(wo.amountBilled ? currency(wo.amountBilled) : '—') + '</td>' +
+      '</tr>';
+    });
+  }
+
+  mount.innerHTML = '<div class="table-wrapper" style="margin-top:12px">' +
+    '<div class="table-header"><div class="table-title"><i class="fas fa-history" style="color:var(--info)"></i> Completed Work Order History</div><div class="section-subtitle">Terminal statuses only • read-only</div></div>' +
+    '<div class="wo-history-scroll" id="woHistoryScroll"><table class="data-table"><thead><tr><th>WO #</th><th>Unit</th><th>Property</th><th>Vendor</th><th>Status</th><th>Completed Date</th><th>Amount Billed</th></tr></thead><tbody>' + bodyHtml + '</tbody></table></div>' +
+    '<div class="wo-history-pagination"><button class="action-btn" id="woHistoryPrev"' + (completedWOHistoryPage === 0 ? ' disabled' : '') + '>← Prev</button><span class="page-label">Page ' + (completedWOHistoryPage + 1) + ' of ' + totalPages + '</span><button class="action-btn" id="woHistoryNext"' + (completedWOHistoryPage >= totalPages - 1 ? ' disabled' : '') + '>Next →</button></div>' +
+  '</div>';
+
+  var scrollEl = $('#woHistoryScroll');
+  var prevBtn = $('#woHistoryPrev');
+  var nextBtn = $('#woHistoryNext');
+  if (prevBtn) prevBtn.addEventListener('click', function() {
+    if (completedWOHistoryPage <= 0) return;
+    completedWOHistoryPage--;
+    renderCompletedWOHistorySection();
+    if (scrollEl) scrollEl.scrollTop = 0;
+  });
+  if (nextBtn) nextBtn.addEventListener('click', function() {
+    if (completedWOHistoryPage >= totalPages - 1) return;
+    completedWOHistoryPage++;
+    renderCompletedWOHistorySection();
+    if (scrollEl) scrollEl.scrollTop = 0;
+  });
+}
+
 function renderWorkOrders() {
   var board = $('#kanbanBoard');
   if (!board) return;
+  rebuildWOScopedFilters();
   var filtered = getFilteredWOs();
-
-  // Populate property dropdown with unique properties from current WOs
-  var propSel = $('#woPropertyFilter');
-  if (propSel && propSel.options.length <= 1) {
-    var props = {};
-    WORK_ORDERS.forEach(function(wo) { if (wo.propertyName) props[wo.propertyName] = true; });
-    Object.keys(props).sort().forEach(function(p) {
-      var opt = document.createElement('option');
-      opt.value = p; opt.textContent = p;
-      propSel.appendChild(opt);
-    });
-  }
 
   // Sync global group filter dropdown
   var grpSel = $('#globalGroupFilter');
@@ -4784,6 +5184,7 @@ function renderWorkOrders() {
 
   if (WORK_ORDERS.length === 0) {
     board.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-inbox" style="font-size:36px;display:block;margin-bottom:12px;color:var(--border)"></i>No work orders loaded. Connect to API or import a cache file.</div>';
+    renderCompletedWOHistorySection();
     return;
   }
 
@@ -4799,10 +5200,11 @@ function renderWorkOrders() {
   KANBAN_STATUSES.forEach(function(col) {
     var wos = groups[col.key] || [];
     var selected = currentWOFilter === col.key ? ' selected' : '';
-    html += '<div class="kanban-col">';
-    html += '<div class="kanban-col-head' + selected + '" data-status="' + escapeHtml(col.key) + '">';
+    var isExpanded = expandedWOColumn === col.key;
+    html += '<div class="kanban-col' + (isExpanded ? ' column--expanded' : '') + '" data-column="' + escapeHtml(col.key) + '">';
+    html += '<div class="kanban-col-head' + selected + '" data-status="' + escapeHtml(col.key) + '" data-column="' + escapeHtml(col.key) + '">';
     html += '<span class="kanban-col-title">' + escapeHtml(col.label) + '</span>';
-    html += '<span class="kanban-col-count">' + wos.length + '</span>';
+    html += '<div style="display:flex;align-items:center;gap:8px"><span class="kanban-col-count">' + wos.length + '</span><span class="kanban-col-toggle">' + (isExpanded ? '▼' : '▶') + '</span></div>';
     html += '</div>';
     html += '<div class="kanban-col-body">';
     if (wos.length === 0) {
@@ -4834,7 +5236,8 @@ function renderWorkOrders() {
   // Also show any WOs with statuses not in KANBAN_STATUSES
   var otherWos = filtered.filter(function(wo) { return !KANBAN_STATUSES.some(function(s) { return s.key === wo.status; }); });
   if (otherWos.length > 0) {
-    html += '<div class="kanban-col"><div class="kanban-col-head"><span class="kanban-col-title">Other</span><span class="kanban-col-count">' + otherWos.length + '</span></div><div class="kanban-col-body">';
+    var otherExpanded = expandedWOColumn === 'Other';
+    html += '<div class="kanban-col' + (otherExpanded ? ' column--expanded' : '') + '" data-column="Other"><div class="kanban-col-head" data-column="Other"><span class="kanban-col-title">Other</span><div style="display:flex;align-items:center;gap:8px"><span class="kanban-col-count">' + otherWos.length + '</span><span class="kanban-col-toggle">' + (otherExpanded ? '▼' : '▶') + '</span></div></div><div class="kanban-col-body">';
     otherWos.forEach(function(wo) {
       var pc = String(wo.priority || 'normal').toLowerCase();
       html += '<div class="kanban-card ' + pc + '" data-woid="' + escapeHtml(String(wo.id)) + '"><div class="kc-top"><span class="kc-id">#' + escapeHtml(String(wo.id)) + '</span><span class="kc-priority"><span class="tag ' + pc + '">' + escapeHtml(wo.priority) + '</span></span></div>';
@@ -4847,9 +5250,15 @@ function renderWorkOrders() {
   }
 
   board.innerHTML = html;
+  board.classList.toggle('has-expanded-column', !!expandedWOColumn);
+  if (expandedWOColumn) {
+    var expandedCol = board.querySelector('.kanban-col.column--expanded .kanban-col-body');
+    if (expandedCol) expandedCol.scrollTop = 0;
+  }
   $('#woBadge').textContent = filtered.length || '0';
   renderWOCloseAssist();
   renderWOFollowupQueue();
+  renderCompletedWOHistorySection();
   // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
 }
 
@@ -4959,7 +5368,9 @@ function computeWOCloseAssistRows() {
 function renderWOCloseAssist() {
   var body = $('#woCloseAssistBody');
   var summary = $('#woCloseAssistSummary');
-  if (!body || !summary) return;
+  var pagination = $('#woCloseAssistPagination');
+  var container = $('#woCloseAssistContainer');
+  if (!body || !summary || !pagination || !container) return;
 
   var rows = computeWOCloseAssistRows();
   var hi = rows.filter(function(r) { return r.confidence === 'High'; }).length;
@@ -4977,11 +5388,19 @@ function renderWOCloseAssist() {
       emptyMsg = 'No candidates for current age/filter window.';
     }
     body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted)">' + emptyMsg + '</td></tr>';
+    pagination.innerHTML = '';
+    woCloseAssist.currentPage = 0;
     return;
   }
 
+  var totalPages = Math.max(1, Math.ceil(rows.length / woCloseAssist.pageSize));
+  if (woCloseAssist.currentPage >= totalPages) woCloseAssist.currentPage = totalPages - 1;
+  if (woCloseAssist.currentPage < 0) woCloseAssist.currentPage = 0;
+  var start = woCloseAssist.currentPage * woCloseAssist.pageSize;
+  var pageItems = rows.slice(start, start + woCloseAssist.pageSize);
+
   var html = '';
-  rows.slice(0, 80).forEach(function(r) {
+  pageItems.forEach(function(r) {
     var wo = r.wo;
     var confColor = r.confidence === 'High' ? 'var(--danger)' : (r.confidence === 'Medium' ? 'var(--warning)' : 'var(--text-muted)');
     var billEvidence = r.billMatches.length > 0 ? (r.billMatches.length + ' AP match') : '—';
@@ -4997,11 +5416,28 @@ function renderWOCloseAssist() {
     html += '</tr>';
   });
   body.innerHTML = html;
+  pagination.innerHTML = '<button class="action-btn" id="woCloseAssistPrev"' + (woCloseAssist.currentPage === 0 ? ' disabled' : '') + '>← Prev</button>' +
+    '<span class="page-label">Page ' + (woCloseAssist.currentPage + 1) + ' of ' + totalPages + '</span>' +
+    '<button class="action-btn" id="woCloseAssistNext"' + (woCloseAssist.currentPage >= totalPages - 1 ? ' disabled' : '') + '>Next →</button>';
 
   Array.prototype.forEach.call(body.querySelectorAll('button[data-woid]'), function(btn) {
     btn.addEventListener('click', function() {
       showWODetail(btn.getAttribute('data-woid'));
     });
+  });
+  var prevBtn = document.getElementById('woCloseAssistPrev');
+  var nextBtn = document.getElementById('woCloseAssistNext');
+  if (prevBtn) prevBtn.addEventListener('click', function() {
+    if (woCloseAssist.currentPage <= 0) return;
+    woCloseAssist.currentPage--;
+    renderWOCloseAssist();
+    container.scrollTop = 0;
+  });
+  if (nextBtn) nextBtn.addEventListener('click', function() {
+    if (woCloseAssist.currentPage >= totalPages - 1) return;
+    woCloseAssist.currentPage++;
+    renderWOCloseAssist();
+    container.scrollTop = 0;
   });
 }
 
@@ -5114,7 +5550,9 @@ function showWODetail(id) {
   PRIORITIES.forEach(function(p) { html += '<option' + (p === wo.priority ? ' selected' : '') + '>' + p + '</option>'; });
   html += '</select></div>';
   html += '<div class="detail-row"><div class="detail-row-label">Type</div><div class="detail-row-value">' + escapeHtml(wo.type || '\u2014') + '</div></div>';
-  html += '<div class="detail-row"><div class="detail-row-label">Amount</div><div class="detail-row-value">' + escapeHtml(wo.amount || '\u2014') + '</div></div>';
+  if (isTerminalWOStatus(wo.status)) {
+    html += '<div class="detail-row"><div class="detail-row-label">Amount Billed</div><div class="detail-row-value" id="detailBilledAmount"><i class="fas fa-spinner fa-spin" style="font-size:10px"></i> Loading billed amount...</div></div>';
+  }
   html += '<div class="detail-row"><div class="detail-row-label">Created</div><div class="detail-row-value">' + formatDate(wo.created) + '</div></div>';
   html += '<div class="detail-row"><div class="detail-row-label">Scheduled</div><div class="detail-row-value">' + formatDate(wo.scheduledStart) + '</div></div>';
   html += '</div>';
@@ -5127,8 +5565,7 @@ function showWODetail(id) {
   html += '<div class="detail-row"><div class="detail-row-label">Property</div><div class="detail-row-value">' + escapeHtml(wo.propertyName) + '</div></div>';
   html += '<div class="detail-row"><div class="detail-row-label">Unit</div><div class="detail-row-value">' + escapeHtml(wo.unit || '\u2014') + '</div></div>';
   html += '<div class="detail-row"><div class="detail-row-label">Address</div><div class="detail-row-value">' + escapeHtml(wo.propertyAddress || '\u2014') + '</div></div>';
-  // Site manager placeholder — will be filled async
-  html += '<div class="detail-row"><div class="detail-row-label">Site Manager</div><div class="detail-row-value" id="detailSiteMgr"><i class="fas fa-spinner fa-spin" style="font-size:10px"></i></div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Site Manager</div><div class="detail-row-value" id="detailSiteMgr">—</div></div>';
   html += '</div></div>';
 
   // -- Tenant Section --
@@ -5151,43 +5588,76 @@ function showWODetail(id) {
 
   // -- Notes Section (async load) --
   html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-sticky-note"></i> Notes</div>';
-  html += '<div class="note-list" id="detailNotesList"><div style="text-align:center;padding:10px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> Loading notes\u2026</div></div></div>';
+  html += '<div class="note-list" id="detailNotesList"><div style="text-align:center;padding:10px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> Loading notes...</div></div></div>';
 
   // -- Add Note --
   html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-plus-circle"></i> Add Note</div>';
-  html += '<textarea class="form-textarea" placeholder="Type a note\u2026" id="detailNote"></textarea></div>';
+  html += '<textarea class="form-textarea" placeholder="Type a note\u2026" id="detailNote"></textarea>';
+  html += '<div id="detailNoteError" style="display:none;margin-top:8px;font-size:12px;color:#b42318;background:#fee4e2;border:1px solid #fda29b;border-radius:8px;padding:8px 10px"></div></div>';
 
   $('#woModalBody').innerHTML = html;
 
-  // Async: fetch property detail for site manager
+  function setDetailNoteError(message) {
+    var errEl = document.getElementById('detailNoteError');
+    if (!errEl) return;
+    if (!message) {
+      errEl.style.display = 'none';
+      errEl.textContent = '';
+      return;
+    }
+    errEl.textContent = message;
+    errEl.style.display = 'block';
+  }
+
+  // Cache-only site manager lookup (no live API call)
   if (wo.propertyId) {
     var prop = PROPERTIES.find(function(p) { return p.id === wo.propertyId || String(p.id) === String(wo.propertyId); });
-    if (prop && prop.siteManager) {
-      var smEl = document.getElementById('detailSiteMgr');
-      if (smEl) smEl.textContent = prop.siteManager;
-    } else {
-      fetchPropertyDetail(wo.propertyId).then(function(data) {
-        var smEl = document.getElementById('detailSiteMgr');
-        if (smEl) smEl.textContent = (data && (data.site_manager || data.SiteManager)) || '\u2014';
-      });
-    }
+    var smEl = document.getElementById('detailSiteMgr');
+    if (smEl) smEl.textContent = (prop && prop.siteManager) ? prop.siteManager : '\u2014';
   } else {
     var smEl = document.getElementById('detailSiteMgr');
     if (smEl) smEl.textContent = '\u2014';
   }
 
   // Async: fetch notes (use resolved DB API UUID for /api/v0/ endpoint)
-  fetchWONotes(woDbUuid).then(function(notes) {
+  if (woDbUuid) delete WO_DETAIL_CACHE['notes_' + woDbUuid];
+  fetchWONotes(woDbUuid || wo.id, wo).then(function(notes) {
     renderWONotesList(notes);
   });
 
+  if (isTerminalWOStatus(wo.status)) {
+    fetchWOBilledAmount(wo.id).then(function(data) {
+      var billedEl = document.getElementById('detailBilledAmount');
+      if (!billedEl) return;
+      var billed = Number((data && data.total_billed) || 0);
+      if (!isFinite(billed)) billed = 0;
+      billedEl.textContent = '$' + billed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }).catch(function(err) {
+      var billedEl = document.getElementById('detailBilledAmount');
+      if (!billedEl) return;
+      billedEl.textContent = 'Unavailable';
+      billedEl.title = (err && err.message) ? err.message : 'Unable to fetch billed amount';
+    });
+  }
+
   $('#woModalSave').onclick = async function() {
+    if (isReadOnlyAccessMode()) {
+      setDetailNoteError('Read-only access mode: updates are disabled.');
+      return;
+    }
+    setDetailNoteError('');
     var newStatus = $('#detailStatus').value;
     var newPriority = $('#detailPriority').value;
-    var note = ($('#detailNote') && $('#detailNote').value) ? $('#detailNote').value.trim() : '';
+    var noteInput = ($('#detailNote') && typeof $('#detailNote').value === 'string') ? $('#detailNote').value : '';
+    var note = noteInput.trim();
+    var statusChanged = newStatus !== wo.status || newPriority !== wo.priority;
+    if (!statusChanged && noteInput.length > 0 && !note) {
+      setDetailNoteError('Please enter a non-empty note.');
+      return;
+    }
 
     try {
-      if (newStatus !== wo.status || newPriority !== wo.priority) {
+      if (statusChanged) {
         if (!woDbUuid) { showToast('Cannot update: no DB API UUID for this WO'); return; }
         await apiFetch('/api/v0/work_orders/' + woDbUuid, {
           method: 'PATCH',
@@ -5197,26 +5667,43 @@ function showWODetail(id) {
         wo.priority = newPriority;
       }
       if (note) {
-        if (!woDbUuid) { showToast('Cannot add note: no DB API UUID for this WO'); return; }
-        try {
-          await apiFetch('/api/v0/work_orders/' + woDbUuid + '/notes', {
-            method: 'POST',
-            body: JSON.stringify({ Body: note })
-          });
-          refreshCurrentWONotes(woDbUuid);
-        } catch (noteErr) {
-          showToast('Note failed: ' + noteErr.message);
+        if (!woDbUuid) {
+          setDetailNoteError('Cannot add note: no DB API UUID for this work order.');
+          return;
         }
+        var noteResp = await postWONoteViaProxy(woDbUuid, note);
+        if (!noteResp.ok) {
+          setDetailNoteError('Add note failed (HTTP ' + noteResp.status + '): ' + noteResp.message);
+          return;
+        }
+        if ($('#detailNote')) $('#detailNote').value = '';
+        refreshCurrentWONotes(woDbUuid);
       }
       renderWorkOrders();
       renderDashboardKPIs();
-      closeModal('woModal');
-      showToast('Updated #' + wo.id + ' successfully');
+      if (!note) closeModal('woModal');
+      showToast(note ? 'Note added to #' + wo.id : 'Updated #' + wo.id + ' successfully');
       await saveAllToCache();
     } catch (err) {
-      showToast('Update failed: ' + err.message);
+      var msg = (err && err.message) ? err.message : 'Request failed';
+      setDetailNoteError(msg);
     }
   };
+  if (isReadOnlyAccessMode()) {
+    var saveBtn = $('#woModalSave');
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.title = 'Read-only access';
+      saveBtn.textContent = 'Read-Only';
+    }
+  } else {
+    var saveBtn2 = $('#woModalSave');
+    if (saveBtn2) {
+      saveBtn2.disabled = false;
+      saveBtn2.title = '';
+      saveBtn2.textContent = 'Save Changes';
+    }
+  }
   openModal('woModal');
 }
 
@@ -5339,14 +5826,10 @@ function buildTurnPipeline() {
     if (!_woByUnitProp[key]) _woByUnitProp[key] = [];
     _woByUnitProp[key].push(wo);
   });
-  // Index TURN_WORK_ORDERS by unitId + propertyId
+  // Index TURN_WORK_ORDERS by unitId for strict unit-level matching
   var _turnWoByUnit = {};
-  var _turnWoByProp = {};
-  var _turnWoByNum = {};
   TURN_WORK_ORDERS.forEach(function(wo) {
     if (wo.unitId) { if (!_turnWoByUnit[wo.unitId]) _turnWoByUnit[wo.unitId] = []; _turnWoByUnit[wo.unitId].push(wo); }
-    if (wo.propertyId) { if (!_turnWoByProp[wo.propertyId]) _turnWoByProp[wo.propertyId] = []; _turnWoByProp[wo.propertyId].push(wo); }
-    if (wo.woNumber) _turnWoByNum[wo.woNumber] = wo;
   });
 
   // Helper: create a composite key for deduplication
@@ -5355,38 +5838,38 @@ function buildTurnPipeline() {
     return k === '--' ? null : k;
   }
 
-  // Helper: find matching WOs for a unit+property pair using pre-built indexes
-  function findMatchingWOs(unit, property, propId, unitId, moveOutDate) {
+  // Helper: strict unit_turn_id + unit_id + created_at>=moveOut matching
+  function findMatchingWOs(unit, property, propId, unitId, moveOutDate, turnData) {
+    var requiredUnitTurnId = String((turnData && turnData.unitTurnId) || '').trim();
+    var requiredUnitId = String(unitId || '').trim();
+    if (!requiredUnitTurnId || !requiredUnitId) return [];
+    var moveOutIso = (moveOutDate && !isNaN(moveOutDate.getTime())) ? moveOutDate.toISOString() : '';
+    if (!moveOutIso) return [];
+
     var wos = [];
-    // From Reports API work orders — O(1) lookup by composite key
-    var lookupKey = (unit && property) ? String(unit).toLowerCase() + '|' + String(property).toLowerCase() : null;
-    var reportsWOs = lookupKey ? (_woByUnitProp[lookupKey] || []) : [];
+    // From Reports API work orders — strict unit + turn + created_at gate
+    var reportsWOs = WORK_ORDERS.filter(function(wo) {
+      var woCreatedIso = '';
+      if (wo.created) {
+        var woCreatedAt = new Date(wo.created);
+        if (!isNaN(woCreatedAt.getTime())) woCreatedIso = woCreatedAt.toISOString();
+      }
+      return String(wo.unitId || '').trim() === requiredUnitId &&
+             String(wo.unitTurnId || '').trim() === requiredUnitTurnId &&
+             !!woCreatedIso && woCreatedIso >= moveOutIso;
+    });
     reportsWOs.forEach(function(wo) {
       if (!isTurnWorkOrderCandidate(wo, moveOutDate, 'reports')) return;
-      if (moveOutDate && wo.created) {
-        var daysDiff = (new Date(wo.created) - moveOutDate) / 86400000;
-        if (daysDiff < -30) return;
-      }
       wos.push({ source: 'reports', id: wo.id, status: wo.status, description: wo.description || '',
         created: wo.created, vendor: wo.vendor || '', unit: wo.unit, property: wo.propertyName, priority: wo.priority });
     });
-    // From DB API turn work orders — O(1) lookup by unit/property ID
-    var dbCandidates = [];
-    if (unitId && _turnWoByUnit[unitId]) dbCandidates = dbCandidates.concat(_turnWoByUnit[unitId]);
-    if (propId && _turnWoByProp[propId]) {
-      _turnWoByProp[propId].forEach(function(tw) {
-        if (!dbCandidates.some(function(c) { return c.id === tw.id; })) dbCandidates.push(tw);
-      });
-    }
-    // Also check WO number matches
-    wos.forEach(function(w) {
-      if (w.id && _turnWoByNum[String(w.id)]) {
-        var tw = _turnWoByNum[String(w.id)];
-        if (!dbCandidates.some(function(c) { return c.id === tw.id; })) dbCandidates.push(tw);
-      }
-    });
+    // From DB API turn work orders — strict match
+    var dbCandidates = _turnWoByUnit[requiredUnitId] || [];
     dbCandidates.forEach(function(wo) {
+      if (String(wo.unitTurnId || '').trim() !== requiredUnitTurnId) return;
       if (!isTurnWorkOrderCandidate(wo, moveOutDate, 'db')) return;
+      var dbCreatedAt = new Date(wo.createdAt || '');
+      if (isNaN(dbCreatedAt.getTime()) || dbCreatedAt.toISOString() < moveOutIso) return;
       var dupe = wos.find(function(w) { return String(w.id) === String(wo.id) || String(w.id) === String(wo.woNumber); });
       if (dupe) {
         dupe.status = wo.status;
@@ -5480,7 +5963,7 @@ function buildTurnPipeline() {
     var isUpcoming = moveOutDate ? moveOutDate > today : false;
     var turnYearStart = getCurrentYearStartDate(today);
     if (moveOutDate && !isNaN(moveOutDate.getTime()) && moveOutDate < turnYearStart) return;
-    var matchingWOs = findMatchingWOs(unit, property, propId, unitId, moveOutDate);
+    var matchingWOs = findMatchingWOs(unit, property, propId, unitId, moveOutDate, turnData);
     var matchingInsp = findMatchingInsp(unit, property);
     var stages = deriveStages(moveOut, matchingWOs, matchingInsp, isUpcoming);
 
@@ -5677,10 +6160,14 @@ function renderTurnBoard() {
 }
 
 function renderTurnKPIs() {
+  var inScope = TURN_PIPE_DATA.filter(function(p) {
+    return isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup);
+  });
+
   // Separate confirmed-active turns from on-radar (unconfirmed) entries
-  var confirmed = TURN_PIPE_DATA.filter(function(p) { return p.isConfirmed && !p.isCompleted; });
-  var onRadar   = TURN_PIPE_DATA.filter(function(p) { return p.isOnRadar; });
-  var upcoming  = TURN_PIPE_DATA.filter(function(p) { return p.isUpcoming; }); // subset of onRadar
+  var confirmed = inScope.filter(function(p) { return p.isConfirmed && !p.isCompleted; });
+  var onRadar   = inScope.filter(function(p) { return p.isOnRadar; });
+  var upcoming  = inScope.filter(function(p) { return p.isUpcoming; }); // subset of onRadar
   var active    = confirmed; // alias — same set for downstream stats
   var awaitEst  = confirmed.filter(function(p) {
     return p.stages.wo_created && p.stages.wo_created.done && p.stages.est_received && !p.stages.est_received.done;
@@ -5705,8 +6192,8 @@ function renderTurnKPIs() {
   e('kpiAvgTurnSub', avgDays > 0 ? 'avg days elapsed' : 'no active turns');
   e('kpiAwaitEst', awaitEst.length);
   e('kpiAwaitEstSub', awaitEst.length + ' turns pending vendor bids');
-  e('kpiTurnBilled', currency(totalBilled));
-  e('kpiTurnBilledSub', 'active turns combined');
+  e('kpiTurnBilled', inScope.length);
+  e('kpiTurnBilledSub', 'active + on radar + completed');
 
   var tb = $('#turnBadge');
   if (tb) tb.textContent = active.length + upcoming.length;
@@ -6051,6 +6538,7 @@ function renderInspections(search) {
 
   // Filter out pre-AppFolio era artifacts (before 2021) from stale cache
   var validInspections = INSPECTIONS.filter(function(r) {
+    if (!isInPropertyGroup(r.propertyId, r.propertyName, currentPropertyGroup)) return false;
     var state = getInspectionCompliance(r, today);
     return !state.anchorDate || state.anchorDate >= INSPECTION_AF_EPOCH;
   });
@@ -6437,6 +6925,575 @@ function renderNewWOVendorOptions(filterText) {
 
 /* renderReconciliation — Removed (billing stripped to lighten payload) */
 
+var ROUTING_DEFAULT_CAPABILITIES = [
+  { trade: 'HVAC', keywords: ['hvac', 'ac', 'air', 'thermostat', 'filter', 'condenser', 'compressor', 'heat'] },
+  { trade: 'Plumbing', keywords: ['plumb', 'toilet', 'faucet', 'sink', 'drain', 'pipe', 'leak', 'water heater', 'shower'] },
+  { trade: 'Electrical', keywords: ['electrical', 'outlet', 'switch', 'breaker', 'circuit', 'wiring', 'fixture'] },
+  { trade: 'Appliances', keywords: ['appliance', 'refrigerator', 'dishwasher', 'washer', 'dryer', 'oven', 'stove', 'microwave'] },
+  { trade: 'Painting', keywords: ['paint', 'painting', 'touch up', 'touch-up', 'repaint'] },
+  { trade: 'Landscaping', keywords: ['landscape', 'lawn', 'grass', 'sprinkler', 'irrigation', 'tree', 'yard'] },
+  { trade: 'General', keywords: ['handyman', 'maintenance', 'minor repair', 'caulk', 'hinge', 'door handle'] }
+];
+
+function getRoutingPropertyGroup(wo) {
+  if (!wo) return '';
+  if (wo.propertyId && _idToGroups[String(wo.propertyId)] && _idToGroups[String(wo.propertyId)].length) {
+    return _idToGroups[String(wo.propertyId)][0] || '';
+  }
+  if (wo.propertyName) {
+    var byName = _nameToGroups[String(wo.propertyName).trim().toLowerCase()];
+    if (byName && byName.length) return byName[0] || '';
+  }
+  var prop = PROPERTIES.find(function(p) {
+    if (wo.propertyId && String(p.id) === String(wo.propertyId)) return true;
+    if (wo.propertyName && p.name && p.name.trim().toLowerCase() === String(wo.propertyName).trim().toLowerCase()) return true;
+    return false;
+  });
+  return (prop && (prop.portfolio || prop.groupName || prop.group || '')) || '';
+}
+
+function getRoutingPmForGroup(groupName) {
+  if (!groupName) return 'Unmapped PM';
+  return ROUTING_PM_MAP[groupName] || groupName;
+}
+
+function getRoutingVendorCategory(wo) {
+  if (!wo) return '';
+  var cat = wo.vendorId ? (getVendorCategory(wo.vendorId) || '') : '';
+  if (!cat) {
+    var byName = VENDORS.find(function(v) { return String(v.name || '').trim().toLowerCase() === String(wo.vendorName || '').trim().toLowerCase(); });
+    if (byName) cat = getVendorCategory(byName.id) || '';
+  }
+  return cat || 'Vendor';
+}
+
+function getRoutingConfidenceRank(level) {
+  var l = String(level || '').toLowerCase();
+  if (l === 'high') return 3;
+  if (l === 'medium') return 2;
+  return 1;
+}
+
+function computeRoutingConfidence(matchCount) {
+  var count = Number(matchCount || 0);
+  var highThreshold = Math.max(2, Number(ROUTING_SETTINGS.highThreshold || 2));
+  if (count >= highThreshold) return 'high';
+  if (count >= 1) return 'medium';
+  return 'low';
+}
+
+function detectRoutingEventsFromLoadedWorkOrders() {
+  var activeCaps = ROUTING_CAPABILITIES.filter(function(c) { return Number(c.active) === 1; });
+  if (!activeCaps.length) return [];
+
+  var out = [];
+  WORK_ORDERS.forEach(function(wo) {
+    var st = String(wo.status || '').toLowerCase();
+    if (st.indexOf('cancel') !== -1 || st.indexOf('complete') !== -1) return;
+    if (!wo.vendorId && !wo.vendorName) return;
+
+    var vCat = getRoutingVendorCategory(wo);
+    if (vCat === 'Employee' || vCat === 'In-House Tech') return;
+
+    var text = (String(wo.description || '') + ' ' + String(wo.type || '') + ' ' + String(wo.priority || '')).toLowerCase();
+    var matches = [];
+    activeCaps.forEach(function(cap) {
+      var kws = [];
+      if (Array.isArray(cap.keywords)) kws = cap.keywords;
+      else if (typeof cap.keywords === 'string') {
+        try { kws = JSON.parse(cap.keywords); } catch (e) { kws = []; }
+      }
+      var tradeHit = text.indexOf(String(cap.trade || '').toLowerCase()) !== -1;
+      var keywordHit = kws.some(function(kw) { return text.indexOf(String(kw || '').toLowerCase()) !== -1; });
+      if (tradeHit || keywordHit) matches.push(String(cap.trade || 'General'));
+    });
+    if (!matches.length) return;
+
+    var confidence = computeRoutingConfidence(matches.length);
+    if (getRoutingConfidenceRank(confidence) < getRoutingConfidenceRank(ROUTING_SETTINGS.minConfidence)) {
+      return;
+    }
+
+    var groupName = getRoutingPropertyGroup(wo);
+    var pmName = getRoutingPmForGroup(groupName);
+
+    out.push({
+      wo_uuid: String(wo.uuid || ''),
+      wo_number: String(wo.id || ''),
+      property_id: String(wo.propertyId || ''),
+      property_name: String(wo.propertyName || ''),
+      unit_name: String(wo.unit || ''),
+      property_group: String(groupName || ''),
+      pm_name: String(pmName || 'Unmapped PM'),
+      vendor_id: String(wo.vendorId || ''),
+      vendor_name: String(wo.vendorName || ''),
+      vendor_category: String(vCat || 'Vendor'),
+      wo_status: String(wo.status || ''),
+      wo_priority: String(wo.priority || ''),
+      wo_created_at: String(wo.created || ''),
+      description: String(wo.description || ''),
+      matched_trade: matches.join(', '),
+      confidence: confidence,
+      source: 'client_scan'
+    });
+  });
+
+  return out;
+}
+
+async function loadRoutingCapabilities() {
+  try {
+    var data = await proxyAction('routing_monitor', { op: 'capabilities' });
+    ROUTING_CAPABILITIES = data.results || [];
+
+    if (!ROUTING_CAPABILITIES.length) {
+      for (var i = 0; i < ROUTING_DEFAULT_CAPABILITIES.length; i++) {
+        var cap = ROUTING_DEFAULT_CAPABILITIES[i];
+        await proxyPost('routing_monitor', {
+          op: 'capability_upsert',
+          trade: cap.trade,
+          keywords: cap.keywords,
+          active: 1
+        });
+      }
+      var seeded = await proxyAction('routing_monitor', { op: 'capabilities' });
+      ROUTING_CAPABILITIES = seeded.results || [];
+    }
+
+    renderRoutingCapabilities();
+  } catch (err) {
+    ROUTING_CAPABILITIES = [];
+    renderRoutingCapabilities();
+    showToast('Routing monitor unavailable: ' + ((err && err.message) ? err.message : String(err)), { kind: 'warning', duration: 4500 });
+  }
+}
+
+async function loadRoutingPmMap() {
+  try {
+    var data = await proxyAction('routing_monitor', { op: 'pm_map' });
+    ROUTING_PM_MAP = {};
+    (data.results || []).forEach(function(r) {
+      ROUTING_PM_MAP[String(r.group_name)] = String(r.pm_name || '');
+    });
+  } catch (err) {
+    ROUTING_PM_MAP = {};
+    showToast('Routing PM map unavailable: ' + ((err && err.message) ? err.message : String(err)), { kind: 'warning', duration: 4500 });
+  }
+  renderRoutingPmMapEditor();
+}
+
+async function loadRoutingEventsAndStats() {
+  var status = $('#routingStatusFilter') ? $('#routingStatusFilter').value : 'pending';
+  var pm = $('#routingPmFilter') ? $('#routingPmFilter').value : 'all';
+  var days = $('#routingDaysFilter') ? $('#routingDaysFilter').value : '30';
+
+  try {
+    var evData = await proxyAction('routing_monitor', {
+      op: 'events',
+      status: status,
+      pm: pm,
+      days: days,
+      limit: '500'
+    });
+    ROUTING_EVENTS = evData.results || [];
+
+    var stData = await proxyAction('routing_monitor', { op: 'pm_stats', days: days });
+    ROUTING_PM_STATS = stData.results || [];
+  } catch (err) {
+    ROUTING_EVENTS = [];
+    ROUTING_PM_STATS = [];
+    showToast('Routing monitor unavailable: ' + ((err && err.message) ? err.message : String(err)), { kind: 'warning', duration: 4500 });
+  }
+
+  renderRoutingPmFilter();
+  renderRoutingScorecard();
+  renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+  renderRoutingKpis();
+}
+
+function renderRoutingPmFilter() {
+  var sel = $('#routingPmFilter');
+  if (!sel) return;
+  var current = sel.value || 'all';
+  var seen = {};
+  var opts = ['<option value="all">All PMs</option>'];
+  ROUTING_PM_STATS.forEach(function(r) {
+    var pm = String(r.pm_name || '').trim();
+    if (!pm || seen[pm]) return;
+    seen[pm] = true;
+    opts.push('<option value="' + escapeHtml(pm) + '">' + escapeHtml(pm) + '</option>');
+  });
+  sel.innerHTML = opts.join('');
+  sel.value = seen[current] ? current : 'all';
+}
+
+function renderRoutingKpis() {
+  var total = ROUTING_EVENTS.length;
+  var pending = ROUTING_EVENTS.filter(function(e) { return String(e.review_status || 'pending') === 'pending'; }).length;
+  var high = ROUTING_EVENTS.filter(function(e) { return String(e.confidence || '') === 'high'; }).length;
+  var reviewed = ROUTING_EVENTS.filter(function(e) { return String(e.review_status || 'pending') !== 'pending'; }).length;
+
+  if ($('#routingKpiFlagged')) $('#routingKpiFlagged').textContent = String(total);
+  if ($('#routingKpiPending')) $('#routingKpiPending').textContent = String(pending);
+  if ($('#routingKpiHigh')) $('#routingKpiHigh').textContent = String(high);
+  if ($('#routingKpiReviewed')) $('#routingKpiReviewed').textContent = String(reviewed);
+  if ($('#routingKpiLast')) $('#routingKpiLast').textContent = _routingLastScanAt || '-';
+
+  var badge = $('#routingBadge');
+  if (badge) {
+    badge.textContent = String(pending);
+    badge.style.display = pending > 0 ? '' : 'none';
+  }
+}
+
+function renderRoutingScorecard() {
+  var body = $('#routingPmBody');
+  if (!body) return;
+  if (!ROUTING_PM_STATS.length) {
+    body.innerHTML = '<tr><td colspan="7" style="color:var(--text-muted)">No PM routing data yet. Run scan.</td></tr>';
+    return;
+  }
+  var html = '';
+  ROUTING_PM_STATS.forEach(function(r) {
+    var last = r.last_flagged ? formatDate(r.last_flagged) : '-';
+    html += '<tr>' +
+      '<td><strong>' + escapeHtml(String(r.pm_name || 'Unmapped PM')) + '</strong></td>' +
+      '<td>' + escapeHtml(String(r.total_flagged || '0')) + '</td>' +
+      '<td>' + escapeHtml(String(r.high_confidence || '0')) + '</td>' +
+      '<td>' + escapeHtml(String(r.pending || '0')) + '</td>' +
+      '<td>' + escapeHtml(String(r.approved_external || '0')) + '</td>' +
+      '<td>' + escapeHtml(String(r.reassigned || '0')) + '</td>' +
+      '<td style="font-family:var(--font-mono);font-size:11px">' + escapeHtml(last) + '</td>' +
+      '</tr>';
+  });
+  body.innerHTML = html;
+}
+
+function renderRoutingEventsTable(query) {
+  var body = $('#routingEventsBody');
+  if (!body) return;
+  var q = String(query || '').trim().toLowerCase();
+  var rows = ROUTING_EVENTS.filter(function(r) {
+    if (!q) return true;
+    var hay = [r.wo_number, r.property_name, r.property_group, r.pm_name, r.vendor_name, r.matched_trade, r.description].join(' ').toLowerCase();
+    return hay.indexOf(q) !== -1;
+  });
+
+  if ($('#routingSummary')) {
+    $('#routingSummary').textContent = 'Showing ' + rows.length + ' of ' + ROUTING_EVENTS.length + ' flagged events';
+  }
+
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="11" style="color:var(--text-muted)">No flagged routing events match current filters.</td></tr>';
+    return;
+  }
+
+  var html = '';
+  rows.forEach(function(r) {
+    var conf = String(r.confidence || 'medium');
+    var rev = String(r.review_status || 'pending');
+    var flaggedAt = r.detected_at ? timeAgo(r.detected_at) : '-';
+    html += '<tr data-routing-id="' + escapeHtml(String(r.id)) + '">' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(String(r.wo_number || '').replace(/^.*(\d{4,})$/, '$1')) + '</td>' +
+      '<td>' + escapeHtml(String(r.property_name || '-')) + '</td>' +
+      '<td>' + escapeHtml(String(r.property_group || '-')) + '</td>' +
+      '<td><strong>' + escapeHtml(String(r.pm_name || 'Unmapped PM')) + '</strong></td>' +
+      '<td>' + escapeHtml(String(r.vendor_name || '-')) + '</td>' +
+      '<td>' + escapeHtml(String(r.matched_trade || '-')) + '</td>' +
+      '<td><span class="routing-badge ' + conf + '">' + escapeHtml(conf) + '</span></td>' +
+      '<td>' + escapeHtml(String(r.wo_status || '-')) + '</td>' +
+      '<td style="font-family:var(--font-mono);font-size:11px">' + escapeHtml(flaggedAt) + '</td>' +
+      '<td class="routing-review ' + rev + '">' + escapeHtml(rev.replace('_', ' ')) + '</td>' +
+      '<td>' +
+      '<button class="filter-btn" data-routing-review="approved_external" data-routing-id="' + escapeHtml(String(r.id)) + '" style="padding:4px 6px">Approve</button> ' +
+      '<button class="filter-btn" data-routing-review="reassign_inhouse" data-routing-id="' + escapeHtml(String(r.id)) + '" style="padding:4px 6px;color:var(--success)">Reassign</button> ' +
+      '<button class="filter-btn" data-routing-review="dismissed" data-routing-id="' + escapeHtml(String(r.id)) + '" style="padding:4px 6px;color:var(--text-muted)">Dismiss</button>' +
+      '</td>' +
+      '</tr>';
+  });
+  body.innerHTML = html;
+}
+
+function renderRoutingCapabilities() {
+  var body = $('#routingCapabilitiesBody');
+  if (!body) return;
+  if (!ROUTING_CAPABILITIES.length) {
+    body.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">No capability rules configured.</td></tr>';
+    return;
+  }
+  var html = '';
+  ROUTING_CAPABILITIES.forEach(function(c) {
+    var kws = [];
+    if (Array.isArray(c.keywords)) kws = c.keywords;
+    else if (typeof c.keywords === 'string') {
+      try { kws = JSON.parse(c.keywords); } catch (e) { kws = []; }
+    }
+    html += '<tr>' +
+      '<td><strong>' + escapeHtml(String(c.trade || '')) + '</strong></td>' +
+      '<td style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(kws.join(', ')) + '</td>' +
+      '<td><label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" data-routing-cap-toggle="' + escapeHtml(String(c.id)) + '"' + (Number(c.active) === 1 ? ' checked' : '') + '> ' + (Number(c.active) === 1 ? 'On' : 'Off') + '</label></td>' +
+      '<td><button class="filter-btn" data-routing-cap-edit="' + escapeHtml(String(c.id)) + '" style="padding:4px 6px">Edit</button> <button class="filter-btn" data-routing-cap-del="' + escapeHtml(String(c.id)) + '" style="padding:4px 6px;color:var(--danger)">Delete</button></td>' +
+      '</tr>';
+  });
+  body.innerHTML = html;
+}
+
+function renderRoutingPmMapEditor() {
+  var body = $('#routingPmMapBody');
+  if (!body) return;
+
+  var groups = [];
+  (PROPERTY_GROUPS || []).forEach(function(g) {
+    if (!g || !g.name) return;
+    groups.push(String(g.name));
+  });
+  Object.keys(ROUTING_PM_MAP).forEach(function(g) {
+    if (groups.indexOf(g) === -1) groups.push(g);
+  });
+  groups.sort(function(a, b) { return a.localeCompare(b); });
+
+  if (!groups.length) {
+    body.innerHTML = '<tr><td colspan="2" style="color:var(--text-muted)">No property groups available yet. Load property groups first.</td></tr>';
+    return;
+  }
+
+  var html = '';
+  groups.forEach(function(group) {
+    var pm = ROUTING_PM_MAP[group] || group;
+    html += '<tr>' +
+      '<td>' + escapeHtml(group) + '</td>' +
+      '<td><input class="form-input routing-pm-map-input" data-group-name="' + escapeHtml(group) + '" value="' + escapeHtml(pm) + '" style="min-width:200px"></td>' +
+      '</tr>';
+  });
+  body.innerHTML = html;
+}
+
+function guessPmNameForGroup(groupName) {
+  var group = String(groupName || '').trim();
+  if (!group) return '';
+
+  var byManager = {};
+  (PROPERTIES || []).forEach(function(p) {
+    var pName = String(p && p.name || '').trim().toLowerCase();
+    var gCandidates = [];
+    if (p && p.id && _idToGroups[String(p.id)]) gCandidates = gCandidates.concat(_idToGroups[String(p.id)]);
+    if (pName && _nameToGroups[pName]) gCandidates = gCandidates.concat(_nameToGroups[pName]);
+    var direct = [p && p.portfolio, p && p.portfolioName, p && p.groupName, p && p.propertyGroup, p && p.group]
+      .map(function(v) { return String(v || '').trim(); })
+      .filter(Boolean);
+    gCandidates = gCandidates.concat(direct);
+    var inGroup = gCandidates.some(function(g) { return String(g || '').trim().toLowerCase() === group.toLowerCase(); });
+    if (!inGroup) return;
+
+    var siteManager = String((p && p.siteManager) || '').trim();
+    if (!siteManager) return;
+    byManager[siteManager] = (byManager[siteManager] || 0) + 1;
+  });
+
+  var best = '';
+  var bestCount = 0;
+  Object.keys(byManager).forEach(function(name) {
+    if (byManager[name] > bestCount) {
+      best = name;
+      bestCount = byManager[name];
+    }
+  });
+  return best;
+}
+
+function autoFillRoutingPmMap() {
+  var updated = 0;
+  $$('.routing-pm-map-input').forEach(function(input) {
+    var groupName = String(input.getAttribute('data-group-name') || '').trim();
+    if (!groupName) return;
+    var current = String(input.value || '').trim();
+    if (current && current.toLowerCase() !== groupName.toLowerCase()) return;
+    var guess = guessPmNameForGroup(groupName);
+    if (guess) {
+      input.value = guess;
+      updated++;
+    }
+  });
+  if (updated > 0) showToast('Auto-filled ' + updated + ' PM mapping row' + (updated === 1 ? '' : 's'));
+  else showToast('No PM names inferred yet. Load properties/work orders first.', 'warning');
+}
+
+async function saveRoutingPmMapFromUi() {
+  var rows = [];
+  $$('.routing-pm-map-input').forEach(function(input) {
+    var groupName = input.getAttribute('data-group-name') || '';
+    var pmName = String(input.value || '').trim();
+    if (groupName && pmName) rows.push({ group_name: groupName, pm_name: pmName });
+  });
+  if (!rows.length) {
+    showToast('No PM map rows to save');
+    return;
+  }
+  await proxyPost('routing_monitor', { op: 'pm_map_bulk', entries: rows });
+  await loadRoutingPmMap();
+  await loadRoutingEventsAndStats();
+  showToast('PM map saved (' + rows.length + ' groups)');
+}
+
+async function runRoutingScan() {
+  var btn = $('#btnRoutingScan');
+  if (btn) { btn.disabled = true; btn.classList.add('spinning'); }
+  try {
+    if (!WORK_ORDERS.length) {
+      showToast('No work orders loaded yet. Refresh data first.');
+      return;
+    }
+    if (!ROUTING_CAPABILITIES.length) await loadRoutingCapabilities();
+    if (!Object.keys(ROUTING_PM_MAP).length) await loadRoutingPmMap();
+
+    var events = detectRoutingEventsFromLoadedWorkOrders();
+    var resp = await proxyPost('routing_monitor', { op: 'scan', events: events });
+    _routingLastScanAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    await loadRoutingEventsAndStats();
+    showToast('Routing scan complete — ' + events.length + ' matched, ' + (resp.upserted || 0) + ' saved');
+  } catch (e) {
+    showToast('Routing scan failed: ' + (e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
+  }
+}
+
+async function initRoutingMonitor() {
+  if (!_routingInitDone) {
+    _routingInitDone = true;
+
+    if ($('#btnRoutingRefresh')) {
+      $('#btnRoutingRefresh').addEventListener('click', function() { loadRoutingEventsAndStats(); });
+    }
+    if ($('#btnRoutingScan')) {
+      $('#btnRoutingScan').addEventListener('click', function() { runRoutingScan(); });
+    }
+    if ($('#routingSearch')) {
+      $('#routingSearch').addEventListener('input', debounce(function() {
+        renderRoutingEventsTable(this.value);
+      }, CONFIG.DEBOUNCE_MS));
+    }
+    if ($('#routingStatusFilter')) {
+      $('#routingStatusFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+    }
+    if ($('#routingPmFilter')) {
+      $('#routingPmFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+    }
+    if ($('#routingDaysFilter')) {
+      $('#routingDaysFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+    }
+    if ($('#btnRoutingCapToggle')) {
+      $('#btnRoutingCapToggle').addEventListener('click', function() {
+        var wrap = $('#routingCapabilitiesWrap');
+        if (!wrap) return;
+        wrap.style.display = wrap.style.display === 'none' ? '' : 'none';
+      });
+    }
+    if ($('#btnRoutingMapToggle')) {
+      $('#btnRoutingMapToggle').addEventListener('click', function() {
+        var wrap = $('#routingPmMapWrap');
+        if (!wrap) return;
+        wrap.style.display = wrap.style.display === 'none' ? '' : 'none';
+      });
+    }
+    if ($('#btnRoutingMapSave')) {
+      $('#btnRoutingMapSave').addEventListener('click', function() { saveRoutingPmMapFromUi(); });
+    }
+    if ($('#btnRoutingMapAutofill')) {
+      $('#btnRoutingMapAutofill').addEventListener('click', function() { autoFillRoutingPmMap(); });
+    }
+    if ($('#routingMinConfidence')) {
+      $('#routingMinConfidence').value = ROUTING_SETTINGS.minConfidence;
+      $('#routingMinConfidence').addEventListener('change', function() {
+        ROUTING_SETTINGS.minConfidence = String(this.value || 'medium');
+      });
+    }
+    if ($('#routingHighThreshold')) {
+      $('#routingHighThreshold').value = String(ROUTING_SETTINGS.highThreshold);
+      $('#routingHighThreshold').addEventListener('change', function() {
+        var next = Number(this.value || '2');
+        ROUTING_SETTINGS.highThreshold = isNaN(next) ? 2 : Math.max(2, next);
+      });
+    }
+    if ($('#btnRoutingCapAdd')) {
+      $('#btnRoutingCapAdd').addEventListener('click', async function() {
+        var trade = prompt('Work type name (example: Locksmith):', '');
+        if (!trade) return;
+        var kwRaw = prompt('Keywords (comma separated):', '');
+        var keywords = String(kwRaw || '').split(',').map(function(k) { return k.trim(); }).filter(Boolean);
+        await proxyPost('routing_monitor', { op: 'capability_upsert', trade: trade.trim(), keywords: keywords, active: 1 });
+        await loadRoutingCapabilities();
+      });
+    }
+    var eventsBody = $('#routingEventsBody');
+    if (eventsBody) {
+      eventsBody.addEventListener('click', async function(e) {
+        var btn = e.target.closest('[data-routing-review]');
+        if (!btn) return;
+        var id = Number(btn.getAttribute('data-routing-id') || '0');
+        var review = btn.getAttribute('data-routing-review') || 'pending';
+        if (!id) return;
+        await proxyPost('routing_monitor', { op: 'review', id: id, review_status: review });
+        await loadRoutingEventsAndStats();
+      });
+    }
+    var capBody = $('#routingCapabilitiesBody');
+    if (capBody) {
+      capBody.addEventListener('change', async function(e) {
+        var chk = e.target.closest('[data-routing-cap-toggle]');
+        if (!chk) return;
+        var capId = Number(chk.getAttribute('data-routing-cap-toggle') || '0');
+        var cap = ROUTING_CAPABILITIES.find(function(c) { return Number(c.id) === capId; });
+        if (!cap) return;
+        var parsedKeywords = [];
+        if (typeof cap.keywords === 'string') {
+          try { parsedKeywords = JSON.parse(cap.keywords || '[]'); } catch (er) { parsedKeywords = []; }
+        } else {
+          parsedKeywords = cap.keywords || [];
+        }
+        await proxyPost('routing_monitor', {
+          op: 'capability_upsert',
+          id: cap.id,
+          trade: cap.trade,
+          keywords: parsedKeywords,
+          active: chk.checked ? 1 : 0
+        });
+        await loadRoutingCapabilities();
+      });
+      capBody.addEventListener('click', async function(e) {
+        var editBtn = e.target.closest('[data-routing-cap-edit]');
+        var delBtn = e.target.closest('[data-routing-cap-del]');
+        if (editBtn) {
+          var cid = Number(editBtn.getAttribute('data-routing-cap-edit') || '0');
+          var cur = ROUTING_CAPABILITIES.find(function(c) { return Number(c.id) === cid; });
+          if (!cur) return;
+          var trade = prompt('Work type name:', String(cur.trade || ''));
+          if (!trade) return;
+          var kws = [];
+          try { kws = typeof cur.keywords === 'string' ? JSON.parse(cur.keywords) : (cur.keywords || []); } catch (er) { kws = []; }
+          var kwRaw = prompt('Keywords (comma separated):', kws.join(', '));
+          if (kwRaw === null) return;
+          var nextKws = String(kwRaw).split(',').map(function(k) { return k.trim(); }).filter(Boolean);
+          await proxyPost('routing_monitor', { op: 'capability_upsert', id: cur.id, trade: trade.trim(), keywords: nextKws, active: Number(cur.active) === 1 ? 1 : 0 });
+          await loadRoutingCapabilities();
+          return;
+        }
+        if (delBtn) {
+          var did = Number(delBtn.getAttribute('data-routing-cap-del') || '0');
+          if (!did) return;
+          if (!confirm('Delete this work type rule?')) return;
+          await proxyPost('routing_monitor', { op: 'capability_delete', id: did });
+          await loadRoutingCapabilities();
+        }
+      });
+    }
+  }
+
+  await loadRoutingCapabilities();
+  await loadRoutingPmMap();
+  await loadRoutingEventsAndStats();
+}
+
 function renderTemplates() {
   var container = $('#templateGrid');
   var html = '';
@@ -6560,12 +7617,17 @@ function wireUpUI() {
       if (card) { showWODetail(card.getAttribute('data-woid')); return; }
       var head = e.target.closest('.kanban-col-head');
       if (head) {
-        var status = head.getAttribute('data-status');
-        if (currentWOFilter === status) { currentWOFilter = 'all'; }
-        else { currentWOFilter = status; }
-        $$('[data-filter]').forEach(function(b) {
-          b.classList.toggle('active', b.getAttribute('data-filter') === currentWOFilter);
-        });
+        var columnName = head.getAttribute('data-column') || head.getAttribute('data-status') || '';
+        if (expandedWOColumn === columnName) {
+          expandedWOColumn = '';
+          renderWorkOrders();
+          board.scrollLeft = kanbanBoardScrollState.left || 0;
+          board.scrollTop = kanbanBoardScrollState.top || 0;
+          return;
+        }
+        kanbanBoardScrollState.left = board.scrollLeft;
+        kanbanBoardScrollState.top = board.scrollTop;
+        expandedWOColumn = columnName;
         renderWorkOrders();
       }
     });
@@ -6888,6 +7950,11 @@ function wireUpUI() {
         _whLazyLoaded = true;
         loadWebhookData();
       }
+
+      // Initialize Routing Monitor on tab open
+      if (tabName === 'routing') {
+        try { await initRoutingMonitor(); } catch (e) { showToast('Routing monitor load failed: ' + (e.message || e)); }
+      }
     });
   });
 
@@ -6909,12 +7976,37 @@ function wireUpUI() {
   if ($('#woTypeFilter')) {
     $('#woTypeFilter').addEventListener('change', function() { currentWOType = this.value; renderWorkOrders(); });
   }
+  if ($('#woVendorFilter')) {
+    $('#woVendorFilter').addEventListener('change', function() { currentWOVendor = this.value; completedWOHistoryPage = 0; renderWorkOrders(); });
+  }
   if ($('#woPropertyFilter')) {
-    $('#woPropertyFilter').addEventListener('change', function() { currentWOProperty = this.value; renderWorkOrders(); });
+    $('#woPropertyFilter').addEventListener('change', function() { currentWOProperty = this.value; completedWOHistoryPage = 0; renderWorkOrders(); });
+  }
+  if ($('#woCompletedHistoryToggle')) {
+    $('#woCompletedHistoryToggle').addEventListener('change', async function() {
+      showCompletedWOHistory = !!this.checked;
+      completedWOHistoryPage = 0;
+      if (!showCompletedWOHistory) {
+        renderCompletedWOHistorySection();
+        return;
+      }
+      completedWOHistoryLoading = true;
+      renderCompletedWOHistorySection();
+      try {
+        await fetchCompletedWorkOrdersHistory(365);
+      } catch (e) {
+        completedWOHistoryRows = [];
+        showToast('Completed history load failed: ' + ((e && e.message) || e), { kind: 'warning' });
+      } finally {
+        completedWOHistoryLoading = false;
+        renderCompletedWOHistorySection();
+      }
+    });
   }
   if ($('#woCloseAge')) {
     $('#woCloseAge').addEventListener('change', function() {
       currentWOCloseAssistAge = parseInt(this.value || '14', 10) || 14;
+      woCloseAssist.currentPage = 0;
       renderWOCloseAssist();
     });
   }
@@ -7158,6 +8250,7 @@ function wireUpUI() {
   var _tabRenderMap = {
     dashboard: function() { renderDashboardKPIs(); },
     workorders: function() { renderWorkOrders(); },
+    routing: function() { loadRoutingEventsAndStats().catch(function() {}); },
     payroll: function() { renderPayroll(); },
     turnboard: function() { renderTurnPipelineUI(); },
     inspections: function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
@@ -7186,6 +8279,10 @@ function wireUpUI() {
   }
 
   function clearPropertyGroupFilters() {
+    if (forcedPropertyGroupUuid) {
+      enforceScopedPropertyGroup();
+      return;
+    }
     currentPropertyGroup = '';
     _isInGroupMissLogCount = 0;
     if (globalGrpEl) globalGrpEl.value = '';
@@ -7199,6 +8296,10 @@ function wireUpUI() {
   var globalGrpEl = $('#globalGroupFilter');
   if (globalGrpEl) {
     globalGrpEl.addEventListener('change', function() {
+      if (forcedPropertyGroupUuid) {
+        enforceScopedPropertyGroup();
+        return;
+      }
       currentPropertyGroup = this.value;
       _isInGroupMissLogCount = 0; // reset miss log throttle on filter change
       applyGroupFilterChange();
@@ -7878,9 +8979,15 @@ function renderAttentionPanel() {
   // Stalled turns
   var stalledEl = document.getElementById('attentionStalledBody');
   if (stalledEl) {
-    var stalled = TURN_PIPE_DATA.filter(function(p) { return p.isStalled && !p.isCompleted; });
+    var stalled = TURN_PIPE_DATA.filter(function(p) {
+      if (!isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup)) return false;
+      return p.isStalled && !p.isCompleted;
+    });
     // Also show turns past deposit deadline
-    var depositOverdue = TURN_PIPE_DATA.filter(function(p) { return p.isConfirmed && p.sla && p.sla.overdue && !p.isCompleted; });
+    var depositOverdue = TURN_PIPE_DATA.filter(function(p) {
+      if (!isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup)) return false;
+      return p.isConfirmed && p.sla && p.sla.overdue && !p.isCompleted;
+    });
     if (stalled.length === 0 && depositOverdue.length === 0) {
       stalledEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> No stalled turns</div>';
     } else {
@@ -7905,11 +9012,14 @@ function renderAttentionPanel() {
   // Overdue inspections + compliance %
   var overdueEl = document.getElementById('attentionOverdueBody');
   if (overdueEl) {
-    var overdue = INSPECTIONS.filter(function(r) {
+    var scopedInspections = INSPECTIONS.filter(function(r) {
+      return isInPropertyGroup(r.propertyId, r.propertyName, currentPropertyGroup);
+    });
+    var overdue = scopedInspections.filter(function(r) {
       var state = getInspectionCompliance(r, attnToday);
       return state.overdue;
     });
-    var totalInsp = INSPECTIONS.length;
+    var totalInsp = scopedInspections.length;
     var compliant = totalInsp - overdue.length;
     var compPct = totalInsp > 0 ? Math.round((compliant / totalInsp) * 100) : 100;
     if (overdue.length === 0) {
@@ -7931,11 +9041,22 @@ function renderAttentionPanel() {
   // Vendor alerts (expired insurance)
   var vendorEl = document.getElementById('attentionVendorsBody');
   if (vendorEl) {
+    var vendorsInGroup = null;
+    if (currentPropertyGroup) {
+      vendorsInGroup = {};
+      WORK_ORDERS.forEach(function(wo) {
+        if (isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup) && wo.vendorName) {
+          vendorsInGroup[String(wo.vendorName).toLowerCase()] = true;
+        }
+      });
+    }
     var vAlerts = VENDORS.filter(function(v) {
+      if (vendorsInGroup && !vendorsInGroup[String(v.name || '').toLowerCase()]) return false;
       var ed = v.insurance ? new Date(v.insurance) : null;
       return ed && ed < attnToday;
     });
     var expiringSoon = VENDORS.filter(function(v) {
+      if (vendorsInGroup && !vendorsInGroup[String(v.name || '').toLowerCase()]) return false;
       var ed = v.insurance ? new Date(v.insurance) : null;
       if (!ed || ed < attnToday) return false;
       return daysBetween(attnToday, ed) <= CONFIG.VENDOR_EXPIRY_ALERT_DAYS;
@@ -7967,7 +9088,8 @@ function renderAttentionPanel() {
   var urgentEl = document.getElementById('attentionUrgentBody');
   if (urgentEl) {
     var urgentOpen = WORK_ORDERS.filter(function(w) {
-      return (w.priority === 'Urgent' || w.priority === 'Emergency') && w.status !== 'Completed' && w.status !== 'Canceled';
+      if ((w.priority !== 'Urgent' && w.priority !== 'Emergency') || w.status === 'Completed' || w.status === 'Canceled') return false;
+      return isInPropertyGroup(w.propertyId, w.propertyName, currentPropertyGroup);
     });
     var unassigned = urgentOpen.filter(function(w) { return !w.vendorName && !w.vendor; });
     if (urgentOpen.length === 0) {
@@ -7986,6 +9108,32 @@ function renderAttentionPanel() {
       }
       if (urgentOpen.length > 3) urgentHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:4px">+' + (urgentOpen.length - 3) + ' more</div>';
       urgentEl.innerHTML = urgentHtml;
+    }
+  }
+
+  // Pending bill approvals
+  var pendingBillsEl = document.getElementById('attentionBillsBody');
+  if (pendingBillsEl) {
+    var pendingBills = (BILLS || []).filter(function(b) {
+      if (!isInPropertyGroup(b.propertyId, b.propertyName, currentPropertyGroup)) return false;
+      var raw = b.raw || {};
+      var statusText = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || raw.State || raw.state || '').toLowerCase();
+      var approvalText = String(raw.ApprovalState || raw.approval_state || raw.PendingApproval || raw.pending_approval || '').toLowerCase();
+      var combined = statusText + ' ' + approvalText;
+      return combined.indexOf('pending') !== -1 || combined.indexOf('awaiting approval') !== -1 || combined.indexOf('needs approval') !== -1;
+    });
+
+    if (!pendingBills.length) {
+      pendingBillsEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> No pending bill approvals</div>';
+    } else {
+      var pbHtml = '<div class="attn-count">' + pendingBills.length + ' pending approval</div>';
+      pendingBills.slice(0, 5).forEach(function(b) {
+        pbHtml += '<div class="attn-item"><span class="attn-label">' +
+          escapeHtml(String(b.propertyName || 'Unknown')) + '</span><span class="attn-value">' +
+          escapeHtml(currency(b.amount || 0)) + '</span></div>';
+      });
+      if (pendingBills.length > 5) pbHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:4px">+' + (pendingBills.length - 5) + ' more</div>';
+      pendingBillsEl.innerHTML = pbHtml;
     }
   }
 }
@@ -9268,6 +10416,7 @@ var DispatchConfig = {
     for(var i=0;i<actions.length;i++){
       try{
         var resp=await dispatchPost(actions[i],payload);
+        woCloseAssist.currentPage = 0;
         if(resp&&resp.ok){
           v9Toast('Assignees synced',String(resp.synced||resp.count||0)+' techs imported from AppFolio roles','success');
           DispatchControl.refresh();
