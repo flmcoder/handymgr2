@@ -256,6 +256,8 @@ function populateGroupFilters() {
   if (forcedPropertyGroupUuid) {
     enforceScopedPropertyGroup();
   }
+  // Refresh PM user group dropdown if the dbadmin panel exposed its populate hook
+  if (typeof window._repopulatePMGroupDropdown === 'function') window._repopulatePMGroupDropdown();
 }
 
 function updateGlobalGroupIndicator() {
@@ -935,7 +937,7 @@ function applyAccessRole() {
       forceActiveTab('dashboard');
     }
     var gfBar2 = document.getElementById('globalFilterBar');
-    if (gfBar2) gfBar2.style.display = '';
+    if (gfBar2) gfBar2.style.display = _accessRole === 'pm_readonly' ? 'none' : '';
   }
   persistAccessRole(_accessRole);
 }
@@ -7186,6 +7188,21 @@ function renderRoutingPmFilter() {
   });
   sel.innerHTML = opts.join('');
   sel.value = seen[current] ? current : 'all';
+  // Also populate trade filter from loaded events
+  var tradeSel = $('#routingTradeFilter');
+  if (tradeSel) {
+    var currentTrade = tradeSel.value || 'all';
+    var tradesSeen = {};
+    var tradeOpts = ['<option value="all">All Work Types</option>'];
+    ROUTING_EVENTS.forEach(function(e) {
+      var t = String(e.matched_trade || '').trim();
+      if (!t || tradesSeen[t]) return;
+      tradesSeen[t] = true;
+      tradeOpts.push('<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>');
+    });
+    tradeSel.innerHTML = tradeOpts.join('');
+    tradeSel.value = tradesSeen[currentTrade] ? currentTrade : 'all';
+  }
 }
 
 function renderRoutingKpis() {
@@ -7234,7 +7251,9 @@ function renderRoutingEventsTable(query) {
   var body = $('#routingEventsBody');
   if (!body) return;
   var q = String(query || '').trim().toLowerCase();
+  var tradeFilter = ($('#routingTradeFilter') && $('#routingTradeFilter').value) || 'all';
   var rows = ROUTING_EVENTS.filter(function(r) {
+    if (tradeFilter !== 'all' && String(r.matched_trade || '').trim() !== tradeFilter) return false;
     if (!q) return true;
     var hay = [r.wo_number, r.property_name, r.property_group, r.pm_name, r.vendor_name, r.matched_trade, r.description].join(' ').toLowerCase();
     return hay.indexOf(q) !== -1;
@@ -7442,6 +7461,11 @@ async function initRoutingMonitor() {
     }
     if ($('#routingDaysFilter')) {
       $('#routingDaysFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+    }
+    if ($('#routingTradeFilter')) {
+      $('#routingTradeFilter').addEventListener('change', function() {
+        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+      });
     }
     if ($('#btnRoutingCapToggle')) {
       $('#btnRoutingCapToggle').addEventListener('click', function() {
