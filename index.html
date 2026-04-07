@@ -12975,14 +12975,16 @@ renderDashboardKPIs = function() {
     var email = (pmUserEmailEl && pmUserEmailEl.value || '').trim().toLowerCase();
     var fullName = (pmUserNameEl && pmUserNameEl.value || '').trim();
     var phone = (pmUserPhoneEl && pmUserPhoneEl.value || '').trim();
-    var groupUuid = (pmUserGroupUuidEl && pmUserGroupUuidEl.value || '').trim();
+    var groupUuid = (pmUserGroupUuidEl && pmUserGroupUuidEl.value || '').trim()
+      || (document.getElementById('pm-user-group-select') && document.getElementById('pm-user-group-select').value || '').trim()
+      || '';
     var userUuid = (pmUserUuidEl && pmUserUuidEl.value || '').trim();
     if (!email) {
       showToast('PM user email is required', 'error');
       return;
     }
     if (!groupUuid) {
-      showToast('Property group UUID is required', 'error');
+      showToast('Select a property group before saving.', 'error');
       return;
     }
     if (pmUserSaveBtn) pmUserSaveBtn.disabled = true;
