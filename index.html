@@ -2587,8 +2587,12 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
           <input type="text" id="pmUserPhone" class="dbadmin-key-input" style="max-width:none;width:100%" placeholder="+15551234567">
         </div>
         <div>
-          <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px">Property Group UUID</div>
-          <input type="text" id="pmUserGroupUuid" class="dbadmin-key-input" style="max-width:none;width:100%;font-family:var(--font-mono)" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px">Property Group</div>
+          <select id="pm-user-group-select" class="dbadmin-key-input" style="max-width:none;width:100%">
+            <option value="">— Select a Property Group —</option>
+          </select>
+          <input type="hidden" id="pmUserGroupUuid">
+          <div style="font-size:10px;color:var(--text-muted);margin-top:3px">Sourced from loaded property groups</div>
         </div>
         <input type="hidden" id="pmUserUuid">
         <button class="dbadmin-btn primary" id="btnPmUserSave" style="height:30px"><i class="fas fa-save"></i> Save</button>
@@ -12924,12 +12928,52 @@ renderDashboardKPIs = function() {
     }
   }
 
+  function populatePMGroupDropdown(currentUuid) {
+    currentUuid = currentUuid || '';
+    var sel    = document.getElementById('pm-user-group-select');
+    var hidden = document.getElementById('pmUserGroupUuid');
+    if (!sel) return;
+    var groups = (typeof PROPERTY_GROUPS !== 'undefined' ? PROPERTY_GROUPS : []);
+    if (!Array.isArray(groups) || !groups.length) {
+      sel.innerHTML = '<option value="">— No groups loaded — refresh data first —</option>';
+      sel.style.borderColor = 'var(--warning, #f0a500)';
+      if (hidden) hidden.value = '';
+      return;
+    }
+    var sorted = groups.slice().sort(function(a, b) {
+      return (a.name || a.Name || '').toLowerCase().localeCompare((b.name || b.Name || '').toLowerCase());
+    });
+    sel.innerHTML = '<option value="">— Select a Property Group —</option>';
+    sorted.forEach(function(g) {
+      var uuid = g.id || g.uuid || g.property_group_id || '';
+      var name = g.name || g.Name || g.display_name || uuid;
+      if (!uuid) return;
+      var opt = document.createElement('option');
+      opt.value = uuid;
+      opt.textContent = name;
+      if (uuid === currentUuid) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.onchange = function() {
+      if (hidden) hidden.value = sel.value;
+      sel.style.borderColor = sel.value ? 'var(--accent, #5c9eff)' : '';
+    };
+    if (hidden) hidden.value = currentUuid;
+    if (currentUuid) {
+      sel.value = currentUuid;
+      sel.style.borderColor = 'var(--accent, #5c9eff)';
+    } else {
+      sel.style.borderColor = '';
+    }
+  }
+
   function clearPmUserForm() {
     if (pmUserUuidEl) pmUserUuidEl.value = '';
     if (pmUserEmailEl) pmUserEmailEl.value = '';
     if (pmUserNameEl) pmUserNameEl.value = '';
     if (pmUserPhoneEl) pmUserPhoneEl.value = '';
     if (pmUserGroupUuidEl) pmUserGroupUuidEl.value = '';
+    populatePMGroupDropdown('');
     if (pmUserSaveBtn) pmUserSaveBtn.innerHTML = '<i class="fas fa-save"></i> Save';
   }
 
@@ -13072,6 +13116,7 @@ renderDashboardKPIs = function() {
         if (pmUserNameEl) pmUserNameEl.value = tr.getAttribute('data-full-name') || '';
         if (pmUserPhoneEl) pmUserPhoneEl.value = tr.getAttribute('data-phone') || '';
         if (pmUserGroupUuidEl) pmUserGroupUuidEl.value = tr.getAttribute('data-group-uuid') || '';
+        populatePMGroupDropdown(tr.getAttribute('data-group-uuid') || '');
         if (pmUserSaveBtn) pmUserSaveBtn.innerHTML = '<i class="fas fa-save"></i> Update';
         if (pmUserEmailEl) pmUserEmailEl.focus();
         return;
@@ -13083,6 +13128,7 @@ renderDashboardKPIs = function() {
   }
 
   fetchUnitTurnHistory().then(function() { renderTurnHistoryPanel(); }).catch(function() {});
+  populatePMGroupDropdown('');
   loadPmUsers();
 
   renderHistory();
