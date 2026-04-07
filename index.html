@@ -493,6 +493,20 @@ body.role-vendors .rate-badge,
 body.role-vendors .sync-timestamp,
 body.role-vendors .cache-badge { display: none; }
 .topbar-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.mobile-nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.mobile-nav-toggle:hover { border-color: var(--accent); color: var(--accent); }
 .rate-badge {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -616,6 +630,14 @@ body.role-vendors .cache-badge { display: none; }
   font-size: 10px; padding: 1px 6px; border-radius: 8px;
   background: var(--danger); color: #fff; font-weight: 600;
 }
+.mobile-nav-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(2, 6, 23, 0.68);
+}
+body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 
 /* Global Property Group Filter Bar */
 .global-filter-bar {
@@ -807,6 +829,8 @@ body.role-vendors .cache-badge { display: none; }
 .vendor-compliance-toggle.is-compliant { border-color:var(--success); color:var(--success); background:rgba(16,185,129,0.08); }
 .vendor-compliance-toggle.is-manual { border-style:dashed; }
 .vendor-card.manual-compliant { border-left:3px solid var(--success); border-left-style:dashed; }
+.vendor-quick-actions { display: none; }
+.vendor-qa-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px; border-radius: 8px; background: var(--bg-input); color: var(--text-secondary); text-decoration: none; font-family: var(--font-mono); font-size: 11px; font-weight: 600; border: 1px solid var(--border); transition: var(--transition); }
 .vendor-cat-select { font-family:var(--font-mono); font-size:10px; padding:2px 6px; border-radius:6px; border:1px solid var(--border); background:var(--bg-input); color:var(--text-primary); cursor:pointer; max-width:132px; }
 .vendor-render-meta { grid-column: 1 / -1; font-size: 11px; color: var(--text-muted); background: var(--bg-card); border: 1px dashed var(--border); border-radius: var(--radius); padding: 8px 10px; font-family: var(--font-mono); }
 .vendor-load-more-wrap { grid-column: 1 / -1; display: flex; justify-content: center; }
@@ -978,25 +1002,152 @@ body.role-vendors .cache-badge { display: none; }
 
 /* Responsive */
 @media (max-width: 768px) {
-  .topbar { padding: 0 12px; }
+  .topbar { padding: 0 10px; min-height: 52px; }
   .topbar-status { display: none; }
   .build-badge { display: none; }
+  .topbar-divider { display: none; }
   .sync-timestamp { display: none; }
   .rate-badge { display: none; }
-  .main-content { padding: 12px; }
-  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
-  .kpi-value { font-size: 22px; }
-  .search-box { width: 160px; }
-  .nav-tabs { padding: 0 8px; }
-  .nav-tab { padding: 10px 10px; font-size: 11px; }
+  .mobile-nav-toggle { display: inline-flex; }
+  #themeToggle,
+  #btnExportCache,
+  #btnImportCache { display: none; }
+  .topbar-right { gap: 6px; }
+  .refresh-btn,
+  .lock-btn {
+    min-height: 34px;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .main-content { padding: 10px; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .kpi-card { padding: 12px; }
+  .kpi-value { font-size: 20px; }
+
+  .section-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .section-header > div:last-child {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    align-items: stretch;
+  }
+  .section-header .search-box {
+    width: 100% !important;
+    min-width: 0;
+    grid-column: 1 / -1;
+  }
+  .section-header .sec-refresh,
+  .section-header .action-btn,
+  .section-header .filter-btn,
+  .section-header .form-select,
+  .section-header select {
+    min-height: 40px;
+    width: 100%;
+  }
+
+  .global-filter-bar {
+    top: 52px;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  .global-filter-bar select { min-height: 38px; }
+
+  .search-box { width: 100%; }
+
+  .table-wrapper { border-radius: 12px; }
+  .table-header { padding: 12px; gap: 8px; }
+  .table-actions { gap: 8px; }
+  .table-scroll { -webkit-overflow-scrolling: touch; }
+  .data-table thead th,
+  .data-table td,
+  .wo-table thead th,
+  .wo-table td {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .kanban-board {
+    gap: 8px;
+    min-height: 220px;
+    max-height: calc(100vh - 270px);
+  }
+  .kanban-col {
+    min-width: min(86vw, 340px);
+    max-width: min(86vw, 340px);
+    flex: 0 0 min(86vw, 340px);
+  }
+  .kanban-col.column--expanded {
+    min-width: 100%;
+    max-width: 100%;
+    flex: 1 0 100%;
+  }
+  .column--expanded .kanban-col-body { min-height: calc(100vh - 280px); }
+
+  .nav-tabs {
+    position: fixed;
+    top: 53px;
+    right: 0;
+    bottom: 0;
+    z-index: 130;
+    width: min(320px, 84vw);
+    padding: 10px 10px 20px;
+    flex-direction: column;
+    gap: 8px;
+    border-left: 1px solid var(--border);
+    border-bottom: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+    transform: translateX(110%);
+    transition: transform 0.22s ease;
+  }
+  body.mobile-nav-open .nav-tabs { transform: translateX(0); }
+  .nav-tab {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 11px 12px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    border-bottom-width: 1px;
+    background: var(--bg-input);
+  }
+  .nav-tab.active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+  }
+
   .template-grid { grid-template-columns: 1fr; }
   .vendor-directory-shell { grid-template-columns: 1fr; }
-  .vendor-directory-rail { position: static; grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .vendor-directory-rail { position: static; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .vendor-cards { grid-template-columns: 1fr; }
   .vendor-row { flex-direction: column; align-items: flex-start; }
   #sec-vendors .section-header > div:last-child { width: 100%; }
   #sec-vendors .search-box { width: 100%; min-width: 0; }
   #sec-vendors select, #sec-vendors .sec-refresh { min-height: 40px; }
+
+  /* Sticky kanban filter bar so controls stay visible while scrolling columns */
+  .kanban-filters {
+    position: sticky;
+    top: 52px;
+    z-index: 50;
+    background: var(--bg-primary);
+    margin: -10px -10px 10px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .kanban-filters select { min-height: 38px; }
+
+  /* Vendor tap-to-call / tap-to-email quick actions */
+  .vendor-quick-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .vendor-qa-btn:hover, .vendor-qa-btn:active { border-color: var(--accent); color: var(--accent); }
 }
 @media (max-width: 1180px) {
   .build-badge { display: none; }
@@ -1010,6 +1161,19 @@ body.role-vendors .cache-badge { display: none; }
   .table-header { flex-direction: column; align-items: stretch; }
   .table-actions { flex-wrap: wrap; }
   .section-header { flex-direction: column; align-items: stretch; }
+
+  /* Compact Turn Pipeline cards */
+  .pipe-card { padding: 8px 10px; gap: 6px; flex-wrap: wrap; }
+  .pipe-card-unit { min-width: 0; flex: 1 1 calc(60% - 50px); }
+  .pipe-card-unit-name { font-size: 12px; }
+  .pipe-card-prop { font-size: 10px; }
+  .pipe-card-stages { max-width: none; flex: 0 0 100%; order: 3; padding: 4px 0 0; justify-content: flex-start; gap: 4px; }
+  .pipe-card-stages::before { left: 10px; right: 10px; }
+  .pipe-dot { width: 20px; height: 20px; font-size: 9px; }
+  .pipe-card-status { min-width: auto; flex: 0 0 auto; align-items: flex-end; }
+  .pipe-card-elapsed { font-size: 11px; }
+  .pipe-card-cost { font-size: 10px; }
+  .pipe-section-head { padding: 5px 10px; font-size: 9px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1748,11 +1912,11 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <div class="vault-subtitle" style="margin-top:4px">Sign in to continue.</div>
     <div style="display:flex;justify-content:center;margin:-10px 0 14px">
       <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
-        <span class="login-info-tip">Use your passphrase, AppFolio subdomain, and proxy URL. In proxy mode, enter Setup PIN or static bearer token in the password field.</span>
+        <span class="login-info-tip">Use one login method: setup PIN or proxy key, role passphrase (handy::manager / advanced::manager / handy::vendors), or your configured @flraz.com PM email for OTP. If your email is not recognized, contact administrator.</span>
       </span>
     </div>
     <div class="vault-input-wrap">
-      <input type="password" class="vault-input" id="vaultPassphrase" placeholder="Enter vault passphrase" autocomplete="off" autofocus>
+      <input type="password" class="vault-input" id="vaultPassphrase" placeholder="Enter PIN, proxy key, role passphrase, or PM email" autocomplete="off" autofocus>
       <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
     </div>
     <div class="vault-input-wrap">
@@ -1799,6 +1963,9 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
   <div class="topbar-right">
+    <button class="mobile-nav-toggle" id="mobileNavToggle" title="Open menu" aria-label="Open navigation menu" aria-expanded="false">
+      <i class="fas fa-bars"></i>
+    </button>
     <button class="theme-toggle-btn" id="themeToggle" title="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
     <div class="cache-badge live" id="cacheBadge" title="Data source"><i class="fas fa-database"></i> <span id="cacheBadgeText">—</span></div>
     <button class="cache-io-btn" id="btnExportCache" title="Export cache to file"><i class="fas fa-download"></i></button>
@@ -1812,6 +1979,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 </div>
 
 <!-- Navigation -->
+<div class="mobile-nav-backdrop" id="mobileNavBackdrop"></div>
 <nav class="nav-tabs" id="navTabs">
   <button class="nav-tab active" data-tab="dashboard"><i class="fas fa-th-large"></i> Dashboard</button>
   <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="badge" id="woBadge">—</span></button>
@@ -2600,6 +2768,51 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       </div>
       <div class="dbadmin-results-body" id="pmUsersBody"><div class="dbadmin-msg">Loading PM users…</div></div>
     </div>
+
+    <!-- ── OTP / Auth Policy Settings ──────────────────────────────────── -->
+    <div class="dbadmin-results" id="otpSettingsPanel">
+      <div class="dbadmin-results-head">
+        <span><i class="fas fa-shield-alt" style="color:var(--accent)"></i> OTP &amp; Auth Policy Settings</span>
+        <button class="dbadmin-btn" id="btnOtpSettingsRefresh" style="padding:3px 10px;font-size:10px"><i class="fas fa-sync-alt"></i> Reload</button>
+      </div>
+      <div style="padding:12px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;border-bottom:1px solid var(--border)">
+        <!-- OTP Enabled -->
+        <div>
+          <div style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">OTP Login Enabled</div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="otpSettingEnabled" style="width:16px;height:16px;accent-color:var(--accent)">
+            <span style="font-size:12px;color:var(--text-secondary)" id="otpSettingEnabledLabel">Enabled</span>
+          </label>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Allow PM users to log in via email OTP</div>
+        </div>
+        <!-- Require PM membership -->
+        <div>
+          <div style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Require PM Membership</div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="otpSettingRequireMembership" style="width:16px;height:16px;accent-color:var(--accent)">
+            <span style="font-size:12px;color:var(--text-secondary)" id="otpSettingRequireMembershipLabel">Required</span>
+          </label>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Only allow emails in the PM Scoped Login Users list above</div>
+        </div>
+        <!-- Allowed domain -->
+        <div>
+          <div style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Allowed Email Domain</div>
+          <input type="text" id="otpSettingDomain" class="dbadmin-key-input" style="max-width:none;width:100%;font-family:var(--font-mono)" placeholder="flraz.com (env fallback)">
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Leave blank to use <code>OTP_ALLOWED_DOMAIN</code> env var</div>
+        </div>
+        <!-- TTL -->
+        <div>
+          <div style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">OTP Code TTL (minutes)</div>
+          <input type="number" id="otpSettingTtl" class="dbadmin-key-input" style="max-width:none;width:100%;font-family:var(--font-mono)" min="3" max="60" placeholder="10">
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">How long a sent OTP code stays valid (min 3)</div>
+        </div>
+      </div>
+      <div style="padding:10px 14px;display:flex;align-items:center;gap:8px;background:var(--bg-secondary)">
+        <button class="dbadmin-btn primary" id="btnOtpSettingsSave" style="padding:4px 14px"><i class="fas fa-save"></i> Save Settings</button>
+        <span id="otpSettingsSaveStatus" style="font-size:11px;color:var(--text-muted)"></span>
+      </div>
+    </div>
+
     <details class="dbadmin-history" id="dbHistoryWrap"><summary><i class="fas fa-history"></i> Query History</summary><div class="dbadmin-history-list" id="dbHistoryList"></div></details>
   </div>
 </section>
@@ -3757,6 +3970,42 @@ function forceActiveTab(tabName) {
   $$('.section').forEach(function(s) {
     s.classList.toggle('active', s.id === 'sec-' + tabName);
   });
+  setMobileNavLabelFromActiveTab();
+  closeMobileNav();
+}
+
+function isMobileViewport() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function closeMobileNav() {
+  document.body.classList.remove('mobile-nav-open');
+  var toggleBtn = document.getElementById('mobileNavToggle');
+  if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+}
+
+function toggleMobileNav() {
+  if (!isMobileViewport()) return;
+  var nextState = !document.body.classList.contains('mobile-nav-open');
+  document.body.classList.toggle('mobile-nav-open', nextState);
+  var toggleBtn = document.getElementById('mobileNavToggle');
+  if (toggleBtn) toggleBtn.setAttribute('aria-expanded', nextState ? 'true' : 'false');
+}
+
+function setMobileNavLabelFromActiveTab() {
+  var toggleBtn = document.getElementById('mobileNavToggle');
+  if (!toggleBtn) return;
+  var activeTab = document.querySelector('.nav-tab.active');
+  var label = activeTab ? activeTab.textContent.replace(/\s+/g, ' ').trim() : 'Menu';
+  toggleBtn.title = 'Menu: ' + label;
+  toggleBtn.setAttribute('aria-label', 'Open navigation menu. Current tab: ' + label);
+}
+
+function syncMobileNavForViewport() {
+  if (!isMobileViewport()) {
+    closeMobileNav();
+  }
+  setMobileNavLabelFromActiveTab();
 }
 
 function wipeCredentials() {
@@ -3770,6 +4019,7 @@ function wipeCredentials() {
   _accessRole = 'full';
   _pmScopeGroupUuid = '';
   _pmScopeEmail = '';
+  closeMobileNav();
 }
 
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
@@ -3905,7 +4155,7 @@ async function setupTrustedDevice(setupPin, userName) {
 function normalizeOtpEmail(raw) {
   var email = String(raw || '').trim().toLowerCase();
   if (!email) return '';
-  var m = email.match(/^[a-z0-9._%+\-]+@flraz\.com$/i);
+  var m = email.match(/^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i);
   return m ? email : '';
 }
 
@@ -4878,7 +5128,7 @@ if ($('#btnSendOtp')) {
     var emailRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
     var email = normalizeOtpEmail(emailRaw);
     if (!email) {
-      $('#vaultError').textContent = 'Enter a valid @flraz.com email to receive OTP.';
+      $('#vaultError').textContent = 'Enter your configured work email to receive OTP.';
       $('#vaultError').classList.add('show');
       return;
     }
@@ -4896,8 +5146,10 @@ if ($('#btnSendOtp')) {
       await requestDeviceOtp(email, 'dispatcher');
       showToast('OTP sent to ' + email, { kind: 'success' });
     } catch (err) {
-      $('#vaultError').textContent = err.message || String(err);
+      var msg = (err && (err.message || String(err))) || 'OTP request failed';
+      $('#vaultError').textContent = msg;
       $('#vaultError').classList.add('show');
+      showToast(msg, { kind: 'danger' });
     } finally {
       btn.disabled = false;
       btn.textContent = 'Send OTP';
@@ -4910,7 +5162,7 @@ if ($('#btnVerifyOtp')) {
     var email = normalizeOtpEmail($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
     var code = String(($('#vaultOtpCode') && $('#vaultOtpCode').value) || '').trim();
     if (!email) {
-      $('#vaultError').textContent = 'Enter a valid @flraz.com email first.';
+      $('#vaultError').textContent = 'Enter your configured work email first.';
       $('#vaultError').classList.add('show');
       return;
     }
@@ -4950,8 +5202,10 @@ if ($('#btnVerifyOtp')) {
       if ($('#vaultPassphrase')) $('#vaultPassphrase').value = '';
       showToast('Device verified — you can now connect without setup PIN.', { kind: 'success' });
     } catch (err) {
-      $('#vaultError').textContent = err.message || String(err);
+      var msg = (err && (err.message || String(err))) || 'OTP verification failed';
+      $('#vaultError').textContent = msg;
       $('#vaultError').classList.add('show');
+      showToast(msg, { kind: 'danger' });
     } finally {
       btn.disabled = false;
       btn.textContent = 'Verify Device';
@@ -4975,7 +5229,7 @@ function sanitizeProxy(raw) {
 initVaultConfigUI();
 
 $('#vaultUnlockBtn').addEventListener('click', async function() {
-  var pass = $('#vaultPassphrase').value;
+  var pass = String(($('#vaultPassphrase') && $('#vaultPassphrase').value) || '').trim();
   // Re-sanitize at unlock time in case user pasted a full URL
   var rawVhost = $('#vaultVhost').value;
   var vhost = sanitizeVhost(rawVhost);
@@ -5009,17 +5263,32 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
   try {
     API_VHOST = vhost;
     API_PROXY = proxyUrl;
+    var passAsEmail = normalizeOtpEmail(pass);
+
+    if (API_PROXY && passAsEmail) {
+      if ($('#vaultOtpEmail')) $('#vaultOtpEmail').value = passAsEmail;
+      await requestDeviceOtp(passAsEmail, 'dispatcher');
+      showToast('OTP sent to ' + passAsEmail + '. Enter code, verify device, then connect.', { kind: 'info', duration: 5000 });
+      $('#vaultError').textContent = 'OTP sent. Complete verification before connecting.';
+      $('#vaultError').classList.add('show');
+      return;
+    }
 
     // Resolve role from passphrase keyword before going into proxy/direct flow.
     function resolveRoleFromPass(p) {
       if (p === ROLE_TOKEN_VENDOR) return 'vendors';
       if (p === ROLE_TOKEN_MANAGER) return 'manager';
+      if (p === ROLE_TOKEN_ADMIN) return 'full';
       return 'full';
     }
 
-    if (API_PROXY && existingDeviceToken && !pass) {
+    function isRolePassphrase(p) {
+      return p === ROLE_TOKEN_VENDOR || p === ROLE_TOKEN_MANAGER || p === ROLE_TOKEN_ADMIN;
+    }
+
+    if (API_PROXY && existingDeviceToken && (!pass || isRolePassphrase(pass))) {
       API_CREDS = { p: existingDeviceToken };
-      _accessRole = getStoredAccessRole();
+      _accessRole = pass ? resolveRoleFromPass(pass) : getStoredAccessRole();
       try {
         var sess = await proxyAction('session_info');
         if (sess && sess.ok && sess.session) {
@@ -5038,6 +5307,9 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       persistAccessRole(_accessRole);
       try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
     } else if (API_PROXY) {
+      if (isRolePassphrase(pass) && !existingDeviceToken) {
+        throw new Error('TRUSTED_DEVICE_REQUIRED');
+      }
       var proxyToken = '';
       try {
         proxyToken = await setupTrustedDevice(pass, 'dispatcher');
@@ -5104,6 +5376,8 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     if (API_PROXY) {
       $('#vaultError').textContent = schemaErr
         ? 'Proxy connected, but database schema is out of date (missing tables/columns). Deploy latest proxy migrations and retry.'
+        : errMsg === 'TRUSTED_DEVICE_REQUIRED'
+        ? 'These role passphrases use your saved trusted-device session. Verify this device with OTP or enter the Setup PIN first.'
         : 'Proxy auth failed \u2014 enter Setup PIN or static bearer token.';
     } else {
       $('#vaultError').textContent = 'Decryption failed \u2014 incorrect passphrase or corrupted vault.';
@@ -10353,7 +10627,11 @@ function renderVendors(search) {
     if (cRes.isManual) html += ' <span style="font-size:9px;opacity:0.7">(manual)</span>';
     html += '</button></div>';
     if (v.phone || v.email) {
-      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Contact</span><span class="vendor-row-value vendor-contact-compact">' + escapeHtml(v.phone || v.email || '\u2014') + (v.phone && v.email ? ' • ' + escapeHtml(v.email) : '') + '</span></div>';
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Contact</span><span class="vendor-row-value vendor-contact-compact">' + escapeHtml(v.phone || v.email || '\u2014') + (v.phone && v.email ? ' \u2022 ' + escapeHtml(v.email) : '') + '</span></div>';
+      html += '<div class="vendor-quick-actions">';
+      if (v.phone) html += '<a class="vendor-qa-btn" href="tel:' + escapeHtml(v.phone) + '" onclick="event.stopPropagation()" title="Call ' + escapeHtml(v.phone) + '"><i class="fas fa-phone"></i> Call</a>';
+      if (v.email) html += '<a class="vendor-qa-btn" href="mailto:' + escapeHtml(v.email) + '" onclick="event.stopPropagation()" title="Email ' + escapeHtml(v.email) + '"><i class="fas fa-envelope"></i> Email</a>';
+      html += '</div>';
     }
     if (v.insurance) {
       html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Insurance</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (exp ? 'var(--danger)' : wrn ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.insurance) + (exp ? ' (EXPIRED)' : wrn ? ' (' + due + 'd)' : '') + '</span></div>';
@@ -11393,12 +11671,34 @@ function wireUpUI() {
   })();
 
   // Navigation tabs (with lazy loading for Vendors & Inspections)
+  var mobileNavToggleBtn = document.getElementById('mobileNavToggle');
+  if (mobileNavToggleBtn) {
+    mobileNavToggleBtn.addEventListener('click', function() {
+      toggleMobileNav();
+    });
+  }
+  var mobileNavBackdrop = document.getElementById('mobileNavBackdrop');
+  if (mobileNavBackdrop) {
+    mobileNavBackdrop.addEventListener('click', function() {
+      closeMobileNav();
+    });
+  }
+  window.addEventListener('resize', function() {
+    syncMobileNavForViewport();
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeMobileNav();
+  });
+  syncMobileNavForViewport();
+
   $$('.nav-tab').forEach(function(tab) {
     tab.addEventListener('click', async function() {
       var tabName = tab.getAttribute('data-tab');
       if (!isTabAllowedForRole(tabName)) return;
       $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
+      closeMobileNav();
+      setMobileNavLabelFromActiveTab();
       $$('.section').forEach(function(s) { s.classList.remove('active'); });
       var sec = document.getElementById('sec-' + tabName);
       if (sec) sec.classList.add('active');
@@ -13130,6 +13430,77 @@ renderDashboardKPIs = function() {
   fetchUnitTurnHistory().then(function() { renderTurnHistoryPanel(); }).catch(function() {});
   populatePMGroupDropdown('');
   loadPmUsers();
+
+  // ── OTP Settings Panel ──────────────────────────────────────────────────
+  (function initOtpSettings() {
+    var enabledCb = document.getElementById('otpSettingEnabled');
+    var enabledLabel = document.getElementById('otpSettingEnabledLabel');
+    var membershipCb = document.getElementById('otpSettingRequireMembership');
+    var membershipLabel = document.getElementById('otpSettingRequireMembershipLabel');
+    var domainInput = document.getElementById('otpSettingDomain');
+    var ttlInput = document.getElementById('otpSettingTtl');
+    var saveBtn = document.getElementById('btnOtpSettingsSave');
+    var saveStatus = document.getElementById('otpSettingsSaveStatus');
+    var refreshBtn = document.getElementById('btnOtpSettingsRefresh');
+    if (!enabledCb || !saveBtn) return;
+
+    function updateCheckboxLabels() {
+      if (enabledLabel) enabledLabel.textContent = enabledCb.checked ? 'Enabled' : 'Disabled';
+      if (membershipLabel) membershipLabel.textContent = membershipCb && membershipCb.checked ? 'Required' : 'Not required';
+    }
+    if (enabledCb) enabledCb.addEventListener('change', updateCheckboxLabels);
+    if (membershipCb) membershipCb.addEventListener('change', updateCheckboxLabels);
+
+    function loadOtpSettings() {
+      var adminKey = (document.getElementById('dbAdminKey') && document.getElementById('dbAdminKey').value || '').trim();
+      if (!adminKey) { if (saveStatus) { saveStatus.textContent = 'Enter Admin Key above to load settings'; saveStatus.style.color = 'var(--text-muted)'; } return; }
+      proxyAction('settings_get', { key: adminKey }).then(function(data) {
+        var settings = {};
+        (data.settings || []).forEach(function(s) { settings[s.key] = s.value; });
+        if (enabledCb) enabledCb.checked = (settings['otp_enabled'] ?? '1') !== '0';
+        if (membershipCb) membershipCb.checked = (settings['otp_require_pm_membership'] ?? '1') !== '0';
+        if (domainInput) domainInput.value = settings['otp_allowed_domain'] || '';
+        if (ttlInput) ttlInput.value = settings['otp_ttl_minutes'] || '10';
+        updateCheckboxLabels();
+        if (saveStatus) { saveStatus.textContent = 'Settings loaded'; saveStatus.style.color = 'var(--success)'; setTimeout(function() { if (saveStatus) saveStatus.textContent = ''; }, 2000); }
+      }).catch(function(err) {
+        if (saveStatus) { saveStatus.textContent = err.message || String(err); saveStatus.style.color = 'var(--danger)'; }
+      });
+    }
+
+    if (refreshBtn) refreshBtn.addEventListener('click', loadOtpSettings);
+
+    saveBtn.addEventListener('click', function() {
+      var adminKey = (document.getElementById('dbAdminKey') && document.getElementById('dbAdminKey').value || '').trim();
+      if (!adminKey) { showToast('Enter Admin Key first', 'error'); return; }
+      var saves = [
+        { key: 'otp_enabled', value: enabledCb.checked ? '1' : '0' },
+        { key: 'otp_require_pm_membership', value: (membershipCb && membershipCb.checked) ? '1' : '0' },
+        { key: 'otp_allowed_domain', value: (domainInput && domainInput.value.trim().replace(/^@/, '')) || '' },
+        { key: 'otp_ttl_minutes', value: String(Math.max(3, parseInt(ttlInput && ttlInput.value || '10', 10) || 10)) },
+      ];
+      saveBtn.disabled = true;
+      if (saveStatus) { saveStatus.textContent = 'Saving…'; saveStatus.style.color = 'var(--text-muted)'; }
+      var promises = saves.map(function(s) {
+        return proxyPost('settings_set', { admin_key: adminKey, key: s.key, value: s.value });
+      });
+      Promise.all(promises).then(function() {
+        showToast('OTP settings saved', 'success');
+        if (saveStatus) { saveStatus.textContent = 'Saved ✓'; saveStatus.style.color = 'var(--success)'; setTimeout(function() { if (saveStatus) saveStatus.textContent = ''; }, 3000); }
+      }).catch(function(err) {
+        showToast(err.message || String(err), 'error');
+        if (saveStatus) { saveStatus.textContent = err.message || 'Error'; saveStatus.style.color = 'var(--danger)'; }
+      }).finally(function() { saveBtn.disabled = false; });
+    });
+
+    // Auto-load when admin key is entered
+    var adminKeyInput = document.getElementById('dbAdminKey');
+    if (adminKeyInput) {
+      adminKeyInput.addEventListener('change', function() { if (adminKeyInput.value.trim()) loadOtpSettings(); });
+    }
+
+    loadOtpSettings();
+  })();
 
   renderHistory();
 })();
