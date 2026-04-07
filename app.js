@@ -1486,6 +1486,27 @@ function setApiStatus(state, text) {
   textEl.textContent = text;
 }
 
+function applyProxySchemaHealth(pingData) {
+  var el = $('#apiStatus');
+  if (!el) return { suffix: '', hasIssue: false, detail: '' };
+  var schema = pingData && pingData.schema;
+  if (!schema || typeof schema !== 'object') {
+    return { suffix: '', hasIssue: false, detail: '' };
+  }
+  var missing = Array.isArray(schema.missing_tables) ? schema.missing_tables : [];
+  var hasIssue = schema.ok === false || missing.length > 0;
+  var detail = hasIssue
+    ? ('Schema issue: missing ' + (missing.length ? missing.join(', ') : 'unknown table(s)'))
+    : 'Schema OK';
+  var dbLabel = (pingData && pingData.database) ? (' [' + pingData.database + ']') : '';
+  el.title = detail + dbLabel;
+  return {
+    suffix: hasIssue ? ' · schema issue' : ' · schema ok',
+    hasIssue: hasIssue,
+    detail: detail,
+  };
+}
+
 var APP_VERSION = 'v9.1a';
 var APP_VERSION_UPDATED = 'April 2026';
 var SERVER_VERSION = '';
@@ -1563,6 +1584,7 @@ var _lastTurnTrackerSyncHash = '';
 var BILLS = []; // from DB API — AP bills for WO close-assist
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
+var _schemaHealthWarned = false;
 var _webhookPollTimer = null;
 var _autoSyncTimer = null;      // 30-min background selective refresh
 var _vendorsLazyLoaded = false; // lazy-load flag — vendors fetched on tab click
@@ -8830,6 +8852,7 @@ async function initApp() {
   try {
     setApiStatus('loading', 'Pinging proxy\u2026');
     var pingData = await proxyAction('ping');
+    var schemaHealth = applyProxySchemaHealth(pingData);
 
     // Detect proxy version when the proxy includes a version field
     _proxyVersion = pingData.version || 'v7';
@@ -8858,9 +8881,21 @@ async function initApp() {
     var pingMsg = 'Proxy OK';
     if (pingData.latency_ms) pingMsg += ' (' + pingData.latency_ms + 'ms)';
     if (_proxyVersion !== 'v7') pingMsg += ' [' + _proxyVersion + ']';
+    if (schemaHealth && schemaHealth.suffix) pingMsg += schemaHealth.suffix;
     if (!dbOk) {
       pingMsg += ' (DB API down, Reports OK)';
       logApiError(0, 'DB API v0 unreachable — some features may be limited', 'resolved');
+    }
+    if (schemaHealth && schemaHealth.hasIssue) {
+      logApiError(500, 'Proxy schema health warning: ' + schemaHealth.detail, 'queued');
+      if (!_schemaHealthWarned) {
+        _schemaHealthWarned = true;
+        showToast('Proxy schema warning: ' + schemaHealth.detail, {
+          kind: 'warning',
+          iconClass: 'fa-triangle-exclamation',
+          duration: 5500,
+        });
+      }
     }
     pingMsg += ' \u2014 loading data\u2026';
     setApiStatus('loading', pingMsg);
