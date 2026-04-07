@@ -795,6 +795,42 @@ function forceActiveTab(tabName) {
   $$('.section').forEach(function(s) {
     s.classList.toggle('active', s.id === 'sec-' + tabName);
   });
+  setMobileNavLabelFromActiveTab();
+  closeMobileNav();
+}
+
+function isMobileViewport() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function closeMobileNav() {
+  document.body.classList.remove('mobile-nav-open');
+  var toggleBtn = document.getElementById('mobileNavToggle');
+  if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+}
+
+function toggleMobileNav() {
+  if (!isMobileViewport()) return;
+  var nextState = !document.body.classList.contains('mobile-nav-open');
+  document.body.classList.toggle('mobile-nav-open', nextState);
+  var toggleBtn = document.getElementById('mobileNavToggle');
+  if (toggleBtn) toggleBtn.setAttribute('aria-expanded', nextState ? 'true' : 'false');
+}
+
+function setMobileNavLabelFromActiveTab() {
+  var toggleBtn = document.getElementById('mobileNavToggle');
+  if (!toggleBtn) return;
+  var activeTab = document.querySelector('.nav-tab.active');
+  var label = activeTab ? activeTab.textContent.replace(/\s+/g, ' ').trim() : 'Menu';
+  toggleBtn.title = 'Menu: ' + label;
+  toggleBtn.setAttribute('aria-label', 'Open navigation menu. Current tab: ' + label);
+}
+
+function syncMobileNavForViewport() {
+  if (!isMobileViewport()) {
+    closeMobileNav();
+  }
+  setMobileNavLabelFromActiveTab();
 }
 
 function wipeCredentials() {
@@ -808,6 +844,7 @@ function wipeCredentials() {
   _accessRole = 'full';
   _pmScopeGroupUuid = '';
   _pmScopeEmail = '';
+  closeMobileNav();
 }
 
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
@@ -939,7 +976,7 @@ async function setupTrustedDevice(setupPin, userName) {
 function normalizeOtpEmail(raw) {
   var email = String(raw || '').trim().toLowerCase();
   if (!email) return '';
-  var m = email.match(/^[a-z0-9._%+\-]+@flraz\.com$/i);
+  var m = email.match(/^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i);
   return m ? email : '';
 }
 
@@ -1954,7 +1991,7 @@ if ($('#btnSendOtp')) {
     var emailRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
     var email = normalizeOtpEmail(emailRaw);
     if (!email) {
-      $('#vaultError').textContent = 'Enter a valid @flraz.com email to receive OTP.';
+      $('#vaultError').textContent = 'Enter your configured work email to receive OTP.';
       $('#vaultError').classList.add('show');
       return;
     }
@@ -1972,8 +2009,10 @@ if ($('#btnSendOtp')) {
       await requestDeviceOtp(email, 'dispatcher');
       showToast('OTP sent to ' + email, { kind: 'success' });
     } catch (err) {
-      $('#vaultError').textContent = err.message || String(err);
+      var msg = (err && (err.message || String(err))) || 'OTP request failed';
+      $('#vaultError').textContent = msg;
       $('#vaultError').classList.add('show');
+      showToast(msg, { kind: 'danger' });
     } finally {
       btn.disabled = false;
       btn.textContent = 'Send OTP';
@@ -1986,7 +2025,7 @@ if ($('#btnVerifyOtp')) {
     var email = normalizeOtpEmail($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
     var code = String(($('#vaultOtpCode') && $('#vaultOtpCode').value) || '').trim();
     if (!email) {
-      $('#vaultError').textContent = 'Enter a valid @flraz.com email first.';
+      $('#vaultError').textContent = 'Enter your configured work email first.';
       $('#vaultError').classList.add('show');
       return;
     }
@@ -2026,8 +2065,10 @@ if ($('#btnVerifyOtp')) {
       if ($('#vaultPassphrase')) $('#vaultPassphrase').value = '';
       showToast('Device verified — you can now connect without setup PIN.', { kind: 'success' });
     } catch (err) {
-      $('#vaultError').textContent = err.message || String(err);
+      var msg = (err && (err.message || String(err))) || 'OTP verification failed';
+      $('#vaultError').textContent = msg;
       $('#vaultError').classList.add('show');
+      showToast(msg, { kind: 'danger' });
     } finally {
       btn.disabled = false;
       btn.textContent = 'Verify Device';
@@ -2051,7 +2092,7 @@ function sanitizeProxy(raw) {
 initVaultConfigUI();
 
 $('#vaultUnlockBtn').addEventListener('click', async function() {
-  var pass = $('#vaultPassphrase').value;
+  var pass = String(($('#vaultPassphrase') && $('#vaultPassphrase').value) || '').trim();
   // Re-sanitize at unlock time in case user pasted a full URL
   var rawVhost = $('#vaultVhost').value;
   var vhost = sanitizeVhost(rawVhost);
@@ -2085,17 +2126,32 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
   try {
     API_VHOST = vhost;
     API_PROXY = proxyUrl;
+    var passAsEmail = normalizeOtpEmail(pass);
+
+    if (API_PROXY && passAsEmail) {
+      if ($('#vaultOtpEmail')) $('#vaultOtpEmail').value = passAsEmail;
+      await requestDeviceOtp(passAsEmail, 'dispatcher');
+      showToast('OTP sent to ' + passAsEmail + '. Enter code, verify device, then connect.', { kind: 'info', duration: 5000 });
+      $('#vaultError').textContent = 'OTP sent. Complete verification before connecting.';
+      $('#vaultError').classList.add('show');
+      return;
+    }
 
     // Resolve role from passphrase keyword before going into proxy/direct flow.
     function resolveRoleFromPass(p) {
       if (p === ROLE_TOKEN_VENDOR) return 'vendors';
       if (p === ROLE_TOKEN_MANAGER) return 'manager';
+      if (p === ROLE_TOKEN_ADMIN) return 'full';
       return 'full';
     }
 
-    if (API_PROXY && existingDeviceToken && !pass) {
+    function isRolePassphrase(p) {
+      return p === ROLE_TOKEN_VENDOR || p === ROLE_TOKEN_MANAGER || p === ROLE_TOKEN_ADMIN;
+    }
+
+    if (API_PROXY && existingDeviceToken && (!pass || isRolePassphrase(pass))) {
       API_CREDS = { p: existingDeviceToken };
-      _accessRole = getStoredAccessRole();
+      _accessRole = pass ? resolveRoleFromPass(pass) : getStoredAccessRole();
       try {
         var sess = await proxyAction('session_info');
         if (sess && sess.ok && sess.session) {
@@ -2114,6 +2170,9 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       persistAccessRole(_accessRole);
       try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
     } else if (API_PROXY) {
+      if (isRolePassphrase(pass) && !existingDeviceToken) {
+        throw new Error('TRUSTED_DEVICE_REQUIRED');
+      }
       var proxyToken = '';
       try {
         proxyToken = await setupTrustedDevice(pass, 'dispatcher');
@@ -2180,6 +2239,8 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     if (API_PROXY) {
       $('#vaultError').textContent = schemaErr
         ? 'Proxy connected, but database schema is out of date (missing tables/columns). Deploy latest proxy migrations and retry.'
+        : errMsg === 'TRUSTED_DEVICE_REQUIRED'
+        ? 'These role passphrases use your saved trusted-device session. Verify this device with OTP or enter the Setup PIN first.'
         : 'Proxy auth failed \u2014 enter Setup PIN or static bearer token.';
     } else {
       $('#vaultError').textContent = 'Decryption failed \u2014 incorrect passphrase or corrupted vault.';
@@ -7857,12 +7918,34 @@ function wireUpUI() {
   })();
 
   // Navigation tabs (with lazy loading for Vendors & Inspections)
+  var mobileNavToggleBtn = document.getElementById('mobileNavToggle');
+  if (mobileNavToggleBtn) {
+    mobileNavToggleBtn.addEventListener('click', function() {
+      toggleMobileNav();
+    });
+  }
+  var mobileNavBackdrop = document.getElementById('mobileNavBackdrop');
+  if (mobileNavBackdrop) {
+    mobileNavBackdrop.addEventListener('click', function() {
+      closeMobileNav();
+    });
+  }
+  window.addEventListener('resize', function() {
+    syncMobileNavForViewport();
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeMobileNav();
+  });
+  syncMobileNavForViewport();
+
   $$('.nav-tab').forEach(function(tab) {
     tab.addEventListener('click', async function() {
       var tabName = tab.getAttribute('data-tab');
       if (!isTabAllowedForRole(tabName)) return;
       $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
+      closeMobileNav();
+      setMobileNavLabelFromActiveTab();
       $$('.section').forEach(function(s) { s.classList.remove('active'); });
       var sec = document.getElementById('sec-' + tabName);
       if (sec) sec.classList.add('active');
