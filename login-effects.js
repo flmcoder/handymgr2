@@ -1,5 +1,5 @@
 /**
- * Login Screen Water Ripple Effect 
+ * Login Screen Water Ripple Effects
  * AD
  */
 
@@ -30,6 +30,10 @@
       this.lastY = 0;
       this.velocityX = 0;
       this.velocityY = 0;
+      this._onMouseMove = null;
+      this._onClick = null;
+      this._onTouchMove = null;
+      this._onTouchEnd = null;
 
       this.resize();
       window.addEventListener('resize', () => this.resize());
@@ -49,7 +53,9 @@
     }
 
     setupDesktopEvents() {
-      document.addEventListener('mousemove', (e) => {
+      this._onMouseMove = (e) => {
+        if (!shouldRenderEffect()) return;
+        if (isInsideLoginPanel(e.target)) return;
         this.velocityX = e.clientX - this.lastX;
         this.velocityY = e.clientY - this.lastY;
         this.lastX = e.clientX;
@@ -59,27 +65,37 @@
         if (Math.abs(this.velocityX) > 0.5 || Math.abs(this.velocityY) > 0.5) {
           this.createRipple(e.clientX, e.clientY, 2);
         }
-      });
+      };
+      document.addEventListener('mousemove', this._onMouseMove);
 
-      document.addEventListener('click', (e) => {
+      this._onClick = (e) => {
+        if (!shouldRenderEffect()) return;
+        if (isInsideLoginPanel(e.target)) return;
         this.createWaterdrop(e.clientX, e.clientY);
-      });
+      };
+      document.addEventListener('click', this._onClick);
     }
 
     setupMobileEvents() {
-      document.addEventListener('touchmove', (e) => {
+      this._onTouchMove = (e) => {
+        if (!shouldRenderEffect()) return;
+        if (isInsideLoginPanel(e.target)) return;
         const touch = e.touches[0];
         if (touch) {
           this.createRipple(touch.clientX, touch.clientY, 2);
         }
-      }, { passive: true });
+      };
+      document.addEventListener('touchmove', this._onTouchMove, { passive: true });
 
-      document.addEventListener('touchend', (e) => {
+      this._onTouchEnd = (e) => {
+        if (!shouldRenderEffect()) return;
+        if (isInsideLoginPanel(e.target)) return;
         const touch = e.changedTouches[0];
         if (touch) {
           this.createWaterdrop(touch.clientX, touch.clientY);
         }
-      }, { passive: true });
+      };
+      document.addEventListener('touchend', this._onTouchEnd, { passive: true });
     }
 
     createRipple(x, y, radius) {
@@ -157,37 +173,57 @@
     }
 
     destroy() {
+      if (this._onMouseMove) document.removeEventListener('mousemove', this._onMouseMove);
+      if (this._onClick) document.removeEventListener('click', this._onClick);
+      if (this._onTouchMove) document.removeEventListener('touchmove', this._onTouchMove);
+      if (this._onTouchEnd) document.removeEventListener('touchend', this._onTouchEnd);
       if (this.canvas && this.canvas.parentNode) {
         this.canvas.parentNode.removeChild(this.canvas);
       }
     }
   }
 
+  function isInsideLoginPanel(target) {
+    if (!target || !target.closest) return false;
+    return !!target.closest('.vault-box');
+  }
+
+  function shouldRenderEffect() {
+    const vaultScreen = document.getElementById('vaultScreen');
+    if (!vaultScreen) return false;
+    const appShell = document.getElementById('appShell');
+    const screenVisible = window.getComputedStyle(vaultScreen).display !== 'none';
+    const appUnlocked = !!(appShell && appShell.classList.contains('unlocked'));
+    return screenVisible && !appUnlocked;
+  }
+
   // Initialize when vault screen is shown
   function initWaterEffect() {
-    const vaultModal = document.getElementById('vaultModal');
-    if (!vaultModal) return;
+    const vaultScreen = document.getElementById('vaultScreen');
+    if (!vaultScreen) return;
 
     let effectInstance = null;
 
-    // Watch for vault modal visibility
-    const observer = new MutationObserver((mutations) => {
-      const isVisible = vaultModal.classList.contains('show');
-
+    function syncEffect() {
+      const isVisible = shouldRenderEffect();
       if (isVisible && !effectInstance) {
         effectInstance = new WaterEffect();
       } else if (!isVisible && effectInstance) {
         effectInstance.destroy();
         effectInstance = null;
       }
+    }
+
+    // Watch for vault screen visibility changes
+    const observer = new MutationObserver(() => {
+      syncEffect();
     });
 
-    observer.observe(vaultModal, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(vaultScreen, { attributes: true, attributeFilter: ['style', 'class'] });
+    document.addEventListener('handymgr:login-screen-visible', syncEffect);
 
     // Initial check
-    if (vaultModal.classList.contains('show')) {
-      effectInstance = new WaterEffect();
-    }
+    syncEffect();
   }
 
   // Start when DOM is ready
