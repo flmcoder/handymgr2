@@ -15,13 +15,25 @@
     constructor() {
       this.canvas = document.createElement('canvas');
       this.canvas.id = 'water-effect-canvas';
-      this.canvas.style.position = 'fixed';
+      this.canvas.style.position = 'absolute';
       this.canvas.style.top = '0';
       this.canvas.style.left = '0';
+      this.canvas.style.width = '100%';
+      this.canvas.style.height = '100%';
       this.canvas.style.background = 'transparent';
       this.canvas.style.pointerEvents = 'none';
-      this.canvas.style.zIndex = '1';
-      document.body.insertBefore(this.canvas, document.body.firstChild);
+      this.canvas.style.zIndex = '0';
+
+      const vaultScreen = document.getElementById('vaultScreen');
+      if (vaultScreen) {
+        // Keep effect confined to login screen only and behind the login panel.
+        if (!vaultScreen.style.position) vaultScreen.style.position = 'relative';
+        vaultScreen.style.overflow = 'hidden';
+        vaultScreen.insertBefore(this.canvas, vaultScreen.firstChild);
+      } else {
+        // Safe fallback: if login container is missing, do not show any effect.
+        throw new Error('vaultScreen not found for water effect');
+      }
 
       this.ctx = this.canvas.getContext('2d');
       this.isMobile = isMobile();
@@ -32,6 +44,7 @@
       this.velocityX = 0;
       this.velocityY = 0;
       this.lastRippleAt = 0;
+      this.hasPointer = false;
       this._onMouseMove = null;
       this._onClick = null;
       this._onTouchMove = null;
@@ -50,14 +63,20 @@
     }
 
     resize() {
-      this.canvas.width = window.innerWidth;
-      this.canvas.height = window.innerHeight;
+      const host = document.getElementById('vaultScreen');
+      if (!host) return;
+      const rect = host.getBoundingClientRect();
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      this.canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+      this.canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
     setupDesktopEvents() {
       this._onMouseMove = (e) => {
         if (!shouldRenderEffect()) return;
         if (isInsideLoginPanel(e.target)) return;
+        this.hasPointer = true;
         this.velocityX = e.clientX - this.lastX;
         this.velocityY = e.clientY - this.lastY;
         this.lastX = e.clientX;
@@ -66,8 +85,8 @@
         // Gentle trail: only add ripples when cursor movement is meaningful and throttled.
         const now = Date.now();
         const speed = Math.abs(this.velocityX) + Math.abs(this.velocityY);
-        if (speed > 3 && (now - this.lastRippleAt) > 45) {
-          this.createRipple(e.clientX, e.clientY, 1.5);
+        if (speed > 6 && (now - this.lastRippleAt) > 120) {
+          this.createRipple(e.clientX, e.clientY, 1.2);
           this.lastRippleAt = now;
         }
       };
@@ -76,7 +95,7 @@
       this._onClick = (e) => {
         if (!shouldRenderEffect()) return;
         if (isInsideLoginPanel(e.target)) return;
-        this.createWaterdrop(e.clientX, e.clientY);
+        this.createWaterdrop(e.clientX, e.clientY, 1);
       };
       document.addEventListener('click', this._onClick);
     }
@@ -87,9 +106,10 @@
         if (isInsideLoginPanel(e.target)) return;
         const touch = e.touches[0];
         if (touch) {
+          this.hasPointer = true;
           const now = Date.now();
-          if ((now - this.lastRippleAt) > 65) {
-            this.createRipple(touch.clientX, touch.clientY, 1.5);
+          if ((now - this.lastRippleAt) > 140) {
+            this.createRipple(touch.clientX, touch.clientY, 1.1);
             this.lastRippleAt = now;
           }
         }
@@ -101,7 +121,7 @@
         if (isInsideLoginPanel(e.target)) return;
         const touch = e.changedTouches[0];
         if (touch) {
-          this.createWaterdrop(touch.clientX, touch.clientY);
+          this.createWaterdrop(touch.clientX, touch.clientY, 0.9);
         }
       };
       document.addEventListener('touchend', this._onTouchEnd, { passive: true });
@@ -112,37 +132,37 @@
         x,
         y,
         radius,
-        maxRadius: 72,
-        opacity: 0.14,
-        speed: 0.9
+        maxRadius: 58,
+        opacity: 0.065,
+        speed: 0.42,
+        lineWidth: 0.8
       });
     }
 
-    createWaterdrop(x, y) {
-      // Create a larger, more visible drop effect
+    createWaterdrop(x, y, scale) {
+      // Small, soft concentric drop rings.
       this.waves.push({
         x,
         y,
         radius: 0,
-        maxRadius: 96,
-        opacity: 0.2,
-        speed: 1.2,
-        isDroplet: true
+        maxRadius: 62 * scale,
+        opacity: 0.09,
+        speed: 0.55,
+        lineWidth: 1,
+        isDroplet: true,
+        delay: 0
       });
-
-      // Soft particle burst for a subtle tap/click bloom.
-      for (let i = 0; i < 4; i++) {
-        const angle = (Math.PI * 2 * i) / 6;
-        const velocity = 0.8 + Math.random() * 1.2;
-        this.particles.push({
-          x,
-          y,
-          vx: Math.cos(angle) * velocity,
-          vy: Math.sin(angle) * velocity,
-          life: 1,
-          size: 1 + Math.random() * 1.4
-        });
-      }
+      this.waves.push({
+        x,
+        y,
+        radius: 0,
+        maxRadius: 82 * scale,
+        opacity: 0.06,
+        speed: 0.5,
+        lineWidth: 0.7,
+        isDroplet: true,
+        delay: 110
+      });
     }
 
     animate() {
@@ -150,31 +170,24 @@
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
       // Update and draw waves
-      this.waves = this.waves.filter(wave => wave.radius < wave.maxRadius);
+      this.waves = this.waves.filter(wave => {
+        if (wave.delay && wave.delay > 0) return true;
+        return wave.radius < wave.maxRadius;
+      });
       for (const wave of this.waves) {
+        if (wave.delay && wave.delay > 0) {
+          wave.delay -= 16;
+          continue;
+        }
         wave.radius += wave.speed;
-        wave.opacity = (wave.isDroplet ? 0.2 : 0.14) * (1 - wave.radius / wave.maxRadius);
+        wave.opacity = (wave.isDroplet ? 0.09 : 0.065) * (1 - wave.radius / wave.maxRadius);
+        if (wave.opacity <= 0.001) continue;
 
         this.ctx.strokeStyle = `rgba(147, 197, 253, ${wave.opacity})`;
-        this.ctx.lineWidth = wave.isDroplet ? 1.5 : 1;
+        this.ctx.lineWidth = wave.lineWidth || (wave.isDroplet ? 1 : 0.8);
         this.ctx.beginPath();
         this.ctx.arc(wave.x, wave.y, wave.radius, 0, Math.PI * 2);
         this.ctx.stroke();
-      }
-
-      // Update and draw particles
-      this.particles = this.particles.filter(p => p.life > 0);
-      for (const particle of this.particles) {
-        particle.x += particle.vx;
-        particle.y += particle.vy;
-        particle.vy += 0.04; // Gravity
-        particle.life -= 0.03;
-        particle.vx *= 0.96; // Friction
-
-        this.ctx.fillStyle = `rgba(147, 197, 253, ${particle.life * 0.2})`;
-        this.ctx.beginPath();
-        this.ctx.arc(particle.x, particle.y, particle.size * particle.life, 0, Math.PI * 2);
-        this.ctx.fill();
       }
 
       requestAnimationFrame(() => this.animate());
