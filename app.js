@@ -674,42 +674,15 @@ function isVendorManuallyCompliant(vendorId) {
 }
 
 /* =================================================================
-   CREDENTIAL VAULT — AES-256-GCM + PBKDF2
+   AUTH GLOBALS — role verified server-side via Val.town proxy.
+   GUI_ADMIN / GUI_GM / GUI_VENDORS env vars are checked on the proxy.
    ================================================================= */
-var VAULT_BLOBS = [
-  { // Vault profile A
-    s: 'oakh6uQFKiJWj95xXH/hJg==',
-    i: 'pbU5H33tdyjncIza',
-    t: '6jhJXkqaMFtyrXueMQbzhw==',
-    c: '4EuCDYImFsxsjPQg65D/hYVji16JZjiEb7IeOf55tUlU9SbBIVNFhrtWS/MDDs2bthUGQl1xQwg6Ds9fX3dW2psUvyMM8FeD62BV7oq9r4ItZHk7Yz/29AuROg/MECEbZhRyzRGRt21c5PNJ1oFih9aR/QmmXKkRo8wvm99Yn+ODsFyCHC15EsFIOzmA288qwA=='
-  },
-  { // Vault profile B
-    s: 'TteV8E8jlLfolw5t39vUiA==',
-    i: 'YJYvbSiwahNcaEFW',
-    t: 'W4kEMK0/WO8kRJPII6RJ3g==',
-    c: '8kD52jM1FFDqORA4amjV5cJgRp6LICgYBqgeP9m7o+IX8XAkxwfa4pFxxU+6Y06xNkeqlL2LZbvYhv4chkydPONGxnKMvtuPurDg43L2QPAf1decHbgWvkcPCDuHzh/mOHH26pdAQjVvrt+RkGqawcpEjI//HsXA/NnUwsHYzU6gL3l1Q+HnZlzu8a+wU8Cnaw=='
-  },
-  { // Vault profile C (restricted view)
-    s: 'h7M5Px4JaZmyG6VElz8WYA==',
-    i: 'kSKuoNSunr9A63nU',
-    t: '1b14DlE9WJbzFBH+dhQBAA==',
-    c: 'rdnAgJHdQrv87rhu1vANkr9ZFIvE8iEFMR1CppCyfx6/evvk31d5CGOg2kt1jXlJqc1xGEWprBc='
-  }
-];
-
 var API_CREDS = null;
 var API_VHOST = null;
 var API_PROXY = '';
 var _accessRole = 'full'; // 'full' | 'manager' | 'vendors' | 'pm_readonly'
 var _pmScopeGroupUuid = '';
 var _pmScopeEmail = '';
-
-function decodeSecretLabel(b64) {
-  try { return atob(b64); } catch (e) { return ''; }
-}
-var ROLE_TOKEN_VENDOR = decodeSecretLabel('aGFuZHk6OnZlbmRvcnM=');
-var ROLE_TOKEN_MANAGER = decodeSecretLabel('aGFuZHk6Om1hbmFnZXI=');
-var ROLE_TOKEN_ADMIN = decodeSecretLabel('YWR2YW5jZWQ6Om1hbmFnZXI=');
 
 function normalizeAccessRole(role) {
   var value = String(role || '').trim().toLowerCase();
@@ -727,56 +700,6 @@ function persistAccessRole(role) {
 
 function getStoredAccessRole() {
   try { return normalizeAccessRole(localStorage.getItem('hm_access_role') || 'full'); } catch (e) { return 'full'; }
-}
-
-function b64ToU8(b64) {
-  var bin = atob(b64);
-  var u8 = new Uint8Array(bin.length);
-  for (var i = 0; i < bin.length; i++) { u8[i] = bin.charCodeAt(i); }
-  return u8;
-}
-
-async function decryptVaultBlob(blob, passphrase) {
-  var enc = new TextEncoder();
-  var salt = b64ToU8(blob.s);
-  var iv = b64ToU8(blob.i);
-  var tag = b64ToU8(blob.t);
-  var ciphertext = b64ToU8(blob.c);
-  var combined = new Uint8Array(ciphertext.length + tag.length);
-  combined.set(ciphertext);
-  combined.set(tag, ciphertext.length);
-  var keyMaterial = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
-  var aesKey = await crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: salt, iterations: 150000, hash: 'SHA-256' },
-    keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
-  );
-  var decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, aesKey, combined.buffer);
-  return JSON.parse(new TextDecoder().decode(decrypted));
-}
-
-async function decryptVault(passphrase) {
-  function roleFromPass(p) {
-    if (p === ROLE_TOKEN_VENDOR) return 'vendors';
-    if (p === ROLE_TOKEN_MANAGER) return 'manager';
-    if (p === ROLE_TOKEN_ADMIN) return 'full';
-    return 'full';
-  }
-
-  var candidates = [passphrase];
-  // Backward-compat: if vault was encrypted with manager token, still allow admin alias.
-  if (passphrase === ROLE_TOKEN_ADMIN) candidates.push(ROLE_TOKEN_MANAGER);
-
-  // Try each vault blob with each candidate passphrase.
-  for (var i = 0; i < VAULT_BLOBS.length; i++) {
-    for (var c = 0; c < candidates.length; c++) {
-      try {
-        var result = await decryptVaultBlob(VAULT_BLOBS[i], candidates[c]);
-        _accessRole = roleFromPass(passphrase);
-        return result;
-      } catch (e) { /* try next candidate/blob */ }
-    }
-  }
-  throw new Error('Decryption failed for all vault blobs');
 }
 
 function isTabAllowedForRole(tabName) {
@@ -2165,12 +2088,10 @@ initVaultConfigUI();
 
 $('#vaultUnlockBtn').addEventListener('click', async function() {
   var pass = String(($('#vaultPassphrase') && $('#vaultPassphrase').value) || '').trim();
-  // Re-sanitize at unlock time in case user pasted a full URL
   var rawVhost = $('#vaultVhost').value;
   var vhost = sanitizeVhost(rawVhost);
   $('#vaultVhost').value = vhost;
   $('#vhostPreview').textContent = vhost || 'yourco';
-  // Sanitize proxy URL
   var proxyUrl = sanitizeProxy($('#vaultProxy').value);
   if (!proxyUrl) {
     try {
@@ -2183,56 +2104,47 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
   try { existingDeviceToken = localStorage.getItem('hm_device_token') || ''; } catch (e) { /* */ }
 
   if (!vhost) {
-    $('#vaultError').textContent = 'AppFolio subdomain is required. Enter just the subdomain (e.g. "flraz"), not the full URL.';
+    $('#vaultError').textContent = 'AppFolio subdomain is required (e.g. "flraz").';
+    $('#vaultError').classList.add('show');
+    return;
+  }
+  if (!proxyUrl) {
+    $('#vaultError').textContent = 'Proxy URL is required — enter your Val.town proxy URL.';
     $('#vaultError').classList.add('show');
     return;
   }
   if (!pass && !existingDeviceToken) {
-    $('#vaultError').textContent = 'Use Setup PIN or verify this device with @flraz.com OTP before connecting.';
+    $('#vaultError').textContent = 'Enter your password, or verify this device with OTP first.';
     $('#vaultError').classList.add('show');
     return;
-  }
-  if (proxyUrl) {
-    console.log('Proxy URL: ' + proxyUrl);
   }
 
   var btn = this;
   btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Decrypting\u2026';
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Connecting\u2026';
   $('#vaultError').classList.remove('show');
 
   try {
     API_VHOST = vhost;
     API_PROXY = proxyUrl;
-    if (API_PROXY) {
-      try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eProxy) { /* */ }
-    }
+    try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eProxy) { /* */ }
+
     var passAsIdentifier = normalizeOtpIdentifier(pass);
 
-    if (API_PROXY && passAsIdentifier) {
+    if (passAsIdentifier) {
+      // OTP flow — send code and show the verification form
       if ($('#vaultOtpEmail')) $('#vaultOtpEmail').value = passAsIdentifier;
       await requestDeviceOtp(passAsIdentifier, 'dispatcher');
-      showToast('OTP sent to ' + passAsIdentifier + '. Enter code, verify device, then connect.', { kind: 'info', duration: 5000 });
-      $('#vaultError').textContent = 'OTP sent. Complete verification before connecting.';
+      showToast('OTP sent to ' + passAsIdentifier + '. Enter the code to verify your device.', { kind: 'info', duration: 5000 });
+      $('#vaultError').textContent = 'OTP sent. Enter the 6-digit code above and click Verify Device.';
       $('#vaultError').classList.add('show');
       return;
     }
 
-    // Resolve role from passphrase keyword before going into proxy/direct flow.
-    function resolveRoleFromPass(p) {
-      if (p === ROLE_TOKEN_VENDOR) return 'vendors';
-      if (p === ROLE_TOKEN_MANAGER) return 'manager';
-      if (p === ROLE_TOKEN_ADMIN) return 'full';
-      return 'full';
-    }
-
-    function isRolePassphrase(p) {
-      return p === ROLE_TOKEN_VENDOR || p === ROLE_TOKEN_MANAGER || p === ROLE_TOKEN_ADMIN;
-    }
-
-    if (API_PROXY && existingDeviceToken && (!pass || isRolePassphrase(pass))) {
+    if (!pass && existingDeviceToken) {
+      // Returning PM session — restore using stored device token
       API_CREDS = { p: existingDeviceToken };
-      _accessRole = pass ? resolveRoleFromPass(pass) : getStoredAccessRole();
+      _accessRole = getStoredAccessRole();
       try {
         var sess = await proxyAction('session_info');
         if (sess && sess.ok && sess.session) {
@@ -2247,49 +2159,20 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
             try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeEmailErr) { /* */ }
           }
         }
-      } catch (sessErr) { /* non-fatal; fallback to stored role */ }
+      } catch (sessErr) { /* non-fatal — use stored role */ }
       persistAccessRole(_accessRole);
       try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
-    } else if (API_PROXY) {
-      if (isRolePassphrase(pass) && !existingDeviceToken) {
-        throw new Error('TRUSTED_DEVICE_REQUIRED');
+    } else if (pass) {
+      // Verify password against proxy env vars (GUI_ADMIN / GUI_GM / GUI_VENDORS)
+      var roleResult = await proxyPost('verify_role', { password: pass });
+      if (!roleResult || !roleResult.ok) {
+        throw new Error((roleResult && roleResult.error) || 'Invalid password');
       }
-      var proxyToken = '';
-      try {
-        proxyToken = await setupTrustedDevice(pass, 'dispatcher');
-        try { localStorage.setItem('hm_device_token', proxyToken); } catch (e) { /* */ }
-      } catch (_setupErr) {
-        // Fallback: treat pass field as static bearer token when setup pin flow fails.
-        proxyToken = String(pass || '').trim();
-      }
-      API_CREDS = { p: proxyToken };
-      _accessRole = resolveRoleFromPass(pass); // role is determined by what the user typed
+      _accessRole = normalizeAccessRole(roleResult.role);
+      API_CREDS = { p: '' };
       persistAccessRole(_accessRole);
-      try { localStorage.setItem('hm_proxy_token', proxyToken); } catch (e) { /* */ }
-
-      // Validate auth with lightweight ping. cache_stats can fail on schema drift.
-      await proxyAction('ping');
-
-      // Load scoped role/session metadata when proxy issues role-bearing tokens.
-      try {
-        var proxySess = await proxyAction('session_info');
-        if (proxySess && proxySess.ok && proxySess.session) {
-          _accessRole = normalizeAccessRole(proxySess.session.role || _accessRole);
-          persistAccessRole(_accessRole);
-          if (proxySess.session.property_group_uuid) {
-            forcedPropertyGroupUuid = String(proxySess.session.property_group_uuid);
-            forcedPropertyGroupName = '';
-            try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (scopeSetErr) { /* */ }
-          }
-          if (proxySess.session.login_email) {
-            _pmScopeEmail = String(proxySess.session.login_email || '');
-            try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeSetErr2) { /* */ }
-          }
-        }
-      } catch (ignoredSessionErr) { /* non-fatal */ }
     } else {
-      API_CREDS = await decryptVault(pass);
-      persistAccessRole(_accessRole);
+      throw new Error('Enter your password to connect.');
     }
 
     if (!$('#vaultRememberConfig') || $('#vaultRememberConfig').checked) {
@@ -2306,26 +2189,19 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     }
     applyAccessRole();
     startAutoSync();
-    var proxyInfo = API_PROXY ? ' via proxy' : ' (direct)';
     if (_accessRole === 'vendors') {
-      showToast('Vendor access \u2014 connecting to ' + vhost + '.appfolio.com' + proxyInfo);
+      showToast('Vendor access \u2014 connecting to ' + vhost + '.appfolio.com via proxy');
     } else {
-      showToast('Connected \u2014 ' + vhost + '.appfolio.com' + proxyInfo);
+      showToast('Connected \u2014 ' + vhost + '.appfolio.com via proxy');
       maybeShowWhatsNew();
     }
   } catch (err) {
     var errMsg = (err && (err.message || String(err))) || '';
     var schemaErr = /no such table|no such column|SQLITE_UNKNOWN|SQL_INPUT_ERROR/i.test(errMsg);
     wipeCredentials();
-    if (API_PROXY) {
-      $('#vaultError').textContent = schemaErr
-        ? 'Proxy connected, but database schema is out of date (missing tables/columns). Deploy latest proxy migrations and retry.'
-        : errMsg === 'TRUSTED_DEVICE_REQUIRED'
-        ? 'These role passphrases use your saved trusted-device session. Verify this device with OTP or enter the Setup PIN first.'
-        : 'Proxy auth failed \u2014 enter Setup PIN or static bearer token.';
-    } else {
-      $('#vaultError').textContent = 'Decryption failed \u2014 incorrect passphrase or corrupted vault.';
-    }
+    $('#vaultError').textContent = schemaErr
+      ? 'Proxy connected, but database schema is out of date. Deploy latest proxy migrations and retry.'
+      : (errMsg || 'Login failed \u2014 check password and proxy URL.');
     $('#vaultError').classList.add('show');
     $('#vaultPassphrase').value = '';
     $('#vaultPassphrase').focus();
