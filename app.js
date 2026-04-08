@@ -683,6 +683,7 @@ var API_PROXY = '';
 var _accessRole = 'full'; // 'full' | 'manager' | 'vendors' | 'pm_readonly'
 var _pmScopeGroupUuid = '';
 var _pmScopeEmail = '';
+var _pmScopeName = '';
 
 function normalizeAccessRole(role) {
   var value = String(role || '').trim().toLowerCase();
@@ -772,7 +773,9 @@ function wipeCredentials() {
   _accessRole = 'full';
   _pmScopeGroupUuid = '';
   _pmScopeEmail = '';
+  _pmScopeName = '';
   closeMobileNav();
+  applyFrontendBuildLabels();
 }
 
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
@@ -1586,10 +1589,34 @@ var ROUTING_CAPABILITIES = [];
 var ROUTING_PM_MAP = {};
 var _routingInitDone = false;
 var _routingLastScanAt = '';
+var ROUTING_PAGE = 1;
 var ROUTING_SETTINGS = {
   minConfidence: 'medium',
-  highThreshold: 2
+  highThreshold: 2,
+  pageSize: 25
 };
+
+function loadRoutingSettings() {
+  try {
+    var raw = localStorage.getItem('hm_routing_settings');
+    if (!raw) return;
+    var parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+    if (parsed.minConfidence) ROUTING_SETTINGS.minConfidence = String(parsed.minConfidence);
+    var high = Number(parsed.highThreshold || 2);
+    ROUTING_SETTINGS.highThreshold = isNaN(high) ? 2 : Math.max(2, high);
+    var pageSize = Number(parsed.pageSize || 25);
+    ROUTING_SETTINGS.pageSize = (pageSize === 50 || pageSize === 100) ? pageSize : 25;
+  } catch (e) { /* */ }
+}
+
+function saveRoutingSettings() {
+  try {
+    localStorage.setItem('hm_routing_settings', JSON.stringify(ROUTING_SETTINGS));
+  } catch (e) { /* */ }
+}
+
+loadRoutingSettings();
 
 try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || ''; } catch (e) { /* */ }
 try { _pmScopeEmail = localStorage.getItem('hm_scope_email') || ''; } catch (e) { /* */ }
@@ -7220,13 +7247,31 @@ function renderRoutingEventsTable(query) {
     $('#routingSummary').textContent = 'Showing ' + rows.length + ' of ' + ROUTING_EVENTS.length + ' flagged events';
   }
 
+  var pageSize = Number(ROUTING_SETTINGS.pageSize || 25);
+  if (pageSize !== 25 && pageSize !== 50 && pageSize !== 100) pageSize = 25;
+  var totalRows = rows.length;
+  var totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  ROUTING_PAGE = Math.min(Math.max(1, ROUTING_PAGE), totalPages);
+  var startIdx = (ROUTING_PAGE - 1) * pageSize;
+  var endIdx = startIdx + pageSize;
+  var pagedRows = rows.slice(startIdx, endIdx);
+
+  var pageLabel = $('#routingEventsPageLabel');
+  if (pageLabel) {
+    pageLabel.textContent = 'Page ' + ROUTING_PAGE + ' of ' + totalPages + ' • ' + totalRows + ' result' + (totalRows === 1 ? '' : 's');
+  }
+  var prevBtn = $('#btnRoutingPrevPage');
+  if (prevBtn) prevBtn.disabled = ROUTING_PAGE <= 1;
+  var nextBtn = $('#btnRoutingNextPage');
+  if (nextBtn) nextBtn.disabled = ROUTING_PAGE >= totalPages;
+
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="11" style="color:var(--text-muted)">No flagged routing events match current filters.</td></tr>';
     return;
   }
 
   var html = '';
-  rows.forEach(function(r) {
+  pagedRows.forEach(function(r) {
     var conf = String(r.confidence || 'medium');
     var rev = String(r.review_status || 'pending');
     var flaggedAt = r.detected_at ? timeAgo(r.detected_at) : '-';
@@ -7407,20 +7452,31 @@ async function initRoutingMonitor() {
     }
     if ($('#routingSearch')) {
       $('#routingSearch').addEventListener('input', debounce(function() {
+        ROUTING_PAGE = 1;
         renderRoutingEventsTable(this.value);
       }, CONFIG.DEBOUNCE_MS));
     }
     if ($('#routingStatusFilter')) {
-      $('#routingStatusFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+      $('#routingStatusFilter').addEventListener('change', function() {
+        ROUTING_PAGE = 1;
+        loadRoutingEventsAndStats();
+      });
     }
     if ($('#routingPmFilter')) {
-      $('#routingPmFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+      $('#routingPmFilter').addEventListener('change', function() {
+        ROUTING_PAGE = 1;
+        loadRoutingEventsAndStats();
+      });
     }
     if ($('#routingDaysFilter')) {
-      $('#routingDaysFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+      $('#routingDaysFilter').addEventListener('change', function() {
+        ROUTING_PAGE = 1;
+        loadRoutingEventsAndStats();
+      });
     }
     if ($('#routingTradeFilter')) {
       $('#routingTradeFilter').addEventListener('change', function() {
+        ROUTING_PAGE = 1;
         renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
       });
     }
@@ -7428,7 +7484,8 @@ async function initRoutingMonitor() {
       $('#btnRoutingCapToggle').addEventListener('click', function() {
         var wrap = $('#routingCapabilitiesWrap');
         if (!wrap) return;
-        wrap.style.display = wrap.style.display === 'none' ? '' : 'none';
+        var isHidden = window.getComputedStyle(wrap).display === 'none';
+        wrap.style.display = isHidden ? '' : 'none';
       });
     }
     if ($('#btnRoutingMapToggle')) {
@@ -7448,6 +7505,7 @@ async function initRoutingMonitor() {
       $('#routingMinConfidence').value = ROUTING_SETTINGS.minConfidence;
       $('#routingMinConfidence').addEventListener('change', function() {
         ROUTING_SETTINGS.minConfidence = String(this.value || 'medium');
+        saveRoutingSettings();
       });
     }
     if ($('#routingHighThreshold')) {
@@ -7455,6 +7513,30 @@ async function initRoutingMonitor() {
       $('#routingHighThreshold').addEventListener('change', function() {
         var next = Number(this.value || '2');
         ROUTING_SETTINGS.highThreshold = isNaN(next) ? 2 : Math.max(2, next);
+        saveRoutingSettings();
+      });
+    }
+    if ($('#routingPageSize')) {
+      $('#routingPageSize').value = String(ROUTING_SETTINGS.pageSize || 25);
+      $('#routingPageSize').addEventListener('change', function() {
+        var nextSize = Number(this.value || '25');
+        ROUTING_SETTINGS.pageSize = (nextSize === 50 || nextSize === 100) ? nextSize : 25;
+        ROUTING_PAGE = 1;
+        saveRoutingSettings();
+        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+      });
+    }
+    if ($('#btnRoutingPrevPage')) {
+      $('#btnRoutingPrevPage').addEventListener('click', function() {
+        if (ROUTING_PAGE <= 1) return;
+        ROUTING_PAGE -= 1;
+        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+      });
+    }
+    if ($('#btnRoutingNextPage')) {
+      $('#btnRoutingNextPage').addEventListener('click', function() {
+        ROUTING_PAGE += 1;
+        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
       });
     }
     if ($('#btnRoutingCapAdd')) {
