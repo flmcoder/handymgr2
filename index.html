@@ -956,11 +956,43 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .kanban-col-toggle { display: inline-flex; align-items: center; justify-content: center; width: 20px; font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
 .kanban-col-count { font-family: var(--font-mono); font-size: 10px; padding: 2px 7px; border-radius: 8px; background: var(--accent-dim); color: var(--accent); font-weight: 700; }
 .kanban-col-body { padding: 6px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px; }
-.kanban-board.has-expanded-column .kanban-col:not(.column--expanded) { display: none; }
-.column--expanded { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 900; overflow-y: auto; background: var(--bg-primary); max-width: none; border-radius: 0; padding-top: 0; }
-.column--expanded .kanban-col-head { top: 0; border-radius: 0; }
-.column--expanded .kanban-col-body { max-height: none; min-height: calc(100vh - 58px); }
-.column--expanded ~ .kanban-col { display: none; }
+.kanban-board.has-expanded-column { overflow-x: auto; align-items: stretch; gap: 8px; }
+.kanban-board.has-expanded-column .kanban-col:not(.column--expanded) {
+  display: flex;
+  min-width: 96px;
+  max-width: 96px;
+  flex: 0 0 96px;
+  opacity: 0.92;
+}
+.kanban-board.has-expanded-column .kanban-col:not(.column--expanded) .kanban-col-body { display: none; }
+.kanban-board.has-expanded-column .kanban-col:not(.column--expanded) .kanban-col-head {
+  min-height: 78px;
+  padding: 8px 6px;
+  border-bottom: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+}
+.kanban-board.has-expanded-column .kanban-col:not(.column--expanded) .kanban-col-title {
+  font-size: 9px;
+  line-height: 1.2;
+}
+.kanban-board.has-expanded-column .kanban-col:not(.column--expanded) .kanban-col-toggle {
+  display: none;
+}
+.column--expanded {
+  position: relative;
+  width: auto;
+  min-width: 420px;
+  max-width: none;
+  align-self: stretch;
+  flex: 1 1 auto;
+  z-index: 1;
+  background: var(--bg-secondary);
+}
+.column--expanded .kanban-col-head { top: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+.column--expanded .kanban-col-body { max-height: none; min-height: 240px; }
 .kanban-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; cursor: pointer; transition: var(--transition); border-left: 3px solid transparent; }
 .kanban-card:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: var(--shadow); }
 .kanban-card.urgent { border-left-color: var(--danger); }
@@ -980,6 +1012,7 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .kanban-card .kc-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 10px; color: var(--text-muted); }
 .kanban-card .kc-meta span { display: flex; align-items: center; gap: 3px; }
 .kanban-card .kc-meta i { font-size: 9px; }
+.kanban-card .kc-group-badge { display:inline-flex; align-items:center; gap:3px; font-size:9px; font-weight:600; color:var(--accent); background:rgba(var(--accent-rgb,99,102,241),0.10); border-radius:3px; padding:1px 4px; }
 .wo-close-assist-scroll { max-height: 480px; overflow-y: auto; }
 .wo-close-assist-pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px 14px; border-top: 1px solid var(--border); }
 .wo-close-assist-pagination .page-label { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
@@ -1413,6 +1446,12 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 .pipe-card-prop {
   font-size: 11px; color: var(--text-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pipe-card-group-badge {
+  font-size: 9px; font-weight: 600; color: var(--accent);
+  background: rgba(var(--accent-rgb,99,102,241),0.10);
+  border-radius: 3px; padding: 1px 4px; margin-top: 2px;
+  display: inline-flex; align-items: center;
 }
 
 /* Card center: stage dots */
@@ -1909,7 +1948,8 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 <div id="vaultScreen">
   <div class="vault-box">
     <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
-    <div class="vault-subtitle" style="margin-top:4px">Sign in to continue.</div>
+    <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Sign in to continue.</div>
+    <div class="vault-user-hint" id="vaultUserHint" style="display:none"></div>
     <div style="display:flex;justify-content:center;margin:-10px 0 14px">
       <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
         <span class="login-info-tip">Use one login method by entering any of the following below: passphrase, work email address, or a proxy setup pin. If your email is not recognized, contact administrator. Email logins require One-Time-Passcode sent to your RingCentral number</span>
@@ -1946,7 +1986,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     </div>
     <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> Secured Session v0.6.8 beta</div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session v0.9.2</span></div>
   </div>
 </div>
 
@@ -1958,7 +1998,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Updated Build <span class="tag">Apr 2026</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Updated Build <span class="tag" id="buildBadgeTag">v9.2.0 APR 2026</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -1985,6 +2025,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="badge" id="woBadge">—</span></button>
   <button class="nav-tab" data-tab="routing"><i class="fas fa-route"></i> Routing <span class="badge" id="routingBadge" style="display:none">0</span></button>
   <button class="nav-tab" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
+  <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Billing / AP <span class="badge" id="billingBadge" style="display:none">0</span></button>
   <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
   <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
   <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
@@ -2318,6 +2359,19 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
         <tbody id="routingEventsBody"></tbody>
       </table>
     </div>
+    <div class="wo-history-pagination">
+      <div class="page-label" id="routingEventsPageLabel">Page 1 of 1</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <label style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">Per page</label>
+        <select id="routingPageSize" style="font-family:var(--font-mono);font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:76px">
+          <option value="25">25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+        <button class="action-btn" id="btnRoutingPrevPage" style="padding:4px 10px;font-size:11px"><i class="fas fa-chevron-left"></i> Prev</button>
+        <button class="action-btn" id="btnRoutingNextPage" style="padding:4px 10px;font-size:11px">Next <i class="fas fa-chevron-right"></i></button>
+      </div>
+    </div>
   </div>
 
   <div class="table-wrapper" id="routingCapabilitiesWrap" style="display:none;margin-bottom:12px">
@@ -2380,6 +2434,56 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
         <tbody id="payrollBody"></tbody>
       </table>
     </div>
+  </div>
+</section>
+
+<!-- ═══ BILLING / AP ═══ -->
+<section class="section" id="sec-billing">
+  <div class="section-header">
+    <div>
+      <div class="section-title"><i class="fas fa-file-invoice-dollar" style="color:var(--success)"></i> Billing / AP Review</div>
+      <div class="section-subtitle">Bills pending approval — filtered by active property group</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="billStatusFilter" class="filter-select" style="font-size:12px;padding:4px 8px">
+        <option value="">All Statuses</option>
+        <option value="pending">Pending Approval</option>
+        <option value="approved">Approved</option>
+        <option value="paid">Paid</option>
+      </select>
+      <button class="action-btn" id="btnRefreshBills"><i class="fas fa-sync-alt"></i> Refresh</button>
+    </div>
+  </div>
+  <div class="kpi-grid stagger" style="margin-bottom:16px">
+    <div class="kpi-card amber"><div class="kpi-label">Pending Approval</div><div class="kpi-value" id="billKpiPending">—</div><div class="kpi-sub" id="billKpiPendingSub">bills awaiting sign-off</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Total Outstanding</div><div class="kpi-value" id="billKpiTotal">—</div><div class="kpi-sub" id="billKpiTotalSub">approved not yet paid</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Paid This Period</div><div class="kpi-value" id="billKpiPaid">—</div><div class="kpi-sub" id="billKpiPaidSub">last 30 days</div></div>
+    <div class="kpi-card purple"><div class="kpi-label">Vendors w/ Open Bills</div><div class="kpi-value" id="billKpiVendors">—</div><div class="kpi-sub" id="billKpiVendorsSub">distinct payees</div></div>
+  </div>
+  <div class="table-wrapper">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-list-alt" style="color:var(--accent)"></i> Bills</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="billSearch" class="search-box" placeholder="Search vendor, property…" style="min-width:180px">
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="billTable">
+        <thead>
+          <tr>
+            <th>Bill #</th>
+            <th>Vendor / Payee</th>
+            <th>Property</th>
+            <th>Amount</th>
+            <th>Date</th>
+            <th>Status</th>
+            <th>Group</th>
+          </tr>
+        </thead>
+        <tbody id="billBody"><tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">Load bills using the Refresh button above</td></tr></tbody>
+      </table>
+    </div>
+    <div class="table-footer" id="billFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
   </div>
 </section>
 
@@ -2742,7 +2846,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <div class="dbadmin-results" id="pmUsersPanel">
       <div class="dbadmin-results-head">
         <span>PM Scoped Login Users</span>
-        <button class="dbadmin-btn" id="btnRefreshPmUsers" style="padding:3px 10px;font-size:10px"><i class="fas fa-sync-alt"></i> Refresh</button>
+        <button class="dbadmin-btn" id="btnRefreshPmUsers" style="padding:3px 10px;font-size:10px"><i class="fas fa-sync-alt"></i> Load Users</button>
       </div>
       <div style="padding:10px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1.2fr 1fr 1fr 1.2fr auto auto;gap:8px;align-items:end">
         <div>
@@ -3042,32 +3146,24 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <button class="modal-close" id="whatsNewClose">&times;</button>
     </div>
     <div class="modal-body">
-        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.1a (updated April 2026) • Highlights (next 36h)</div>
+        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.2.0 (updated April 2026) • Highlights (next 36h)</div>
       <div style="max-height:290px;overflow-y:auto;padding-right:4px">
       <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px">
         <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--warning);flex-shrink:0;margin-top:1px"><i class="fas fa-clipboard-check"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Inspections refined</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Only move-ins from this year that are missing a move-in inspection, or move-outs for current residents, are surfaced.</div></div>
+          <span style="color:var(--warning);flex-shrink:0;margin-top:1px"><i class="fas fa-gauge-high"></i></span>
+          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">API traffic smoothing</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Request pacing now adapts when rate limits are hit, reducing burst pressure during multi-user sessions.</div></div>
         </li>
         <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--accent);flex-shrink:0;margin-top:1px"><i class="fas fa-exchange-alt"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Turn board logic aligned</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Similar current-resident and current-year filtering has been applied to the turn board to reduce stale noise.</div></div>
+          <span style="color:var(--accent);flex-shrink:0;margin-top:1px"><i class="fas fa-user-check"></i></span>
+          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">PM login context</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Login now surfaces the scoped PM identity so users can confirm access context before connecting.</div></div>
         </li>
         <li style="display:flex;gap:10px;align-items:flex-start">
           <span style="color:#60a5fa;flex-shrink:0;margin-top:1px"><i class="fas fa-shield-alt"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Backend security tightened</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">How the program shares information across backend services has been locked down and secured.</div></div>
+          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">SQL safety and proxy resilience</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Client-side retry/backoff paths were tightened to lower transient failure rates on free-tier infrastructure.</div></div>
         </li>
         <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--success);flex-shrink:0;margin-top:1px"><i class="fas fa-check-double"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Work Order Closure Assistant added</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">A new WO closure workflow is live to speed completion reviews and closeout actions.</div></div>
-        </li>
-        <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--accent);flex-shrink:0;margin-top:1px"><i class="fas fa-users-cog"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Technician dashboard + dispatch population</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Features were added to populate technician roster data and support dispatch operations.</div></div>
-        </li>
-        <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--warning);flex-shrink:0;margin-top:1px"><i class="fas fa-comment-dots"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">RingCentral SMS integration</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">SMS abilities tied to RingCentral are now integrated into the communication flow.</div></div>
+          <span style="color:var(--success);flex-shrink:0;margin-top:1px"><i class="fas fa-list-check"></i></span>
+          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Turn + notes stabilization</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Foundational update pass prepared for notes, turn association, and property-group scoped behavior.</div></div>
         </li>
       </ul>
       </div>
@@ -3124,7 +3220,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.1a';
+var APP_VERSION = 'v9.2.0';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 
@@ -3319,6 +3415,12 @@ function isInPropertyGroup(propertyId, propertyName, groupName) {
   if (propertyId) {
     var idGroups = _idToGroups[String(propertyId)];
     if (idGroups && idGroups.indexOf(groupName) !== -1) return true;
+  }
+
+  // 2.5. Lookup by DB API UUID (handles unit-turn and DB-sourced items with UUID propertyId)
+  if (propertyId) {
+    var uuidGroups = _uuidToGroups[String(propertyId).trim()];
+    if (uuidGroups && uuidGroups.indexOf(groupName) !== -1) return true;
   }
 
   // 3. Portfolio fallback — check if property's portfolio matches the group name
@@ -3882,12 +3984,12 @@ function getStoredAccessRole() {
 function isTabAllowedForRole(tabName) {
   if (_accessRole === 'vendors') return tabName === 'vendors';
   if (_accessRole === 'pm_readonly') {
-    var pmAllowedTabs = ['dashboard', 'workorders', 'routing', 'turnboard', 'vendors', 'inspections', 'errors'];
+    var pmAllowedTabs = ['dashboard', 'workorders', 'routing', 'billing', 'turnboard', 'vendors', 'inspections', 'errors'];
     return pmAllowedTabs.indexOf(tabName) !== -1;
   }
   if (_accessRole === 'manager') {
     // Manager role allowed tabs: workorders, turnboard, vendors, inspections, errors
-    var allowedTabs = ['dashboard', 'workorders', 'routing', 'turnboard', 'vendors', 'inspections', 'errors'];
+    var allowedTabs = ['dashboard', 'workorders', 'routing', 'billing', 'turnboard', 'vendors', 'inspections', 'errors'];
     return allowedTabs.indexOf(tabName) !== -1;
   }
   return true;
@@ -4227,6 +4329,8 @@ async function proxyAction(action, params) {
       }
       if (attempt < maxRetries && isRetryable) {
         var retryWait = Math.pow(2, attempt + 1) * 1000;
+        // If the proxy itself hit a 429 upstream, pause the shared queue
+        if (dataStatus === 429) { rateLimiter.backpressure(retryWait); }
         logApiError(dataStatus || 502, 'Proxy action=' + action + ': ' + (data.error || 'Unknown') + ' — retrying in ' + (retryWait / 1000) + 's', 'retry');
         await sleep(retryWait);
         continue;
@@ -4253,17 +4357,33 @@ async function proxyPost(action, bodyObj, extraHeaders) {
   var token = getProxyAccessToken();
   var headers = Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json' }, extraHeaders || {});
   if (token) headers['Authorization'] = 'Bearer ' + token;
-  var res = await fetch(url, {
-    method: 'POST',
-    headers: headers,
-    body: JSON.stringify(bodyObj || {})
-  });
-  if (!res.ok) {
-    var errBody = '';
-    try { errBody = await res.text(); } catch (e) { /* empty */ }
-    throw new Error('Proxy POST action=' + action + ' failed: HTTP ' + res.status + (errBody ? ' \u2014 ' + errBody.substring(0, 200) : ''));
+  var maxRetries = 2;
+  for (var attempt = 0; attempt <= maxRetries; attempt++) {
+    var res = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(bodyObj || {})
+    }, 30000);
+    if (res.status === 429) {
+      var retryAfter = parseInt(res.headers.get('Retry-After') || '5', 10);
+      rateLimiter.backpressure(retryAfter * 1000);
+      logApiError(429, 'POST action=' + action + ' rate limited — pausing ' + retryAfter + 's', 'retry');
+      if (attempt < maxRetries) { await sleep(retryAfter * 1000); continue; }
+      throw new Error('429: Rate limited on POST ' + action + ' after retries');
+    }
+    if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < maxRetries) {
+      var backoff = Math.pow(2, attempt + 1) * 1000; // 2s, 4s
+      logApiError(res.status, 'POST action=' + action + ' HTTP ' + res.status + ' — retrying in ' + (backoff / 1000) + 's', 'retry');
+      await sleep(backoff);
+      continue;
+    }
+    if (!res.ok) {
+      var errBody = '';
+      try { errBody = await res.text(); } catch (e) { /* empty */ }
+      throw new Error('Proxy POST action=' + action + ' failed: HTTP ' + res.status + (errBody ? ' \u2014 ' + errBody.substring(0, 200) : ''));
+    }
+    return res.json();
   }
-  return res.json();
 }
 
 // Resolve a path to a fetchable URL.
@@ -4302,9 +4422,31 @@ var rateLimiter = {
   queue: [],
   inFlight: 0,
   maxPerSec: 4,
+  _defaultMaxPerSec: 4,
   windowStart: 0,
   windowCount: 0,
   processing: false,
+  // Global pause gate: epoch-ms when queue may resume after a 429
+  pauseUntil: 0,
+
+  // Called whenever any request sees a 429. Freezes the queue and halves
+  // dispatch rate for the pause window to reduce burst pressure.
+  backpressure: function(ms) {
+    var resumeAt = Date.now() + ms;
+    if (resumeAt > rateLimiter.pauseUntil) {
+      rateLimiter.pauseUntil = resumeAt;
+    }
+    // Halve rate during backpressure, floor at 1 req/s
+    rateLimiter.maxPerSec = Math.max(1, Math.floor(rateLimiter._defaultMaxPerSec / 2));
+    updateRateBadge();
+    // Restore rate automatically after pause window clears
+    setTimeout(function() {
+      if (Date.now() >= rateLimiter.pauseUntil) {
+        rateLimiter.maxPerSec = rateLimiter._defaultMaxPerSec;
+        updateRateBadge();
+      }
+    }, ms + 150);
+  },
 
   enqueue: function(fn) {
     return new Promise(function(resolve, reject) {
@@ -4324,6 +4466,14 @@ var rateLimiter = {
       }
 
       var now = Date.now();
+
+      // Global 429 backpressure: hold the whole queue until the window clears
+      if (now < rateLimiter.pauseUntil) {
+        var pauseWait = rateLimiter.pauseUntil - now + 50;
+        setTimeout(tick, pauseWait);
+        return;
+      }
+
       if (now - rateLimiter.windowStart >= 1000) {
         rateLimiter.windowStart = now;
         rateLimiter.windowCount = 0;
@@ -4357,7 +4507,15 @@ var rateLimiter = {
 
 function updateRateBadge() {
   var el = $('#rateBadge');
-  if (el) { el.textContent = (rateLimiter.maxPerSec - rateLimiter.inFlight) + '/' + rateLimiter.maxPerSec + ' req/s'; }
+  if (!el) return;
+  if (rateLimiter.pauseUntil > Date.now()) {
+    var secsLeft = Math.ceil((rateLimiter.pauseUntil - Date.now()) / 1000);
+    el.textContent = '\u23f8 paused ' + secsLeft + 's';
+    el.style.color = 'var(--warning)';
+  } else {
+    el.textContent = (rateLimiter.maxPerSec - rateLimiter.inFlight) + '/' + rateLimiter.maxPerSec + ' req/s';
+    el.style.color = '';
+  }
 }
 
 // Core fetch wrapper with auth, retries, and error logging
@@ -4412,7 +4570,9 @@ async function apiFetch(path, options) {
       // --- Retryable errors (429 rate limit, 533 DB unavailable) ---
       if (res.status === 429) {
         var retryAfter = parseInt(res.headers.get('Retry-After') || '5', 10);
-        logApiError(429, 'Rate limit exceeded — Retry-After: ' + retryAfter + 's', 'retry');
+        // Freeze the shared queue so all concurrent requests back off together
+        rateLimiter.backpressure(retryAfter * 1000);
+        logApiError(429, 'Rate limit exceeded — Retry-After: ' + retryAfter + 's (queue paused)', 'retry');
         if (attempt < maxRetries) { await sleep(retryAfter * 1000); continue; }
         throw new Error('429: Rate limited after retries');
       }
@@ -4704,13 +4864,61 @@ var ROUTING_CAPABILITIES = [];
 var ROUTING_PM_MAP = {};
 var _routingInitDone = false;
 var _routingLastScanAt = '';
+var ROUTING_PAGE = 1;
 var ROUTING_SETTINGS = {
   minConfidence: 'medium',
-  highThreshold: 2
+  highThreshold: 2,
+  pageSize: 25
 };
+
+function loadRoutingSettings() {
+  try {
+    var raw = localStorage.getItem('hm_routing_settings');
+    if (!raw) return;
+    var parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+    if (parsed.minConfidence) ROUTING_SETTINGS.minConfidence = String(parsed.minConfidence);
+    var high = Number(parsed.highThreshold || 2);
+    ROUTING_SETTINGS.highThreshold = isNaN(high) ? 2 : Math.max(2, high);
+    var pageSize = Number(parsed.pageSize || 25);
+    ROUTING_SETTINGS.pageSize = (pageSize === 50 || pageSize === 100) ? pageSize : 25;
+  } catch (e) { /* */ }
+}
+
+function saveRoutingSettings() {
+  try {
+    localStorage.setItem('hm_routing_settings', JSON.stringify(ROUTING_SETTINGS));
+  } catch (e) { /* */ }
+}
+
+loadRoutingSettings();
 
 try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || ''; } catch (e) { /* */ }
 try { _pmScopeEmail = localStorage.getItem('hm_scope_email') || ''; } catch (e) { /* */ }
+
+// Show returning-PM identity hint on the login screen before user connects
+(function() {
+  try {
+    var storedEmail = _pmScopeEmail || '';
+    var storedToken = '';
+    try { storedToken = localStorage.getItem('hm_device_token') || ''; } catch (e) { /* */ }
+    if (!storedEmail || !storedToken) return;
+    // Derive a display name from email prefix: "alex.smith" → "Alex Smith"
+    var prefix = storedEmail.split('@')[0] || storedEmail;
+    var displayName = prefix.split(/[.\-_]/).map(function(p) {
+      return p ? (p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()) : '';
+    }).filter(Boolean).join(' ') || storedEmail;
+    // Populate the pre-existing hint pill
+    var hint = document.getElementById('vaultUserHint');
+    if (hint) {
+      hint.textContent = '\u{1F464} ' + displayName + '  \u2022  ' + storedEmail;
+      hint.style.display = '';
+    }
+    // Update subtitle for returning PM context
+    var sub = document.getElementById('vaultSubtitle');
+    if (sub) sub.textContent = 'Welcome back, ' + displayName + '. Tap Connect to resume.';
+  } catch (e) { /* non-fatal */ }
+})();
 
 function resolveGroupNameFromUuid(groupUuid) {
   var gid = String(groupUuid || '').trim();
@@ -4739,6 +4947,15 @@ function enforceScopedPropertyGroup() {
   }
   var clearBtn = document.getElementById('globalGroupClear');
   if (clearBtn) clearBtn.style.display = 'none';
+}
+
+// Returns the active group filter name, honouring PM scope enforcement.
+// Use instead of reading currentPropertyGroup directly in scope-sensitive code.
+function getEffectiveGroupId() {
+  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
+    return resolveGroupNameFromUuid(forcedPropertyGroupUuid) || forcedPropertyGroupName || currentPropertyGroup || '';
+  }
+  return currentPropertyGroup || '';
 }
 
 /* =================================================================
@@ -6056,6 +6273,33 @@ async function resolvePropertyGroupNames() {
     var pfErr = 'Portfolio fallback error: ' + (err.message || err);
     diag.errors.push(pfErr);
     console.log('[PG] ' + pfErr);
+  }
+
+  // Step 3: Enrich loaded WORK_ORDERS and TURNS with _propertyGroup field.
+  // Runs after maps are built so each item carries its group for display and PM scope checks.
+  try {
+    WORK_ORDERS.forEach(function(wo) {
+      var byName = _nameToGroups[(wo.propertyName || '').trim().toLowerCase()] || [];
+      var byId   = _idToGroups[String(wo.propertyId || '')] || [];
+      var grps = byName.length ? byName : byId;
+      wo._propertyGroup = grps[0] || '';
+    });
+    TURNS.forEach(function(t) {
+      var byName = _nameToGroups[(t.property || '').trim().toLowerCase()] || [];
+      var byId   = _idToGroups[String(t.propertyId || '')] || [];
+      var grps = byName.length ? byName : byId;
+      t._propertyGroup = grps[0] || '';
+    });
+    // Enrich BILLS with _propertyGroup if already loaded
+    (BILLS || []).forEach(function(b) {
+      var byName = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] || [];
+      var byId   = _idToGroups[String(b.propertyId || '')] || [];
+      var grps = byName.length ? byName : byId;
+      b._propertyGroup = grps[0] || '';
+    });
+    console.log('[PG] Step 3 done — enriched ' + WORK_ORDERS.length + ' WOs, ' + TURNS.length + ' turns with _propertyGroup');
+  } catch (enrErr) {
+    console.log('[PG] Enrichment error: ' + (enrErr.message || enrErr));
   }
 
   // Store diagnostics for the shift-click report
@@ -7410,6 +7654,8 @@ async function fetchPropertyDetail(propId) {
 function resolveWODbUuid(wo) {
   if (!wo) return '';
   if (isUuidString(wo.dbApiId || '')) return String(wo.dbApiId);
+  // WORK_ORDERS items store the UUID in wo.uuid (r.work_order_id from Reports API)
+  if (isUuidString(wo.uuid || '')) return String(wo.uuid);
   // 1. Check if wo already has a DB API link (contains UUID in path)
   if (wo.link) {
     var linkMatch = String(wo.link).match(/work_orders\/([0-9a-f\-]{36})/i);
@@ -7489,13 +7735,31 @@ function renderWONotesList(notes) {
   nl.innerHTML = nh;
 }
 
-function refreshCurrentWONotes(forceUuid) {
+// bypassProxyCache=true: skips the 5-min Turso cache via ?path= passthrough,
+// used after a successful note post so the new note appears immediately.
+function refreshCurrentWONotes(forceUuid, bypassProxyCache) {
   var modal = document.getElementById('woModal');
   if (!modal || !modal.classList.contains('show') || !CURRENT_WO_MODAL) return;
   var targetUuid = forceUuid || CURRENT_WO_MODAL.woDbUuid;
   if (!targetUuid) return;
   delete WO_DETAIL_CACHE['notes_' + targetUuid];
-  fetchWONotes(targetUuid).then(function(notes) {
+  var fetchPromise;
+  if (bypassProxyCache && API_PROXY) {
+    // Use apiFetch which routes via ?path= compat mode, bypassing wo_notes Turso cache
+    var notesApiPath = '/api/v0/work_orders/' + encodeURIComponent(targetUuid) + '/notes';
+    fetchPromise = apiFetch(notesApiPath)
+      .then(function(data) {
+        var notes = (data && data.results) ? data.results
+          : (data && data.data) ? data.data
+          : (Array.isArray(data) ? data : []);
+        detailCacheSet('notes_' + targetUuid, notes);
+        return notes;
+      })
+      .catch(function() { return detailCacheGet('notes_' + targetUuid) || []; });
+  } else {
+    fetchPromise = fetchWONotes(targetUuid);
+  }
+  fetchPromise.then(function(notes) {
     if (!CURRENT_WO_MODAL || CURRENT_WO_MODAL.woDbUuid !== targetUuid) return;
     renderWONotesList(notes);
   });
@@ -7897,6 +8161,116 @@ function getPayrollWeek(offset) {
 }
 
 // Payroll uses shared currentPropertyGroup (global group filter across all tabs)
+
+// ─── Billing / AP Section ──────────────────────────────────────────────────
+var _billsPage = 0;
+var BILLS_PAGE_SIZE = 50;
+
+function renderBillsSection() {
+  var tbody = document.getElementById('billBody');
+  var footer = document.getElementById('billFooter');
+  if (!tbody) return;
+
+  var grp = getEffectiveGroupId();
+  var statusFilter = ($('#billStatusFilter') ? $('#billStatusFilter').value : '').toLowerCase();
+  var search = ($('#billSearch') ? $('#billSearch').value : '').trim().toLowerCase();
+  var now = Date.now();
+  var thirtyDaysAgo = now - 30 * 86400000;
+
+  // Filter
+  var filtered = (BILLS || []).filter(function(b) {
+    if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) return false;
+    if (statusFilter) {
+      var raw = b.raw || {};
+      var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
+      if (statusFilter === 'pending' && st.indexOf('pending') === -1) return false;
+      if (statusFilter === 'approved' && st.indexOf('approv') === -1) return false;
+      if (statusFilter === 'paid' && st.indexOf('paid') === -1) return false;
+    }
+    if (search) {
+      var hay = (b.vendorName + ' ' + b.propertyName + ' ' + b.id).toLowerCase();
+      if (hay.indexOf(search) === -1) return false;
+    }
+    return true;
+  });
+
+  // KPIs
+  var pendingBills = filtered.filter(function(b) {
+    var raw = b.raw || {};
+    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
+    return st.indexOf('pending') !== -1;
+  });
+  var paidBills = filtered.filter(function(b) {
+    var raw = b.raw || {};
+    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
+    var d = new Date(b.date || '');
+    return st.indexOf('paid') !== -1 && !isNaN(d.getTime()) && d.getTime() >= thirtyDaysAgo;
+  });
+  var uniqueVendors = new Set(filtered.map(function(b) { return b.vendorId || b.vendorName; }).filter(Boolean));
+  var outstandingTotal = filtered.reduce(function(sum, b) {
+    var raw = b.raw || {};
+    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
+    if (st.indexOf('paid') !== -1) return sum;
+    var n = parseFloat(String(b.amount || '0').replace(/[^0-9.\-]/g, '')) || 0;
+    return sum + n;
+  }, 0);
+  var paidTotal = paidBills.reduce(function(sum, b) {
+    var n = parseFloat(String(b.amount || '0').replace(/[^0-9.\-]/g, '')) || 0;
+    return sum + n;
+  }, 0);
+
+  var setKpi = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+  setKpi('billKpiPending', String(pendingBills.length));
+  setKpi('billKpiPendingSub', pendingBills.length === 1 ? '1 bill' : pendingBills.length + ' bills');
+  setKpi('billKpiTotal', '$' + outstandingTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  setKpi('billKpiTotalSub', 'approved, not yet paid');
+  setKpi('billKpiPaid', '$' + paidTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  setKpi('billKpiPaidSub', paidBills.length + ' bills in last 30d');
+  setKpi('billKpiVendors', String(uniqueVendors.size));
+  setKpi('billKpiVendorsSub', 'distinct payees');
+
+  // Update nav badge with pending count
+  var badge = document.getElementById('billingBadge');
+  if (badge) {
+    badge.textContent = String(pendingBills.length);
+    badge.style.display = pendingBills.length > 0 ? '' : 'none';
+  }
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px">' +
+      (BILLS.length === 0 ? 'No bills loaded — click Refresh to fetch from AppFolio' : 'No bills match current filter') + '</td></tr>';
+    if (footer) footer.style.display = 'none';
+    return;
+  }
+
+  // Pagination
+  var totalPages = Math.ceil(filtered.length / BILLS_PAGE_SIZE);
+  _billsPage = Math.max(0, Math.min(_billsPage, totalPages - 1));
+  var page = filtered.slice(_billsPage * BILLS_PAGE_SIZE, (_billsPage + 1) * BILLS_PAGE_SIZE);
+
+  var rows = page.map(function(b) {
+    var raw = b.raw || {};
+    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '—');
+    var stLow = st.toLowerCase();
+    var stCls = stLow.indexOf('pending') !== -1 ? 'color:var(--warning)' : stLow.indexOf('approv') !== -1 ? 'color:var(--success)' : stLow.indexOf('paid') !== -1 ? 'color:var(--info)' : '';
+    var grpName = b._propertyGroup || _nameToGroups[(b.propertyName || '').trim().toLowerCase()]?.[0] || '';
+    return '<tr>' +
+      '<td style="font-family:var(--font-mono);font-size:11px">' + escapeHtml(String(b.id || '—')) + '</td>' +
+      '<td>' + escapeHtml(b.vendorName || '—') + '</td>' +
+      '<td>' + escapeHtml(b.propertyName || '—') + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(String(b.amount || '—')) + '</td>' +
+      '<td>' + escapeHtml(b.date ? formatDate(b.date) : '—') + '</td>' +
+      '<td><span style="' + stCls + '">' + escapeHtml(st) + '</span></td>' +
+      '<td style="font-size:10px;color:var(--accent)">' + escapeHtml(grpName || '—') + '</td>' +
+      '</tr>';
+  });
+  tbody.innerHTML = rows.join('');
+
+  if (footer) {
+    footer.style.display = '';
+    footer.textContent = 'Showing ' + (_billsPage * BILLS_PAGE_SIZE + 1) + '–' + Math.min((_billsPage + 1) * BILLS_PAGE_SIZE, filtered.length) + ' of ' + filtered.length + ' bills';
+  }
+}
 
 function renderPayroll() {
   var period = getPayrollWeek(PAYROLL_WEEK_OFFSET);
@@ -8588,6 +8962,7 @@ function renderWorkOrders() {
       html += '<div class="kc-meta">';
       if (ageMeta.days !== null) html += '<span class="wo-age-pill ' + ageMeta.cls + '"><i class="fas fa-hourglass-half"></i> ' + escapeHtml(ageMeta.label) + '</span>';
       if (wo.propertyName) html += '<span><i class="fas fa-building"></i> ' + escapeHtml(wo.propertyName) + '</span>';
+      if (!currentPropertyGroup && wo._propertyGroup) html += '<span class="kc-group-badge"><i class="fas fa-layer-group"></i> ' + escapeHtml(wo._propertyGroup) + '</span>';
       if (wo.unit) html += '<span><i class="fas fa-door-open"></i> ' + escapeHtml(wo.unit) + '</span>';
       if (wo.vendorName) {
         html += '<span><i class="fas fa-hard-hat"></i> ' + escapeHtml(wo.vendorName) + '</span>';
@@ -9097,7 +9472,8 @@ function showWODetail(id) {
           return;
         }
         if ($('#detailNote')) $('#detailNote').value = '';
-        refreshCurrentWONotes(woDbUuid);
+        // bypassProxyCache=true so the new note appears immediately (skips 5-min Turso TTL)
+        refreshCurrentWONotes(woDbUuid, true);
       }
       renderWorkOrders();
       renderDashboardKPIs();
@@ -9471,13 +9847,45 @@ function buildTurnPipeline() {
     return k === '--' ? null : k;
   }
 
-  // Helper: find matching WOs using strict unit_turn_id + unit_id + created_at gate
+  // Helper: find matching WOs using strict unit_turn_id + unit_id + created_at gate.
+  // Fallback: for upcoming move-outs with no AppFolio turn record yet, matches by
+  // unit_id + vacancy window (moveOut-7d … moveOut+270d) to surface pre-vacancy WOs.
   function findMatchingWOs(turnKey, unit, property, propId, unitId, moveOutDate, turnData) {
     var requiredUnitTurnId = String((turnData && turnData.unitTurnId) || '').trim();
     var requiredUnitId = String(unitId || '').trim();
-    if (!requiredUnitTurnId || !requiredUnitId) return [];
     var moveOutIso = (moveOutDate && !isNaN(moveOutDate.getTime())) ? moveOutDate.toISOString() : '';
-    if (!moveOutIso) return [];
+
+    // ---- No turn record yet: vacancy-window match by unit_id + date range ----
+    if (!requiredUnitTurnId) {
+      if (!requiredUnitId || !moveOutIso) return [];
+      var winStart = new Date(moveOutDate.getTime() - 7 * 86400000);   // 7d before MO
+      var winEnd   = new Date(moveOutDate.getTime() + 270 * 86400000); // ~9 months after MO
+      var vacWOs = [];
+      WORK_ORDERS.forEach(function(wo) {
+        if (String(wo.unitId || '').trim() !== requiredUnitId) return;
+        if (!isTurnWorkOrderCandidate(wo, moveOutDate, 'reports')) return;
+        var wc = new Date(wo.created || '');
+        if (isNaN(wc.getTime()) || wc < winStart || wc > winEnd) return;
+        vacWOs.push({ source: 'reports', id: wo.id, status: wo.status,
+          description: wo.description || '', created: wo.created,
+          vendor: wo.vendor || '', unit: wo.unit, property: wo.propertyName, priority: wo.priority });
+      });
+      (_turnWoByUnit[requiredUnitId] || []).forEach(function(wo) {
+        if (!isTurnWorkOrderCandidate(wo, moveOutDate, 'db')) return;
+        var dc = new Date(wo.createdAt || '');
+        if (isNaN(dc.getTime()) || dc < winStart || dc > winEnd) return;
+        var dupe = vacWOs.find(function(w) { return String(w.id) === String(wo.id) || String(w.id) === String(wo.woNumber); });
+        if (!dupe) {
+          vacWOs.push({ source: 'db_api', id: wo.woNumber || wo.id, dbApiId: wo.id,
+            status: wo.status, description: wo.description || '',
+            created: wo.createdAt, vendor: wo.vendorTrade || '', priority: wo.priority });
+        }
+      });
+      return vacWOs;
+    }
+
+    // ---- Strict match: unit_turn_id + unit_id + created_at gate ----
+    if (!requiredUnitId || !moveOutIso) return [];
 
     var wos = [];
     // From Reports API work orders — strict unit + turn + created_at gate
@@ -9986,6 +10394,7 @@ function renderTurnPipelineUI() {
     // Left: unit info
     html += '<div class="pipe-card-unit"><div class="pipe-card-unit-name">' + escapeHtml(p.unit || 'Unit') + '</div>';
     html += '<div class="pipe-card-prop">' + escapeHtml(p.property) + '</div>';
+    if (!currentPropertyGroup && p.turn && p.turn._propertyGroup) html += '<div class="pipe-card-prop pipe-card-group-badge"><i class="fas fa-layer-group" style="font-size:9px;margin-right:3px"></i>' + escapeHtml(p.turn._propertyGroup) + '</div>';
     if (p.tenant) html += '<div class="pipe-card-prop" style="font-size:10px;color:var(--accent)">' + escapeHtml(p.tenant) + '</div>';
     html += '</div>';
 
@@ -10915,13 +11324,31 @@ function renderRoutingEventsTable(query) {
     $('#routingSummary').textContent = 'Showing ' + rows.length + ' of ' + ROUTING_EVENTS.length + ' flagged events';
   }
 
+  var pageSize = Number(ROUTING_SETTINGS.pageSize || 25);
+  if (pageSize !== 25 && pageSize !== 50 && pageSize !== 100) pageSize = 25;
+  var totalRows = rows.length;
+  var totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  ROUTING_PAGE = Math.min(Math.max(1, ROUTING_PAGE), totalPages);
+  var startIdx = (ROUTING_PAGE - 1) * pageSize;
+  var endIdx = startIdx + pageSize;
+  var pagedRows = rows.slice(startIdx, endIdx);
+
+  var pageLabel = $('#routingEventsPageLabel');
+  if (pageLabel) {
+    pageLabel.textContent = 'Page ' + ROUTING_PAGE + ' of ' + totalPages + ' • ' + totalRows + ' result' + (totalRows === 1 ? '' : 's');
+  }
+  var prevBtn = $('#btnRoutingPrevPage');
+  if (prevBtn) prevBtn.disabled = ROUTING_PAGE <= 1;
+  var nextBtn = $('#btnRoutingNextPage');
+  if (nextBtn) nextBtn.disabled = ROUTING_PAGE >= totalPages;
+
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="11" style="color:var(--text-muted)">No flagged routing events match current filters.</td></tr>';
     return;
   }
 
   var html = '';
-  rows.forEach(function(r) {
+  pagedRows.forEach(function(r) {
     var conf = String(r.confidence || 'medium');
     var rev = String(r.review_status || 'pending');
     var flaggedAt = r.detected_at ? timeAgo(r.detected_at) : '-';
@@ -11102,20 +11529,31 @@ async function initRoutingMonitor() {
     }
     if ($('#routingSearch')) {
       $('#routingSearch').addEventListener('input', debounce(function() {
+        ROUTING_PAGE = 1;
         renderRoutingEventsTable(this.value);
       }, CONFIG.DEBOUNCE_MS));
     }
     if ($('#routingStatusFilter')) {
-      $('#routingStatusFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+      $('#routingStatusFilter').addEventListener('change', function() {
+        ROUTING_PAGE = 1;
+        loadRoutingEventsAndStats();
+      });
     }
     if ($('#routingPmFilter')) {
-      $('#routingPmFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+      $('#routingPmFilter').addEventListener('change', function() {
+        ROUTING_PAGE = 1;
+        loadRoutingEventsAndStats();
+      });
     }
     if ($('#routingDaysFilter')) {
-      $('#routingDaysFilter').addEventListener('change', function() { loadRoutingEventsAndStats(); });
+      $('#routingDaysFilter').addEventListener('change', function() {
+        ROUTING_PAGE = 1;
+        loadRoutingEventsAndStats();
+      });
     }
     if ($('#routingTradeFilter')) {
       $('#routingTradeFilter').addEventListener('change', function() {
+        ROUTING_PAGE = 1;
         renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
       });
     }
@@ -11123,7 +11561,8 @@ async function initRoutingMonitor() {
       $('#btnRoutingCapToggle').addEventListener('click', function() {
         var wrap = $('#routingCapabilitiesWrap');
         if (!wrap) return;
-        wrap.style.display = wrap.style.display === 'none' ? '' : 'none';
+        var isHidden = window.getComputedStyle(wrap).display === 'none';
+        wrap.style.display = isHidden ? '' : 'none';
       });
     }
     if ($('#btnRoutingMapToggle')) {
@@ -11143,6 +11582,7 @@ async function initRoutingMonitor() {
       $('#routingMinConfidence').value = ROUTING_SETTINGS.minConfidence;
       $('#routingMinConfidence').addEventListener('change', function() {
         ROUTING_SETTINGS.minConfidence = String(this.value || 'medium');
+        saveRoutingSettings();
       });
     }
     if ($('#routingHighThreshold')) {
@@ -11150,6 +11590,30 @@ async function initRoutingMonitor() {
       $('#routingHighThreshold').addEventListener('change', function() {
         var next = Number(this.value || '2');
         ROUTING_SETTINGS.highThreshold = isNaN(next) ? 2 : Math.max(2, next);
+        saveRoutingSettings();
+      });
+    }
+    if ($('#routingPageSize')) {
+      $('#routingPageSize').value = String(ROUTING_SETTINGS.pageSize || 25);
+      $('#routingPageSize').addEventListener('change', function() {
+        var nextSize = Number(this.value || '25');
+        ROUTING_SETTINGS.pageSize = (nextSize === 50 || nextSize === 100) ? nextSize : 25;
+        ROUTING_PAGE = 1;
+        saveRoutingSettings();
+        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+      });
+    }
+    if ($('#btnRoutingPrevPage')) {
+      $('#btnRoutingPrevPage').addEventListener('click', function() {
+        if (ROUTING_PAGE <= 1) return;
+        ROUTING_PAGE -= 1;
+        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+      });
+    }
+    if ($('#btnRoutingNextPage')) {
+      $('#btnRoutingNextPage').addEventListener('click', function() {
+        ROUTING_PAGE += 1;
+        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
       });
     }
     if ($('#btnRoutingCapAdd')) {
@@ -11324,7 +11788,7 @@ var _uiWired = false;
 
 // What's New popup — shown once per 36 hours after vault unlock
 function maybeShowWhatsNew() {
-  var WHATS_NEW_KEY = 'hnmgr_whats_new_v92';
+  var WHATS_NEW_KEY = 'hnmgr_whats_new_v920';
   if (localStorage.getItem(WHATS_NEW_KEY + '_skip') === '1') return;
   var lastShown = parseInt(localStorage.getItem(WHATS_NEW_KEY) || '0', 10);
   if (Date.now() - lastShown < 36 * 60 * 60 * 1000) return;
@@ -11333,7 +11797,7 @@ function maybeShowWhatsNew() {
 }
 function dismissWhatsNew() {
   if ($('#whatsNewDontShow') && $('#whatsNewDontShow').checked) {
-    localStorage.setItem('hnmgr_whats_new_v92_skip', '1');
+    localStorage.setItem('hnmgr_whats_new_v920_skip', '1');
   }
   closeModal('whatsNewModal');
 }
@@ -11705,6 +12169,25 @@ function wireUpUI() {
         fetchBills(365).then(function() { renderWOCloseAssist(); }).catch(function() {});
       }
 
+      // Lazy-load AP Bills when Billing tab is opened
+      if (tabName === 'billing') {
+        if (!BILLS || BILLS.length === 0) {
+          var billBody = document.getElementById('billBody');
+          if (billBody) billBody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px">' + loadingHtml('Loading bills\u2026') + '</td></tr>';
+          fetchBills(365).then(function() {
+            // Re-enrich bills with _propertyGroup after load
+            (BILLS || []).forEach(function(b) {
+              var grps = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] ||
+                         _idToGroups[String(b.propertyId || '')] || [];
+              b._propertyGroup = grps[0] || '';
+            });
+            renderBillsSection();
+          }).catch(function(e) { showToast('Bills load failed: ' + (e.message || e)); });
+        } else {
+          renderBillsSection();
+        }
+      }
+
       // Lazy-load Vendors on first tab click
       if (tabName === 'vendors' && !_vendorsLazyLoaded && VENDORS.length === 0) {
         _vendorsLazyLoaded = true;
@@ -12065,6 +12548,35 @@ function wireUpUI() {
   $('#btnRefreshWO').addEventListener('click', function() { sectionRefresh('workorders', this); });
   $('#btnRefreshVendors').addEventListener('click', function() { sectionRefresh('vendors', this); });
 
+  // Billing section — Refresh, search, status filter
+  var billRefreshBtn = $('#btnRefreshBills');
+  if (billRefreshBtn) {
+    billRefreshBtn.addEventListener('click', async function() {
+      billRefreshBtn.disabled = true;
+      billRefreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading…';
+      try {
+        await fetchBills(365);
+        // Enrich bills with property group after fresh load
+        (BILLS || []).forEach(function(b) {
+          var grps = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] ||
+                     _idToGroups[String(b.propertyId || '')] || [];
+          b._propertyGroup = grps[0] || '';
+        });
+        renderBillsSection();
+        showToast('Bills refreshed — ' + BILLS.length + ' loaded');
+      } catch (e) {
+        showToast('Bills refresh failed: ' + (e.message || e));
+      } finally {
+        billRefreshBtn.disabled = false;
+        billRefreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
+      }
+    });
+  }
+  var billSearch = $('#billSearch');
+  if (billSearch) billSearch.addEventListener('input', function() { _billsPage = 0; renderBillsSection(); });
+  var billStatusFilter = $('#billStatusFilter');
+  if (billStatusFilter) billStatusFilter.addEventListener('change', function() { _billsPage = 0; renderBillsSection(); });
+
   // Theme toggle
   $('#themeToggle').addEventListener('click', function() { toggleTheme(); });
   updateThemeIcon(); // sync icon with initial state
@@ -12098,6 +12610,7 @@ function wireUpUI() {
     workorders: function() { renderWorkOrders(); },
     routing: function() { loadRoutingEventsAndStats().catch(function() {}); },
     payroll: function() { renderPayroll(); },
+    billing: function() { renderBillsSection(); },
     turnboard: function() { renderTurnPipelineUI(); },
     inspections: function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
     vendors: function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); }
@@ -13277,9 +13790,9 @@ renderDashboardKPIs = function() {
   function loadPmUsers() {
     if (!pmUsersBody) return Promise.resolve();
     var adminKey = (document.getElementById('dbAdminKey') && document.getElementById('dbAdminKey').value || '').trim();
+    // Try to retrieve from sessionStorage if not entered
     if (!adminKey) {
-      pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-key"></i> Enter Admin Key above to load PM users</div>';
-      return Promise.resolve();
+      try { adminKey = (sessionStorage.getItem('hm_pm_admin_key') || '').trim(); } catch (e) { /* */ }
     }
     pmUsersBody.innerHTML = '<div class="dbadmin-msg">Loading PM users…</div>';
     if (!API_PROXY) {
@@ -13289,6 +13802,12 @@ renderDashboardKPIs = function() {
       pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-plug"></i> Proxy not configured. Connect via the vault first.</div>';
       return Promise.resolve();
     }
+    if (!adminKey) {
+      pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-key"></i> Admin key required. Enter above to load PM users.</div>';
+      return Promise.resolve();
+    }
+    // Store key in sessionStorage for future auto-load
+    try { sessionStorage.setItem('hm_pm_admin_key', adminKey); } catch (e) { /* */ }
     return proxyAction('pm_proxy_users', { key: adminKey }).then(function(data) {
       renderPmUsers(data.results || []);
     }).catch(function(err) {
@@ -13400,6 +13919,20 @@ renderDashboardKPIs = function() {
   if (pmUserSaveBtn) pmUserSaveBtn.addEventListener('click', savePmUser);
   if (pmUserClearBtn) pmUserClearBtn.addEventListener('click', clearPmUserForm);
   if (pmUserRefreshBtn) pmUserRefreshBtn.addEventListener('click', function() { loadPmUsers(); });
+  
+  // Auto-load PM users on page load if proxy is available
+  function autoLoadPmUsers() {
+    if (!API_PROXY && !pmUsersBody) return;
+    try { var _sp = localStorage.getItem('hm_proxy_url'); if (_sp) API_PROXY = _sp; } catch (e) { /* */ }
+    if (API_PROXY) {
+      loadPmUsers().catch(function() { /* silently ignore auto-load failures */ });
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { setTimeout(autoLoadPmUsers, 500); });
+  } else {
+    setTimeout(autoLoadPmUsers, 500);
+  }
   if (pmUsersBody) {
     pmUsersBody.addEventListener('click', function(ev) {
       var editBtn = ev.target.closest('.pm-edit');
