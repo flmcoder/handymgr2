@@ -1912,7 +1912,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <div class="vault-subtitle" style="margin-top:4px">Sign in to continue.</div>
     <div style="display:flex;justify-content:center;margin:-10px 0 14px">
       <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
-        <span class="login-info-tip">Use one login method: setup PIN or proxy key, role passphrase (handy::manager / advanced::manager / handy::vendors), or your configured @flraz.com PM email for OTP. If your email is not recognized, contact administrator.</span>
+        <span class="login-info-tip">Use one login method by entering any of the following below: passphrase, work email address, or a proxy setup pin. If your email is not recognized, contact administrator. Email logins require One-Time-Passcode sent to your RingCentral number</span>
       </span>
     </div>
     <div class="vault-input-wrap">
@@ -1929,7 +1929,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <div class="vault-input-wrap">
         <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
       </div>
-      <label class="vault-proxy-label">New Device Verification (Org Email OTP)</label>
+      <label class="vault-proxy-label">New Device Verification Required (Org Email/SMS OTP)</label>
       <div class="vault-input-wrap">
         <input type="email" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com" autocomplete="off">
       </div>
@@ -1942,11 +1942,11 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <div class="vault-inline-actions">
         <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify Device</button>
       </div>
-      <div class="vault-proxy-hint">OTP is only sent to <code>@flraz.com</code> addresses. Setup PIN is still accepted in the password field.</div>
+      <div class="vault-proxy-hint">OTP is only sent to <code>@flraz.com</code> addresses. Contact administrator for assistance.</div>
     </div>
     <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> Secure session enabled</div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> Secured Session v0.6.8 beta</div>
   </div>
 </div>
 
@@ -2036,7 +2036,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 
   <div class="table-wrapper" style="margin-bottom:20px" id="managerOverviewSection">
     <div class="table-header">
-      <div class="table-title"><i class="fas fa-chart-line" style="color:var(--info)"></i> Handy::Manager Overview (Handy::Manager + Advanced::Manager)</div>
+      <div class="table-title"><i class="fas fa-chart-line" style="color:var(--info)"></i> Handy Manager - Fort Lowell Realty & Property Management</div>
     </div>
     <div class="kpi-grid" style="padding:12px 12px 16px">
       <div class="kpi-card red"><div class="kpi-label">Avg Turnover Completion</div><div class="kpi-value" id="kpiMgrAvgTurnCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div></div>
@@ -2050,7 +2050,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <div class="table-header">
       <div>
         <div class="table-title"><i class="fas fa-film" style="color:var(--accent)"></i> Turn Progress Dashboard</div>
-        <div class="section-subtitle">Simple PM view with rotating pages. Click any card to jump into the turn board.</div>
+        <div class="section-subtitle">Click any card to jump to the turn board for more details.</div>
       </div>
       <div class="turn-dash-controls">
         <select id="dashTurnPmFilter" class="form-select" style="font-size:12px;padding:5px 10px;min-width:150px;font-family:var(--font-mono)">
