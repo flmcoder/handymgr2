@@ -133,7 +133,7 @@
         y,
         radius,
         maxRadius: 58,
-        opacity: 0.085,
+        opacity: 0.14,
         speed: 0.48,
         lineWidth: 1
       });
@@ -146,7 +146,7 @@
         y,
         radius: 0,
         maxRadius: 62 * scale,
-        opacity: 0.12,
+        opacity: 0.18,
         speed: 0.62,
         lineWidth: 1,
         isDroplet: true,
@@ -157,7 +157,7 @@
         y,
         radius: 0,
         maxRadius: 82 * scale,
-        opacity: 0.08,
+        opacity: 0.13,
         speed: 0.56,
         lineWidth: 0.9,
         isDroplet: true,
@@ -181,7 +181,7 @@
             continue;
           }
           wave.radius += wave.speed;
-          wave.opacity = (wave.isDroplet ? 0.12 : 0.085) * (1 - wave.radius / wave.maxRadius);
+          wave.opacity = (wave.isDroplet ? 0.18 : 0.14) * (1 - wave.radius / wave.maxRadius);
           if (wave.opacity <= 0.001) continue;
 
           this.ctx.strokeStyle = `rgba(147, 197, 253, ${wave.opacity})`;
