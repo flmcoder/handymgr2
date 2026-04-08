@@ -755,23 +755,26 @@ async function decryptVaultBlob(blob, passphrase) {
 }
 
 async function decryptVault(passphrase) {
-  // Allow rotating manager/full-admin aliases without re-encrypting vault blobs.
-  var normalizedPassphrase = passphrase;
-  var requestedRole = 'full';
-  if (passphrase === ROLE_TOKEN_ADMIN) {
-    normalizedPassphrase = ROLE_TOKEN_MANAGER;
-  } else if (passphrase === ROLE_TOKEN_MANAGER) {
-    requestedRole = 'manager';
-  } else if (passphrase === ROLE_TOKEN_VENDOR) {
-    requestedRole = 'vendors';
+  function roleFromPass(p) {
+    if (p === ROLE_TOKEN_VENDOR) return 'vendors';
+    if (p === ROLE_TOKEN_MANAGER) return 'manager';
+    if (p === ROLE_TOKEN_ADMIN) return 'full';
+    return 'full';
   }
-  // Try each vault blob — supports multiple passphrases
+
+  var candidates = [passphrase];
+  // Backward-compat: if vault was encrypted with manager token, still allow admin alias.
+  if (passphrase === ROLE_TOKEN_ADMIN) candidates.push(ROLE_TOKEN_MANAGER);
+
+  // Try each vault blob with each candidate passphrase.
   for (var i = 0; i < VAULT_BLOBS.length; i++) {
-    try {
-      var result = await decryptVaultBlob(VAULT_BLOBS[i], normalizedPassphrase);
-      _accessRole = requestedRole;
-      return result;
-    } catch (e) { /* try next blob */ }
+    for (var c = 0; c < candidates.length; c++) {
+      try {
+        var result = await decryptVaultBlob(VAULT_BLOBS[i], candidates[c]);
+        _accessRole = roleFromPass(passphrase);
+        return result;
+      } catch (e) { /* try next candidate/blob */ }
+    }
   }
   throw new Error('Decryption failed for all vault blobs');
 }
@@ -999,12 +1002,30 @@ function normalizeOtpEmail(raw) {
   return m ? email : '';
 }
 
-async function requestDeviceOtp(email, userName) {
+function normalizeOtpPhone(raw) {
+  var val = String(raw || '').trim();
+  if (!val) return '';
+  var digits = val.replace(/\D+/g, '');
+  if (digits.length === 11 && digits.charAt(0) === '1') return '+' + digits;
+  if (digits.length === 10) return '+1' + digits;
+  if (val.charAt(0) === '+' && digits.length >= 10 && digits.length <= 15) return '+' + digits;
+  return '';
+}
+
+function normalizeOtpIdentifier(raw) {
+  return normalizeOtpEmail(raw) || normalizeOtpPhone(raw);
+}
+
+async function requestDeviceOtp(identifier, userName) {
   if (!resolveProxyBaseUrl()) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_request';
+  var email = normalizeOtpEmail(identifier);
+  var phone = normalizeOtpPhone(identifier);
   var payload = {
-    email: email,
+    identifier: String(identifier || '').trim(),
+    email: email || undefined,
+    phone: phone || undefined,
     user_name: userName || ('hm-' + (navigator && navigator.platform ? navigator.platform : 'device'))
   };
   var res = await fetchWithTimeout(url, {
@@ -1020,12 +1041,16 @@ async function requestDeviceOtp(email, userName) {
   return data;
 }
 
-async function verifyDeviceOtp(email, code, userName) {
+async function verifyDeviceOtp(identifier, code, userName) {
   if (!resolveProxyBaseUrl()) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_verify';
+  var email = normalizeOtpEmail(identifier);
+  var phone = normalizeOtpPhone(identifier);
   var payload = {
-    email: email,
+    identifier: String(identifier || '').trim(),
+    email: email || undefined,
+    phone: phone || undefined,
     code: code,
     user_name: userName || ('hm-' + (navigator && navigator.platform ? navigator.platform : 'device'))
   };
@@ -2029,10 +2054,10 @@ $$('.vault-proxy-preset').forEach(function(btn) {
 
 if ($('#btnSendOtp')) {
   $('#btnSendOtp').addEventListener('click', async function() {
-    var emailRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
-    var email = normalizeOtpEmail(emailRaw);
-    if (!email) {
-      $('#vaultError').textContent = 'Enter your configured work email to receive OTP.';
+    var idRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
+    var identifier = normalizeOtpIdentifier(idRaw);
+    if (!identifier) {
+      $('#vaultError').textContent = 'Enter your configured PM email or phone to receive OTP.';
       $('#vaultError').classList.add('show');
       return;
     }
@@ -2050,8 +2075,8 @@ if ($('#btnSendOtp')) {
     btn.textContent = 'Sending...';
     $('#vaultError').classList.remove('show');
     try {
-      await requestDeviceOtp(email, 'dispatcher');
-      showToast('OTP sent to ' + email, { kind: 'success' });
+      await requestDeviceOtp(identifier, 'dispatcher');
+      showToast('OTP sent to ' + identifier, { kind: 'success' });
     } catch (err) {
       var msg = (err && (err.message || String(err))) || 'OTP request failed';
       $('#vaultError').textContent = msg;
@@ -2066,10 +2091,10 @@ if ($('#btnSendOtp')) {
 
 if ($('#btnVerifyOtp')) {
   $('#btnVerifyOtp').addEventListener('click', async function() {
-    var email = normalizeOtpEmail($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
+    var identifier = normalizeOtpIdentifier($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
     var code = String(($('#vaultOtpCode') && $('#vaultOtpCode').value) || '').trim();
-    if (!email) {
-      $('#vaultError').textContent = 'Enter your configured work email first.';
+    if (!identifier) {
+      $('#vaultError').textContent = 'Enter your configured PM email or phone first.';
       $('#vaultError').classList.add('show');
       return;
     }
@@ -2092,7 +2117,7 @@ if ($('#btnVerifyOtp')) {
     btn.textContent = 'Verifying...';
     $('#vaultError').classList.remove('show');
     try {
-      var verifyData = await verifyDeviceOtp(email, code, 'dispatcher');
+      var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher');
       var token = verifyData.token;
       try { localStorage.setItem('hm_device_token', token); } catch (e) { /* */ }
       try { localStorage.setItem('hm_proxy_token', token); } catch (e2) { /* */ }
@@ -2182,12 +2207,12 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     if (API_PROXY) {
       try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eProxy) { /* */ }
     }
-    var passAsEmail = normalizeOtpEmail(pass);
+    var passAsIdentifier = normalizeOtpIdentifier(pass);
 
-    if (API_PROXY && passAsEmail) {
-      if ($('#vaultOtpEmail')) $('#vaultOtpEmail').value = passAsEmail;
-      await requestDeviceOtp(passAsEmail, 'dispatcher');
-      showToast('OTP sent to ' + passAsEmail + '. Enter code, verify device, then connect.', { kind: 'info', duration: 5000 });
+    if (API_PROXY && passAsIdentifier) {
+      if ($('#vaultOtpEmail')) $('#vaultOtpEmail').value = passAsIdentifier;
+      await requestDeviceOtp(passAsIdentifier, 'dispatcher');
+      showToast('OTP sent to ' + passAsIdentifier + '. Enter code, verify device, then connect.', { kind: 'info', duration: 5000 });
       $('#vaultError').textContent = 'OTP sent. Complete verification before connecting.';
       $('#vaultError').classList.add('show');
       return;
