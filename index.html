@@ -1916,7 +1916,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       </span>
     </div>
     <div class="vault-input-wrap">
-      <input type="password" class="vault-input" id="vaultPassphrase" placeholder="Enter PIN, proxy key, role passphrase, or PM email" autocomplete="off" autofocus>
+      <input type="password" class="vault-input" id="vaultPassphrase" placeholder="enter passphrase, work email, or setup pin" autocomplete="off" autofocus>
       <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
     </div>
     <div class="vault-input-wrap">
@@ -4090,12 +4090,30 @@ function normalizeOtpEmail(raw) {
   return m ? email : '';
 }
 
-async function requestDeviceOtp(email, userName) {
+function normalizeOtpPhone(raw) {
+  var val = String(raw || '').trim();
+  if (!val) return '';
+  var digits = val.replace(/\D+/g, '');
+  if (digits.length === 11 && digits.charAt(0) === '1') return '+' + digits;
+  if (digits.length === 10) return '+1' + digits;
+  if (val.charAt(0) === '+' && digits.length >= 10 && digits.length <= 15) return '+' + digits;
+  return '';
+}
+
+function normalizeOtpIdentifier(raw) {
+  return normalizeOtpEmail(raw) || normalizeOtpPhone(raw);
+}
+
+async function requestDeviceOtp(identifier, userName) {
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_request';
+  var email = normalizeOtpEmail(identifier);
+  var phone = normalizeOtpPhone(identifier);
   var payload = {
-    email: email,
+    identifier: String(identifier || '').trim(),
+    email: email || undefined,
+    phone: phone || undefined,
     user_name: userName || ('hm-' + (navigator && navigator.platform ? navigator.platform : 'device'))
   };
   var res = await fetchWithTimeout(url, {
