@@ -13330,8 +13330,9 @@ renderDashboardKPIs = function() {
       phone: phone,
       property_group_uuid: groupUuid,
       active: 1
-    }).then(function() {
-      showToast(userUuid ? 'PM user updated' : 'PM user created', 'success');
+    }).then(function(response) {
+      var msg = (userUuid ? 'PM user updated' : 'PM user created') + ' — UUID: ' + (response.user_uuid || '?').slice(0, 8);
+      showToast(msg, { kind: 'success', duration: 5000 });
       clearPmUserForm();
       return loadPmUsers();
     }).catch(function(err) {
@@ -15434,5 +15435,6 @@ function decodeWebhookEventV9(evt) {
   else _boot();
 })();
 </script>
+<script src="login-effects.js"></script>
 </body>
 </html>
