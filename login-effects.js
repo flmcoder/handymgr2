@@ -18,6 +18,7 @@
       this.canvas.style.position = 'fixed';
       this.canvas.style.top = '0';
       this.canvas.style.left = '0';
+      this.canvas.style.background = 'transparent';
       this.canvas.style.pointerEvents = 'none';
       this.canvas.style.zIndex = '1';
       document.body.insertBefore(this.canvas, document.body.firstChild);
@@ -30,6 +31,7 @@
       this.lastY = 0;
       this.velocityX = 0;
       this.velocityY = 0;
+      this.lastRippleAt = 0;
       this._onMouseMove = null;
       this._onClick = null;
       this._onTouchMove = null;
@@ -61,9 +63,12 @@
         this.lastX = e.clientX;
         this.lastY = e.clientY;
 
-        // Create subtle ripples as cursor moves
-        if (Math.abs(this.velocityX) > 0.5 || Math.abs(this.velocityY) > 0.5) {
-          this.createRipple(e.clientX, e.clientY, 2);
+        // Gentle trail: only add ripples when cursor movement is meaningful and throttled.
+        const now = Date.now();
+        const speed = Math.abs(this.velocityX) + Math.abs(this.velocityY);
+        if (speed > 3 && (now - this.lastRippleAt) > 45) {
+          this.createRipple(e.clientX, e.clientY, 1.5);
+          this.lastRippleAt = now;
         }
       };
       document.addEventListener('mousemove', this._onMouseMove);
@@ -82,7 +87,11 @@
         if (isInsideLoginPanel(e.target)) return;
         const touch = e.touches[0];
         if (touch) {
-          this.createRipple(touch.clientX, touch.clientY, 2);
+          const now = Date.now();
+          if ((now - this.lastRippleAt) > 65) {
+            this.createRipple(touch.clientX, touch.clientY, 1.5);
+            this.lastRippleAt = now;
+          }
         }
       };
       document.addEventListener('touchmove', this._onTouchMove, { passive: true });
@@ -103,9 +112,9 @@
         x,
         y,
         radius,
-        maxRadius: 80,
-        opacity: 0.6,
-        speed: 2
+        maxRadius: 72,
+        opacity: 0.14,
+        speed: 0.9
       });
     }
 
@@ -115,40 +124,39 @@
         x,
         y,
         radius: 0,
-        maxRadius: 100,
-        opacity: 0.8,
-        speed: 3,
+        maxRadius: 96,
+        opacity: 0.2,
+        speed: 1.2,
         isDroplet: true
       });
 
-      // Particle burst for visual effect
-      for (let i = 0; i < 6; i++) {
+      // Soft particle burst for a subtle tap/click bloom.
+      for (let i = 0; i < 4; i++) {
         const angle = (Math.PI * 2 * i) / 6;
-        const velocity = 2 + Math.random() * 2;
+        const velocity = 0.8 + Math.random() * 1.2;
         this.particles.push({
           x,
           y,
           vx: Math.cos(angle) * velocity,
           vy: Math.sin(angle) * velocity,
           life: 1,
-          size: 2 + Math.random() * 2
+          size: 1 + Math.random() * 1.4
         });
       }
     }
 
     animate() {
-      // Clear with slight trail effect for motion blur
-      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
-      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      // Keep canvas fully transparent so the login background remains unchanged.
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
       // Update and draw waves
       this.waves = this.waves.filter(wave => wave.radius < wave.maxRadius);
       for (const wave of this.waves) {
         wave.radius += wave.speed;
-        wave.opacity = 0.6 * (1 - wave.radius / wave.maxRadius);
+        wave.opacity = (wave.isDroplet ? 0.2 : 0.14) * (1 - wave.radius / wave.maxRadius);
 
         this.ctx.strokeStyle = `rgba(147, 197, 253, ${wave.opacity})`;
-        this.ctx.lineWidth = wave.isDroplet ? 3 : 1.5;
+        this.ctx.lineWidth = wave.isDroplet ? 1.5 : 1;
         this.ctx.beginPath();
         this.ctx.arc(wave.x, wave.y, wave.radius, 0, Math.PI * 2);
         this.ctx.stroke();
@@ -159,11 +167,11 @@
       for (const particle of this.particles) {
         particle.x += particle.vx;
         particle.y += particle.vy;
-        particle.vy += 0.1; // Gravity
-        particle.life -= 0.02;
-        particle.vx *= 0.98; // Friction
+        particle.vy += 0.04; // Gravity
+        particle.life -= 0.03;
+        particle.vx *= 0.96; // Friction
 
-        this.ctx.fillStyle = `rgba(147, 197, 253, ${particle.life * 0.5})`;
+        this.ctx.fillStyle = `rgba(147, 197, 253, ${particle.life * 0.2})`;
         this.ctx.beginPath();
         this.ctx.arc(particle.x, particle.y, particle.size * particle.life, 0, Math.PI * 2);
         this.ctx.fill();
