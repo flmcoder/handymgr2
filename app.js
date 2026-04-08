@@ -954,8 +954,25 @@ function getProxyAccessToken() {
   try { return localStorage.getItem('hm_proxy_token') || ''; } catch (e) { return ''; }
 }
 
+function resolveProxyBaseUrl() {
+  var base = '';
+  try { base = String(API_PROXY || '').trim(); } catch (e0) { base = ''; }
+  if (base) return base;
+  try {
+    var saved = localStorage.getItem('hm_proxy_url') || '';
+    if (saved) {
+      base = typeof sanitizeProxy === 'function' ? sanitizeProxy(saved) : String(saved).trim();
+      if (base) {
+        API_PROXY = base;
+        return base;
+      }
+    }
+  } catch (e1) { /* */ }
+  return '';
+}
+
 async function setupTrustedDevice(setupPin, userName) {
-  if (!API_PROXY) throw new Error('No proxy configured');
+  if (!resolveProxyBaseUrl()) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_setup';
   var payload = {
@@ -983,7 +1000,7 @@ function normalizeOtpEmail(raw) {
 }
 
 async function requestDeviceOtp(email, userName) {
-  if (!API_PROXY) throw new Error('No proxy configured');
+  if (!resolveProxyBaseUrl()) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_request';
   var payload = {
@@ -1004,7 +1021,7 @@ async function requestDeviceOtp(email, userName) {
 }
 
 async function verifyDeviceOtp(email, code, userName) {
-  if (!API_PROXY) throw new Error('No proxy configured');
+  if (!resolveProxyBaseUrl()) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_verify';
   var payload = {
@@ -1040,7 +1057,7 @@ function fetchWithTimeout(url, opts, timeoutMs) {
 // Proxy does all pagination server-side and returns complete dataset
 // Includes 45-second timeout — never hangs forever
 async function proxyAction(action, params) {
-  if (!API_PROXY) throw new Error('No proxy configured');
+  if (!resolveProxyBaseUrl()) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
   if (params) {
@@ -1121,7 +1138,7 @@ async function proxyPost(action, bodyObj, extraHeaders) {
   if (isReadOnlyAccessMode()) {
     throw new Error('Read-only access mode: updates are disabled');
   }
-  if (!API_PROXY) throw new Error('No proxy configured');
+  if (!resolveProxyBaseUrl()) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
   var token = getProxyAccessToken();
