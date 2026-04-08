@@ -2037,6 +2037,9 @@ if ($('#btnSendOtp')) {
       return;
     }
     API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
+    if (API_PROXY) {
+      try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (e) { /* */ }
+    }
     if (!API_PROXY) {
       $('#vaultError').textContent = 'Proxy URL is required before requesting OTP.';
       $('#vaultError').classList.add('show');
@@ -2076,6 +2079,9 @@ if ($('#btnVerifyOtp')) {
       return;
     }
     API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
+    if (API_PROXY) {
+      try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (e0) { /* */ }
+    }
     if (!API_PROXY) {
       $('#vaultError').textContent = 'Proxy URL is required before verifying OTP.';
       $('#vaultError').classList.add('show');
@@ -2141,6 +2147,12 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
   $('#vhostPreview').textContent = vhost || 'yourco';
   // Sanitize proxy URL
   var proxyUrl = sanitizeProxy($('#vaultProxy').value);
+  if (!proxyUrl) {
+    try {
+      proxyUrl = sanitizeProxy(localStorage.getItem('hm_proxy_url') || '');
+      if (proxyUrl && $('#vaultProxy')) $('#vaultProxy').value = proxyUrl;
+    } catch (eProxyLoad) { /* */ }
+  }
   $('#vaultProxy').value = proxyUrl;
   var existingDeviceToken = '';
   try { existingDeviceToken = localStorage.getItem('hm_device_token') || ''; } catch (e) { /* */ }
@@ -2167,6 +2179,9 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
   try {
     API_VHOST = vhost;
     API_PROXY = proxyUrl;
+    if (API_PROXY) {
+      try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eProxy) { /* */ }
+    }
     var passAsEmail = normalizeOtpEmail(pass);
 
     if (API_PROXY && passAsEmail) {
