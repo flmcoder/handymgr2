@@ -186,11 +186,22 @@ body {
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 16px;
+  font-weight: 500;
   letter-spacing: 2px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   transition: var(--transition);
 }
 .vault-input:focus { outline: none; border-color: var(--accent); }
-.vault-input::placeholder { letter-spacing: 0; color: var(--text-muted); font-size: 13px; }
+.vault-input::placeholder {
+  letter-spacing: 0;
+  color: color-mix(in srgb, var(--text-muted) 70%, #9ca3af 30%);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+}
 .vault-input.vhost-input { letter-spacing: 0; font-size: 16px; }
 .vault-toggle-vis {
   position: absolute;
