@@ -816,6 +816,7 @@ function lockVault() {
   updateCacheBadge('offline');
   $('#appShell').classList.remove('unlocked');
   $('#vaultScreen').style.display = 'flex';
+  document.dispatchEvent(new CustomEvent('handymgr:login-screen-visible', { detail: { visible: true } }));
   $('#vaultPassphrase').value = '';
   $('#vaultError').classList.remove('show');
   $('#corsBanner').classList.remove('show');
@@ -2180,6 +2181,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     }
     $('#vaultPassphrase').value = '';
     $('#vaultScreen').style.display = 'none';
+    document.dispatchEvent(new CustomEvent('handymgr:login-screen-visible', { detail: { visible: false } }));
     $('#appShell').classList.add('unlocked');
     applyAccessRole();
     await initApp();
