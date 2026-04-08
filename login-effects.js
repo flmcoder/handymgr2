@@ -85,7 +85,7 @@
         // Gentle trail: only add ripples when cursor movement is meaningful and throttled.
         const now = Date.now();
         const speed = Math.abs(this.velocityX) + Math.abs(this.velocityY);
-        if (speed > 6 && (now - this.lastRippleAt) > 120) {
+        if (speed > 4 && (now - this.lastRippleAt) > 100) {
           this.createRipple(e.clientX, e.clientY, 1.2);
           this.lastRippleAt = now;
         }
@@ -108,7 +108,7 @@
         if (touch) {
           this.hasPointer = true;
           const now = Date.now();
-          if ((now - this.lastRippleAt) > 140) {
+          if ((now - this.lastRippleAt) > 120) {
             this.createRipple(touch.clientX, touch.clientY, 1.1);
             this.lastRippleAt = now;
           }
@@ -133,9 +133,9 @@
         y,
         radius,
         maxRadius: 58,
-        opacity: 0.065,
-        speed: 0.42,
-        lineWidth: 0.8
+        opacity: 0.085,
+        speed: 0.48,
+        lineWidth: 1
       });
     }
 
@@ -146,8 +146,8 @@
         y,
         radius: 0,
         maxRadius: 62 * scale,
-        opacity: 0.09,
-        speed: 0.55,
+        opacity: 0.12,
+        speed: 0.62,
         lineWidth: 1,
         isDroplet: true,
         delay: 0
@@ -157,37 +157,41 @@
         y,
         radius: 0,
         maxRadius: 82 * scale,
-        opacity: 0.06,
-        speed: 0.5,
-        lineWidth: 0.7,
+        opacity: 0.08,
+        speed: 0.56,
+        lineWidth: 0.9,
         isDroplet: true,
         delay: 110
       });
     }
 
     animate() {
-      // Keep canvas fully transparent so the login background remains unchanged.
-      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      try {
+        // Keep canvas fully transparent so the login background remains unchanged.
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-      // Update and draw waves
-      this.waves = this.waves.filter(wave => {
-        if (wave.delay && wave.delay > 0) return true;
-        return wave.radius < wave.maxRadius;
-      });
-      for (const wave of this.waves) {
-        if (wave.delay && wave.delay > 0) {
-          wave.delay -= 16;
-          continue;
+        // Update and draw waves
+        this.waves = this.waves.filter(wave => {
+          if (wave.delay && wave.delay > 0) return true;
+          return wave.radius < wave.maxRadius;
+        });
+        for (const wave of this.waves) {
+          if (wave.delay && wave.delay > 0) {
+            wave.delay -= 16;
+            continue;
+          }
+          wave.radius += wave.speed;
+          wave.opacity = (wave.isDroplet ? 0.12 : 0.085) * (1 - wave.radius / wave.maxRadius);
+          if (wave.opacity <= 0.001) continue;
+
+          this.ctx.strokeStyle = `rgba(147, 197, 253, ${wave.opacity})`;
+          this.ctx.lineWidth = wave.lineWidth || (wave.isDroplet ? 1 : 0.9);
+          this.ctx.beginPath();
+          this.ctx.arc(wave.x, wave.y, wave.radius, 0, Math.PI * 2);
+          this.ctx.stroke();
         }
-        wave.radius += wave.speed;
-        wave.opacity = (wave.isDroplet ? 0.09 : 0.065) * (1 - wave.radius / wave.maxRadius);
-        if (wave.opacity <= 0.001) continue;
-
-        this.ctx.strokeStyle = `rgba(147, 197, 253, ${wave.opacity})`;
-        this.ctx.lineWidth = wave.lineWidth || (wave.isDroplet ? 1 : 0.8);
-        this.ctx.beginPath();
-        this.ctx.arc(wave.x, wave.y, wave.radius, 0, Math.PI * 2);
-        this.ctx.stroke();
+      } catch (_) {
+        // Never allow effect errors to stop the animation loop.
       }
 
       requestAnimationFrame(() => this.animate());
