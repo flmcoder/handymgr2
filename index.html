@@ -13377,6 +13377,13 @@ renderDashboardKPIs = function() {
       return Promise.resolve();
     }
     pmUsersBody.innerHTML = '<div class="dbadmin-msg">Loading PM users…</div>';
+    if (!API_PROXY) {
+      try { var _sp = localStorage.getItem('hm_proxy_url'); if (_sp) API_PROXY = _sp; } catch (e) { /* */ }
+    }
+    if (!API_PROXY) {
+      pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-plug"></i> Proxy not configured. Connect via the vault first.</div>';
+      return Promise.resolve();
+    }
     return proxyAction('pm_proxy_users', { key: adminKey }).then(function(data) {
       renderPmUsers(data.results || []);
     }).catch(function(err) {
@@ -13401,7 +13408,17 @@ renderDashboardKPIs = function() {
       return;
     }
     if (pmUserSaveBtn) pmUserSaveBtn.disabled = true;
+    // Restore API_PROXY from localStorage if the session was reopened without full vault login
+    if (!API_PROXY) {
+      try { var _savedProxy = localStorage.getItem('hm_proxy_url'); if (_savedProxy) API_PROXY = _savedProxy; } catch (e) { /* */ }
+    }
+    if (!API_PROXY) {
+      showToast('Proxy not configured. Connect to the proxy first (enter URL in the vault).', 'error');
+      if (pmUserSaveBtn) pmUserSaveBtn.disabled = false;
+      return;
+    }
     proxyPost('pm_proxy_user_upsert', {
+      key: getAdminKey(),
       user_uuid: userUuid || undefined,
       email: email,
       full_name: fullName,
@@ -13422,7 +13439,11 @@ renderDashboardKPIs = function() {
   function deletePmUser(userUuid) {
     if (!userUuid) return;
     if (!confirm('Delete this PM login user?')) return;
-    proxyPost('pm_proxy_user_delete', { user_uuid: userUuid }).then(function() {
+    if (!API_PROXY) {
+      try { var _savedProxy2 = localStorage.getItem('hm_proxy_url'); if (_savedProxy2) API_PROXY = _savedProxy2; } catch (e) { /* */ }
+    }
+    if (!API_PROXY) { showToast('Proxy not configured.', 'error'); return; }
+    proxyPost('pm_proxy_user_delete', { key: getAdminKey(), user_uuid: userUuid }).then(function() {
       showToast('PM user deleted', 'success');
       if (pmUserUuidEl && pmUserUuidEl.value === userUuid) clearPmUserForm();
       return loadPmUsers();
