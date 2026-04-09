@@ -3184,6 +3184,7 @@ async function pollWebhookEvents() {
             resource_id: meta.resourceId || '',
             resource_name: meta.resourceName || '',
             title: friendlyTitle,
+            description: e.description || e.human_description || '',
             body: evtBody,
             priority: e.priority || 'normal',
             source: e.source || 'appfolio'
@@ -4360,6 +4361,16 @@ async function fetchWONotes(woIdOrUuid, woContext) {
       woRef = fallback ? String(fallback.id) : '';
     }
   }
+  // Final fallback: ask proxy to resolve WO reference to DB API UUID.
+  if ((!woRef || !isUuidString(woRef)) && API_PROXY) {
+    try {
+      var detailData = await proxyAction('wo_detail', { wo_id: String(woIdOrUuid || '') });
+      var resolvedUuid = String((detailData && detailData.uuid) || (detailData && detailData.result && detailData.result.id) || '').trim();
+      if (isUuidString(resolvedUuid)) woRef = resolvedUuid;
+    } catch (e) {
+      // Keep silent fallback behavior for modal; render function shows empty state.
+    }
+  }
   if (!woRef || !isUuidString(woRef)) return [];
   var notesCached = detailCacheGet('notes_' + woRef);
   if (typeof notesCached !== 'undefined') return notesCached;
@@ -4392,13 +4403,29 @@ function renderWONotesList(notes) {
   nl.innerHTML = nh;
 }
 
-function refreshCurrentWONotes(forceUuid) {
+function refreshCurrentWONotes(forceUuid, bypassProxyCache) {
   var modal = document.getElementById('woModal');
   if (!modal || !modal.classList.contains('show') || !CURRENT_WO_MODAL) return;
   var targetUuid = forceUuid || CURRENT_WO_MODAL.woDbUuid;
   if (!targetUuid) return;
   delete WO_DETAIL_CACHE['notes_' + targetUuid];
-  fetchWONotes(targetUuid).then(function(notes) {
+  var fetchPromise;
+  if (bypassProxyCache && API_PROXY) {
+    // Use apiFetch passthrough to avoid stale 5-min wo_notes cache after posting.
+    var notesApiPath = '/api/v0/work_orders/' + encodeURIComponent(targetUuid) + '/notes';
+    fetchPromise = apiFetch(notesApiPath)
+      .then(function(data) {
+        var notes = (data && data.results) ? data.results
+          : (data && data.data) ? data.data
+          : (Array.isArray(data) ? data : []);
+        detailCacheSet('notes_' + targetUuid, notes);
+        return notes;
+      })
+      .catch(function() { return detailCacheGet('notes_' + targetUuid) || []; });
+  } else {
+    fetchPromise = fetchWONotes(targetUuid);
+  }
+  fetchPromise.then(function(notes) {
     if (!CURRENT_WO_MODAL || CURRENT_WO_MODAL.woDbUuid !== targetUuid) return;
     renderWONotesList(notes);
   });
@@ -4406,12 +4433,28 @@ function refreshCurrentWONotes(forceUuid) {
 
 async function postWONoteViaProxy(woDbUuid, noteText) {
   if (!woDbUuid) return { ok: false, status: 0, message: 'Missing work order UUID' };
+  if (API_PROXY) {
+    try {
+      var postResp = await proxyPost('wo_note_create', {
+        uuid: String(woDbUuid),
+        body_text: String(noteText || '')
+      });
+      if (!postResp || postResp.ok === false) {
+        return {
+          ok: false,
+          status: Number((postResp && postResp.status) || 500),
+          message: String((postResp && (postResp.message || postResp.error)) || 'Request failed')
+        };
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, status: 500, message: String((e && e.message) || e || 'Request failed') };
+    }
+  }
+
   var path = '/api/v0/work_orders/' + encodeURIComponent(String(woDbUuid)) + '/notes';
   var headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
-  if (API_PROXY) {
-    var token = getProxyAccessToken();
-    if (token) headers['Authorization'] = 'Bearer ' + token;
-  } else {
+  {
     var auth = getAuthHeader();
     var devId = getDevId();
     if (auth) headers['Authorization'] = auth;
@@ -4935,7 +4978,7 @@ function renderActivityFeed() {
       iconColor: isPri ? 'var(--danger)' : whColor,
       event: '<span class="tag ' + (isPri ? 'urgent' : 'new') + '">' + escapeHtml(eventLabel) + '</span>',
       entity: escapeHtml(wh.resource_name || wh.source || 'appfolio'),
-      detail: escapeHtml(wh.title || ''),
+      detail: escapeHtml(wh.description || wh.title || wh.body || ''),
       extra: '<span style="color:var(--purple)"><i class="fas fa-satellite-dish" style="font-size:9px"></i> live</span>'
     });
   });
@@ -5724,7 +5767,7 @@ function showWODetail(id) {
           return;
         }
         if ($('#detailNote')) $('#detailNote').value = '';
-        refreshCurrentWONotes(woDbUuid);
+        refreshCurrentWONotes(woDbUuid, true);
       }
       renderWorkOrders();
       renderDashboardKPIs();
