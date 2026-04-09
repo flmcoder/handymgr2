@@ -1998,7 +1998,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Updated Build <span class="tag" id="buildBadgeTag">v9.2.0 APR 2026</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Updated Build <span class="tag" id="buildBadgeTag">v9.2.1</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -2412,7 +2412,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   <div class="section-header">
     <div>
       <div class="section-title"><i class="fas fa-money-check-alt" style="color:var(--success)"></i> Payroll Review</div>
-      <div class="section-subtitle">Work orders marked "Work Done" — Friday-to-Friday pay period</div>
+      <div class="section-subtitle">Completed and ready-to-bill work orders — Friday-to-Friday pay period</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button class="action-btn" id="payrollPrev"><i class="fas fa-chevron-left"></i> Prev</button>
@@ -2421,13 +2421,13 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     </div>
   </div>
   <div class="kpi-grid stagger" style="margin-bottom:16px">
-    <div class="kpi-card green"><div class="kpi-label">Work Done This Period</div><div class="kpi-value" id="payrollCount">—</div><div class="kpi-sub" id="payrollCountSub">Loading…</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Completed This Period</div><div class="kpi-value" id="payrollCount">—</div><div class="kpi-sub" id="payrollCountSub">Loading…</div></div>
     <div class="kpi-card amber"><div class="kpi-label">Total Labor</div><div class="kpi-value" id="payrollTotal">—</div><div class="kpi-sub" id="payrollTotalSub">Loading…</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Vendors Active</div><div class="kpi-value" id="payrollVendors">—</div><div class="kpi-sub" id="payrollVendorsSub">Loading…</div></div>
     <div class="kpi-card purple"><div class="kpi-label">Properties Touched</div><div class="kpi-value" id="payrollProps">—</div><div class="kpi-sub" id="payrollPropsSub">Loading…</div></div>
   </div>
   <div class="table-wrapper">
-    <div class="table-header"><div class="table-title"><i class="fas fa-clipboard-list" style="color:var(--accent)"></i> Work Done This Period</div></div>
+    <div class="table-header"><div class="table-title"><i class="fas fa-clipboard-list" style="color:var(--accent)"></i> Completed This Period</div></div>
     <div class="table-scroll">
       <table class="data-table" id="payrollTable">
         <thead><tr><th>WO #</th><th>Property</th><th>Unit</th><th>Description</th><th>Vendor</th><th>Completed</th><th>Amount</th><th style="width:50px">Flag</th></tr></thead>
@@ -3146,7 +3146,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <button class="modal-close" id="whatsNewClose">&times;</button>
     </div>
     <div class="modal-body">
-        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.2.0 (updated April 2026) • Highlights (next 36h)</div>
+        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.2.1 • Highlights (next 36h)</div>
       <div style="max-height:290px;overflow-y:auto;padding-right:4px">
       <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px">
         <li style="display:flex;gap:10px;align-items:flex-start">
@@ -3220,7 +3220,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.2.0';
+var APP_VERSION = 'v9.2.1';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 
@@ -6133,7 +6133,24 @@ async function resolvePropertyGroupNames() {
       dbProps.forEach(function(p) {
         var pid = p.Id || p.id || '';
         var pname = p.Name || p.name || p.PropertyName || p.property_name || '';
-        if (pid && pname) uuidMapFallback[String(pid)] = { name: String(pname) };
+        var smObj = p.SiteManager || p.site_manager || null;
+        var smName = '';
+        if (smObj && typeof smObj === 'object') {
+          smName = [smObj.FirstName, smObj.LastName].filter(Boolean).join(' ').trim();
+        } else if (typeof smObj === 'string') {
+          smName = smObj.trim();
+        }
+        var gIds = [];
+        var rawGroupIds = p.PropertyGroupIds || p.property_group_ids || [];
+        if (Array.isArray(rawGroupIds)) {
+          gIds = rawGroupIds.map(function(v) { return String(v || '').trim(); }).filter(Boolean);
+        }
+        if (pid && pname) uuidMapFallback[String(pid)] = {
+          name: String(pname),
+          site_manager_name: smName,
+          group_ids: gIds,
+          maintenance_notes: p.MaintenanceNotes || p.maintenance_notes || ''
+        };
       });
       mapData = { property_uuid_map: uuidMapFallback };
     }
@@ -6163,6 +6180,22 @@ async function resolvePropertyGroupNames() {
     });
     diag.dbNameCount = Object.keys(dbNameToUuids).length;
     console.log('[PG] Reverse name→UUID map: ' + diag.dbNameCount + ' distinct names');
+
+    function _normalizeGroupIds(entry) {
+      if (!entry || typeof entry !== 'object') return [];
+      var ids = entry.group_ids || entry.groupIds || [];
+      if (!Array.isArray(ids)) return [];
+      return ids.map(function(v) { return String(v || '').trim(); }).filter(Boolean);
+    }
+
+    function _propertyMetaFromMap(entry) {
+      if (!entry || typeof entry !== 'object') return null;
+      return {
+        siteManager: String(entry.site_manager_name || entry.siteManager || '').trim(),
+        maintenanceNotes: String(entry.maintenance_notes || entry.maintenanceNotes || '').trim(),
+        groupIds: _normalizeGroupIds(entry)
+      };
+    }
 
     PROPERTY_GROUPS.forEach(function(g) {
       if (!g.name) return;
@@ -6200,6 +6233,22 @@ async function resolvePropertyGroupNames() {
     // For each PROPERTIES entry, find its UUID(s) by matching name, then index by id.
     if (uuidMapOk) {
       PROPERTIES.forEach(function(p) {
+        // Direct UUID match if Reports API id is already DB UUID-like.
+        var directEntry = p.id ? uuidMap[String(p.id)] : null;
+        var directMeta = _propertyMetaFromMap(directEntry);
+        if (directMeta) {
+          p._dbUuid = String(p.id || '');
+          if (!String(p.siteManager || '').trim() && directMeta.siteManager) {
+            p.siteManager = directMeta.siteManager;
+          }
+          if (!String(p.maintenanceNotes || '').trim() && directMeta.maintenanceNotes) {
+            p.maintenanceNotes = directMeta.maintenanceNotes;
+          }
+          if ((!p._groupIds || !p._groupIds.length) && directMeta.groupIds.length) {
+            p._groupIds = directMeta.groupIds.slice();
+          }
+        }
+
         if (!p.name) return;
         var pNameLower = (p.name || '').trim().toLowerCase();
         // Check if this Reports API property name matches any DB API property name
@@ -6208,6 +6257,22 @@ async function resolvePropertyGroupNames() {
           diag.nameMatches++;
           // Store the first UUID on the property for reference
           p._dbUuid = matchedUuids[0];
+
+          // Pull richer metadata from DB map to close UI data gaps.
+          var mappedEntry = uuidMap[matchedUuids[0]];
+          var mappedMeta = _propertyMetaFromMap(mappedEntry);
+          if (mappedMeta) {
+            if (!String(p.siteManager || '').trim() && mappedMeta.siteManager) {
+              p.siteManager = mappedMeta.siteManager;
+            }
+            if (!String(p.maintenanceNotes || '').trim() && mappedMeta.maintenanceNotes) {
+              p.maintenanceNotes = mappedMeta.maintenanceNotes;
+            }
+            if ((!p._groupIds || !p._groupIds.length) && mappedMeta.groupIds.length) {
+              p._groupIds = mappedMeta.groupIds.slice();
+            }
+          }
+
           // For each matched UUID, copy that UUID's group memberships to the property_id
           matchedUuids.forEach(function(uuid) {
             var uGroups = _uuidToGroups[uuid];
@@ -6525,6 +6590,7 @@ async function pollWebhookEvents() {
             resource_id: meta.resourceId || '',
             resource_name: meta.resourceName || '',
             title: friendlyTitle,
+            description: e.description || e.human_description || '',
             body: evtBody,
             priority: e.priority || 'normal',
             source: e.source || 'appfolio'
@@ -7703,6 +7769,16 @@ async function fetchWONotes(woIdOrUuid, woContext) {
       woRef = fallback ? String(fallback.id) : '';
     }
   }
+  // Final fallback: ask proxy to resolve WO reference to DB API UUID.
+  if ((!woRef || !isUuidString(woRef)) && API_PROXY) {
+    try {
+      var detailData = await proxyAction('wo_detail', { wo_id: String(woIdOrUuid || '') });
+      var resolvedUuid = String((detailData && detailData.uuid) || (detailData && detailData.result && detailData.result.id) || '').trim();
+      if (isUuidString(resolvedUuid)) woRef = resolvedUuid;
+    } catch (e) {
+      // Keep silent fallback behavior for modal; render function shows empty state.
+    }
+  }
   if (!woRef || !isUuidString(woRef)) return [];
   var notesCached = detailCacheGet('notes_' + woRef);
   if (typeof notesCached !== 'undefined') return notesCached;
@@ -7767,12 +7843,28 @@ function refreshCurrentWONotes(forceUuid, bypassProxyCache) {
 
 async function postWONoteViaProxy(woDbUuid, noteText) {
   if (!woDbUuid) return { ok: false, status: 0, message: 'Missing work order UUID' };
+  if (API_PROXY) {
+    try {
+      var postResp = await proxyPost('wo_note_create', {
+        uuid: String(woDbUuid),
+        body_text: String(noteText || '')
+      });
+      if (!postResp || postResp.ok === false) {
+        return {
+          ok: false,
+          status: Number((postResp && postResp.status) || 500),
+          message: String((postResp && (postResp.message || postResp.error)) || 'Request failed')
+        };
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, status: 500, message: String((e && e.message) || e || 'Request failed') };
+    }
+  }
+
   var path = '/api/v0/work_orders/' + encodeURIComponent(String(woDbUuid)) + '/notes';
   var headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
-  if (API_PROXY) {
-    var token = getProxyAccessToken();
-    if (token) headers['Authorization'] = 'Bearer ' + token;
-  } else {
+  {
     var auth = getAuthHeader();
     var devId = getDevId();
     if (auth) headers['Authorization'] = auth;
@@ -8282,7 +8374,7 @@ function renderPayroll() {
   if (pgSel && pgSel.value !== currentPropertyGroup) pgSel.value = currentPropertyGroup;
 
   var workDone = WORK_ORDERS.filter(function(wo) {
-    if (wo.status !== 'Work Done' && wo.status !== 'Ready to Bill') return false;
+    if (!isTurnWorkDoneStatus(wo.status)) return false;
     var cd = wo.workCompletedOn ? new Date(wo.workCompletedOn) : (wo.completedOn ? new Date(wo.completedOn) : null);
     if (!cd) return false;
     if (cd < period.start || cd > period.end) return false;
@@ -8313,7 +8405,7 @@ function renderPayroll() {
   var propEl = $('#payrollProps');
   if (propEl) propEl.textContent = Object.keys(propSet).length;
   var propSub = $('#payrollPropsSub');
-  if (propSub) propSub.textContent = 'properties with work done';
+  if (propSub) propSub.textContent = 'properties with completed work';
 
   var body = $('#payrollBody');
   if (!body) return;
@@ -8594,7 +8686,7 @@ function renderActivityFeed() {
       iconColor: isPri ? 'var(--danger)' : whColor,
       event: '<span class="tag ' + (isPri ? 'urgent' : 'new') + '">' + escapeHtml(eventLabel) + '</span>',
       entity: escapeHtml(wh.resource_name || wh.source || 'appfolio'),
-      detail: escapeHtml(wh.title || ''),
+      detail: escapeHtml(wh.description || wh.title || wh.body || ''),
       extra: '<span style="color:var(--purple)"><i class="fas fa-satellite-dish" style="font-size:9px"></i> live</span>'
     });
   });
@@ -13827,6 +13919,14 @@ renderDashboardKPIs = function() {
       showToast('PM user email is required', 'error');
       return;
     }
+    if (!fullName) {
+      showToast('PM user full name is required', 'error');
+      return;
+    }
+    if (!phone) {
+      showToast('PM user phone is required', 'error');
+      return;
+    }
     if (!groupUuid) {
       showToast('Select a property group before saving.', 'error');
       return;
@@ -13850,6 +13950,11 @@ renderDashboardKPIs = function() {
       property_group_uuid: groupUuid,
       active: 1
     }).then(function(response) {
+      if (!response || response.ok === false) {
+        var errMsg = (response && (response.message || response.error)) || 'PM save failed';
+        showToast(errMsg, 'error');
+        return;
+      }
       var msg = (userUuid ? 'PM user updated' : 'PM user created') + ' — UUID: ' + (response.user_uuid || '?').slice(0, 8);
       showToast(msg, { kind: 'success', duration: 5000 });
       clearPmUserForm();
