@@ -334,18 +334,19 @@ body {
   line-height: 1.6;
 }
 .vault-otp-route {
-  margin-top: 14px;
+  margin-top: 12px;
   padding: 12px;
   border: 1px solid var(--vault-input-border);
   border-radius: var(--radius);
   background: rgba(15, 23, 42, 0.42);
 }
+.vault-otp-route.hidden { display: none; }
 .vault-otp-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--vault-accent);
   letter-spacing: 0.02em;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .vault-otp-title i { margin-right: 6px; }
 .vault-proxy-hint code {
@@ -373,6 +374,7 @@ body {
 .vault-proxy-preset.active { background: var(--vault-accent-dim); border-color: var(--vault-accent-strong); color: var(--vault-accent); }
 .vault-inline-actions { display: flex; gap: 8px; margin: 8px 0 10px; }
 .vault-inline-actions .vault-proxy-preset { flex: 1; text-align: center; }
+.vault-otp-verify-row.hidden { display: none; }
 
 .login-info {
   position: relative;
@@ -1979,24 +1981,25 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off" value="flraz">
     </div>
     <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
-    <button class="vault-advanced-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM OTP Login (Email or Phone)</button>
-    <div class="vault-otp-route" id="vaultOtpRoute">
-      <div class="vault-otp-title"><i class="fas fa-mobile-alt"></i> PM Scoped Login Route</div>
-      <label class="vault-proxy-label">PM Account Login (Email or Phone)</label>
+    <button class="vault-advanced-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
+    <div class="vault-otp-route hidden" id="vaultOtpRoute" aria-hidden="true">
+      <div class="vault-otp-title"><i class="fas fa-mobile-alt"></i> Enter PM Email or Phone</div>
       <div class="vault-input-wrap">
         <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="off" inputmode="email">
       </div>
       <div class="vault-inline-actions">
-        <button type="button" class="vault-proxy-preset" id="btnSendOtp">Start PM Login</button>
+        <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
       </div>
+      <div class="vault-otp-verify-row hidden" id="vaultOtpVerifyRow">
       <div class="vault-input-wrap">
         <input type="text" class="vault-input" id="vaultOtpCode" placeholder="Enter 6-digit OTP" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
       </div>
       <div class="vault-inline-actions">
-        <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify Device</button>
-        <button type="button" class="vault-proxy-preset" id="btnContinueDeviceLogin">Continue with Verified Device</button>
+        <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify OTP</button>
+        <button type="button" class="vault-proxy-preset" id="btnContinueDeviceLogin" style="display:none">Continue</button>
       </div>
-      <div class="vault-proxy-hint">Use this PM login path only for scoped PM access. The main Connect button does not start PM OTP.</div>
+      </div>
+      <div class="vault-proxy-hint">We send your one-time code to the RingCentral number on your PM account.</div>
     </div>
     <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> Proxy Settings <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
     <div class="vault-advanced-panel" id="advancedPanel">
@@ -4316,12 +4319,16 @@ async function requestDeviceOtp(identifier, userName) {
   return data;
 }
 
-async function verifyDeviceOtp(email, code, userName) {
+async function verifyDeviceOtp(identifier, code, userName) {
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_verify';
+  var email = normalizeOtpEmail(identifier);
+  var phone = normalizeOtpPhone(identifier);
   var payload = {
-    email: email,
+    identifier: String(identifier || '').trim(),
+    email: email || undefined,
+    phone: phone || undefined,
     code: code,
     user_name: userName || ('hm-' + (navigator && navigator.platform ? navigator.platform : 'device'))
   };
@@ -5429,11 +5436,16 @@ $('#advancedToggle').addEventListener('click', function() {
 if ($('#pmLoginToggle')) {
   $('#pmLoginToggle').addEventListener('click', function() {
     var route = $('#vaultOtpRoute');
+    if (route) {
+      var shouldShow = route.classList.contains('hidden');
+      route.classList.toggle('hidden', !shouldShow);
+      route.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+    }
     if (route && typeof route.scrollIntoView === 'function') {
       route.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
     if ($('#vaultOtpEmail')) $('#vaultOtpEmail').focus();
-    $('#vaultError').textContent = 'PM login route selected. Enter PM email or phone, then click Start PM Login.';
+    $('#vaultError').textContent = 'Enter your PM email or phone, then click Send OTP.';
     $('#vaultError').classList.add('show');
   });
 }
@@ -5473,8 +5485,9 @@ if ($('#btnSendOtp')) {
     $('#vaultError').classList.remove('show');
     try {
       await requestDeviceOtp(identifier, 'dispatcher');
-      showToast('OTP sent for ' + identifier, { kind: 'success' });
-      $('#vaultError').textContent = 'OTP sent. Enter the 6-digit code below, then click Verify Device.';
+      showToast('OTP sent', { kind: 'success' });
+      if ($('#vaultOtpVerifyRow')) $('#vaultOtpVerifyRow').classList.remove('hidden');
+      $('#vaultError').textContent = 'OTP sent. Enter the 6-digit code and click Verify OTP.';
       $('#vaultError').classList.add('show');
     } catch (err) {
       var msg = (err && (err.message || String(err))) || 'OTP request failed';
@@ -5483,7 +5496,7 @@ if ($('#btnSendOtp')) {
       showToast(msg, { kind: 'danger' });
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Start PM Login';
+      btn.textContent = 'Send OTP';
     }
   });
 }
@@ -5532,8 +5545,8 @@ if ($('#btnVerifyOtp')) {
       }
       if ($('#vaultPassphrase')) $('#vaultPassphrase').value = '';
       refreshVaultDeviceLoginState();
-      showToast('Device verified — continue with the verified-device button.', { kind: 'success' });
-      $('#vaultError').textContent = 'Device verified. Click Continue with Verified Device to finish PM login.';
+      showToast('Device verified', { kind: 'success' });
+      $('#vaultError').textContent = 'Device verified. Click Continue to complete PM login.';
       $('#vaultError').classList.add('show');
     } catch (err) {
       var msg = (err && (err.message || String(err))) || 'OTP verification failed';
