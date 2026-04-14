@@ -1476,7 +1476,7 @@ function applyProxySchemaHealth(pingData) {
   };
 }
 
-var APP_VERSION = 'v9.1a';
+var APP_VERSION = 'v9.2.2';
 var APP_VERSION_UPDATED = 'April 2026';
 var SERVER_VERSION = '';
 
@@ -10503,9 +10503,15 @@ var DispatchComms = {
     var btn = document.getElementById('btnDispatchSendTestSms');
     var resultEl = document.getElementById('dispatchTestResult');
     var phone = phoneEl ? String(phoneEl.value || '').trim() : '';
+    var adminKey = getDispatchAdminKey();
     if (!/^\+\d{10,15}$/.test(phone)) {
       if (resultEl) resultEl.textContent = 'Enter a valid E.164 phone number such as +15551234567.';
       v9Toast('Invalid phone number', 'Use E.164 format like +15551234567', 'warning');
+      return;
+    }
+    if (!adminKey) {
+      if (resultEl) resultEl.textContent = 'Set PROXY_ADMIN_KEY in the Database tab before sending test links.';
+      v9Toast('Admin key required', 'Set PROXY_ADMIN_KEY in Database tab first', 'warning');
       return;
     }
 
@@ -10518,6 +10524,7 @@ var DispatchComms = {
 
     try {
       var response = await dispatchPost('send_magic_link_test_sms', {
+        key: adminKey,
         phone: phone,
         tech_name: 'Dispatch Test',
         tech_id: 'dispatch-test'
