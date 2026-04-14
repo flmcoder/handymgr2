@@ -301,6 +301,22 @@ body {
   padding: 1px 5px;
   border-radius: 3px;
 }
+.vault-panel.hidden { display: none; }
+.vault-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border: 1px solid var(--vault-input-border);
+  background: var(--vault-input-bg);
+  color: var(--vault-text-muted);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+.vault-back-btn:hover { color: var(--vault-accent); border-color: var(--vault-accent-strong); }
 .vault-advanced-toggle {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   font-family: var(--font-mono); font-size: 11px; color: var(--vault-text-muted);
@@ -1965,51 +1981,60 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 <!-- ==================== VAULT UNLOCK SCREEN ==================== -->
 <div id="vaultScreen">
   <div class="vault-box">
-    <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
-    <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Sign in to continue.</div>
-    <div class="vault-user-hint" id="vaultUserHint" style="display:none"></div>
-    <div style="display:flex;justify-content:center;margin:-10px 0 14px">
-      <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
-        <span class="login-info-tip">Manager and vendor passwords go in the main field. PM account login uses the separate PM login field below and sends a one-time code to the contact on file. Do not enter a PM email or phone in the password box.</span>
-      </span>
-    </div>
-    <div class="vault-input-wrap">
-      <input type="password" class="vault-input" id="vaultPassphrase" placeholder="enter manager or vendor password" autocomplete="off" autofocus>
-      <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
-    </div>
-    <div class="vault-input-wrap">
-      <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off" value="flraz">
-    </div>
-    <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
-    <button class="vault-advanced-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
-    <div class="vault-otp-route hidden" id="vaultOtpRoute" aria-hidden="true">
-      <div class="vault-otp-title"><i class="fas fa-mobile-alt"></i> Enter PM Email or Phone</div>
+    <div class="vault-panel" id="vaultMainPanel">
+      <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
+      <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Sign in to continue.</div>
+      <div class="vault-user-hint" id="vaultUserHint" style="display:none"></div>
+      <div style="display:flex;justify-content:center;margin:-10px 0 14px">
+        <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
+          <span class="login-info-tip">Manager and vendor passwords go in the main field. PMs must use the PM Login via OTP button.</span>
+        </span>
+      </div>
       <div class="vault-input-wrap">
-        <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="off" inputmode="email">
+        <input type="password" class="vault-input" id="vaultPassphrase" placeholder="enter manager or vendor password" autocomplete="off" autofocus>
+        <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
       </div>
-      <div class="vault-inline-actions">
-        <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
-      </div>
-      <div class="vault-otp-verify-row hidden" id="vaultOtpVerifyRow">
       <div class="vault-input-wrap">
-        <input type="text" class="vault-input" id="vaultOtpCode" placeholder="Enter 6-digit OTP" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
+        <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off" value="flraz">
       </div>
-      <div class="vault-inline-actions">
-        <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify OTP</button>
-        <button type="button" class="vault-proxy-preset" id="btnContinueDeviceLogin" style="display:none">Continue</button>
-      </div>
-      </div>
-      <div class="vault-proxy-hint">We send your one-time code to the RingCentral number on your PM account.</div>
+      <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
+      <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
+      <button class="vault-advanced-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
     </div>
-    <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> Proxy Settings <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
-    <div class="vault-advanced-panel" id="advancedPanel">
-      <label class="vault-proxy-label">Proxy Relay URL</label>
-      <div class="vault-input-wrap">
-        <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
+
+    <div class="vault-panel hidden" id="vaultPmPanel" aria-hidden="true">
+      <button type="button" class="vault-back-btn" id="pmLoginBackBtn"><i class="fas fa-arrow-left"></i> Back to standard login</button>
+      <img src="assets/logo.png" alt="HandyManager" class="vault-logo">
+      <div class="vault-subtitle" style="margin-top:4px">PM Login via OTP</div>
+      <div class="vault-vhost-hint">URL: <code><span id="vhostPreviewPm">flraz</span>.appfolio.com</code></div>
+      <div class="vault-otp-route" id="vaultOtpRoute" aria-hidden="false">
+        <div class="vault-otp-title"><i class="fas fa-mobile-alt"></i> Enter PM Email or Phone</div>
+        <div class="vault-input-wrap">
+          <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="off" inputmode="email">
+        </div>
+        <div class="vault-inline-actions">
+          <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
+        </div>
+        <div class="vault-otp-verify-row hidden" id="vaultOtpVerifyRow">
+        <div class="vault-input-wrap">
+          <input type="text" class="vault-input" id="vaultOtpCode" placeholder="Enter 6-digit OTP" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
+        </div>
+        <div class="vault-inline-actions">
+          <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify OTP</button>
+          <button type="button" class="vault-proxy-preset" id="btnContinueDeviceLogin" style="display:none">Continue</button>
+        </div>
+        </div>
+        <div class="vault-proxy-hint">We send your one-time code to your PM account phone number on file.</div>
       </div>
-      <div class="vault-proxy-hint">Proxy relay settings for backend routing.</div>
+      <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> Proxy Settings <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
+      <div class="vault-advanced-panel" id="advancedPanel">
+        <label class="vault-proxy-label">Proxy Relay URL</label>
+        <div class="vault-input-wrap">
+          <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
+        </div>
+        <div class="vault-proxy-hint">Proxy relay settings for backend routing.</div>
+      </div>
     </div>
-    <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
     <div class="vault-error" id="vaultError"></div>
     <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session v0.9.2</span></div>
   </div>
@@ -5402,6 +5427,7 @@ $('#vaultVhost').addEventListener('input', function() {
   var val = sanitizeVhost(this.value);
   this.value = val;
   $('#vhostPreview').textContent = val || 'yourco';
+  if ($('#vhostPreviewPm')) $('#vhostPreviewPm').textContent = val || 'yourco';
 });
 
 $('#vaultToggleVis').addEventListener('click', function() {
@@ -5429,24 +5455,37 @@ if ($('#vaultOtpCode')) {
 }
 
 // Advanced panel toggle
-$('#advancedToggle').addEventListener('click', function() {
-  this.classList.toggle('open');
-  $('#advancedPanel').classList.toggle('show');
-});
+if ($('#advancedToggle')) {
+  $('#advancedToggle').addEventListener('click', function() {
+    this.classList.toggle('open');
+    $('#advancedPanel').classList.toggle('show');
+  });
+}
+
+function setVaultPanel(panel) {
+  var main = $('#vaultMainPanel');
+  var pm = $('#vaultPmPanel');
+  if (!main || !pm) return;
+  var showPm = panel === 'pm';
+  main.classList.toggle('hidden', showPm);
+  pm.classList.toggle('hidden', !showPm);
+  pm.setAttribute('aria-hidden', showPm ? 'false' : 'true');
+}
+
 if ($('#pmLoginToggle')) {
   $('#pmLoginToggle').addEventListener('click', function() {
-    var route = $('#vaultOtpRoute');
-    if (route) {
-      var shouldShow = route.classList.contains('hidden');
-      route.classList.toggle('hidden', !shouldShow);
-      route.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
-    }
-    if (route && typeof route.scrollIntoView === 'function') {
-      route.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+    setVaultPanel('pm');
     if ($('#vaultOtpEmail')) $('#vaultOtpEmail').focus();
     $('#vaultError').textContent = 'Enter your PM email or phone, then click Send OTP.';
     $('#vaultError').classList.add('show');
+  });
+}
+
+if ($('#pmLoginBackBtn')) {
+  $('#pmLoginBackBtn').addEventListener('click', function() {
+    setVaultPanel('main');
+    if ($('#vaultPassphrase')) $('#vaultPassphrase').focus();
+    $('#vaultError').classList.remove('show');
   });
 }
 
@@ -5661,6 +5700,11 @@ function sanitizeProxy(raw) {
 
 initVaultConfigUI();
 refreshVaultDeviceLoginState();
+if ($('#vhostPreviewPm')) {
+  var vVal = sanitizeVhost((($('#vaultVhost') && $('#vaultVhost').value) || ''));
+  $('#vhostPreviewPm').textContent = vVal || 'yourco';
+}
+setVaultPanel('main');
 
 $('#vaultUnlockBtn').addEventListener('click', async function() {
   var pass = String(($('#vaultPassphrase') && $('#vaultPassphrase').value) || '').trim();
