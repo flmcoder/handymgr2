@@ -333,6 +333,21 @@ body {
   margin-top: 6px;
   line-height: 1.6;
 }
+.vault-otp-route {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--vault-input-border);
+  border-radius: var(--radius);
+  background: rgba(15, 23, 42, 0.42);
+}
+.vault-otp-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--vault-accent);
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+}
+.vault-otp-title i { margin-right: 6px; }
 .vault-proxy-hint code {
   color: var(--vault-accent);
   background: var(--vault-accent-dim);
@@ -1964,12 +1979,9 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off" value="flraz">
     </div>
     <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
-    <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> CORS Proxy <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
-    <div class="vault-advanced-panel" id="advancedPanel">
-      <label class="vault-proxy-label">Proxy Relay URL</label>
-      <div class="vault-input-wrap">
-        <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
-      </div>
+    <button class="vault-advanced-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM OTP Login (Email or Phone)</button>
+    <div class="vault-otp-route" id="vaultOtpRoute">
+      <div class="vault-otp-title"><i class="fas fa-mobile-alt"></i> PM Scoped Login Route</div>
       <label class="vault-proxy-label">PM Account Login (Email or Phone)</label>
       <div class="vault-input-wrap">
         <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="off" inputmode="email">
@@ -1984,7 +1996,15 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
         <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify Device</button>
         <button type="button" class="vault-proxy-preset" id="btnContinueDeviceLogin">Continue with Verified Device</button>
       </div>
-      <div class="vault-proxy-hint">Use this PM login path only for scoped PM access. The main Connect button no longer starts PM OTP.</div>
+      <div class="vault-proxy-hint">Use this PM login path only for scoped PM access. The main Connect button does not start PM OTP.</div>
+    </div>
+    <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> Proxy Settings <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
+    <div class="vault-advanced-panel" id="advancedPanel">
+      <label class="vault-proxy-label">Proxy Relay URL</label>
+      <div class="vault-input-wrap">
+        <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
+      </div>
+      <div class="vault-proxy-hint">Proxy relay settings for backend routing.</div>
     </div>
     <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
     <div class="vault-error" id="vaultError"></div>
@@ -5406,6 +5426,17 @@ $('#advancedToggle').addEventListener('click', function() {
   this.classList.toggle('open');
   $('#advancedPanel').classList.toggle('show');
 });
+if ($('#pmLoginToggle')) {
+  $('#pmLoginToggle').addEventListener('click', function() {
+    var route = $('#vaultOtpRoute');
+    if (route && typeof route.scrollIntoView === 'function') {
+      route.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    if ($('#vaultOtpEmail')) $('#vaultOtpEmail').focus();
+    $('#vaultError').textContent = 'PM login route selected. Enter PM email or phone, then click Start PM Login.';
+    $('#vaultError').classList.add('show');
+  });
+}
 
 // Proxy preset buttons
 $$('.vault-proxy-preset').forEach(function(btn) {
