@@ -328,6 +328,20 @@ body {
 .vault-advanced-toggle:hover { color: var(--vault-accent); border-color: var(--vault-accent-strong); }
 .vault-advanced-toggle i { transition: transform 0.2s ease; font-size: 10px; }
 .vault-advanced-toggle.open i { transform: rotate(180deg); }
+.vault-pm-toggle {
+  background: linear-gradient(180deg, #1e6dff, #1554d1);
+  border-color: #3f86ff;
+  color: #ecf4ff;
+  font-weight: 700;
+  box-shadow: 0 8px 18px rgba(30, 109, 255, 0.32);
+}
+.vault-pm-toggle:hover {
+  color: #ffffff;
+  border-color: #7eaeff;
+  box-shadow: 0 10px 22px rgba(30, 109, 255, 0.42);
+  transform: translateY(-1px);
+}
+.vault-pm-toggle i { color: #e7f1ff; }
 .vault-advanced-panel {
   display: none; padding: 0 0 16px;
   animation: fadeIn 0.2s ease;
@@ -1999,7 +2013,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       </div>
       <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
       <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
-      <button class="vault-advanced-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
+      <button class="vault-advanced-toggle vault-pm-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
     </div>
 
     <div class="vault-panel hidden" id="vaultPmPanel" aria-hidden="true">
@@ -2024,7 +2038,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
           <button type="button" class="vault-proxy-preset" id="btnContinueDeviceLogin" style="display:none">Continue</button>
         </div>
         </div>
-        <div class="vault-proxy-hint">We send your one-time code to your PM account phone number on file.</div>
+        <div class="vault-proxy-hint">We send your one-time code to your RingCentral phone number on file.</div>
       </div>
       <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> Proxy Settings <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
       <div class="vault-advanced-panel" id="advancedPanel">
@@ -2048,7 +2062,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Updated Build <span class="tag" id="buildBadgeTag">v9.2.2</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">v9.2.2</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
