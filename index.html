@@ -5997,7 +5997,7 @@ async function fetchBills(days, opts) {
     var lookback = parseInt(days || 365, 10) || 365;
     var params = { days: String(lookback), max: String(opts.max || 3000) };
     if (opts.forceRefresh) params.force_refresh = 'true';
-    if (opts.scoped) {
+    if (opts.scoped !== false) {
       var grpName = getEffectiveGroupId();
       if (grpName) params.group_name = grpName;
       if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
@@ -6012,15 +6012,19 @@ async function fetchBills(days, opts) {
         id: b.id || b.Id || raw.Id || raw.id || raw.BillId || '',
         billNumber: b.bill_number || b.reference || raw.Reference || raw.reference || b.id || raw.Id || '',
         vendorId: b.vendor_id || raw.VendorId || raw.vendor_id || raw.PayeeId || raw.payee_id || raw.PayeeUuid || raw.payee_uuid || '',
+        vendorUuid: b.vendor_uuid || raw.VendorUuid || raw.vendor_uuid || raw.VendorId || raw.vendor_id || raw.PayeeUuid || raw.payee_uuid || '',
+        payeeUuid: b.payee_uuid || raw.PayeeUuid || raw.payee_uuid || raw.PayeeId || raw.payee_id || raw.VendorId || raw.vendor_id || '',
         vendorName: b.vendor_name || raw.VendorName || raw.vendor_name || raw.PayeeName || raw.payee_name || raw.Name || raw.name || '',
         propertyId: b.property_id || raw.PropertyId || raw.property_id || raw.PropertyUuid || raw.property_uuid || '',
         propertyName: b.property_name || raw.PropertyName || raw.property_name || raw.Property || raw.property || '',
+        propertyGroup: b.property_group || raw.property_group || raw.PropertyGroup || '',
         workOrderId: b.work_order_id || raw.WorkOrderId || raw.work_order_id || '',
         amount: amountNum,
-        date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
-        status: status,
-        statusLabel: b.status_label || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '—',
-        raw: raw
+          date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
+          status: status,
+          statusLabel: b.status_label || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '—',
+          lineItems: Array.isArray(b.line_items) ? b.line_items : (Array.isArray(raw.LineItems) ? raw.LineItems : (Array.isArray(raw.line_items) ? raw.line_items : [])),
+          raw: raw
       };
     });
     _billsLoadedAt = Date.now();
@@ -7062,11 +7066,23 @@ function resolveWebhookResourceName(resourceType, resourceId) {
     var turn = TURNS.find(function(t) { return String(t.unitTurnId) === rid || String(t.unitId) === rid; });
     if (turn) return (turn.unit || rid.slice(0, 8)) + (turn.property ? ' - ' + turn.property : '');
   }
+  if (rtype === 'inspection' || rtype === 'unit_inspection') {
+    var insp = (typeof INSPECTIONS !== 'undefined' ? INSPECTIONS : []).find(function(i) {
+      return String(i.id || i.uuid || i.inspectionId || '') === rid;
+    });
+    if (insp) return (insp.name || insp.inspectionName || 'Inspection') + (insp.propertyName ? ' - ' + insp.propertyName : '');
+  }
+  if (rtype === 'bill') {
+    var bill = (typeof BILLS !== 'undefined' ? BILLS : []).find(function(b) {
+      return String(b.id || '') === rid;
+    });
+    if (bill) return 'Bill' + (bill.billNumber ? ' #' + bill.billNumber : '') + (bill.vendorName ? ' - ' + bill.vendorName : '');
+  }
   if (rtype === 'property_group') {
     var grp = PROPERTY_GROUPS.find(function(g) { return String(g.id) === rid; });
     if (grp) return grp.name || '';
   }
-  return '';
+  return rid.length > 12 ? rid.slice(0, 8) + '\u2026' : rid;
 }
 
 function getWebhookReadableContext(meta, e) {
@@ -8087,7 +8103,9 @@ async function fetchWONotes(woIdOrUuid, woContext) {
     // Use dedicated proxy action with v0 credentials (like property_groups)
     var data = await proxyAction('wo_notes', { wo_id: woRef });
     var notes = (data && data.results) ? data.results :
+                (data && data.Results) ? data.Results :
                 (data && data.data) ? data.data :
+                (data && data.Data) ? data.Data :
                 (Array.isArray(data) ? data : []);
     detailCacheSet('notes_' + woRef, notes);
     return notes;
@@ -8127,7 +8145,9 @@ function refreshCurrentWONotes(forceUuid, bypassProxyCache) {
     fetchPromise = apiFetch(notesApiPath)
       .then(function(data) {
         var notes = (data && data.results) ? data.results
+          : (data && data.Results) ? data.Results
           : (data && data.data) ? data.data
+          : (data && data.Data) ? data.Data
           : (Array.isArray(data) ? data : []);
         detailCacheSet('notes_' + targetUuid, notes);
         return notes;
@@ -8572,7 +8592,14 @@ function renderBillsSection() {
 
   // Filter
   var filtered = (BILLS || []).filter(function(b) {
-    if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) return false;
+    if (grp) {
+      var billGroup = String(b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
+      if (billGroup) {
+        if (billGroup !== String(grp).trim().toLowerCase()) return false;
+      } else if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) {
+        return false;
+      }
+    }
     if (statusFilter) {
       var st = String(b.status || '').toLowerCase();
       if (statusFilter === 'pending_approval' && st !== 'pending_approval') return false;
@@ -8584,7 +8611,10 @@ function renderBillsSection() {
       var hay = [
         b.vendorName,
         b.vendorId,
+        b.payeeUuid,
+        b.vendorUuid,
         b.propertyName,
+        b.propertyGroup,
         b.billNumber,
         b.id,
       ].join(' ').toLowerCase();
@@ -8654,7 +8684,8 @@ function renderBillsSection() {
       : '';
     var grpName = b._propertyGroup || _nameToGroups[(b.propertyName || '').trim().toLowerCase()]?.[0] || '';
     var vendorText = b.vendorName || b.vendorId || '—';
-    if (b.vendorName && b.vendorId) vendorText += ' (' + b.vendorId + ')';
+    var payeeText = b.payeeUuid || b.vendorUuid || b.vendorId || '';
+    if (b.vendorName && payeeText) vendorText += ' (' + payeeText + ')';
     return '<tr>' +
       '<td style="font-family:var(--font-mono);font-size:11px"><button class="action-btn" data-billdetail="' + escapeHtml(String(b.id || '')) + '" style="padding:2px 8px">' + escapeHtml(String(b.billNumber || b.id || '—')) + '</button></td>' +
       '<td>' + escapeHtml(vendorText) + '</td>' +
@@ -8702,6 +8733,19 @@ function buildBillLineItemsHtml(lineItems) {
     '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">GL</th>' +
     '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">Unit</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+function buildBillPayloadHtml(payload) {
+  var safe = payload && typeof payload === 'object' ? payload : {};
+  var pretty = '';
+  try { pretty = JSON.stringify(safe, null, 2); } catch (e) { pretty = String(safe || ''); }
+  return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+    '<button class="action-btn" id="btnBillPayloadCopy" style="padding:3px 8px">Copy JSON</button>' +
+    '<button class="action-btn" id="btnBillPayloadDownload" style="padding:3px 8px">Download JSON</button>' +
+    '</div>' +
+    '<pre id="billPayloadPre" style="max-height:280px;overflow:auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;line-height:1.45;font-family:var(--font-mono)">' +
+    escapeHtml(pretty || '{}') +
+    '</pre>';
 }
 
 async function loadBillAttachments(billId, containerEl) {
@@ -8801,7 +8845,7 @@ async function showBillDetailModal(billId) {
     }
 
     var raw = b.raw || {};
-    var lineItems = b.line_items || raw.LineItems || raw.line_items || [];
+    var lineItems = b.line_items || b.lineItems || raw.LineItems || raw.line_items || [];
     var afLink = API_VHOST
       ? ('https://' + API_VHOST + '.appfolio.com/bills/' + encodeURIComponent(String(b.id || billId)))
       : '';
@@ -8816,8 +8860,10 @@ async function showBillDetailModal(billId) {
       { label: 'Due Date', value: b.due_date ? formatDate(b.due_date) : '—' },
       { label: 'Posting Date', value: b.posting_date ? formatDate(b.posting_date) : '—' },
       { section: 'Associations', icon: 'fa-link' },
-      { label: 'Vendor / Payee', value: String((b.vendor_name || '—') + (b.vendor_id ? (' (' + b.vendor_id + ')') : '')) },
+      { label: 'Vendor / Payee', value: String((b.vendor_name || '—') + ((b.payee_uuid || b.vendor_uuid || b.vendor_id) ? (' (' + (b.payee_uuid || b.vendor_uuid || b.vendor_id) + ')') : '')) },
+      { label: 'Payee UUID', value: String(b.payee_uuid || b.vendor_uuid || b.vendor_id || '—') },
       { label: 'Property', value: String((b.property_name || '—') + (b.property_id ? (' (' + b.property_id + ')') : '')) },
+      { label: 'Property Group', value: String(b.property_group || b.propertyGroup || b._propertyGroup || '—') },
       { label: 'Work Order', value: b.work_order_id ? String(b.work_order_id) : '—' },
       { label: 'Reference', value: String(b.reference || '—') },
       { label: 'Remarks', value: String(b.remarks || '—') },
@@ -8832,7 +8878,9 @@ async function showBillDetailModal(billId) {
           '<button class="action-btn" id="btnUploadBillAttachment" style="padding:4px 8px">Upload</button>' +
           '<span id="billAttachStatus" style="font-size:11px;color:var(--text-muted)"></span>' +
           '</div>'
-      }
+      },
+      { section: 'Full Payload', icon: 'fa-code' },
+      { label: 'Raw JSON', html: buildBillPayloadHtml(raw) }
     ], afLink);
 
     requestAnimationFrame(function() {
@@ -8840,11 +8888,41 @@ async function showBillDetailModal(billId) {
       var uploadBtn = document.getElementById('btnUploadBillAttachment');
       var fileInput = document.getElementById('billAttachFile');
       var statusEl = document.getElementById('billAttachStatus');
+      var payloadCopyBtn = document.getElementById('btnBillPayloadCopy');
+      var payloadDownloadBtn = document.getElementById('btnBillPayloadDownload');
 
       if (listEl) loadBillAttachments(billId, listEl);
       if (uploadBtn) {
         uploadBtn.addEventListener('click', function() {
           uploadBillAttachment(billId, fileInput, statusEl, listEl);
+        });
+      }
+      if (payloadCopyBtn && navigator && navigator.clipboard && navigator.clipboard.writeText) {
+        payloadCopyBtn.addEventListener('click', async function() {
+          try {
+            await navigator.clipboard.writeText(JSON.stringify(raw || {}, null, 2));
+            showToast('Bill payload copied', { kind: 'success' });
+          } catch (e) {
+            showToast('Copy failed', { kind: 'warning' });
+          }
+        });
+      }
+      if (payloadDownloadBtn) {
+        payloadDownloadBtn.addEventListener('click', function() {
+          try {
+            var content = JSON.stringify(raw || {}, null, 2);
+            var blob = new Blob([content], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'bill-' + String(b.id || billId || 'payload') + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          } catch (e) {
+            showToast('Download failed', { kind: 'warning' });
+          }
         });
       }
     });
