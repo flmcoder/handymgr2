@@ -1953,11 +1953,11 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <div class="vault-user-hint" id="vaultUserHint" style="display:none"></div>
     <div style="display:flex;justify-content:center;margin:-10px 0 14px">
       <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
-        <span class="login-info-tip">Use one login method by entering any of the following below: passphrase, work email address, or a proxy setup pin. If your email is not recognized, contact administrator. Email logins require One-Time-Passcode sent to your RingCentral number</span>
+        <span class="login-info-tip">Manager and vendor passwords go in the main field. PM account login uses the separate PM login field below and sends a one-time code to the contact on file. Do not enter a PM email or phone in the password box.</span>
       </span>
     </div>
     <div class="vault-input-wrap">
-      <input type="password" class="vault-input" id="vaultPassphrase" placeholder="enter passphrase, work email, or setup pin" autocomplete="off" autofocus>
+      <input type="password" class="vault-input" id="vaultPassphrase" placeholder="enter manager or vendor password" autocomplete="off" autofocus>
       <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
     </div>
     <div class="vault-input-wrap">
@@ -1970,20 +1970,21 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <div class="vault-input-wrap">
         <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
       </div>
-      <label class="vault-proxy-label">New Device Verification Required (Org Email/SMS OTP)</label>
+      <label class="vault-proxy-label">PM Account Login (Email or Phone)</label>
       <div class="vault-input-wrap">
-        <input type="email" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com" autocomplete="off">
+        <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="off" inputmode="email">
       </div>
       <div class="vault-inline-actions">
-        <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
+        <button type="button" class="vault-proxy-preset" id="btnSendOtp">Start PM Login</button>
       </div>
       <div class="vault-input-wrap">
         <input type="text" class="vault-input" id="vaultOtpCode" placeholder="Enter 6-digit OTP" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
       </div>
       <div class="vault-inline-actions">
         <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify Device</button>
+        <button type="button" class="vault-proxy-preset" id="btnContinueDeviceLogin">Continue with Verified Device</button>
       </div>
-      <div class="vault-proxy-hint">OTP is only sent to <code>@flraz.com</code> addresses. Contact administrator for assistance.</div>
+      <div class="vault-proxy-hint">Use this PM login path only for scoped PM access. The main Connect button no longer starts PM OTP.</div>
     </div>
     <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
     <div class="vault-error" id="vaultError"></div>
@@ -2509,13 +2510,15 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
             <th>Bill #</th>
             <th>Vendor / Payee</th>
             <th>Property</th>
+            <th>Group</th>
+            <th>Property Manager</th>
             <th>Amount</th>
             <th>Invoice Date</th>
             <th>Status</th>
             <th>WO</th>
           </tr>
         </thead>
-        <tbody id="billHistBody"><tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">Run a date search to load historical bills</td></tr></tbody>
+        <tbody id="billHistBody"><tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">Run a date search to load historical bills</td></tr></tbody>
       </table>
     </div>
     <div class="table-footer" id="billHistFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
@@ -4199,6 +4202,33 @@ function getProxyAccessToken() {
   try { return localStorage.getItem('hm_proxy_token') || ''; } catch (e) { return ''; }
 }
 
+function isVaultUnlocked() {
+  var vault = $('#vaultScreen');
+  if (!vault) return true;
+  return vault.style.display === 'none';
+}
+
+function isProxySessionReady() {
+  if (!isVaultUnlocked()) return false;
+  if (!API_PROXY) return false;
+  if (API_CREDS) return true;
+  return !!getProxyAccessToken();
+}
+
+function hasStoredDeviceSession() {
+  try {
+    return !!(localStorage.getItem('hm_device_token') || localStorage.getItem('hm_proxy_token') || '');
+  } catch (e) {
+    return false;
+  }
+}
+
+function refreshVaultDeviceLoginState() {
+  var btn = $('#btnContinueDeviceLogin');
+  if (!btn) return;
+  btn.style.display = hasStoredDeviceSession() ? '' : 'none';
+}
+
 async function setupTrustedDevice(setupPin, userName) {
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
@@ -4312,7 +4342,7 @@ async function proxyAction(action, params) {
     });
   }
   var maxRetries = 2; // retry once for transient 502/503/network errors
-  var timeoutMs = action === 'turn_work_orders' ? 70000 : 45000;
+  var timeoutMs = (action === 'turn_work_orders' || action === 'bills_history') ? 90000 : 45000;
   var token = getProxyAccessToken();
   var reqHeaders = { 'Accept': 'application/json' };
   if (token) reqHeaders['Authorization'] = 'Bearer ' + token;
@@ -4348,6 +4378,17 @@ async function proxyAction(action, params) {
       }
       var errBody = '';
       try { errBody = await res.text(); } catch (e) { /* empty */ }
+      if (res.status === 401) {
+        var errBodyLower = String(errBody || '').toLowerCase();
+        var isProxySession401 = errBodyLower.indexOf('frontend bearer token') !== -1 ||
+          errBodyLower.indexOf('proxy session') !== -1 ||
+          errBodyLower.indexOf('read-only session') !== -1;
+        if (isProxySession401) {
+          var sessionMsg = 'Proxy action=' + action + ' failed: HTTP 401 — Proxy session missing or expired';
+          logApiError(401, sessionMsg, 'resolved');
+          throw new Error(sessionMsg);
+        }
+      }
       var errMsg = 'Proxy action=' + action + ' failed: HTTP ' + res.status;
       if (errBody) {
         try { var ej = JSON.parse(errBody); if (ej.error) errMsg += ' \u2014 ' + ej.error; } catch (e) { errMsg += ' \u2014 ' + errBody.substring(0, 200); }
@@ -4428,6 +4469,12 @@ async function proxyPost(action, bodyObj, extraHeaders) {
     if (!res.ok) {
       var errBody = '';
       try { errBody = await res.text(); } catch (e) { /* empty */ }
+      if (res.status === 401) {
+        var errBodyLower = String(errBody || '').toLowerCase();
+        if (errBodyLower.indexOf('frontend bearer token') !== -1 || errBodyLower.indexOf('proxy session') !== -1) {
+          throw new Error('Proxy POST action=' + action + ' failed: HTTP 401 — Proxy session missing or expired. Sign in again.');
+        }
+      }
       throw new Error('Proxy POST action=' + action + ' failed: HTTP ' + res.status + (errBody ? ' \u2014 ' + errBody.substring(0, 200) : ''));
     }
     return res.json();
@@ -5343,6 +5390,16 @@ $('#vaultPassphrase').addEventListener('keydown', function(e) {
 $('#vaultVhost').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') { $('#vaultUnlockBtn').click(); }
 });
+if ($('#vaultOtpEmail')) {
+  $('#vaultOtpEmail').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { $('#btnSendOtp').click(); }
+  });
+}
+if ($('#vaultOtpCode')) {
+  $('#vaultOtpCode').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { $('#btnVerifyOtp').click(); }
+  });
+}
 
 // Advanced panel toggle
 $('#advancedToggle').addEventListener('click', function() {
@@ -5353,22 +5410,27 @@ $('#advancedToggle').addEventListener('click', function() {
 // Proxy preset buttons
 $$('.vault-proxy-preset').forEach(function(btn) {
   btn.addEventListener('click', function() {
+    var presetProxy = btn.getAttribute('data-proxy');
+    if (!presetProxy) return;
     $$('.vault-proxy-preset').forEach(function(b) { b.classList.remove('active'); });
     btn.classList.add('active');
-    $('#vaultProxy').value = btn.getAttribute('data-proxy');
+    $('#vaultProxy').value = presetProxy;
   });
 });
 
 if ($('#btnSendOtp')) {
   $('#btnSendOtp').addEventListener('click', async function() {
-    var emailRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
-    var email = normalizeOtpEmail(emailRaw);
-    if (!email) {
-      $('#vaultError').textContent = 'Enter your configured work email to receive OTP.';
+    var identifierRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
+    var identifier = normalizeOtpIdentifier(identifierRaw);
+    if (!identifier) {
+      $('#vaultError').textContent = 'Enter your configured PM email or phone to start PM login.';
       $('#vaultError').classList.add('show');
       return;
     }
     API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
+    if (API_PROXY) {
+      try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eSaveProxy) { /* */ }
+    }
     if (!API_PROXY) {
       $('#vaultError').textContent = 'Proxy URL is required before requesting OTP.';
       $('#vaultError').classList.add('show');
@@ -5379,8 +5441,10 @@ if ($('#btnSendOtp')) {
     btn.textContent = 'Sending...';
     $('#vaultError').classList.remove('show');
     try {
-      await requestDeviceOtp(email, 'dispatcher');
-      showToast('OTP sent to ' + email, { kind: 'success' });
+      await requestDeviceOtp(identifier, 'dispatcher');
+      showToast('OTP sent for ' + identifier, { kind: 'success' });
+      $('#vaultError').textContent = 'OTP sent. Enter the 6-digit code below, then click Verify Device.';
+      $('#vaultError').classList.add('show');
     } catch (err) {
       var msg = (err && (err.message || String(err))) || 'OTP request failed';
       $('#vaultError').textContent = msg;
@@ -5388,17 +5452,17 @@ if ($('#btnSendOtp')) {
       showToast(msg, { kind: 'danger' });
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Send OTP';
+      btn.textContent = 'Start PM Login';
     }
   });
 }
 
 if ($('#btnVerifyOtp')) {
   $('#btnVerifyOtp').addEventListener('click', async function() {
-    var email = normalizeOtpEmail($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
+    var identifier = normalizeOtpIdentifier($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
     var code = String(($('#vaultOtpCode') && $('#vaultOtpCode').value) || '').trim();
-    if (!email) {
-      $('#vaultError').textContent = 'Enter your configured work email first.';
+    if (!identifier) {
+      $('#vaultError').textContent = 'Enter your configured PM email or phone first.';
       $('#vaultError').classList.add('show');
       return;
     }
@@ -5418,7 +5482,7 @@ if ($('#btnVerifyOtp')) {
     btn.textContent = 'Verifying...';
     $('#vaultError').classList.remove('show');
     try {
-      var verifyData = await verifyDeviceOtp(email, code, 'dispatcher');
+      var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher');
       var token = verifyData.token;
       try { localStorage.setItem('hm_device_token', token); } catch (e) { /* */ }
       try { localStorage.setItem('hm_proxy_token', token); } catch (e2) { /* */ }
@@ -5436,7 +5500,10 @@ if ($('#btnVerifyOtp')) {
         try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (e4) { /* */ }
       }
       if ($('#vaultPassphrase')) $('#vaultPassphrase').value = '';
-      showToast('Device verified — you can now connect without setup PIN.', { kind: 'success' });
+      refreshVaultDeviceLoginState();
+      showToast('Device verified — continue with the verified-device button.', { kind: 'success' });
+      $('#vaultError').textContent = 'Device verified. Click Continue with Verified Device to finish PM login.';
+      $('#vaultError').classList.add('show');
     } catch (err) {
       var msg = (err && (err.message || String(err))) || 'OTP verification failed';
       $('#vaultError').textContent = msg;
@@ -5445,6 +5512,92 @@ if ($('#btnVerifyOtp')) {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Verify Device';
+    }
+  });
+}
+
+async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
+  API_VHOST = vhost;
+  API_PROXY = proxyUrl;
+  API_CREDS = { p: existingDeviceToken };
+  _accessRole = getStoredAccessRole();
+  try {
+    var sess = await proxyAction('session_info');
+    if (sess && sess.ok && sess.session) {
+      _accessRole = normalizeAccessRole(sess.session.role || _accessRole);
+      if (sess.session.property_group_uuid) {
+        forcedPropertyGroupUuid = String(sess.session.property_group_uuid);
+        forcedPropertyGroupName = '';
+        try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (scopeErr) { /* */ }
+      }
+      if (sess.session.login_email) {
+        _pmScopeEmail = String(sess.session.login_email);
+        try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeEmailErr) { /* */ }
+      }
+    }
+  } catch (sessErr) { /* non-fatal — use stored role */ }
+  persistAccessRole(_accessRole);
+  try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
+  if (!$('#vaultRememberConfig') || $('#vaultRememberConfig').checked) {
+    await saveVaultConfig(getVaultConfigFromInputs());
+  }
+  $('#vaultPassphrase').value = '';
+  $('#vaultScreen').style.display = 'none';
+  $('#appShell').classList.add('unlocked');
+  applyAccessRole();
+  await initApp();
+  if (_accessRole === 'pm_readonly') {
+    try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (eScope) { /* */ }
+    enforceScopedPropertyGroup();
+  }
+  applyAccessRole();
+  startAutoSync();
+  showToast('Connected — ' + vhost + '.appfolio.com via verified device');
+}
+
+if ($('#btnContinueDeviceLogin')) {
+  $('#btnContinueDeviceLogin').addEventListener('click', async function() {
+    var rawVhost = $('#vaultVhost').value;
+    var vhost = sanitizeVhost(rawVhost);
+    $('#vaultVhost').value = vhost;
+    $('#vhostPreview').textContent = vhost || 'yourco';
+    var proxyUrl = sanitizeProxy($('#vaultProxy').value || '');
+    var existingDeviceToken = '';
+    try { existingDeviceToken = localStorage.getItem('hm_device_token') || localStorage.getItem('hm_proxy_token') || ''; } catch (e) { /* */ }
+
+    if (!vhost) {
+      $('#vaultError').textContent = 'AppFolio subdomain is required (e.g. "flraz").';
+      $('#vaultError').classList.add('show');
+      return;
+    }
+    if (!proxyUrl) {
+      $('#vaultError').textContent = 'Proxy URL is required before device login.';
+      $('#vaultError').classList.add('show');
+      return;
+    }
+    if (!existingDeviceToken) {
+      $('#vaultError').textContent = 'No verified device session found. Start PM login and verify OTP first.';
+      $('#vaultError').classList.add('show');
+      refreshVaultDeviceLoginState();
+      return;
+    }
+
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+    $('#vaultError').classList.remove('show');
+    try {
+      try { localStorage.setItem('hm_proxy_url', proxyUrl); } catch (eProxySave) { /* */ }
+      await unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl);
+    } catch (err) {
+      var errMsg = (err && (err.message || String(err))) || 'Verified device login failed';
+      wipeCredentials();
+      $('#vaultError').textContent = errMsg;
+      $('#vaultError').classList.add('show');
+      $('#vaultPassphrase').focus();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Continue with Verified Device';
     }
   });
 }
@@ -5463,6 +5616,7 @@ function sanitizeProxy(raw) {
 }
 
 initVaultConfigUI();
+refreshVaultDeviceLoginState();
 
 $('#vaultUnlockBtn').addEventListener('click', async function() {
   var pass = String(($('#vaultPassphrase') && $('#vaultPassphrase').value) || '').trim();
@@ -5478,9 +5632,6 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     } catch (eProxyLoad) { /* */ }
   }
   $('#vaultProxy').value = proxyUrl;
-  var existingDeviceToken = '';
-  try { existingDeviceToken = localStorage.getItem('hm_device_token') || ''; } catch (e) { /* */ }
-
   if (!vhost) {
     $('#vaultError').textContent = 'AppFolio subdomain is required (e.g. "flraz").';
     $('#vaultError').classList.add('show');
@@ -5491,8 +5642,8 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     $('#vaultError').classList.add('show');
     return;
   }
-  if (!pass && !existingDeviceToken) {
-    $('#vaultError').textContent = 'Enter your password, or verify this device with OTP first.';
+  if (!pass) {
+    $('#vaultError').textContent = 'Enter your password. For PM access, use the separate PM login field and buttons below.';
     $('#vaultError').classList.add('show');
     return;
   }
@@ -5510,36 +5661,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     var passAsIdentifier = normalizeOtpIdentifier(pass);
 
     if (passAsIdentifier) {
-      // OTP flow — send code and show the verification form
-      if ($('#vaultOtpEmail')) $('#vaultOtpEmail').value = passAsIdentifier;
-      await requestDeviceOtp(passAsIdentifier, 'dispatcher');
-      showToast('OTP sent to ' + passAsIdentifier + '. Enter the code to verify your device.', { kind: 'info', duration: 5000 });
-      $('#vaultError').textContent = 'OTP sent. Enter the 6-digit code above and click Verify Device.';
-      $('#vaultError').classList.add('show');
-      return;
-    }
-
-    if (!pass && existingDeviceToken) {
-      // Returning PM session — restore using stored device token
-      API_CREDS = { p: existingDeviceToken };
-      _accessRole = getStoredAccessRole();
-      try {
-        var sess = await proxyAction('session_info');
-        if (sess && sess.ok && sess.session) {
-          _accessRole = normalizeAccessRole(sess.session.role || _accessRole);
-          if (sess.session.property_group_uuid) {
-            forcedPropertyGroupUuid = String(sess.session.property_group_uuid);
-            forcedPropertyGroupName = '';
-            try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (scopeErr) { /* */ }
-          }
-          if (sess.session.login_email) {
-            _pmScopeEmail = String(sess.session.login_email);
-            try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeEmailErr) { /* */ }
-          }
-        }
-      } catch (sessErr) { /* non-fatal — use stored role */ }
-      persistAccessRole(_accessRole);
-      try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
+      throw new Error('PM login uses the separate PM login field and buttons below. Do not enter email or phone in the password box.');
     } else if (pass) {
       // Verify password against proxy env vars (GUI_ADMIN / GUI_GM / GUI_VENDORS)
       var roleResult = await proxyPost('verify_role', { password: pass });
@@ -6630,6 +6752,7 @@ async function fetchUnitTurnsDB() {
   WEBHOOK EVENTS — AppFolio signed webhook ingest feed
   ================================================================= */
 async function pollWebhookEvents() {
+  if (!isProxySessionReady()) return false;
   try {
     var data = await proxyAction('webhook_events');
     if (data && Array.isArray(data.events)) {
@@ -7253,6 +7376,10 @@ var _whFilters = { search: '', type: '', source: '', from: '', to: '' };
 async function loadWebhookData() {
   var body = $('#whDataBody');
   if (!body) return;
+  if (!isProxySessionReady()) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)">Sign in to load webhook events</td></tr>';
+    return;
+  }
   body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fas fa-circle-notch fa-spin"></i> Loading webhook data\u2026</td></tr>';
   try {
     var params = {
@@ -7460,6 +7587,11 @@ async function loadWebhookStats() {
   var panel = $('#whStatsPanel');
   var content = $('#whStatsContent');
   if (!panel || !content) return;
+  if (!isProxySessionReady()) {
+    panel.classList.remove('hidden');
+    content.innerHTML = 'Sign in to view webhook stats.';
+    return;
+  }
   panel.classList.remove('hidden');
   content.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Loading stats\u2026';
   try {
@@ -8633,14 +8765,20 @@ async function runBillHistorySearch() {
     return;
   }
 
-  body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px">' + loadingHtml('Searching history…') + '</td></tr>';
+  body.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">' + loadingHtml('Searching history…') + '</td></tr>';
   footer.style.display = 'none';
 
   try {
+    var fromDt = new Date(dateFrom + 'T00:00:00');
+    var toDt = new Date(dateTo + 'T23:59:59');
+    var spanDays = 365;
+    if (!isNaN(fromDt.getTime()) && !isNaN(toDt.getTime())) {
+      spanDays = Math.max(30, Math.min(3650, Math.ceil((toDt - fromDt) / 86400000) + 30));
+    }
     var params = {
       date_from: dateFrom,
       date_to: dateTo,
-      days: '3650',
+      days: String(spanDays),
       max: '8000',
     };
     var grpName = getEffectiveGroupId();
@@ -8654,7 +8792,7 @@ async function runBillHistorySearch() {
     var rows = Array.isArray(data.results) ? data.results : [];
 
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">No historical bills found for selected criteria</td></tr>';
+      body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No historical bills found for selected criteria</td></tr>';
       footer.style.display = 'none';
       return;
     }
@@ -8662,10 +8800,21 @@ async function runBillHistorySearch() {
     body.innerHTML = rows.slice(0, 500).map(function(r) {
       var wo = String(r.work_order_id || '').trim();
       var billId = String(r.id || '').trim();
+      var grpResolved = String(r.property_group || '').trim();
+      if (!grpResolved) {
+        var nGroups = _nameToGroups[(String(r.property_name || '').trim().toLowerCase())] || [];
+        grpResolved = nGroups[0] || '';
+      }
+      var pmResolved = String(r.property_manager || '').trim();
+      if (!pmResolved && grpResolved) {
+        pmResolved = getRoutingPmForGroup(grpResolved);
+      }
       return '<tr>' +
         '<td style="font-family:var(--font-mono);font-size:11px">' + (billId ? ('<button class="action-btn" data-billdetail="' + escapeHtml(billId) + '" style="padding:2px 8px">' + escapeHtml(String(r.bill_number || r.id || '—')) + '</button>') : escapeHtml(String(r.bill_number || r.id || '—'))) + '</td>' +
         '<td>' + escapeHtml(String(r.vendor_name || r.vendor_id || '—')) + '</td>' +
         '<td>' + escapeHtml(String(r.property_name || r.property_id || '—')) + '</td>' +
+        '<td>' + escapeHtml(grpResolved || '—') + '</td>' +
+        '<td>' + escapeHtml(pmResolved || '—') + '</td>' +
         '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || 0) + '</td>' +
         '<td>' + escapeHtml(r.invoice_date ? formatDate(r.invoice_date) : '—') + '</td>' +
         '<td>' + escapeHtml(String(r.status_label || r.status || '—')) + '</td>' +
@@ -8691,7 +8840,7 @@ async function runBillHistorySearch() {
       });
     });
   } catch (e) {
-    body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:20px">History search failed: ' + escapeHtml(String(e.message || e)) + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:20px">History search failed: ' + escapeHtml(String(e.message || e)) + '</td></tr>';
     footer.style.display = 'none';
   }
 }
@@ -14667,6 +14816,10 @@ renderDashboardKPIs = function() {
   }
 
   function pollLiveEvents() {
+    if (!isProxySessionReady()) {
+      setStatus('Awaiting sign-in…');
+      return;
+    }
     proxyAction('webhook_events', { limit: 100 }).then(function(data) {
       mergeEvents(data && Array.isArray(data.events) ? data.events : []);
       setStatus('Listening for AppFolio events…');
@@ -16345,11 +16498,13 @@ function decodeWebhookEventV9(evt) {
   function _clearUnseen(){_unseenCount=0;_updateBadge();}
 
   async function _seedLastId(){
+    if (!isProxySessionReady()) return;
     try{var d=await proxyAction('webhook_events',{limit:1});if(d.ok&&d.events&&d.events.length)_lastId=d.events[0].id||0;}catch(e){}
   }
 
   async function _poll(){
     if(_isPolling||!API_PROXY)return;
+    if(!isProxySessionReady()) return;
     _isPolling=true;
     try{
       var data=await proxyAction('webhook_live',{since_id:String(_lastId),limit:'20'});
