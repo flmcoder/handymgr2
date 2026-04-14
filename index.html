@@ -1395,6 +1395,7 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .pipe-card.sla-breach { border-left: 3px solid var(--danger); background: var(--danger-dim); }
 /* Radar / confirmation-gate UI */
 .pipe-card.on-radar { border-left: 3px solid #60a5fa; background: rgba(96,165,250,0.03); }
+.pipe-card.completed { border-left: 3px solid var(--success); background: var(--success-dim); }
 .dark .pipe-card.on-radar { background: rgba(96,165,250,0.07); }
 .radar-badge { font-family: var(--font-mono); font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; background: rgba(96,165,250,0.2); color: #60a5fa; text-transform: uppercase; white-space: nowrap; display: inline-block; margin-bottom: 2px; }
 .pipe-dot.gate { border: 2px dashed var(--accent) !important; background: var(--accent-dim) !important; color: var(--accent) !important; }
@@ -1998,7 +1999,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Updated Build <span class="tag" id="buildBadgeTag">v9.2.1</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Updated Build <span class="tag" id="buildBadgeTag">v9.2.2</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -2219,8 +2220,10 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
     <button class="filter-btn" data-filter="Estimated">Estimated</button>
   </div>
-  <div class="wo-history-toggle-row">
+  <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     <label class="wo-history-toggle"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed History</span></label>
+    <input type="number" id="woCompletedHistoryDays" min="30" step="30" value="365" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
+    <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Completed</button>
   </div>
   <div class="kanban-board" id="kanbanBoard"></div>
   <div id="woCompletedHistoryMount"></div>
@@ -2251,6 +2254,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
             <th>AP Evidence</th>
             <th>Confidence</th>
             <th>Suggestion</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody id="woCloseAssistBody"></tbody>
@@ -2447,9 +2451,10 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="billStatusFilter" class="filter-select" style="font-size:12px;padding:4px 8px">
         <option value="">All Statuses</option>
-        <option value="pending">Pending Approval</option>
+        <option value="pending_approval">Pending Approval</option>
         <option value="approved">Approved</option>
         <option value="paid">Paid</option>
+        <option value="void">Void</option>
       </select>
       <button class="action-btn" id="btnRefreshBills"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
@@ -2484,6 +2489,36 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       </table>
     </div>
     <div class="table-footer" id="billFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
+  </div>
+
+  <div class="table-wrapper" style="margin-top:12px">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-clock-rotate-left" style="color:var(--accent)"></i> Bill History Search</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">From</label>
+        <input type="date" id="billHistFrom" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
+        <label style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">To</label>
+        <input type="date" id="billHistTo" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
+        <button class="action-btn" id="btnBillHistSearch"><i class="fas fa-search"></i> Search History</button>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Bill #</th>
+            <th>Vendor / Payee</th>
+            <th>Property</th>
+            <th>Amount</th>
+            <th>Invoice Date</th>
+            <th>Status</th>
+            <th>WO</th>
+          </tr>
+        </thead>
+        <tbody id="billHistBody"><tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">Run a date search to load historical bills</td></tr></tbody>
+      </table>
+    </div>
+    <div class="table-footer" id="billHistFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
   </div>
 </section>
 
@@ -3146,7 +3181,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <button class="modal-close" id="whatsNewClose">&times;</button>
     </div>
     <div class="modal-body">
-        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.2.1 • Highlights (next 36h)</div>
+        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.2.2 • Highlights (next 36h)</div>
       <div style="max-height:290px;overflow-y:auto;padding-right:4px">
       <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px">
         <li style="display:flex;gap:10px;align-items:flex-start">
@@ -3220,7 +3255,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.2.1';
+var APP_VERSION = 'v9.2.2';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 
@@ -4341,6 +4376,19 @@ async function proxyAction(action, params) {
     }
     return data;
   }
+}
+
+function buildProxyActionUrl(action, params) {
+  if (!API_PROXY) throw new Error('No proxy configured');
+  var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
+  var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
+  if (params) {
+    Object.keys(params).forEach(function(k) {
+      if (params[k] === undefined || params[k] === null) return;
+      url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+    });
+  }
+  return url;
 }
 
 // POST helper for sensitive admin actions where secrets must NOT appear in the
@@ -5693,7 +5741,7 @@ async function fetchWorkOrders() {
 
 async function fetchCompletedWorkOrdersHistory(days) {
   var lookback = parseInt(days || 365, 10) || 365;
-  var data = await proxyAction('completed_work_orders_history', { days: String(lookback) });
+  var data = await proxyAction('work_orders_completed_history', { days: String(lookback) });
   var results = data.results || [];
   completedWOHistoryRows = results.map(function(r) {
     return {
@@ -5717,23 +5765,38 @@ async function fetchCompletedWorkOrdersHistory(days) {
   return true;
 }
 
-// Bills: Proxy ?action=bills — DB API v0
-// Used by WO close-assist to infer likely completion.
-async function fetchBills(days) {
+// Bills: Proxy actions (bills, bills_stats, bills_history, bill_detail)
+// Used by WO close-assist and Billing/AP tab.
+async function fetchBills(days, opts) {
   try {
+    opts = opts || {};
     var lookback = parseInt(days || 365, 10) || 365;
-    var data = await proxyAction('bills', { days: String(lookback), max: '1500' });
+    var params = { days: String(lookback), max: String(opts.max || 3000) };
+    if (opts.forceRefresh) params.force_refresh = 'true';
+    if (opts.scoped) {
+      var grpName = getEffectiveGroupId();
+      if (grpName) params.group_name = grpName;
+      if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
+    }
+    var data = await proxyAction('bills', params);
     var results = data.results || data.data || [];
     BILLS = results.map(function(b) {
+      var raw = b.raw || b;
+      var status = String(b.status || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase().replace(/\s+/g, '_');
+      var amountNum = parseFloat(String(b.amount != null ? b.amount : (b.total_amount != null ? b.total_amount : (raw.TotalAmount || raw.total_amount || raw.Amount || raw.amount || '0'))).replace(/[^0-9.\-]/g, '')) || 0;
       return {
-        id: b.Id || b.id || b.BillId || '',
-        vendorId: b.VendorId || b.vendor_id || b.PayeeId || b.payee_id || b.PayeeUuid || b.payee_uuid || '',
-        vendorName: b.VendorName || b.vendor_name || b.PayeeName || b.payee_name || b.Name || b.name || '',
-        propertyId: b.PropertyId || b.property_id || b.PropertyUuid || b.property_uuid || '',
-        propertyName: b.PropertyName || b.property_name || b.Property || b.property || '',
-        amount: b.Amount || b.amount || b.Total || b.total || '',
-        date: b.BillDate || b.bill_date || b.InvoiceDate || b.invoice_date || b.PaidOn || b.paid_on || b.CreatedAt || b.created_at || b.LastUpdatedAt || b.last_updated_at || '',
-        raw: b
+        id: b.id || b.Id || raw.Id || raw.id || raw.BillId || '',
+        billNumber: b.bill_number || b.reference || raw.Reference || raw.reference || b.id || raw.Id || '',
+        vendorId: b.vendor_id || raw.VendorId || raw.vendor_id || raw.PayeeId || raw.payee_id || raw.PayeeUuid || raw.payee_uuid || '',
+        vendorName: b.vendor_name || raw.VendorName || raw.vendor_name || raw.PayeeName || raw.payee_name || raw.Name || raw.name || '',
+        propertyId: b.property_id || raw.PropertyId || raw.property_id || raw.PropertyUuid || raw.property_uuid || '',
+        propertyName: b.property_name || raw.PropertyName || raw.property_name || raw.Property || raw.property || '',
+        workOrderId: b.work_order_id || raw.WorkOrderId || raw.work_order_id || '',
+        amount: amountNum,
+        date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
+        status: status,
+        statusLabel: b.status_label || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '—',
+        raw: raw
       };
     });
     _billsLoadedAt = Date.now();
@@ -7129,6 +7192,10 @@ function renderWebhookEventList() {
     if (rec.PropertyName) ctxParts.push(rec.PropertyName);
     if (rec.UnitName || rec.Unit) ctxParts.push(rec.UnitName || rec.Unit);
     if (rec.AssignedToName || rec.VendorName) ctxParts.push(rec.AssignedToName || rec.VendorName);
+    if (ctxParts.length === 0) {
+      var fallbackCtx = getWebhookReadableContext(meta, e);
+      if (fallbackCtx) ctxParts.push(fallbackCtx);
+    }
 
     html += '<div style="border-bottom:1px solid var(--border)">';
     // Header row — clickable to expand
@@ -8273,36 +8340,35 @@ function renderBillsSection() {
   var filtered = (BILLS || []).filter(function(b) {
     if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) return false;
     if (statusFilter) {
-      var raw = b.raw || {};
-      var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
-      if (statusFilter === 'pending' && st.indexOf('pending') === -1) return false;
-      if (statusFilter === 'approved' && st.indexOf('approv') === -1) return false;
-      if (statusFilter === 'paid' && st.indexOf('paid') === -1) return false;
+      var st = String(b.status || '').toLowerCase();
+      if (statusFilter === 'pending_approval' && st !== 'pending_approval') return false;
+      if (statusFilter === 'approved' && st !== 'approved') return false;
+      if (statusFilter === 'paid' && st !== 'paid') return false;
+      if (statusFilter === 'void' && st !== 'void') return false;
     }
     if (search) {
-      var hay = (b.vendorName + ' ' + b.propertyName + ' ' + b.id).toLowerCase();
+      var hay = [
+        b.vendorName,
+        b.vendorId,
+        b.propertyName,
+        b.billNumber,
+        b.id,
+      ].join(' ').toLowerCase();
       if (hay.indexOf(search) === -1) return false;
     }
     return true;
   });
 
   // KPIs
-  var pendingBills = filtered.filter(function(b) {
-    var raw = b.raw || {};
-    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
-    return st.indexOf('pending') !== -1;
-  });
+  var pendingBills = filtered.filter(function(b) { return String(b.status || '') === 'pending_approval'; });
+  var approvedBills = filtered.filter(function(b) { return String(b.status || '') === 'approved'; });
   var paidBills = filtered.filter(function(b) {
-    var raw = b.raw || {};
-    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
+    var st = String(b.status || '');
     var d = new Date(b.date || '');
-    return st.indexOf('paid') !== -1 && !isNaN(d.getTime()) && d.getTime() >= thirtyDaysAgo;
+    return st === 'paid' && !isNaN(d.getTime()) && d.getTime() >= thirtyDaysAgo;
   });
   var uniqueVendors = new Set(filtered.map(function(b) { return b.vendorId || b.vendorName; }).filter(Boolean));
-  var outstandingTotal = filtered.reduce(function(sum, b) {
-    var raw = b.raw || {};
-    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
-    if (st.indexOf('paid') !== -1) return sum;
+  var outstandingTotal = approvedBills.reduce(function(sum, b) {
     var n = parseFloat(String(b.amount || '0').replace(/[^0-9.\-]/g, '')) || 0;
     return sum + n;
   }, 0);
@@ -8341,16 +8407,25 @@ function renderBillsSection() {
   var page = filtered.slice(_billsPage * BILLS_PAGE_SIZE, (_billsPage + 1) * BILLS_PAGE_SIZE);
 
   var rows = page.map(function(b) {
-    var raw = b.raw || {};
-    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '—');
-    var stLow = st.toLowerCase();
-    var stCls = stLow.indexOf('pending') !== -1 ? 'color:var(--warning)' : stLow.indexOf('approv') !== -1 ? 'color:var(--success)' : stLow.indexOf('paid') !== -1 ? 'color:var(--info)' : '';
+    var st = String(b.statusLabel || b.status || '—');
+    var stLow = String(b.status || '').toLowerCase();
+    var stCls = stLow === 'pending_approval'
+      ? 'color:var(--warning)'
+      : stLow === 'approved'
+      ? 'color:var(--success)'
+      : stLow === 'paid'
+      ? 'color:var(--info)'
+      : stLow === 'void'
+      ? 'color:var(--text-muted)'
+      : '';
     var grpName = b._propertyGroup || _nameToGroups[(b.propertyName || '').trim().toLowerCase()]?.[0] || '';
+    var vendorText = b.vendorName || b.vendorId || '—';
+    if (b.vendorName && b.vendorId) vendorText += ' (' + b.vendorId + ')';
     return '<tr>' +
-      '<td style="font-family:var(--font-mono);font-size:11px">' + escapeHtml(String(b.id || '—')) + '</td>' +
-      '<td>' + escapeHtml(b.vendorName || '—') + '</td>' +
+      '<td style="font-family:var(--font-mono);font-size:11px"><button class="action-btn" data-billdetail="' + escapeHtml(String(b.id || '')) + '" style="padding:2px 8px">' + escapeHtml(String(b.billNumber || b.id || '—')) + '</button></td>' +
+      '<td>' + escapeHtml(vendorText) + '</td>' +
       '<td>' + escapeHtml(b.propertyName || '—') + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(String(b.amount || '—')) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + currency(b.amount || 0) + '</td>' +
       '<td>' + escapeHtml(b.date ? formatDate(b.date) : '—') + '</td>' +
       '<td><span style="' + stCls + '">' + escapeHtml(st) + '</span></td>' +
       '<td style="font-size:10px;color:var(--accent)">' + escapeHtml(grpName || '—') + '</td>' +
@@ -8358,9 +8433,266 @@ function renderBillsSection() {
   });
   tbody.innerHTML = rows.join('');
 
+  Array.prototype.forEach.call(tbody.querySelectorAll('button[data-billdetail]'), function(btn) {
+    btn.addEventListener('click', function() {
+      var billId = btn.getAttribute('data-billdetail');
+      if (!billId) return;
+      showBillDetailModal(billId);
+    });
+  });
+
   if (footer) {
     footer.style.display = '';
     footer.textContent = 'Showing ' + (_billsPage * BILLS_PAGE_SIZE + 1) + '–' + Math.min((_billsPage + 1) * BILLS_PAGE_SIZE, filtered.length) + ' of ' + filtered.length + ' bills';
+  }
+}
+
+function buildBillLineItemsHtml(lineItems) {
+  if (!Array.isArray(lineItems) || lineItems.length === 0) return '<span style="color:var(--text-muted)">No line items available</span>';
+  var rows = lineItems.map(function(li) {
+    var desc = li.Description || li.description || '—';
+    var amt = li.Amount || li.amount || 0;
+    var gl = li.GlAccountId || li.gl_account_id || li.GLAccountId || '—';
+    var unit = li.UnitId || li.unit_id || '—';
+    return '<tr>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + escapeHtml(String(desc)) + '</td>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono)">' + currency(amt) + '</td>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid var(--border);font-family:var(--font-mono)">' + escapeHtml(String(gl)) + '</td>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + escapeHtml(String(unit)) + '</td>' +
+      '</tr>';
+  }).join('');
+  return '<table style="width:100%;border-collapse:collapse;font-size:11px">' +
+    '<thead><tr>' +
+    '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">Description</th>' +
+    '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid var(--border)">Amount</th>' +
+    '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">GL</th>' +
+    '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">Unit</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+async function loadBillAttachments(billId, containerEl) {
+  if (!containerEl) return;
+  containerEl.innerHTML = '<div style="color:var(--text-muted);font-size:11px">Loading attachments…</div>';
+  try {
+    var data = await proxyAction('bill_attachments', { bill_id: String(billId) });
+    var list = data.attachments || data.results || [];
+    if (!Array.isArray(list) || list.length === 0) {
+      containerEl.innerHTML = '<div style="color:var(--text-muted);font-size:11px">No attachments on file.</div>';
+      return;
+    }
+
+    containerEl.innerHTML = list.map(function(att) {
+      var url = String(att.Url || att.url || att.DownloadUrl || att.download_url || '').trim();
+      var name = String(att.FileName || att.file_name || att.Name || att.name || att.Id || 'Attachment');
+      var ctype = String(att.ContentType || att.content_type || '').trim();
+      return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border)">' +
+        '<span style="font-size:12px">📎</span>' +
+        (url
+          ? ('<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener" style="color:var(--accent);font-size:11px;text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(name) + '</a>')
+          : ('<span style="flex:1;font-size:11px">' + escapeHtml(name) + '</span>')) +
+        (ctype ? ('<span style="color:var(--text-muted);font-size:10px">' + escapeHtml(ctype) + '</span>') : '') +
+        '</div>';
+    }).join('');
+  } catch (e) {
+    containerEl.innerHTML = '<div style="color:var(--danger);font-size:11px">Failed to load attachments.</div>';
+  }
+}
+
+async function uploadBillAttachment(billId, fileInput, statusEl, listEl) {
+  if (!fileInput || !statusEl) return;
+  var file = fileInput.files && fileInput.files[0];
+  if (!file) {
+    statusEl.style.color = 'var(--warning)';
+    statusEl.textContent = 'No file selected.';
+    return;
+  }
+
+  var allowed = ['application/pdf', 'image/png', 'image/jpeg', 'image/tiff'];
+  var fileType = String(file.type || '').toLowerCase();
+  var fileName = String(file.name || '').toLowerCase();
+  var extOk = /\.(pdf|png|jpg|jpeg|tif|tiff)$/i.test(fileName);
+  if (!(allowed.indexOf(fileType) !== -1 || extOk)) {
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Unsupported file type. Use PDF, PNG, JPG, or TIFF.';
+    return;
+  }
+
+  statusEl.style.color = 'var(--text-muted)';
+  statusEl.textContent = 'Uploading…';
+
+  try {
+    var url = buildProxyActionUrl('bill_attachment_upload', { bill_id: String(billId) });
+    var token = getProxyAccessToken();
+    var headers = { 'Accept': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
+    var form = new FormData();
+    form.append('File', file, file.name);
+
+    var resp = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: headers,
+      body: form
+    }, 60000);
+
+    var data = null;
+    try { data = await resp.json(); } catch (eJson) { data = null; }
+
+    if (resp.ok && data && data.ok) {
+      statusEl.style.color = 'var(--success)';
+      statusEl.textContent = 'Uploaded successfully.';
+      fileInput.value = '';
+      if (listEl) loadBillAttachments(billId, listEl);
+    } else {
+      var detail = data && data.detail
+        ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail))
+        : ('HTTP ' + resp.status);
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = 'Upload failed: ' + detail.substring(0, 180);
+    }
+  } catch (e) {
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Upload failed: ' + (e.message || e);
+  }
+}
+
+async function showBillDetailModal(billId) {
+  if (!billId) return;
+  try {
+    var data = await proxyAction('bill_detail', { bill_id: String(billId) });
+    var b = data.result || data.bill || null;
+    if (!b) {
+      showToast('Bill detail unavailable', { kind: 'warning' });
+      return;
+    }
+
+    var raw = b.raw || {};
+    var lineItems = b.line_items || raw.LineItems || raw.line_items || [];
+    var afLink = API_VHOST
+      ? ('https://' + API_VHOST + '.appfolio.com/bills/' + encodeURIComponent(String(b.id || billId)))
+      : '';
+
+    showItemDetail('Bill — ' + String(b.bill_number || b.id || billId), [
+      { section: 'Core', icon: 'fa-file-invoice-dollar' },
+      { label: 'Bill ID', value: String(b.id || billId) },
+      { label: 'Invoice #', value: String(b.bill_number || b.reference || '—') },
+      { label: 'Status', value: String(b.status_label || b.status || '—') },
+      { label: 'Amount', value: currency(b.amount || b.total_amount || 0) },
+      { label: 'Invoice Date', value: b.invoice_date ? formatDate(b.invoice_date) : '—' },
+      { label: 'Due Date', value: b.due_date ? formatDate(b.due_date) : '—' },
+      { label: 'Posting Date', value: b.posting_date ? formatDate(b.posting_date) : '—' },
+      { section: 'Associations', icon: 'fa-link' },
+      { label: 'Vendor / Payee', value: String((b.vendor_name || '—') + (b.vendor_id ? (' (' + b.vendor_id + ')') : '')) },
+      { label: 'Property', value: String((b.property_name || '—') + (b.property_id ? (' (' + b.property_id + ')') : '')) },
+      { label: 'Work Order', value: b.work_order_id ? String(b.work_order_id) : '—' },
+      { label: 'Reference', value: String(b.reference || '—') },
+      { label: 'Remarks', value: String(b.remarks || '—') },
+      { section: 'Line Items', icon: 'fa-list' },
+      { label: 'Items', html: buildBillLineItemsHtml(lineItems) },
+      { section: 'Attachments', icon: 'fa-paperclip' },
+      {
+        label: 'Files',
+        html: '<div id="billAttachmentList" style="min-height:26px"></div>' +
+          '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+          '<input type="file" id="billAttachFile" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" style="font-size:11px;max-width:220px" />' +
+          '<button class="action-btn" id="btnUploadBillAttachment" style="padding:4px 8px">Upload</button>' +
+          '<span id="billAttachStatus" style="font-size:11px;color:var(--text-muted)"></span>' +
+          '</div>'
+      }
+    ], afLink);
+
+    requestAnimationFrame(function() {
+      var listEl = document.getElementById('billAttachmentList');
+      var uploadBtn = document.getElementById('btnUploadBillAttachment');
+      var fileInput = document.getElementById('billAttachFile');
+      var statusEl = document.getElementById('billAttachStatus');
+
+      if (listEl) loadBillAttachments(billId, listEl);
+      if (uploadBtn) {
+        uploadBtn.addEventListener('click', function() {
+          uploadBillAttachment(billId, fileInput, statusEl, listEl);
+        });
+      }
+    });
+  } catch (e) {
+    showToast('Bill detail failed: ' + (e.message || e), { kind: 'warning' });
+  }
+}
+
+async function runBillHistorySearch() {
+  var fromEl = document.getElementById('billHistFrom');
+  var toEl = document.getElementById('billHistTo');
+  var body = document.getElementById('billHistBody');
+  var footer = document.getElementById('billHistFooter');
+  if (!fromEl || !toEl || !body || !footer) return;
+
+  var dateFrom = String(fromEl.value || '').trim();
+  var dateTo = String(toEl.value || '').trim();
+  if (!dateFrom || !dateTo) {
+    showToast('Select both From and To dates for history search');
+    return;
+  }
+
+  body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px">' + loadingHtml('Searching history…') + '</td></tr>';
+  footer.style.display = 'none';
+
+  try {
+    var params = {
+      date_from: dateFrom,
+      date_to: dateTo,
+      days: '3650',
+      max: '8000',
+    };
+    var grpName = getEffectiveGroupId();
+    if (grpName) params.group_name = grpName;
+    if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
+
+    var st = ($('#billStatusFilter') ? $('#billStatusFilter').value : '').trim();
+    if (st) params.status = st;
+
+    var data = await proxyAction('bills_history', params);
+    var rows = Array.isArray(data.results) ? data.results : [];
+
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">No historical bills found for selected criteria</td></tr>';
+      footer.style.display = 'none';
+      return;
+    }
+
+    body.innerHTML = rows.slice(0, 500).map(function(r) {
+      var wo = String(r.work_order_id || '').trim();
+      var billId = String(r.id || '').trim();
+      return '<tr>' +
+        '<td style="font-family:var(--font-mono);font-size:11px">' + (billId ? ('<button class="action-btn" data-billdetail="' + escapeHtml(billId) + '" style="padding:2px 8px">' + escapeHtml(String(r.bill_number || r.id || '—')) + '</button>') : escapeHtml(String(r.bill_number || r.id || '—'))) + '</td>' +
+        '<td>' + escapeHtml(String(r.vendor_name || r.vendor_id || '—')) + '</td>' +
+        '<td>' + escapeHtml(String(r.property_name || r.property_id || '—')) + '</td>' +
+        '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || 0) + '</td>' +
+        '<td>' + escapeHtml(r.invoice_date ? formatDate(r.invoice_date) : '—') + '</td>' +
+        '<td>' + escapeHtml(String(r.status_label || r.status || '—')) + '</td>' +
+        '<td>' + (wo ? ('<button class="action-btn" data-wojump="' + escapeHtml(wo) + '" style="padding:2px 8px">#' + escapeHtml(wo.slice(0, 8)) + '</button>') : '<span style="color:var(--text-muted)">—</span>') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    footer.style.display = '';
+    footer.textContent = 'History search returned ' + rows.length + ' bill(s) from ' + dateFrom + ' to ' + dateTo;
+
+    Array.prototype.forEach.call(body.querySelectorAll('button[data-wojump]'), function(btn) {
+      btn.addEventListener('click', function() {
+        var woId = btn.getAttribute('data-wojump');
+        if (!woId) return;
+        showWODetail(woId);
+      });
+    });
+    Array.prototype.forEach.call(body.querySelectorAll('button[data-billdetail]'), function(btn) {
+      btn.addEventListener('click', function() {
+        var billId = btn.getAttribute('data-billdetail');
+        if (!billId) return;
+        showBillDetailModal(billId);
+      });
+    });
+  } catch (e) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:20px">History search failed: ' + escapeHtml(String(e.message || e)) + '</td></tr>';
+    footer.style.display = 'none';
   }
 }
 
@@ -9274,7 +9606,7 @@ function renderWOCloseAssist() {
       : (BILLS.length === 0)
         ? 'No aged open WOs match current filter. ℹ️ AP bills not loaded — click “Refresh AP” above for vendor-match evidence.'
         : 'No candidates for current age/filter window.';
-    body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted)">' + noRowsMsg + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">' + noRowsMsg + '</td></tr>';
     pagination.innerHTML = '';
     woCloseAssist.currentPage = 0;
     return;
@@ -9290,16 +9622,44 @@ function renderWOCloseAssist() {
   pageItems.forEach(function(r) {
     var wo = r.wo;
     var confColor = r.confidence === 'High' ? 'var(--danger)' : (r.confidence === 'Medium' ? 'var(--warning)' : 'var(--text-muted)');
-    var billEvidence = r.billMatches.length > 0 ? (r.billMatches.length + ' AP match') : '—';
+    var leadBillId = r.billMatches.length > 0 ? String(r.billMatches[0].id || '').trim() : '';
+    var leadBillLabel = r.billMatches.length > 0
+      ? String(r.billMatches[0].billNumber || r.billMatches[0].id || 'Bill')
+      : '';
+    var billEvidence = '—';
+    if (r.billMatches.length > 0) {
+      var total = r.billMatches.reduce(function(sum, b) {
+        return sum + (parseFloat(String(b.amount || 0).replace(/[^0-9.\-]/g, '')) || 0);
+      }, 0);
+      var lead = r.billMatches.slice(0, 2).map(function(b) {
+        var bid = String(b.id || '').trim();
+        var label = String(b.billNumber || b.id || 'bill');
+        if (!bid) return '<span class="tag" style="font-family:var(--font-mono)">' + escapeHtml(label) + '</span>';
+        return '<button class="action-btn" data-billdetail="' + escapeHtml(bid) + '" style="padding:2px 6px;font-size:10px;font-family:var(--font-mono)" title="Open bill detail">' +
+          escapeHtml(label) + '</button>';
+      }).join(' ');
+      billEvidence = '<div style="display:flex;flex-direction:column;gap:4px">' +
+        '<div><span style="font-weight:600;color:var(--success)">' + r.billMatches.length + ' match' + (r.billMatches.length === 1 ? '' : 'es') + '</span> ' +
+        '<span style="color:var(--text-muted)">(' + currency(total) + ')</span></div>' +
+        '<div style="display:flex;gap:4px;flex-wrap:wrap">' + lead +
+        (r.billMatches.length > 2 ? ('<span style="font-size:10px;color:var(--text-muted)">+' + (r.billMatches.length - 2) + ' more</span>') : '') +
+        '</div></div>';
+    }
     html += '<tr>';
     html += '<td><button class="action-btn" data-woid="' + escapeHtml(String(wo.id)) + '" style="padding:2px 8px">#' + escapeHtml(String(wo.id)) + '</button></td>';
     html += '<td>' + escapeHtml(wo.propertyName || '—') + '</td>';
     html += '<td>' + escapeHtml(wo.unit || '—') + '</td>';
     html += '<td>' + r.ageDays + 'd <span style="color:var(--text-muted)">(' + r.bucket + ')</span></td>';
     html += '<td>' + escapeHtml(wo.assignedUser || wo.vendorName || '—') + '</td>';
-    html += '<td>' + escapeHtml(billEvidence) + '</td>';
+    html += '<td>' + billEvidence + '</td>';
     html += '<td><span style="font-weight:700;color:' + confColor + '">' + r.confidence + '</span></td>';
     html += '<td>' + escapeHtml(r.suggestion) + '</td>';
+    html += '<td style="white-space:nowrap">' +
+      '<button class="action-btn" data-woopen="' + escapeHtml(String(wo.id)) + '" style="padding:2px 8px;margin-right:4px" title="Open WO detail">WO</button>' +
+      (leadBillId
+        ? ('<button class="action-btn" data-billopen="' + escapeHtml(leadBillId) + '" style="padding:2px 8px" title="Open lead bill ' + escapeHtml(leadBillLabel) + '">Bill</button>')
+        : '<button class="action-btn" disabled style="padding:2px 8px;opacity:0.5" title="No AP match">Bill</button>') +
+      '</td>';
     html += '</tr>';
   });
   body.innerHTML = html;
@@ -9310,6 +9670,27 @@ function renderWOCloseAssist() {
   Array.prototype.forEach.call(body.querySelectorAll('button[data-woid]'), function(btn) {
     btn.addEventListener('click', function() {
       showWODetail(btn.getAttribute('data-woid'));
+    });
+  });
+  Array.prototype.forEach.call(body.querySelectorAll('button[data-billdetail]'), function(btn) {
+    btn.addEventListener('click', function() {
+      var billId = btn.getAttribute('data-billdetail');
+      if (!billId) return;
+      showBillDetailModal(billId);
+    });
+  });
+  Array.prototype.forEach.call(body.querySelectorAll('button[data-woopen]'), function(btn) {
+    btn.addEventListener('click', function() {
+      var woId = btn.getAttribute('data-woopen');
+      if (!woId) return;
+      showWODetail(woId);
+    });
+  });
+  Array.prototype.forEach.call(body.querySelectorAll('button[data-billopen]'), function(btn) {
+    btn.addEventListener('click', function() {
+      var billId = btn.getAttribute('data-billopen');
+      if (!billId) return;
+      showBillDetailModal(billId);
     });
   });
   var prevBtn = document.getElementById('woCloseAssistPrev');
@@ -10217,7 +10598,6 @@ function buildTurnPipeline() {
       }
     }
     var target = (turnData && turnData.targetDays) || CONFIG.TURN_TARGET_DAYS;
-    var isStalled = !isUpcoming && elapsed > CONFIG.TURN_STALLED_DAYS && currentStageIdx >= 1 && currentStageIdx < PIPE_STAGES.length - 1;
     // Aggregate completion: ALL linked WOs must be in terminal status
     var allWOsDone = isTurnFullyComplete(matchingWOs);
     // A turn is CONFIRMED when AppFolio is tracking it (comes from unit_turn_detail report)
@@ -10239,6 +10619,7 @@ function buildTurnPipeline() {
     PIPE_STAGES.forEach(function(ps, i) {
       if (stages[ps.key] && stages[ps.key].done) currentStageIdx = i;
     });
+    var isStalled = !isUpcoming && elapsed > CONFIG.TURN_STALLED_DAYS && currentStageIdx >= 1 && currentStageIdx < PIPE_STAGES.length - 1;
     // Look up DB API unit turn data for this entry
     var dbTurnMatch = null;
     if (UNIT_TURNS_DB.length > 0) {
@@ -10480,7 +10861,7 @@ function renderTurnPipelineUI() {
       }
     }
     var slaBreach = p.sla && p.sla.breached && !p.isCompleted;
-    var cardClass = p.isCompleted ? '' : p.isUpcoming ? 'upcoming' : p.isOnRadar ? 'on-radar' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
+    var cardClass = p.isCompleted ? 'completed' : p.isUpcoming ? 'upcoming' : p.isOnRadar ? 'on-radar' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
     html += '<div class="pipe-card ' + cardClass + '" data-pipeidx="' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
 
     // Left: unit info
@@ -12266,7 +12647,7 @@ function wireUpUI() {
         if (!BILLS || BILLS.length === 0) {
           var billBody = document.getElementById('billBody');
           if (billBody) billBody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px">' + loadingHtml('Loading bills\u2026') + '</td></tr>';
-          fetchBills(365).then(function() {
+          fetchBills(365, { scoped: true }).then(function() {
             // Re-enrich bills with _propertyGroup after load
             (BILLS || []).forEach(function(b) {
               var grps = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] ||
@@ -12381,19 +12762,32 @@ function wireUpUI() {
     $('#woCompletedHistoryToggle').addEventListener('change', async function() {
       showCompletedWOHistory = !!this.checked;
       completedWOHistoryPage = 0;
-      if (!showCompletedWOHistory) {
-        renderCompletedWOHistorySection();
-        return;
-      }
+      renderCompletedWOHistorySection();
+    });
+  }
+  if ($('#btnFetchCompletedHistory')) {
+    $('#btnFetchCompletedHistory').addEventListener('click', async function() {
+      var btn = this;
+      var daysEl = $('#woCompletedHistoryDays');
+      var days = parseInt(daysEl ? daysEl.value : '365', 10) || 365;
+      days = Math.max(30, Math.min(3650, days));
+      if (daysEl) daysEl.value = String(days);
+      showCompletedWOHistory = true;
+      if ($('#woCompletedHistoryToggle')) $('#woCompletedHistoryToggle').checked = true;
+      completedWOHistoryPage = 0;
       completedWOHistoryLoading = true;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Searching…';
       renderCompletedWOHistorySection();
       try {
-        await fetchCompletedWorkOrdersHistory(365);
+        await fetchCompletedWorkOrdersHistory(days);
       } catch (e) {
         completedWOHistoryRows = [];
         showToast('Completed history load failed: ' + ((e && e.message) || e), { kind: 'warning' });
       } finally {
         completedWOHistoryLoading = false;
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-search"></i> Search Completed';
         renderCompletedWOHistorySection();
       }
     });
@@ -12647,7 +13041,7 @@ function wireUpUI() {
       billRefreshBtn.disabled = true;
       billRefreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading…';
       try {
-        await fetchBills(365);
+        await fetchBills(365, { scoped: true, forceRefresh: true });
         // Enrich bills with property group after fresh load
         (BILLS || []).forEach(function(b) {
           var grps = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] ||
@@ -12668,6 +13062,8 @@ function wireUpUI() {
   if (billSearch) billSearch.addEventListener('input', function() { _billsPage = 0; renderBillsSection(); });
   var billStatusFilter = $('#billStatusFilter');
   if (billStatusFilter) billStatusFilter.addEventListener('change', function() { _billsPage = 0; renderBillsSection(); });
+  var billHistBtn = $('#btnBillHistSearch');
+  if (billHistBtn) billHistBtn.addEventListener('click', runBillHistorySearch);
 
   // Theme toggle
   $('#themeToggle').addEventListener('click', function() { toggleTheme(); });
@@ -14321,7 +14717,7 @@ renderDashboardKPIs = function() {
 })();
 
 /* ================================================================
-  HANDYMANAGER v9.1a — PART 3: DISPATCH CONTROL MODULE
+  HANDYMANAGER v9.2.2 — PART 3: DISPATCH CONTROL MODULE
    All proxy calls use existing proxyAction() + API_PROXY.
    Tech UUIDs must hold "Maintenance Tech" role in AppFolio or
    every automated PATCH returns 422 "User not found".
@@ -14572,11 +14968,20 @@ function dispatchPost(action, body) {
   }
   var sep = base.indexOf('?')!==-1?'&':'?';
   var url = base + sep + 'action=' + encodeURIComponent(action);
+  var headers = { 'Content-Type': 'application/json' };
+  var token = getProxyAccessToken();
+  if (token) {
+    headers['Authorization'] = 'Bearer ' + token;
+    headers['x-proxy-token'] = token;
+  }
   return fetch(url, {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    method:'POST', headers: headers, body:JSON.stringify(body)
   }).then(function(r){
     if (!r.ok) {
       return r.text().then(function(t) {
+        if (r.status === 401) {
+          throw new Error('Dispatch ' + action + ' unauthorized: reconnect in Vault (missing or invalid proxy token).');
+        }
         throw new Error('Dispatch ' + action + ' failed: HTTP ' + r.status + (t ? ' — ' + t.substring(0, 200) : ''));
       });
     }
@@ -15189,9 +15594,15 @@ var DispatchComms = {
     var btn = document.getElementById('btnDispatchSendTestSms');
     var resultEl = document.getElementById('dispatchTestResult');
     var phone = phoneEl ? String(phoneEl.value || '').trim() : '';
+    var adminKey = getDispatchAdminKey();
     if (!/^\+\d{10,15}$/.test(phone)) {
       if (resultEl) resultEl.textContent = 'Enter a valid E.164 phone number such as +15551234567.';
       v9Toast('Invalid phone number', 'Use E.164 format like +15551234567', 'warning');
+      return;
+    }
+    if (!adminKey) {
+      if (resultEl) resultEl.textContent = 'Set PROXY_ADMIN_KEY in the Database tab before sending test links.';
+      v9Toast('Admin key required', 'Set PROXY_ADMIN_KEY in Database tab first', 'warning');
       return;
     }
 
@@ -15204,6 +15615,7 @@ var DispatchComms = {
 
     try {
       var response = await dispatchPost('send_magic_link_test_sms', {
+        key: adminKey,
         phone: phone,
         tech_name: 'Dispatch Test',
         tech_id: 'dispatch-test'
@@ -15801,7 +16213,7 @@ document.addEventListener('keydown',function(e){
 });
 
 /* ================================================================
-  HANDYMANAGER v9.1a — PART 4: LIVE WEBHOOK EVENT ENGINE
+  HANDYMANAGER v9.2.2 — PART 4: LIVE WEBHOOK EVENT ENGINE
 
    Decodes every webhook event into human-readable labels,
    fires v9Toast for important events (completions/escalations),
