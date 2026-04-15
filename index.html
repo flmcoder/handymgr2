@@ -154,6 +154,7 @@ body {
   box-shadow: var(--shadow);
   padding: clamp(18px, 3vw, 34px);
   color: var(--vault-text);
+  position: relative;
 }
 
 @media (max-width: 640px) {
@@ -278,6 +279,16 @@ body {
   border-radius: var(--radius);
 }
 .vault-error.show { display: block; animation: fadeIn 0.2s ease; }
+.vault-error.success {
+  color: #86efac;
+  background: rgba(20, 83, 45, 0.52);
+  border: 1px solid rgba(74, 222, 128, 0.28);
+}
+.vault-error.info {
+  color: #bfdbfe;
+  background: rgba(30, 64, 175, 0.26);
+  border: 1px solid rgba(96, 165, 250, 0.24);
+}
 .vault-footer {
   margin-top: 20px;
   text-align: center;
@@ -302,6 +313,33 @@ body {
   border-radius: 3px;
 }
 .vault-panel.hidden { display: none; }
+.vault-config-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--vault-input-border);
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--vault-text-muted);
+  cursor: pointer;
+  transition: var(--transition);
+  z-index: 3;
+}
+.vault-config-btn:hover {
+  color: var(--vault-accent);
+  border-color: var(--vault-accent-strong);
+  background: rgba(15, 23, 42, 0.9);
+}
+.vault-config-btn.open {
+  color: var(--vault-accent);
+  border-color: var(--vault-accent-strong);
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.18);
+}
 .vault-back-btn {
   display: inline-flex;
   align-items: center;
@@ -333,6 +371,7 @@ body {
   border-color: #3f86ff;
   color: #ecf4ff;
   font-weight: 700;
+  margin-top: 10px;
   box-shadow: 0 8px 18px rgba(30, 109, 255, 0.32);
 }
 .vault-pm-toggle:hover {
@@ -347,6 +386,11 @@ body {
   animation: fadeIn 0.2s ease;
 }
 .vault-advanced-panel.show { display: block; }
+.vault-shared-settings {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
 .vault-proxy-label {
   font-family: var(--font-mono);
   font-size: 10px; font-weight: 600;
@@ -371,6 +415,9 @@ body {
   background: rgba(15, 23, 42, 0.42);
 }
 .vault-otp-route.hidden { display: none; }
+.vault-otp-route.compact {
+  padding: 10px 12px;
+}
 .vault-otp-title {
   font-size: 11px;
   font-weight: 700;
@@ -405,6 +452,52 @@ body {
 .vault-inline-actions { display: flex; gap: 8px; margin: 8px 0 10px; }
 .vault-inline-actions .vault-proxy-preset { flex: 1; text-align: center; }
 .vault-otp-verify-row.hidden { display: none; }
+.vault-otp-summary.hidden,
+.vault-otp-request-row.hidden,
+.vault-otp-edit-row.hidden { display: none; }
+.vault-otp-summary {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+.vault-otp-summary-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--vault-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 5px;
+}
+.vault-otp-summary-value {
+  font-size: 13px;
+  color: var(--vault-text);
+  word-break: break-word;
+}
+.vault-otp-edit-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px 0 8px;
+}
+.vault-otp-edit-btn {
+  border: none;
+  background: none;
+  color: var(--vault-accent);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 0;
+}
+.vault-otp-edit-btn:hover { color: var(--vault-accent-strong); }
+.vault-otp-code-wrap .vault-input {
+  min-height: 44px;
+  font-size: 18px;
+  letter-spacing: 0.32em;
+  text-align: center;
+  padding-left: 18px;
+  padding-right: 18px;
+}
 
 .login-info {
   position: relative;
@@ -451,6 +544,32 @@ body {
   .vault-input-wrap { margin-bottom: 12px; }
   .vault-vhost-hint { font-size: 10px; margin-bottom: 12px; }
   .vault-unlock-btn { font-size: 13px; }
+}
+
+@media (max-width: 640px) {
+  .vault-unlock-btn,
+  .vault-pm-toggle {
+    min-height: 50px;
+    padding: 13px;
+    font-size: 13px;
+  }
+  .vault-back-btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .vault-inline-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .vault-inline-actions .vault-proxy-preset {
+    width: 100%;
+  }
+  .vault-config-btn {
+    width: 42px;
+    height: 42px;
+    top: 10px;
+    right: 10px;
+  }
 }
 
 /* ===================== APP SHELL (hidden until unlock) ===================== */
@@ -1995,6 +2114,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 <!-- ==================== VAULT UNLOCK SCREEN ==================== -->
 <div id="vaultScreen">
   <div class="vault-box">
+    <button class="vault-config-btn" id="advancedToggle" type="button" title="Proxy settings" aria-label="Proxy settings"><i class="fas fa-cog"></i></button>
     <div class="vault-panel" id="vaultMainPanel">
       <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
       <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Sign in to continue.</div>
@@ -2023,31 +2143,36 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <div class="vault-vhost-hint">URL: <code><span id="vhostPreviewPm">flraz</span>.appfolio.com</code></div>
       <div class="vault-otp-route" id="vaultOtpRoute" aria-hidden="false">
         <div class="vault-otp-title"><i class="fas fa-mobile-alt"></i> Enter PM Email or Phone</div>
-        <div class="vault-input-wrap">
-          <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="off" inputmode="email">
+        <div class="vault-input-wrap vault-otp-request-row" id="vaultOtpIdentifierWrap">
+          <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="text">
         </div>
-        <div class="vault-inline-actions">
+        <div class="vault-inline-actions vault-otp-request-row" id="vaultOtpRequestActions">
           <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
         </div>
+        <div class="vault-otp-summary hidden" id="vaultOtpSentSummary">
+          <div class="vault-otp-summary-label">OTP sent to</div>
+          <div class="vault-otp-summary-value" id="vaultOtpSentValue"></div>
+        </div>
+        <div class="vault-otp-edit-row hidden" id="vaultOtpEditRow">
+          <button type="button" class="vault-otp-edit-btn" id="btnEditOtpIdentifier">Change email or phone</button>
+        </div>
         <div class="vault-otp-verify-row hidden" id="vaultOtpVerifyRow">
-        <div class="vault-input-wrap">
+        <div class="vault-input-wrap vault-otp-code-wrap">
           <input type="text" class="vault-input" id="vaultOtpCode" placeholder="Enter 6-digit OTP" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
         </div>
         <div class="vault-inline-actions">
           <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify OTP</button>
-          <button type="button" class="vault-proxy-preset" id="btnContinueDeviceLogin" style="display:none">Continue</button>
         </div>
         </div>
         <div class="vault-proxy-hint">We send your one-time code to your RingCentral phone number on file.</div>
       </div>
-      <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> Proxy Settings <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
-      <div class="vault-advanced-panel" id="advancedPanel">
-        <label class="vault-proxy-label">Proxy Relay URL</label>
-        <div class="vault-input-wrap">
-          <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
-        </div>
-        <div class="vault-proxy-hint">Proxy relay settings for backend routing.</div>
+    </div>
+    <div class="vault-advanced-panel vault-shared-settings" id="advancedPanel">
+      <label class="vault-proxy-label">Proxy Relay URL</label>
+      <div class="vault-input-wrap">
+        <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
       </div>
+      <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
     <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session v0.9.2</span></div>
@@ -4285,10 +4410,60 @@ function hasStoredDeviceSession() {
   }
 }
 
-function refreshVaultDeviceLoginState() {
-  var btn = $('#btnContinueDeviceLogin');
-  if (!btn) return;
-  btn.style.display = hasStoredDeviceSession() ? '' : 'none';
+function setVaultFeedback(message, state) {
+  var el = $('#vaultError');
+  if (!el) return;
+  el.textContent = String(message || '');
+  el.classList.remove('success', 'info');
+  if (!message) {
+    el.classList.remove('show');
+    return;
+  }
+  if (state === 'success' || state === 'info') {
+    el.classList.add(state);
+  }
+  el.classList.add('show');
+}
+
+function formatOtpIdentifierSummary(identifier) {
+  var email = normalizeOtpEmail(identifier);
+  if (email) return email;
+  var phone = normalizeOtpPhone(identifier);
+  if (!phone) return String(identifier || '').trim();
+  var digits = phone.replace(/\D+/g, '');
+  if (digits.length >= 10) {
+    return '+1 (' + digits.slice(-10, -7) + ') ' + digits.slice(-7, -4) + '-' + digits.slice(-4);
+  }
+  return phone;
+}
+
+function setPmOtpStep(step, identifier) {
+  var route = $('#vaultOtpRoute');
+  var identifierWrap = $('#vaultOtpIdentifierWrap');
+  var requestActions = $('#vaultOtpRequestActions');
+  var summary = $('#vaultOtpSentSummary');
+  var summaryValue = $('#vaultOtpSentValue');
+  var editRow = $('#vaultOtpEditRow');
+  var verifyRow = $('#vaultOtpVerifyRow');
+  var identifierInput = $('#vaultOtpEmail');
+  var codeInput = $('#vaultOtpCode');
+  var verifyBtn = $('#btnVerifyOtp');
+  var sent = step === 'verify';
+
+  if (route) route.classList.toggle('compact', sent);
+  if (identifierWrap) identifierWrap.classList.toggle('hidden', sent);
+  if (requestActions) requestActions.classList.toggle('hidden', sent);
+  if (summary) summary.classList.toggle('hidden', !sent);
+  if (editRow) editRow.classList.toggle('hidden', !sent);
+  if (verifyRow) verifyRow.classList.toggle('hidden', !sent);
+  if (identifierInput) identifierInput.disabled = sent;
+  if (summaryValue && sent) summaryValue.textContent = formatOtpIdentifierSummary(identifier || (identifierInput ? identifierInput.value : ''));
+  if (verifyBtn) verifyBtn.textContent = 'Verify OTP';
+
+  if (!sent && codeInput) codeInput.value = '';
+  if (sent && codeInput) {
+    setTimeout(function() { codeInput.focus(); codeInput.select(); }, 20);
+  }
 }
 
 async function setupTrustedDevice(setupPin, userName) {
@@ -5489,17 +5664,26 @@ function setVaultPanel(panel) {
 if ($('#pmLoginToggle')) {
   $('#pmLoginToggle').addEventListener('click', function() {
     setVaultPanel('pm');
+    setPmOtpStep('request');
     if ($('#vaultOtpEmail')) $('#vaultOtpEmail').focus();
-    $('#vaultError').textContent = 'Enter your PM email or phone, then click Send OTP.';
-    $('#vaultError').classList.add('show');
+    setVaultFeedback('Enter your PM email or phone, then click Send OTP.', 'info');
   });
 }
 
 if ($('#pmLoginBackBtn')) {
   $('#pmLoginBackBtn').addEventListener('click', function() {
     setVaultPanel('main');
+    setPmOtpStep('request');
     if ($('#vaultPassphrase')) $('#vaultPassphrase').focus();
-    $('#vaultError').classList.remove('show');
+    setVaultFeedback('');
+  });
+}
+
+if ($('#btnEditOtpIdentifier')) {
+  $('#btnEditOtpIdentifier').addEventListener('click', function() {
+    setPmOtpStep('request');
+    setVaultFeedback('Update the email or phone number, then send a new OTP.', 'info');
+    if ($('#vaultOtpEmail')) $('#vaultOtpEmail').focus();
   });
 }
 
@@ -5519,8 +5703,7 @@ if ($('#btnSendOtp')) {
     var identifierRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
     var identifier = normalizeOtpIdentifier(identifierRaw);
     if (!identifier) {
-      $('#vaultError').textContent = 'Enter your configured PM email or phone to start PM login.';
-      $('#vaultError').classList.add('show');
+      setVaultFeedback('Enter a valid PM email or phone number to start PM login. US numbers work with or without +1.', '');
       return;
     }
     API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
@@ -5528,24 +5711,21 @@ if ($('#btnSendOtp')) {
       try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eSaveProxy) { /* */ }
     }
     if (!API_PROXY) {
-      $('#vaultError').textContent = 'Proxy URL is required before requesting OTP.';
-      $('#vaultError').classList.add('show');
+      setVaultFeedback('Proxy URL is required before requesting OTP.', '');
       return;
     }
     var btn = this;
     btn.disabled = true;
     btn.textContent = 'Sending...';
-    $('#vaultError').classList.remove('show');
+    setVaultFeedback('');
     try {
       await requestDeviceOtp(identifier, 'dispatcher');
       showToast('OTP sent', { kind: 'success' });
-      if ($('#vaultOtpVerifyRow')) $('#vaultOtpVerifyRow').classList.remove('hidden');
-      $('#vaultError').textContent = 'OTP sent. Enter the 6-digit code and click Verify OTP.';
-      $('#vaultError').classList.add('show');
+      setPmOtpStep('verify', identifier);
+      setVaultFeedback('OTP code sent successfully. Enter the 6-digit verification code.', 'success');
     } catch (err) {
       var msg = (err && (err.message || String(err))) || 'OTP request failed';
-      $('#vaultError').textContent = msg;
-      $('#vaultError').classList.add('show');
+      setVaultFeedback(msg, '');
       showToast(msg, { kind: 'danger' });
     } finally {
       btn.disabled = false;
@@ -5559,25 +5739,32 @@ if ($('#btnVerifyOtp')) {
     var identifier = normalizeOtpIdentifier($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
     var code = String(($('#vaultOtpCode') && $('#vaultOtpCode').value) || '').trim();
     if (!identifier) {
-      $('#vaultError').textContent = 'Enter your configured PM email or phone first.';
-      $('#vaultError').classList.add('show');
+      setPmOtpStep('request');
+      setVaultFeedback('Enter your PM email or phone number first.', '');
       return;
     }
     if (!/^\d{6}$/.test(code)) {
-      $('#vaultError').textContent = 'Enter the 6-digit OTP code.';
-      $('#vaultError').classList.add('show');
+      setVaultFeedback('Enter the 6-digit OTP code.', '');
       return;
     }
     API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
     if (!API_PROXY) {
-      $('#vaultError').textContent = 'Proxy URL is required before verifying OTP.';
-      $('#vaultError').classList.add('show');
+      setVaultFeedback('Proxy URL is required before verifying OTP.', '');
+      return;
+    }
+    var rawVhost = $('#vaultVhost').value;
+    var vhost = sanitizeVhost(rawVhost);
+    $('#vaultVhost').value = vhost;
+    $('#vhostPreview').textContent = vhost || 'yourco';
+    $('#vhostPreviewPm').textContent = vhost || 'yourco';
+    if (!vhost) {
+      setVaultFeedback('AppFolio subdomain is required (e.g. "flraz").', '');
       return;
     }
     var btn = this;
     btn.disabled = true;
     btn.textContent = 'Verifying...';
-    $('#vaultError').classList.remove('show');
+    setVaultFeedback('');
     try {
       var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher');
       var token = verifyData.token;
@@ -5597,18 +5784,18 @@ if ($('#btnVerifyOtp')) {
         try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (e4) { /* */ }
       }
       if ($('#vaultPassphrase')) $('#vaultPassphrase').value = '';
-      refreshVaultDeviceLoginState();
       showToast('Device verified', { kind: 'success' });
-      $('#vaultError').textContent = 'Device verified. Click Continue to complete PM login.';
-      $('#vaultError').classList.add('show');
+      setVaultFeedback('OTP verified. Signing you in...', 'success');
+      btn.textContent = 'Signing in...';
+      try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eProxySave) { /* */ }
+      await unlockWithDeviceToken(token, vhost, API_PROXY);
     } catch (err) {
       var msg = (err && (err.message || String(err))) || 'OTP verification failed';
-      $('#vaultError').textContent = msg;
-      $('#vaultError').classList.add('show');
+      setVaultFeedback(msg, '');
       showToast(msg, { kind: 'danger' });
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Verify Device';
+      btn.textContent = 'Verify OTP';
     }
   });
 }
@@ -5652,53 +5839,6 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   showToast('Connected — ' + vhost + '.appfolio.com via verified device');
 }
 
-if ($('#btnContinueDeviceLogin')) {
-  $('#btnContinueDeviceLogin').addEventListener('click', async function() {
-    var rawVhost = $('#vaultVhost').value;
-    var vhost = sanitizeVhost(rawVhost);
-    $('#vaultVhost').value = vhost;
-    $('#vhostPreview').textContent = vhost || 'yourco';
-    var proxyUrl = sanitizeProxy($('#vaultProxy').value || '');
-    var existingDeviceToken = '';
-    try { existingDeviceToken = localStorage.getItem('hm_device_token') || localStorage.getItem('hm_proxy_token') || ''; } catch (e) { /* */ }
-
-    if (!vhost) {
-      $('#vaultError').textContent = 'AppFolio subdomain is required (e.g. "flraz").';
-      $('#vaultError').classList.add('show');
-      return;
-    }
-    if (!proxyUrl) {
-      $('#vaultError').textContent = 'Proxy URL is required before device login.';
-      $('#vaultError').classList.add('show');
-      return;
-    }
-    if (!existingDeviceToken) {
-      $('#vaultError').textContent = 'No verified device session found. Start PM login and verify OTP first.';
-      $('#vaultError').classList.add('show');
-      refreshVaultDeviceLoginState();
-      return;
-    }
-
-    var btn = this;
-    btn.disabled = true;
-    btn.textContent = 'Connecting...';
-    $('#vaultError').classList.remove('show');
-    try {
-      try { localStorage.setItem('hm_proxy_url', proxyUrl); } catch (eProxySave) { /* */ }
-      await unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl);
-    } catch (err) {
-      var errMsg = (err && (err.message || String(err))) || 'Verified device login failed';
-      wipeCredentials();
-      $('#vaultError').textContent = errMsg;
-      $('#vaultError').classList.add('show');
-      $('#vaultPassphrase').focus();
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Continue with Verified Device';
-    }
-  });
-}
-
 // Sanitize proxy URL — ensure https:// prefix, trim whitespace
 function sanitizeProxy(raw) {
   var val = (raw || '').trim();
@@ -5713,7 +5853,7 @@ function sanitizeProxy(raw) {
 }
 
 initVaultConfigUI();
-refreshVaultDeviceLoginState();
+setPmOtpStep('request');
 if ($('#vhostPreviewPm')) {
   var vVal = sanitizeVhost((($('#vaultVhost') && $('#vaultVhost').value) || ''));
   $('#vhostPreviewPm').textContent = vVal || 'yourco';
@@ -5771,7 +5911,12 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         throw new Error((roleResult && roleResult.error) || 'Invalid password');
       }
       _accessRole = normalizeAccessRole(roleResult.role);
-      API_CREDS = { p: '' };
+      var sessionToken = String(roleResult.token || '');
+      API_CREDS = { p: sessionToken };
+      if (sessionToken) {
+        try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
+        try { localStorage.setItem('hm_proxy_token', sessionToken); } catch (eTok2) { /* */ }
+      }
       persistAccessRole(_accessRole);
     } else {
       throw new Error('Enter your password to connect.');
@@ -6871,8 +7016,8 @@ async function pollWebhookEvents() {
           var evtBody = e.body || '';
           if (evtBody.length > 500) evtBody = evtBody.substring(0, 500) + '\u2026';
           var meta = extractWebhookMeta(e);
-          // Decode event type to friendly label
-          var friendlyTitle = decodeWebhookTitle(e, meta);
+          var friendlyTitle = getWebhookDisplayTitle(e, meta);
+          var friendlyDescription = getWebhookDisplayDescription(e, meta);
           WEBHOOK_EVENTS.push({
             id: e.id || 0,
             ts: e.ts || e.timestamp || new Date().toISOString(),
@@ -6880,12 +7025,14 @@ async function pollWebhookEvents() {
             event_label: e.event_label || friendlyTitle,
             resource_type: meta.resourceType || '',
             resource_id: meta.resourceId || '',
-            resource_name: meta.resourceName || '',
+            resource_name: e.resource_name || meta.resourceName || '',
             title: friendlyTitle,
-            description: e.description || e.human_description || '',
+            human_description: e.human_description || '',
+            description: friendlyDescription,
             body: evtBody,
             priority: e.priority || 'normal',
-            source: e.source || 'appfolio'
+            source: e.source || 'appfolio',
+            raw: e.raw || null
           });
           existing[key] = true;
         }
@@ -7110,6 +7257,18 @@ function getWebhookPreviewText(e, meta) {
   meta = meta || extractWebhookMeta(e || {});
   var view = interpretWebhookEvent(e || {}, meta);
   return (view && view.description) || getWebhookReadableContext(meta, e) || '';
+}
+
+function getWebhookDisplayTitle(e, meta) {
+  meta = meta || extractWebhookMeta(e || {});
+  var explicitTitle = String((e && (e.title || e.event_label)) || '').trim();
+  return explicitTitle || decodeWebhookTitle(e || {}, meta) || 'Webhook Event';
+}
+
+function getWebhookDisplayDescription(e, meta) {
+  meta = meta || extractWebhookMeta(e || {});
+  var explicitDescription = String((e && (e.description || e.human_description)) || '').trim();
+  return explicitDescription || getWebhookPreviewText(e || {}, meta) || '';
 }
 
 function extractWebhookMeta(e) {
@@ -7417,14 +7576,14 @@ function renderWebhookEventList() {
     else if (rtype === 'property') { iconClass = 'fa-building'; iconColor = 'var(--accent)'; }
     var detailId = 'whPanelDetail_' + (e.id || idx);
     var meta = extractWebhookMeta(e);
-    var previewText = getWebhookPreviewText(e, meta);
+    var displayTitle = getWebhookDisplayTitle(e, meta);
+    var previewText = getWebhookDisplayDescription(e, meta);
     var rckey = (meta.resourceType && meta.resourceId) ? webhookResolveKey(meta.resourceType, meta.resourceId) : '';
     var resolved = rckey ? WEBHOOK_RESOURCE_CACHE[rckey] : null;
 
     // Build detail content
     var richTitle = (resolved && resolved.record) ? buildAppFolioStyleTitle(meta.resourceType, meta.eventType, resolved.record) : null;
-    var objectLine = richTitle || (resolved && resolved.summary && resolved.summary.title) || meta.resourceName || getWebhookReadableContext(meta, e) || previewText || '';
-    if (!objectLine && meta.resourceId) objectLine = (meta.resourceType || '') + ' / ' + meta.resourceId;
+    var objectLine = richTitle || (resolved && resolved.summary && resolved.summary.title) || '';
     var statusLine = (resolved && resolved.summary && resolved.summary.status) || '';
     var refLine    = (resolved && resolved.summary && resolved.summary.reference) ? '#' + resolved.summary.reference : '';
     var changes    = getWebhookChangeSummary(meta.payload || {});
@@ -7445,7 +7604,7 @@ function renderWebhookEventList() {
     html += '<div style="flex:1;min-width:0">';
     html += '<span style="color:var(--text-muted);font-size:10px">' + escapeHtml(e.ts ? timeAgo(e.ts) : '\u2014') + '</span> ';
     if (isPri) html += '<span style="color:var(--danger);font-weight:600">\u26a0 </span>';
-    html += '<strong style="color:var(--text-primary);font-size:11px">' + escapeHtml(e.title || decodeWebhookTitle(e, meta)) + '</strong>';
+    html += '<strong style="color:var(--text-primary);font-size:11px">' + escapeHtml(displayTitle) + '</strong>';
     if (previewText) html += '<div style="color:var(--text-secondary);margin-top:1px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(previewText) + '</div>';
     html += '</div>';
     html += '<i class="fas fa-chevron-down" style="font-size:9px;color:var(--text-muted);margin-top:3px;flex-shrink:0;transition:transform .15s" id="' + detailId + '_chev"></i>';
@@ -7454,6 +7613,7 @@ function renderWebhookEventList() {
     // Collapsible detail panel
     html += '<div id="' + detailId + '" style="display:none;padding:6px 8px 8px 20px;font-size:10px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-input);line-height:1.7">';
     if (objectLine) html += '<div><span style="color:var(--text-muted)">Object:</span> ' + escapeHtml(objectLine + (refLine ? ' ' + refLine : '')) + (statusLine ? ' <span style="color:var(--text-muted)">(' + escapeHtml(statusLine) + ')</span>' : '') + '</div>';
+    if (previewText) html += '<div><span style="color:var(--text-muted)">Summary:</span> ' + escapeHtml(previewText) + '</div>';
     if (ctxParts.length) html += '<div><span style="color:var(--text-muted)">Where:</span> ' + escapeHtml(ctxParts.join(' \u00b7 ')) + '</div>';
     html += '<div><span style="color:var(--text-muted)">Change:</span> ' + escapeHtml(changes) + '</div>';
     if (e.body)    html += '<div style="margin-top:2px"><span style="color:var(--text-muted)">Body:</span> ' + escapeHtml(e.body) + '</div>';
@@ -7512,14 +7672,17 @@ async function loadWebhookData() {
     var data = await proxyAction('webhook_events', params);
     var events = (data.events || []).map(function(evt) {
       var meta = extractWebhookMeta(evt);
-      var title = decodeWebhookTitle(evt, meta);
+      var title = getWebhookDisplayTitle(evt, meta);
+      var description = getWebhookDisplayDescription(evt, meta);
       return Object.assign({}, evt, {
         type: meta.eventType || evt.type || evt.event_type || 'webhook',
         resource_type: meta.resourceType || evt.resource_type || '',
         resource_id: meta.resourceId || evt.resource_id || '',
-        resource_name: meta.resourceName || evt.resource_name || '',
+        resource_name: evt.resource_name || meta.resourceName || '',
         title: title,
-        event_label: evt.event_label || title
+        event_label: evt.event_label || title,
+        description: description,
+        human_description: evt.human_description || ''
       });
     });
     events = dedupeWebhookEvents(events);
@@ -7565,11 +7728,12 @@ async function loadWebhookData() {
       // Recompute titles with resolved names and re-render current page.
       events = events.map(function(evt) {
         var meta = extractWebhookMeta(evt);
-        var title = decodeWebhookTitle(evt, meta);
+        var title = getWebhookDisplayTitle(evt, meta);
         return Object.assign({}, evt, {
           resource_name: meta.resourceName || evt.resource_name || '',
           title: title,
-          event_label: evt.event_label || title
+          event_label: evt.event_label || title,
+          description: getWebhookDisplayDescription(evt, meta)
         });
       });
       renderWebhookDataTable(events);
@@ -7592,6 +7756,8 @@ function renderWebhookDataTable(events) {
     var ckey = webhookResolveKey(meta.resourceType || e.resource_type, meta.resourceId || e.resource_id);
     var resolved = ckey ? WEBHOOK_RESOURCE_CACHE[ckey] : null;
     var changeSummary = getWebhookChangeSummary(meta.payload || {});
+    var displayTitle = getWebhookDisplayTitle(e, meta);
+    var displayDescription = getWebhookDisplayDescription(e, meta);
     var isPri = e.priority === 'urgent' || e.priority === 'high';
     var priClass = isPri ? 'color:var(--danger);font-weight:600' : 'color:var(--text-secondary)';
     var rowNum = _whPage * _whPageSize + idx + 1;
@@ -7599,12 +7765,12 @@ function renderWebhookDataTable(events) {
     html += '<td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">' + rowNum + '</td>';
     html += '<td style="font-family:var(--font-mono);font-size:11px;white-space:nowrap">' + escapeHtml(e.ts ? timeAgo(e.ts) : '\u2014') + '</td>';
     html += '<td><span class="tag wh-type-' + escapeHtml(String(e.type || 'webhook').replace(/[^a-z0-9_-]/gi, '')) + '">' + escapeHtml(e.type || 'webhook') + '</span></td>';
-    html += '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.title || '\u2014');
-    // v8 enriched data: show resource_type/resource_id if available
-    if (e.resource_type) {
-      html += ' <span style="font-size:10px;color:var(--text-muted)">(' + escapeHtml(e.resource_type);
-      if (e.resource_id) html += ':' + escapeHtml(String(e.resource_id).substring(0, 8));
-      html += ')</span>';
+    html += '<td style="max-width:300px">';
+    html += '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(displayTitle || '\u2014') + '</div>';
+    if (displayDescription) {
+      html += '<div style="font-size:10px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(displayDescription) + '</div>';
+    } else if (resolved && resolved.summary && resolved.summary.title) {
+      html += '<div style="font-size:10px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(resolved.summary.title) + '</div>';
     }
     if (e.body_status === 'empty') {
       html += ' <span style="font-size:9px;color:var(--warning)" title="Webhook body was empty (pre-v8 bug)">\u26a0 empty</span>';
