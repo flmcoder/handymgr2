@@ -6283,7 +6283,9 @@ async function fetchCompletedWorkOrdersHistory(days) {
       priority: r.priority || r.Priority || 'Normal',
       type: r.work_order_type || r.Type || '',
       description: r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
-      tenant: r.primary_tenant || r.PrimaryTenant || ''
+      tenant: r.primary_tenant || r.PrimaryTenant || '',
+      completedBy: r.completed_by || r.CompletedBy || '',
+      paidBy: r.paid_by || r.PaidBy || ''
     };
   });
   completedWOHistoryPage = 0;
@@ -10200,7 +10202,7 @@ function renderCompletedWOHistorySection() {
   var pageRows = rows.slice(start, start + completedWOHistoryPageSize);
   var bodyHtml = '';
   if (!rows.length) {
-    bodyHtml = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No completed work orders match the current filters.</td></tr>';
+    bodyHtml = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">No completed work orders match the current filters.</td></tr>';
   } else {
     pageRows.forEach(function(wo) {
       bodyHtml += '<tr>' +
@@ -10211,13 +10213,15 @@ function renderCompletedWOHistorySection() {
         '<td>' + escapeHtml(String(wo.status || '—')) + '</td>' +
         '<td>' + escapeHtml(formatDate(wo.completedOn)) + '</td>' +
         '<td>' + escapeHtml(wo.amountBilled ? currency(wo.amountBilled) : '—') + '</td>' +
+        '<td>' + escapeHtml(String(wo.type || '—')) + '</td>' +
+        '<td style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(String(wo.description || '')) + '">' + escapeHtml(String(wo.description || '—')) + '</td>' +
       '</tr>';
     });
   }
 
   mount.innerHTML = '<div class="table-wrapper" style="margin-top:12px">' +
     '<div class="table-header"><div class="table-title"><i class="fas fa-history" style="color:var(--info)"></i> Completed Work Order History</div><div class="section-subtitle">Terminal statuses only • read-only</div></div>' +
-    '<div class="wo-history-scroll" id="woHistoryScroll"><table class="data-table"><thead><tr><th>WO #</th><th>Unit</th><th>Property</th><th>Vendor</th><th>Status</th><th>Completed Date</th><th>Amount Billed</th></tr></thead><tbody>' + bodyHtml + '</tbody></table></div>' +
+    '<div class="wo-history-scroll" id="woHistoryScroll"><table class="data-table"><thead><tr><th>WO #</th><th>Unit</th><th>Property</th><th>Vendor</th><th>Status</th><th>Completed Date</th><th>Amount Billed</th><th>Type</th><th>Description</th></tr></thead><tbody>' + bodyHtml + '</tbody></table></div>' +
     '<div class="wo-history-pagination"><button class="action-btn" id="woHistoryPrev"' + (completedWOHistoryPage === 0 ? ' disabled' : '') + '>← Prev</button><span class="page-label">Page ' + (completedWOHistoryPage + 1) + ' of ' + totalPages + '</span><button class="action-btn" id="woHistoryNext"' + (completedWOHistoryPage >= totalPages - 1 ? ' disabled' : '') + '>Next →</button></div>' +
   '</div>';
 
@@ -12187,6 +12191,19 @@ function resolveVendorCompliance(v) {
   return { compliant: v.compliant, isManual: false };
 }
 
+function navigateToBillsForVendor(vendorName) {
+  // Switch to billing tab
+  var billingTab = document.querySelector('.nav-tab[data-tab="billing"]');
+  if (billingTab) billingTab.click();
+  // Pre-fill vendor search and re-render
+  var billSearch = $('#billSearch');
+  if (billSearch) {
+    billSearch.value = vendorName;
+    _billsPage = 0;
+    renderBillsSection();
+  }
+}
+
 function renderVendors(search) {
   var container = $('#vendorGrid');
   if (!container) return;
@@ -12370,6 +12387,9 @@ function renderVendors(search) {
     if (v.insurance) {
       html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Insurance</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (exp ? 'var(--danger)' : wrn ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.insurance) + (exp ? ' (EXPIRED)' : wrn ? ' (' + due + 'd)' : '') + '</span></div>';
     }
+    html += '<div class="vendor-quick-actions" style="margin-top:6px">';
+    html += '<button class="vendor-qa-btn" onclick="event.stopPropagation();navigateToBillsForVendor(' + JSON.stringify(v.name || '') + ')" title="View bills for this vendor in the current property group"><i class="fas fa-file-invoice-dollar"></i> View Bills</button>';
+    html += '</div>';
     html += '</div>';
   });
   if (filtered.length > visible.length) {
