@@ -4353,6 +4353,7 @@ function wipeCredentials() {
 
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
 var AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+var _sessionExpiryHandled = false;
 
 function startAutoSync() {
   stopAutoSync(); // clear any existing
@@ -4380,6 +4381,42 @@ function startAutoSync() {
 
 function stopAutoSync() {
   if (_autoSyncTimer) { clearInterval(_autoSyncTimer); _autoSyncTimer = null; }
+}
+
+function clearStoredProxySessionTokens() {
+  try { localStorage.removeItem('hm_device_token'); } catch (e1) { /* */ }
+  try { localStorage.removeItem('hm_proxy_token'); } catch (e2) { /* */ }
+}
+
+function handleProxySessionExpired(contextLabel) {
+  if (_sessionExpiryHandled) return;
+  _sessionExpiryHandled = true;
+
+  stopAutoSync();
+  if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
+
+  clearStoredProxySessionTokens();
+  if (API_CREDS && API_CREDS.p) {
+    API_CREDS.p = '0'.repeat(String(API_CREDS.p).length);
+  }
+  API_CREDS = null;
+  appInitialized = false;
+
+  var vault = $('#vaultScreen');
+  if (vault) vault.style.display = 'flex';
+  var shell = $('#appShell');
+  if (shell) shell.classList.remove('unlocked');
+  setVaultPanel('main');
+  setPmOtpStep('request');
+  setVaultFeedback('Proxy session expired. Sign in again to continue.', '');
+  if ($('#vaultPassphrase')) $('#vaultPassphrase').focus();
+
+  var detail = contextLabel ? (' (' + contextLabel + ')') : '';
+  showToast('Session expired. Please sign in again' + detail + '.', {
+    kind: 'warning',
+    iconClass: 'fa-triangle-exclamation',
+    duration: 5000,
+  });
 }
 
 function lockVault() {
@@ -4697,6 +4734,7 @@ async function proxyAction(action, params) {
           errBodyLower.indexOf('proxy session') !== -1 ||
           errBodyLower.indexOf('read-only session') !== -1;
         if (isProxySession401) {
+          handleProxySessionExpired('action=' + action);
           var sessionMsg = 'Proxy action=' + action + ' failed: HTTP 401 — Proxy session missing or expired';
           logApiError(401, sessionMsg, 'resolved');
           throw new Error(sessionMsg);
@@ -4769,6 +4807,7 @@ async function proxyPost(action, bodyObj, extraHeaders) {
     if (res.status === 429) {
       var retryAfter = parseInt(res.headers.get('Retry-After') || '5', 10);
       rateLimiter.backpressure(retryAfter * 1000);
+          handleProxySessionExpired('post=' + action);
       logApiError(429, 'POST action=' + action + ' rate limited — pausing ' + retryAfter + 's', 'retry');
       if (attempt < maxRetries) { await sleep(retryAfter * 1000); continue; }
       throw new Error('429: Rate limited on POST ' + action + ' after retries');
@@ -5894,6 +5933,7 @@ if ($('#btnVerifyOtp')) {
 }
 
 async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
+  _sessionExpiryHandled = false;
   API_VHOST = vhost;
   API_PROXY = proxyUrl;
   API_CREDS = { p: existingDeviceToken };
@@ -6005,6 +6045,10 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       }
       _accessRole = normalizeAccessRole(roleResult.role);
       var sessionToken = String(roleResult.token || '');
+      if (!sessionToken) {
+        throw new Error('Login succeeded but server did not mint a session token. Check proxy DB/write access and try again.');
+      }
+      _sessionExpiryHandled = false;
       API_CREDS = { p: sessionToken };
       if (sessionToken) {
         try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
