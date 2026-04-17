@@ -2192,12 +2192,39 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
     } else if (pass) {
       // Verify password against proxy env vars (GUI_ADMIN / GUI_GM / GUI_VENDORS)
-      var roleResult = await proxyPost('verify_role', { password: pass });
+      // Handle 505 gracefully: password verified but session token creation failed (Turso schema issue)
+      var roleResult;
+      try {
+        roleResult = await proxyPost('verify_role', { password: pass });
+      } catch (verifyErr) {
+        var verifyErrMsg = String(verifyErr && verifyErr.message || '');
+        var is505TokenFail = verifyErrMsg.indexOf('505') !== -1 && verifyErrMsg.indexOf('Password verified') !== -1;
+        if (is505TokenFail) {
+          var roleFromErr = 'admin';
+          var tokenFailBody = verifyErrMsg.replace(/^.*?\u2014\s*/, '');
+          try {
+            var parsedErrBody = JSON.parse(tokenFailBody);
+            if (parsedErrBody.role) roleFromErr = parsedErrBody.role;
+          } catch (pe) { /* use default */ }
+          roleResult = { ok: true, role: roleFromErr, token: '', _degraded: true };
+          console.warn('verify_role returned 505 — password verified, proceeding with degraded session.');
+        } else {
+          throw verifyErr;
+        }
+      }
       if (!roleResult || !roleResult.ok) {
         throw new Error((roleResult && roleResult.error) || 'Invalid password');
       }
       _accessRole = normalizeAccessRole(roleResult.role);
-      API_CREDS = { p: '' };
+      var sessionToken = String(roleResult.token || '');
+      if (sessionToken) {
+        API_CREDS = { p: sessionToken };
+        try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
+        try { localStorage.setItem('hm_proxy_token', sessionToken); } catch (eTok2) { /* */ }
+      } else {
+        API_CREDS = { p: '' };
+        showToast('Connected in degraded mode — proxy DB write issue prevents persistent sessions.', { kind: 'warning', duration: 7000 });
+      }
       persistAccessRole(_accessRole);
     } else {
       throw new Error('Enter your password to connect.');
@@ -2227,10 +2254,15 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
   } catch (err) {
     var errMsg = (err && (err.message || String(err))) || '';
     var schemaErr = /no such table|no such column|SQLITE_UNKNOWN|SQL_INPUT_ERROR/i.test(errMsg);
+    var trustedDevicesErr = /trusted_devices|session token could not be created/i.test(errMsg);
     wipeCredentials();
-    $('#vaultError').textContent = schemaErr
-      ? 'Proxy connected, but database schema is out of date. Deploy latest proxy migrations and retry.'
-      : (errMsg || 'Login failed \u2014 check password and proxy URL.');
+    if (trustedDevicesErr) {
+      $('#vaultError').textContent = 'Proxy connected, but the trusted_devices table is missing or has a schema issue. Run proxy migrations to create it, or redeploy the proxy.';
+    } else if (schemaErr) {
+      $('#vaultError').textContent = 'Proxy connected, but database schema is out of date. Deploy latest proxy migrations and retry.';
+    } else {
+      $('#vaultError').textContent = errMsg || 'Login failed \u2014 check password and proxy URL.';
+    }
     $('#vaultError').classList.add('show');
     $('#vaultPassphrase').value = '';
     $('#vaultPassphrase').focus();
@@ -2392,7 +2424,8 @@ async function fetchWorkOrders() {
 
 async function fetchCompletedWorkOrdersHistory(days) {
   var lookback = parseInt(days || 365, 10) || 365;
-  var data = await proxyAction('completed_work_orders_history', { days: String(lookback) });
+  lookback = Math.max(30, Math.min(3650, lookback));
+  var data = await proxyAction('work_orders_completed_history', { days: String(lookback) });
   var results = data.results || [];
   completedWOHistoryRows = results.map(function(r) {
     return {
@@ -2409,7 +2442,9 @@ async function fetchCompletedWorkOrdersHistory(days) {
       priority: r.priority || r.Priority || 'Normal',
       type: r.work_order_type || r.Type || '',
       description: r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
-      tenant: r.primary_tenant || r.PrimaryTenant || ''
+      tenant: r.primary_tenant || r.PrimaryTenant || '',
+      completedBy: r.completed_by || r.CompletedBy || r.assigned_user || r.AssignedUser || r.AssignedTo || '',
+      paidBy: r.paid_by || r.PaidBy || r.payee_name || r.PayeeName || ''
     };
   });
   completedWOHistoryPage = 0;
@@ -5185,15 +5220,19 @@ function rebuildWOScopedFilters() {
 
 function getFilteredCompletedWOHistoryRows() {
   var search = $('#woSearch') ? $('#woSearch').value : '';
+  var histVendor = $('#woHistoryVendorFilter') ? $('#woHistoryVendorFilter').value : '';
+  var histProperty = $('#woHistoryPropertyFilter') ? $('#woHistoryPropertyFilter').value : '';
   return completedWOHistoryRows.filter(function(wo) {
     if (currentWOPriority && wo.priority !== currentWOPriority) return false;
     if (currentWOType && wo.type !== currentWOType) return false;
-    if (currentWOVendor && String(wo.vendorName || '') !== currentWOVendor) return false;
-    if (currentWOProperty && wo.propertyName !== currentWOProperty) return false;
+    var vendorMatch = histVendor || currentWOVendor;
+    var propertyMatch = histProperty || currentWOProperty;
+    if (vendorMatch && String(wo.vendorName || '') !== vendorMatch) return false;
+    if (propertyMatch && wo.propertyName !== propertyMatch) return false;
     if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return false;
     if (search) {
       var s = search.toLowerCase();
-      var haystack = [String(wo.id), String(wo.description || ''), String(wo.propertyName || ''), String(wo.vendorName || ''), String(wo.unit || ''), String(wo.tenant || '')].join(' ').toLowerCase();
+      var haystack = [String(wo.id), String(wo.description || ''), String(wo.propertyName || ''), String(wo.vendorName || ''), String(wo.unit || ''), String(wo.tenant || ''), String(wo.completedBy || ''), String(wo.paidBy || '')].join(' ').toLowerCase();
       return haystack.indexOf(s) !== -1;
     }
     return true;
@@ -5212,36 +5251,130 @@ function renderCompletedWOHistorySection() {
     return;
   }
 
+  var histVendors = {};
+  var histProperties = {};
+  completedWOHistoryRows.forEach(function(wo) {
+    if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return;
+    if (wo.vendorName) histVendors[wo.vendorName] = true;
+    if (wo.propertyName) histProperties[wo.propertyName] = true;
+  });
+
   var rows = getFilteredCompletedWOHistoryRows();
   var totalPages = Math.max(1, Math.ceil(rows.length / completedWOHistoryPageSize));
   if (completedWOHistoryPage >= totalPages) completedWOHistoryPage = totalPages - 1;
   if (completedWOHistoryPage < 0) completedWOHistoryPage = 0;
   var start = completedWOHistoryPage * completedWOHistoryPageSize;
   var pageRows = rows.slice(start, start + completedWOHistoryPageSize);
+
+  var totalBilled = 0;
+  rows.forEach(function(wo) {
+    totalBilled += parseFloat(wo.amountBilled) || 0;
+  });
+
   var bodyHtml = '';
   if (!rows.length) {
-    bodyHtml = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No completed work orders match the current filters.</td></tr>';
+    bodyHtml = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">No completed work orders match the current filters.</td></tr>';
   } else {
-    pageRows.forEach(function(wo) {
-      bodyHtml += '<tr>' +
-        '<td>#' + escapeHtml(String(wo.id || '—')) + '</td>' +
-        '<td>' + escapeHtml(String(wo.unit || '—')) + '</td>' +
-        '<td>' + escapeHtml(String(wo.propertyName || '—')) + '</td>' +
-        '<td>' + escapeHtml(String(wo.vendorName || '—')) + '</td>' +
-        '<td>' + escapeHtml(String(wo.status || '—')) + '</td>' +
+    pageRows.forEach(function(wo, idx) {
+      var rowIdx = start + idx;
+      bodyHtml += '<tr class="wo-history-row" data-wohistidx="' + rowIdx + '" style="cursor:pointer" title="Click to expand details">' +
+        '<td>#' + escapeHtml(String(wo.id || '\u2014')) + '</td>' +
+        '<td>' + escapeHtml(String(wo.unit || '\u2014')) + '</td>' +
+        '<td>' + escapeHtml(String(wo.propertyName || '\u2014')) + '</td>' +
+        '<td>' + escapeHtml(String(wo.vendorName || '\u2014')) + '</td>' +
+        '<td>' + escapeHtml(String(wo.completedBy || '\u2014')) + '</td>' +
+        '<td>' + escapeHtml(String(wo.paidBy || '\u2014')) + '</td>' +
+        '<td><span class="tag ' + String(wo.status || '').toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(String(wo.status || '\u2014')) + '</span></td>' +
         '<td>' + escapeHtml(formatDate(wo.completedOn)) + '</td>' +
-        '<td>' + escapeHtml(wo.amountBilled ? currency(wo.amountBilled) : '—') + '</td>' +
+        '<td style="text-align:right;font-family:var(--font-mono)">' + escapeHtml(wo.amountBilled ? currency(wo.amountBilled) : '\u2014') + '</td>' +
+      '</tr>';
+      bodyHtml += '<tr class="wo-history-detail" id="woHistDetail' + rowIdx + '" style="display:none;background:var(--bg-secondary)">' +
+        '<td colspan="9" style="padding:12px 16px;font-size:11px;border-bottom:2px solid var(--border)">' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;max-width:700px">' +
+            '<div><strong>Description:</strong> ' + escapeHtml(String(wo.description || 'N/A')) + '</div>' +
+            '<div><strong>Tenant:</strong> ' + escapeHtml(String(wo.tenant || 'N/A')) + '</div>' +
+            '<div><strong>Priority:</strong> ' + escapeHtml(String(wo.priority || 'Normal')) + '</div>' +
+            '<div><strong>Type:</strong> ' + escapeHtml(String(wo.type || 'N/A')) + '</div>' +
+            '<div><strong>Completed By:</strong> ' + escapeHtml(String(wo.completedBy || 'N/A')) + '</div>' +
+            '<div><strong>Paid By:</strong> ' + escapeHtml(String(wo.paidBy || 'N/A')) + '</div>' +
+            (wo.uuid ? '<div><strong>UUID:</strong> <span style="font-family:var(--font-mono);font-size:10px">' + escapeHtml(wo.uuid) + '</span></div>' : '') +
+          '</div>' +
+        '</td>' +
       '</tr>';
     });
   }
 
+  var vendorFilterHtml = '<select id="woHistoryVendorFilter" class="form-select" style="font-size:11px;padding:4px 8px;min-width:140px;font-family:var(--font-mono)"><option value="">All Vendors</option>';
+  Object.keys(histVendors).sort().forEach(function(v) {
+    vendorFilterHtml += '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>';
+  });
+  vendorFilterHtml += '</select>';
+
+  var propertyFilterHtml = '<select id="woHistoryPropertyFilter" class="form-select" style="font-size:11px;padding:4px 8px;min-width:140px;font-family:var(--font-mono)"><option value="">All Properties</option>';
+  Object.keys(histProperties).sort().forEach(function(p) {
+    propertyFilterHtml += '<option value="' + escapeHtml(p) + '">' + escapeHtml(p) + '</option>';
+  });
+  propertyFilterHtml += '</select>';
+
+  var summaryHtml = rows.length > 0
+    ? '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono);padding:6px 14px;border-bottom:1px solid var(--border)">' +
+        '<span><i class="fas fa-file-invoice"></i> ' + rows.length + ' records</span>' +
+        '<span><i class="fas fa-dollar-sign"></i> Total Billed: ' + currency(totalBilled) + '</span>' +
+        '<span><i class="fas fa-building"></i> ' + Object.keys(histProperties).length + ' properties</span>' +
+        '<span><i class="fas fa-hard-hat"></i> ' + Object.keys(histVendors).length + ' vendors</span>' +
+      '</div>'
+    : '';
+
   mount.innerHTML = '<div class="table-wrapper" style="margin-top:12px">' +
-    '<div class="table-header"><div class="table-title"><i class="fas fa-history" style="color:var(--info)"></i> Completed Work Order History</div><div class="section-subtitle">Terminal statuses only • read-only</div></div>' +
-    '<div class="wo-history-scroll" id="woHistoryScroll"><table class="data-table"><thead><tr><th>WO #</th><th>Unit</th><th>Property</th><th>Vendor</th><th>Status</th><th>Completed Date</th><th>Amount Billed</th></tr></thead><tbody>' + bodyHtml + '</tbody></table></div>' +
-    '<div class="wo-history-pagination"><button class="action-btn" id="woHistoryPrev"' + (completedWOHistoryPage === 0 ? ' disabled' : '') + '>← Prev</button><span class="page-label">Page ' + (completedWOHistoryPage + 1) + ' of ' + totalPages + '</span><button class="action-btn" id="woHistoryNext"' + (completedWOHistoryPage >= totalPages - 1 ? ' disabled' : '') + '>Next →</button></div>' +
+    '<div class="table-header">' +
+      '<div class="table-title"><i class="fas fa-history" style="color:var(--info)"></i> Completed Work Order History</div>' +
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+        vendorFilterHtml + propertyFilterHtml +
+        '<div class="section-subtitle" style="margin:0">Completed/Canceled WOs \u2022 click row to expand</div>' +
+      '</div>' +
+    '</div>' +
+    summaryHtml +
+    '<div class="wo-history-scroll" id="woHistoryScroll"><table class="data-table"><thead><tr>' +
+      '<th>WO #</th><th>Unit</th><th>Property</th><th>Vendor</th><th>Completed By</th><th>Paid By</th><th>Status</th><th>Completed Date</th><th style="text-align:right">Amount Billed</th>' +
+    '</tr></thead><tbody>' + bodyHtml + '</tbody></table></div>' +
+    '<div class="wo-history-pagination">' +
+      '<button class="action-btn" id="woHistoryPrev"' + (completedWOHistoryPage === 0 ? ' disabled' : '') + '>\u2190 Prev</button>' +
+      '<span class="page-label">Page ' + (completedWOHistoryPage + 1) + ' of ' + totalPages + '</span>' +
+      '<button class="action-btn" id="woHistoryNext"' + (completedWOHistoryPage >= totalPages - 1 ? ' disabled' : '') + '>Next \u2192</button>' +
+    '</div>' +
   '</div>';
 
+  var histVendorSel = $('#woHistoryVendorFilter');
+  var histPropertySel = $('#woHistoryPropertyFilter');
+
   var scrollEl = $('#woHistoryScroll');
+  if (scrollEl) {
+    scrollEl.addEventListener('click', function(ev) {
+      var row = ev.target.closest('.wo-history-row');
+      if (!row) return;
+      var idx = row.getAttribute('data-wohistidx');
+      var detailRow = document.getElementById('woHistDetail' + idx);
+      if (detailRow) {
+        var wasHidden = detailRow.style.display === 'none';
+        detailRow.style.display = wasHidden ? '' : 'none';
+        row.classList.toggle('expanded', wasHidden);
+      }
+    });
+  }
+
+  if (histVendorSel) {
+    histVendorSel.addEventListener('change', function() {
+      completedWOHistoryPage = 0;
+      renderCompletedWOHistorySection();
+    });
+  }
+  if (histPropertySel) {
+    histPropertySel.addEventListener('change', function() {
+      completedWOHistoryPage = 0;
+      renderCompletedWOHistorySection();
+    });
+  }
+
   var prevBtn = $('#woHistoryPrev');
   var nextBtn = $('#woHistoryNext');
   if (prevBtn) prevBtn.addEventListener('click', function() {
