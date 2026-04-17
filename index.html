@@ -2452,8 +2452,8 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <button class="filter-btn" data-filter="Estimated">Estimated</button>
   </div>
   <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <label class="wo-history-toggle"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed History</span></label>
-    <input type="number" id="woCompletedHistoryDays" min="30" step="30" value="365" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
+    <label class="wo-history-toggle"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed Work Orders</span></label>
+    <input type="number" id="woCompletedHistoryDays" min="7" step="30" value="30" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
     <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Completed</button>
   </div>
   <div class="kanban-board" id="kanbanBoard"></div>
@@ -4259,6 +4259,8 @@ var API_PROXY = '';
 var _accessRole = 'full'; // 'full' | 'manager' | 'vendors' | 'pm_readonly'
 var _pmScopeGroupUuid = '';
 var _pmScopeEmail = '';
+var DEFAULT_BILLS_LOOKBACK_DAYS = 90;
+var DEFAULT_COMPLETED_WO_LOOKBACK_DAYS = 30;
 
 function normalizeAccessRole(role) {
   var value = String(role || '').trim().toLowerCase();
@@ -4692,17 +4694,33 @@ async function proxyAction(action, params) {
     });
   }
   var maxRetries = 2; // retry once for transient 502/503/network errors
-  var timeoutMs = (action === 'turn_work_orders' || action === 'bills_history') ? 90000 : 45000;
+  var timeoutByAction = {
+    turn_work_orders: 120000,
+    bills_history: 120000,
+    properties: 90000,
+    bills: 90000,
+    turns: 90000,
+    unit_turns: 90000,
+    work_orders_completed_history: 90000
+  };
+  var baseTimeoutMs = timeoutByAction[action] || 60000;
   var token = getProxyAccessToken();
   var reqHeaders = { 'Accept': 'application/json' };
   if (token) reqHeaders['Authorization'] = 'Bearer ' + token;
   for (var attempt = 0; attempt <= maxRetries; attempt++) {
+    var attemptTimeoutMs = Math.min(baseTimeoutMs + (attempt * 15000), 150000);
     var res;
     try {
-      res = await fetchWithTimeout(url, { headers: reqHeaders }, timeoutMs);
+      res = await fetchWithTimeout(url, { headers: reqHeaders }, attemptTimeoutMs);
     } catch (abortErr) {
       if (abortErr.name === 'AbortError') {
-        var tmsg = 'Proxy action=' + action + ' timed out after ' + Math.round(timeoutMs / 1000) + 's';
+        if (attempt < maxRetries) {
+          var timeoutWait = Math.pow(2, attempt + 1) * 1000;
+          logApiError(0, 'Proxy action=' + action + ' timed out after ' + Math.round(attemptTimeoutMs / 1000) + 's (attempt ' + (attempt + 1) + '/' + (maxRetries + 1) + ') — retrying in ' + (timeoutWait / 1000) + 's', 'retry');
+          await sleep(timeoutWait);
+          continue;
+        }
+        var tmsg = 'Proxy action=' + action + ' timed out after ' + Math.round(attemptTimeoutMs / 1000) + 's';
         logApiError(0, tmsg, 'queued');
         throw new Error(tmsg);
       }
@@ -4807,7 +4825,6 @@ async function proxyPost(action, bodyObj, extraHeaders) {
     if (res.status === 429) {
       var retryAfter = parseInt(res.headers.get('Retry-After') || '5', 10);
       rateLimiter.backpressure(retryAfter * 1000);
-          handleProxySessionExpired('post=' + action);
       logApiError(429, 'POST action=' + action + ' rate limited — pausing ' + retryAfter + 's', 'retry');
       if (attempt < maxRetries) { await sleep(retryAfter * 1000); continue; }
       throw new Error('429: Rate limited on POST ' + action + ' after retries');
@@ -4824,6 +4841,7 @@ async function proxyPost(action, bodyObj, extraHeaders) {
       if (res.status === 401) {
         var errBodyLower = String(errBody || '').toLowerCase();
         if (errBodyLower.indexOf('frontend bearer token') !== -1 || errBodyLower.indexOf('proxy session') !== -1) {
+          handleProxySessionExpired('post=' + action);
           throw new Error('Proxy POST action=' + action + ' failed: HTTP 401 — Proxy session missing or expired. Sign in again.');
         }
       }
@@ -6246,7 +6264,8 @@ async function fetchWorkOrders() {
 }
 
 async function fetchCompletedWorkOrdersHistory(days) {
-  var lookback = parseInt(days || 365, 10) || 365;
+  var lookback = parseInt(days || DEFAULT_COMPLETED_WO_LOOKBACK_DAYS, 10) || DEFAULT_COMPLETED_WO_LOOKBACK_DAYS;
+  lookback = Math.max(30, Math.min(3650, lookback));
   var data = await proxyAction('work_orders_completed_history', { days: String(lookback) });
   var results = data.results || [];
   completedWOHistoryRows = results.map(function(r) {
@@ -6281,7 +6300,7 @@ async function fetchBills(days, opts) {
   _billsFetchInFlight = true;
   try {
     opts = opts || {};
-    var lookback = parseInt(days || 365, 10) || 365;
+    var lookback = parseInt(days || DEFAULT_BILLS_LOOKBACK_DAYS, 10) || DEFAULT_BILLS_LOOKBACK_DAYS;
     var params = { days: String(lookback), max: String(opts.max || 3000) };
     if (opts.forceRefresh) params.force_refresh = 'true';
     var routeAction = String(opts.filterType || '').trim();
@@ -6573,11 +6592,11 @@ function normalizeTurnRecord(t) {
 async function fetchTurns() {
   try {
     setApiStatus('loading', 'Loading turns (In Progress + Completed)…');
-    var activeData = await proxyAction('turns', { days: 120, status: 'In Progress' });
+    var activeData = await proxyAction('turns', { days: 60, status: 'In Progress' });
     var activeRows = activeData.results || activeData.data || [];
     var completedRows = [];
     try {
-      var completedData = await proxyAction('turns', { days: 365, status: 'Completed' });
+      var completedData = await proxyAction('turns', { days: 30, status: 'Completed' });
       completedRows = completedData.results || completedData.data || [];
     } catch (e) {
       console.log('Completed turns fetch skipped: ' + (e.message || e));
@@ -7186,7 +7205,7 @@ async function fetchTurnWorkOrders() {
 async function fetchUnitTurnsDB() {
   try {
     setApiStatus('loading', 'Loading unit turn tracker…');
-    var data = await proxyAction('unit_turns', { days: '180' });
+    var data = await proxyAction('unit_turns', { days: '90' });
     var results = data.results || data.data || [];
     UNIT_TURN_TRACKER_BY_KEY = {};
     UNIT_TURNS_DB = results.map(function(t) {
@@ -9202,7 +9221,7 @@ function wireBillingFilters() {
     var originalText = applyBtn.innerHTML;
     applyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying…';
     try {
-      var ok = await fetchBills(365, {
+      var ok = await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, {
         scoped: true,
         filterType: type,
         filterValue: value,
@@ -13550,7 +13569,7 @@ function wireUpUI() {
 
       // Lazy-load AP bills when Work Orders tab is opened (needed for WO Close Assist)
       if (tabName === 'workorders' && (!BILLS || BILLS.length === 0)) {
-        fetchBills(365).then(function() { renderWOCloseAssist(); }).catch(function() {});
+        fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS).then(function() { renderWOCloseAssist(); }).catch(function() {});
       }
 
       // Lazy-load AP Bills when Billing tab is opened
@@ -13558,7 +13577,7 @@ function wireUpUI() {
         if (!BILLS || BILLS.length === 0) {
           var billBody = document.getElementById('billBody');
           if (billBody) billBody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px">' + loadingHtml('Loading bills\u2026') + '</td></tr>';
-          fetchBills(365, { scoped: true }).then(function() {
+          fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, { scoped: true }).then(function() {
             // Re-enrich bills with _propertyGroup after load
             (BILLS || []).forEach(function(b) {
               var grps = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] ||
@@ -13680,7 +13699,7 @@ function wireUpUI() {
     $('#btnFetchCompletedHistory').addEventListener('click', async function() {
       var btn = this;
       var daysEl = $('#woCompletedHistoryDays');
-      var days = parseInt(daysEl ? daysEl.value : '365', 10) || 365;
+      var days = parseInt(daysEl ? daysEl.value : String(DEFAULT_COMPLETED_WO_LOOKBACK_DAYS), 10) || DEFAULT_COMPLETED_WO_LOOKBACK_DAYS;
       days = Math.max(30, Math.min(3650, days));
       if (daysEl) daysEl.value = String(days);
       showCompletedWOHistory = true;
@@ -13710,7 +13729,7 @@ function wireUpUI() {
       this.disabled = true;
       this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading AP\u2026';
       try {
-        var ok = await fetchBills(365);
+        var ok = await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS);
         woCloseAssist.currentPage = 0;
         renderWOCloseAssist();
         showToast(ok ? ('AP loaded — ' + BILLS.length + ' bills') : 'Could not load AP bills', ok ? { kind: 'success' } : { kind: 'warning' });
@@ -13952,7 +13971,7 @@ function wireUpUI() {
       billRefreshBtn.disabled = true;
       billRefreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading…';
       try {
-        await fetchBills(365, { scoped: true, forceRefresh: true });
+        await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, { scoped: true, forceRefresh: true });
         // Enrich bills with property group after fresh load
         (BILLS || []).forEach(function(b) {
           var grps = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] ||
@@ -14326,7 +14345,7 @@ async function sectionRefresh(section, btn) {
       showToast('Refreshing open work orders\u2026');
       await fetchWorkOrders();
       if (!_billsLoadedAt || (Date.now() - _billsLoadedAt) > (30 * 60 * 1000)) {
-        await fetchBills(365);
+        await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS);
       }
       renderWorkOrders();
     }
@@ -14675,7 +14694,7 @@ async function fetchAllLive() {
 
     if (BILLS.length === 0) {
       // Best-effort AP load for WO close-assist; non-blocking and non-fatal.
-      try { await withStepTimeout(function() { return fetchBills(365); }, 30000); } catch (e) { /* ignore */ }
+      try { await withStepTimeout(function() { return fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS); }, 30000); } catch (e) { /* ignore */ }
     }
 
     anySuccess = woOk || propOk || turnOk;
