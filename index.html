@@ -3521,6 +3521,7 @@ var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06e
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
 var APP_VERSION = 'v9.2.2';
+var APP_VERSION_UPDATED = 'April 2026';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 
@@ -3534,6 +3535,51 @@ function compareVersions(v1, v2) {
     if (n1 < n2) return -1;
   }
   return 0;
+}
+
+function applyVersionBadge(serverVersion) {
+  var badge = document.getElementById('versionBadge');
+  if (!badge) return;
+  var txt = APP_VERSION + ' (updated ' + APP_VERSION_UPDATED + ')';
+  if (serverVersion && String(serverVersion).trim() && String(serverVersion).trim() !== APP_VERSION) {
+    txt += ' \u2022 server ' + String(serverVersion).trim();
+  }
+  txt += ' \u2022 Highlights (next 36h)';
+  badge.textContent = txt;
+}
+
+function enforceServerVersionGuard(pingData) {
+  var serverVersion = String((pingData && (pingData.version || pingData.proxy)) || '').trim();
+  if (!serverVersion) {
+    applyVersionBadge('');
+    return false;
+  }
+  SERVER_VERSION = serverVersion;
+  applyVersionBadge(serverVersion);
+  if (serverVersion === APP_VERSION) return false;
+  var seenKey = 'hm_force_refresh_seen_' + serverVersion;
+  try {
+    if (sessionStorage.getItem(seenKey) !== '1') {
+      sessionStorage.setItem(seenKey, '1');
+      alert('A newer HandyManager build (' + serverVersion + ') is available. The app will refresh now.');
+      window.location.reload();
+      return true;
+    }
+  } catch (_) {
+    alert('A newer HandyManager build (' + serverVersion + ') is available. Please refresh now.');
+    window.location.reload();
+    return true;
+  }
+  setApiStatus('error', 'Update required \u2014 refresh the app');
+  showToast('New build detected (' + serverVersion + '). Please hard refresh.', {
+    kind: 'warning', iconClass: 'fa-triangle-exclamation', duration: 7000,
+  });
+  return true;
+}
+
+function applyFrontendBuildLabels() {
+  var t = document.getElementById('buildBadgeTag');
+  if (t) t.textContent = APP_VERSION;
 }
 
 function applyBrandConfig(brand) {
@@ -4262,6 +4308,7 @@ var API_PROXY = '';
 var _accessRole = 'full'; // 'full' | 'manager' | 'vendors' | 'pm_readonly'
 var _pmScopeGroupUuid = '';
 var _pmScopeEmail = '';
+var _pmScopeName = '';
 var DEFAULT_BILLS_LOOKBACK_DAYS = 90;
 var DEFAULT_COMPLETED_WO_LOOKBACK_DAYS = 30;
 
@@ -4353,7 +4400,9 @@ function wipeCredentials() {
   _accessRole = 'full';
   _pmScopeGroupUuid = '';
   _pmScopeEmail = '';
+  _pmScopeName = '';
   closeMobileNav();
+  applyFrontendBuildLabels();
 }
 
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
@@ -4611,8 +4660,22 @@ function setPmOtpStep(step, identifier) {
   }
 }
 
+function resolveProxyBaseUrl() {
+  var base = '';
+  try { base = String(API_PROXY || '').trim(); } catch (e0) { base = ''; }
+  if (base) return base;
+  try {
+    var saved = localStorage.getItem('hm_proxy_url') || '';
+    if (saved) {
+      base = typeof sanitizeProxy === 'function' ? sanitizeProxy(saved) : String(saved).trim();
+      if (base) { API_PROXY = base; return base; }
+    }
+  } catch (e1) { /* */ }
+  return '';
+}
+
 async function setupTrustedDevice(setupPin, userName) {
-  if (!API_PROXY) throw new Error('No proxy configured');
+  if (!resolveProxyBaseUrl()) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_setup';
   var payload = {
@@ -4654,7 +4717,7 @@ function normalizeOtpIdentifier(raw) {
 }
 
 async function requestDeviceOtp(identifier, userName) {
-  if (!API_PROXY) throw new Error('No proxy configured');
+  if (!resolveProxyBaseUrl()) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_request';
   var email = normalizeOtpEmail(identifier);
@@ -4679,7 +4742,7 @@ async function requestDeviceOtp(identifier, userName) {
 }
 
 async function verifyDeviceOtp(identifier, code, userName) {
-  if (!API_PROXY) throw new Error('No proxy configured');
+  if (!resolveProxyBaseUrl()) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_verify';
   var email = normalizeOtpEmail(identifier);
@@ -14550,6 +14613,7 @@ async function sectionRefresh(section, btn) {
 async function initApp() {
   if (appInitialized) return;
   appInitialized = true;
+  applyVersionBadge('');
 
   // ================================================================
   // VENDOR-ONLY MODE: streamlined init — only load vendor data
@@ -14681,14 +14745,10 @@ async function initApp() {
     var schemaHealth = applyProxySchemaHealth(pingData);
     if (pingData && pingData.brand) applyBrandConfig(pingData.brand);
 
-    // Cache server version and detect version mismatch (force refresh if needed)
+    // Detect version mismatch — enforceServerVersionGuard handles badge + forced reload
     if (pingData && pingData.version) {
-      SERVER_VERSION = String(pingData.version);
-      localStorage.setItem('hm_server_version', SERVER_VERSION);
-      if (SERVER_VERSION !== APP_VERSION && compareVersions(SERVER_VERSION, APP_VERSION) > 0) {
-        localStorage.setItem('hm_version_mismatch', '1');
-        setTimeout(function() { location.reload(); }, 2000);
-      }
+      localStorage.setItem('hm_server_version', String(pingData.version));
+      if (enforceServerVersionGuard(pingData)) return;
     }
 
     // Detect proxy version when the proxy includes a version field
@@ -16143,6 +16203,14 @@ function renderDispatchGrades(techs) {
   tbody.innerHTML=html;
 }
 
+function isMonitoredWorkOrder(woId) {
+  var id = String(woId || '').trim();
+  if (!id) return false;
+  return (DISPATCH.monitored || []).some(function(m) {
+    return String((m && m.wo_id) || '').trim() === id;
+  });
+}
+
 function renderDispatchQueue(queue) {
   var tbody=document.getElementById('queueTableBody');
   if (!tbody) return;
@@ -16176,7 +16244,7 @@ function renderDispatchQueue(queue) {
     var branchLabel = rowBranch === 'unknown' ? 'Unknown' : (rowBranch === 'phoenix' ? 'Phoenix' : 'Tucson');
     var firstSeen=r.first_seen_at?timeAgo(r.first_seen_at):'—';
     var lastAct=r.last_reassigned_at?timeAgo(r.last_reassigned_at):(r.warning_sent_at?timeAgo(r.warning_sent_at):'—');
-    var isMonitored = (DISPATCH.monitored||[]).some(function(m){return String(m.wo_id)===String(r.wo_id);});
+    var isMonitored = isMonitoredWorkOrder(r.wo_id);
     var exemptBtn=!r.auto_exempt
       ?'<button class="btn-dispatch-secondary btn-xs-dispatch" onclick="DispatchQueue.markExempt(\''+woId+'\',\''+woNum+'\')">🔕 Exempt</button>'
       :'<button class="btn-dispatch-danger btn-xs-dispatch" onclick="DispatchQueue.clearExempt(\''+woId+'\')">🔓 Clear</button>';

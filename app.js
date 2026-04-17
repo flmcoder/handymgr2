@@ -1527,11 +1527,9 @@ function enforceServerVersionGuard(pingData) {
     applyVersionBadge('');
     return false;
   }
-
   SERVER_VERSION = serverVersion;
   applyVersionBadge(serverVersion);
   if (serverVersion === APP_VERSION) return false;
-
   var seenKey = 'hm_force_refresh_seen_' + serverVersion;
   try {
     if (sessionStorage.getItem(seenKey) !== '1') {
@@ -1545,12 +1543,16 @@ function enforceServerVersionGuard(pingData) {
     window.location.reload();
     return true;
   }
-
   setApiStatus('error', 'Update required \u2014 refresh the app');
   showToast('New build detected (' + serverVersion + '). Please hard refresh.', {
     kind: 'warning', iconClass: 'fa-triangle-exclamation', duration: 7000,
   });
   return true;
+}
+
+function applyFrontendBuildLabels() {
+  var t = document.getElementById('buildBadgeTag');
+  if (t) t.textContent = APP_VERSION;
 }
 
 /* =================================================================
