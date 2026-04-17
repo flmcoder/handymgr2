@@ -139,6 +139,20 @@ body {
   justify-content: center;
   padding: max(env(safe-area-inset-top), clamp(14px, 4vw, 28px)) max(env(safe-area-inset-right), clamp(12px, 3vw, 24px)) max(env(safe-area-inset-bottom), clamp(14px, 4vw, 28px)) max(env(safe-area-inset-left), clamp(12px, 3vw, 24px));
   background: linear-gradient(155deg, var(--vault-grad-start) 0%, var(--vault-grad-mid) 55%, var(--vault-grad-end) 100%);
+  position: relative;
+  isolation: isolate;
+}
+
+#vaultScreen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 82% 18%, rgba(3, 105, 161, 0.22), transparent 0 26%),
+    radial-gradient(circle at 72% 28%, rgba(186, 230, 253, 0.18), transparent 0 34%),
+    linear-gradient(180deg, rgba(2, 6, 23, 0.08), rgba(2, 6, 23, 0.18));
 }
 
 .vault-box {
@@ -155,6 +169,7 @@ body {
   padding: clamp(18px, 3vw, 34px);
   color: var(--vault-text);
   position: relative;
+  z-index: 2;
 }
 
 @media (max-width: 640px) {
