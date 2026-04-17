@@ -7518,7 +7518,8 @@ function resolveWebhookResourceName(resourceType, resourceId) {
     var grp = PROPERTY_GROUPS.find(function(g) { return String(g.id) === rid; });
     if (grp) return grp.name || '';
   }
-  return rid.length > 12 ? rid.slice(0, 8) + '\u2026' : rid;
+  // No local match and not yet resolved — caller should queue enrichment.
+  return '\u2014\u00a0Unresolved';
 }
 
 function getWebhookReadableContext(meta, e) {
@@ -17243,7 +17244,10 @@ function decodeWebhookEventV9(evt) {
   if(handlers){try{view=(handlers[action]||handlers['updated']||null);if(view)view=view(meta.payload||{});}catch(e){view=null;}}
   if(!view){
     var fallbackTitle=typeof decodeWebhookTitle==='function'?decodeWebhookTitle(evt,meta):'Webhook Event';
-    view={title:fallbackTitle||'Webhook Event',desc:meta.resourceName||evt.resource_name||'',severity:'info',icon:'fa-plug',color:'var(--purple)'};
+    var fallbackDesc=meta.resourceName||evt.resource_name||'';
+    // If resource is identified but not yet resolved, mark pending so enrichment pass can update it.
+    if(!fallbackDesc&&meta.resourceId&&meta.resourceType)fallbackDesc='\u29d7 Resolving\u2026';
+    view={title:fallbackTitle||'Webhook Event',desc:fallbackDesc,severity:'info',icon:'fa-plug',color:'var(--purple)'};
   }
   var eventKey=rType+'.'+action;
   return {
@@ -17323,6 +17327,35 @@ function decodeWebhookEventV9(evt) {
       _renderFeed();
       var st=_getEl('live-feed-status');
       if(st)st.innerHTML='<span class="feed-pulse"></span> Live · '+new Date().toLocaleTimeString();
+
+      // Progressive enrichment: resolve sparse-payload events asynchronously.
+      // Cap at 10 per poll cycle to stay well under AppFolio rate limits.
+      (async function _enrichLiveEvents(newEvts){
+        var PENDING='\u29d7 Resolving\u2026';
+        var toEnrich=newEvts.filter(function(v){
+          if(!v.resource_id||!v.resource_type)return false;
+          var k=webhookResolveKey(v.resource_type,v.resource_id);
+          return k&&!WEBHOOK_RESOURCE_CACHE[k]&&!WEBHOOK_RESOURCE_INFLIGHT[k];
+        });
+        if(!toEnrich.length)return;
+        var changed=false;
+        for(var i=0;i<Math.min(10,toEnrich.length);i++){
+          var item=toEnrich[i];
+          var got=await resolveWebhookResource(item.resource_type,item.resource_id);
+          if(got&&got.summary){
+            var resolvedName=(got.summary.title||'')+(got.summary.reference&&got.summary.title?'':got.summary.reference?'#'+got.summary.reference:'');
+            if(resolvedName){
+              _events.forEach(function(ev){
+                if(ev.resource_id===item.resource_id&&ev.resource_type===item.resource_type){
+                  if(!ev.desc||ev.desc===PENDING){ev.desc=resolvedName;changed=true;}
+                }
+              });
+            }
+          }
+          await sleep(140+Math.floor(Math.random()*40));
+        }
+        if(changed)_renderFeed();
+      })(decoded);
     }catch(e){
       var st2=_getEl('live-feed-status');
       if(st2)st2.innerHTML='<span class="feed-pulse"></span> Reconnecting…';
@@ -17357,12 +17390,24 @@ function decodeWebhookEventV9(evt) {
   // Public API
   window.LiveEngineV9={
     resolve:function(rType,rId){
-      v9Toast('Resolving…',rType+' / '+String(rId).substring(0,14),'info',2500);
+      v9Toast('Resolving\u2026',rType+' / '+String(rId).substring(0,14),'info',2500);
       proxyAction('webhook_resolve',{resource_type:rType,resource_id:rId}).then(function(data){
         if(data.ok&&data.record){
           var s=data.summary||{};
+          var resolvedName=(s.title||'')+(s.reference?(' #'+s.reference):'');
+          // Update matching events in feed with resolved name, then re-render.
+          var changed=false;
+          var PENDING='\u29d7 Resolving\u2026';
+          _events.forEach(function(ev){
+            if(ev.resource_id===rId&&ev.resource_type===rType){
+              if(!ev.desc||ev.desc===PENDING||ev.desc==='\u2014\u00a0Unresolved'){
+                ev.desc=resolvedName||s.title||rType;changed=true;
+              }
+            }
+          });
+          if(changed)_renderFeed();
           showItemDetail((s.title||rType)+(s.reference?' #'+s.reference:''),
-            [{section:'Resolved Record',icon:'fa-link'},{label:'Title',value:s.title||'—'},{label:'Status',value:s.status||'—'},{label:'UUID',value:rId||'—'}],null);
+            [{section:'Resolved Record',icon:'fa-link'},{label:'Title',value:s.title||'\u2014'},{label:'Status',value:s.status||'\u2014'},{label:'UUID',value:rId||'\u2014'}],null);
         }else{v9Toast('Could not resolve',data.error||'Record not found','warning');}
       }).catch(function(e){v9Toast('Resolve failed',e.message,'danger');});
     },
