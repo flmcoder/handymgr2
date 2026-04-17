@@ -18,6 +18,7 @@
 // ============================================================================
 
 import { cacheGet, cacheSet, rowsAsObjects, sqlite, upsertWorkOrderRows } from "../db.ts";
+import { propertyInScope, resolveGroupPropertyIds } from "../lib/groupUtils.ts";
 import { AF_DB, AF_REPORTS, dbHeaders } from "../config.ts";
 import { fetchDbApi, fetchReport } from "../lib/appfolio.ts";
 import { daysAgo, fetchWithTimeout, snapDays, today } from "../lib/fetchUtils.ts";
@@ -98,25 +99,35 @@ export async function handleWorkOrders(
   const cacheKey = `work_orders_${days}`;
 
   const cached = await cacheGet(cacheKey, "work_orders");
+  let results: any[];
+  let fromCache = false;
+  let cachedAt = "";
+
   if (cached) {
-    return {
-      ok: true,
-      results: cached.data,
-      count: cached.record_count,
-      cached_at: cached.cached_at,
-      from_cache: true,
-    };
+    results = cached.data;
+    fromCache = true;
+    cachedAt = String(cached.cached_at || "");
+  } else {
+    results = await fetchReport("work_order", {
+      work_order_statuses: ["0", "1", "2", "9", "3", "6", "8", "12"],
+      status_date_range_from: daysAgo(days),
+      status_date: "0",
+    });
+    await cacheSet(cacheKey, "work_orders", results, results.length);
+    upsertWorkOrderRows(results).catch(() => {});
   }
 
-  const results = await fetchReport("work_order", {
-    work_order_statuses: ["0", "1", "2", "9", "3", "6", "8", "12"],
-    status_date_range_from: daysAgo(days),
-    status_date: "0",
-  });
+  // Server-side PM scope enforcement: filter to group's properties if scoped.
+  const allowedIds = await resolveGroupPropertyIds(params);
+  if (allowedIds) {
+    results = results.filter((r: any) =>
+      propertyInScope(String(r.property_id || r.PropertyId || ""), allowedIds)
+    );
+  }
 
-  await cacheSet(cacheKey, "work_orders", results, results.length);
-  upsertWorkOrderRows(results).catch(() => {});
-  return { ok: true, results, count: results.length, from_cache: false };
+  const resp: Record<string, any> = { ok: true, results, count: results.length, from_cache: fromCache };
+  if (cachedAt) resp.cached_at = cachedAt;
+  return resp;
 }
 
 export async function handleCompletedWorkOrdersHistory(
@@ -146,14 +157,22 @@ export async function handleCompletedWorkOrdersHistory(
     };
   }
 
-  const results = await fetchReport("work_order", {
-    work_order_statuses: ["4", "5", "7"],
+  let results = await fetchReport("work_order", {
     status_date_range_from: effectiveFrom,
     status_date_range_to: effectiveTo,
     status_date: "0",
   });
 
   await cacheSet(cacheKey, "work_orders_history", results, results.length);
+
+  // Server-side PM scope enforcement.
+  const allowedIds = await resolveGroupPropertyIds(params);
+  if (allowedIds) {
+    results = results.filter((r: any) =>
+      propertyInScope(String(r.property_id || r.PropertyId || ""), allowedIds)
+    );
+  }
+
   return { ok: true, results, count: results.length, from_cache: false };
 }
 

@@ -477,6 +477,53 @@ export default async function handler(req: Request): Promise<Response> {
       }
     }
 
+    // ── PM scope enforcement — inject property group constraint into params ───
+    // When a session has a non-full role and a bound property_group_uuid, all
+    // scoped data-read actions are constrained to that group.  Admin sessions
+    // (role === 'full') and unauthenticated requests pass through unfiltered.
+    // The group_uuid is injected into params here so every handler that already
+    // accepts group_uuid/property_group_id automatically enforces it.
+    const sessionScopeUuid = (
+      frontendSession &&
+      frontendSession.property_group_uuid &&
+      frontendSession.role !== "full"
+    ) ? String(frontendSession.property_group_uuid) : null;
+
+    const SCOPED_DATA_ACTIONS = new Set([
+      "work_orders",
+      "work_orders_completed_history",
+      "completed_work_orders_history",
+      "bills",
+      "bills_stats",
+      "bills_history",
+      "bill_detail",
+      "bills_sync",
+      "bills_list",
+      "bills_by_vendor",
+      "bills_by_property",
+      "bills_by_wo",
+      "bills_by_wo_number",
+      "bills_by_invoice",
+      "bills_due_range",
+      "turns",
+      "unit_turns",
+      "unit_turns_history",
+      "closed_turns",
+      "upcoming_moveouts",
+      "turn_work_orders",
+      "labor",
+      "recent_tasks",
+      "wo_comparison_report",
+      "inspections",
+      "property_groups",
+    ]);
+
+    if (sessionScopeUuid && SCOPED_DATA_ACTIONS.has(action)) {
+      // Always override — scoped PMs cannot bypass their group boundary.
+      params.group_uuid = sessionScopeUuid;
+      params.property_group_id = sessionScopeUuid;
+    }
+
     // Optional path-style endpoint for frontend polling.
     if (
       (req.method === "GET" || req.method === "HEAD") &&
