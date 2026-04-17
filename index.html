@@ -1597,6 +1597,34 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 .aging-badge.moderate { background: var(--warning-dim); color: var(--warning); }
 .aging-badge.old { background: var(--danger-dim); color: var(--danger); }
 
+.source-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.source-badge.live {
+  background: var(--accent);
+  color: #fff;
+}
+
+.source-badge.cached {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.source-badge.legacy {
+  background: var(--warning);
+  color: #fff;
+}
+
 /* Vendor compliance warning on kanban */
 .wo-vendor-warn { font-size: 9px; color: var(--danger); margin-top: 2px; }
 .wo-vendor-warn i { margin-right: 2px; }
@@ -2655,8 +2683,37 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   </div>
   <div class="table-wrapper">
     <div class="table-header">
-      <div class="table-title"><i class="fas fa-list-alt" style="color:var(--accent)"></i> Bills</div>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div class="table-title"><i class="fas fa-list-alt" style="color:var(--accent)"></i> Bills <span id="billing-source-badge" class="source-badge legacy">⚠ Legacy</span></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="billing-filter-type" class="filter-select" style="font-size:12px;padding:4px 8px">
+          <option value="bills_list">Group Bills</option>
+          <option value="bills_by_vendor">By Vendor</option>
+          <option value="bills_by_property">By Property</option>
+          <option value="bills_by_wo">By Work Order</option>
+          <option value="bills_by_wo_number">By WO Number</option>
+          <option value="bills_by_invoice">By Invoice</option>
+          <option value="bills_due_range">Due Date Range</option>
+        </select>
+        <span id="billing-input-wrapper" style="display:flex;align-items:center;gap:6px">
+          <input type="text" id="billing-filter-input" class="search-box" placeholder="Vendor/Property/WO/Invoice…" style="min-width:180px">
+        </span>
+        <span id="billing-date-range" style="display:none;align-items:center;gap:6px;flex-wrap:wrap">
+          <label style="font-size:11px;color:var(--text-muted)">Due</label>
+          <input type="date" id="billing-due-from" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
+          <span style="font-size:11px;color:var(--text-muted)">to</span>
+          <input type="date" id="billing-due-to" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
+        </span>
+        <span id="billing-status-wrapper" style="display:none;align-items:center;gap:6px">
+          <select id="billing-status-filter" class="filter-select" style="font-size:12px;padding:4px 8px">
+            <option value="">Any Status</option>
+            <option value="pending_approval">Pending Approval</option>
+            <option value="approved">Approved</option>
+            <option value="paid">Paid</option>
+            <option value="void">Void</option>
+          </select>
+        </span>
+        <button class="action-btn" id="billing-filter-apply" style="padding:4px 8px"><i class="fas fa-filter"></i> Apply</button>
+        <button class="action-btn" id="billing-filter-reset" style="padding:4px 8px"><i class="fas fa-undo"></i> Reset</button>
         <input type="text" id="billSearch" class="search-box" placeholder="Search vendor, property…" style="min-width:180px">
       </div>
     </div>
@@ -5162,6 +5219,8 @@ var _turnAutoCloseSyncInFlight = false;
 var _lastTurnAutoCloseHash = '';
 var UNIT_TURN_HISTORY = [];
 var BILLS = []; // from DB API — AP bills for WO close-assist
+var _billsFetchInFlight = false;
+var _lastBillSource = 'legacy';
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
 var _schemaHealthWarned = false;
@@ -5263,6 +5322,25 @@ function resolveGroupNameFromUuid(groupUuid) {
     return String((x && x.id) || '').trim() === gid;
   });
   return g && g.name ? String(g.name) : '';
+}
+
+function resolveGroupUuidFromName(groupName) {
+  var target = String(groupName || '').trim().toLowerCase();
+  if (!target) return '';
+
+  // If caller already passed a UUID, trust it directly.
+  if (isUuidString(target)) return target;
+
+  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
+    return String(forcedPropertyGroupUuid).trim();
+  }
+
+  var g = (PROPERTY_GROUPS || []).find(function(x) {
+    var gName = String((x && x.name) || '').trim().toLowerCase();
+    var gId = String((x && x.id) || '').trim().toLowerCase();
+    return gName === target || gId === target;
+  });
+  return g && g.id ? String(g.id).trim() : '';
 }
 
 function enforceScopedPropertyGroup() {
@@ -6137,22 +6215,145 @@ async function fetchCompletedWorkOrdersHistory(days) {
 // Bills: Proxy actions (bills, bills_stats, bills_history, bill_detail)
 // Used by WO close-assist and Billing/AP tab.
 async function fetchBills(days, opts) {
+  if (_billsFetchInFlight) {
+    console.log('fetchBills skip: previous request still in flight');
+    return null;
+  }
+  _billsFetchInFlight = true;
   try {
     opts = opts || {};
     var lookback = parseInt(days || 365, 10) || 365;
     var params = { days: String(lookback), max: String(opts.max || 3000) };
     if (opts.forceRefresh) params.force_refresh = 'true';
+    var routeAction = String(opts.filterType || '').trim();
+    var routeStatusFilter = String(opts.routeStatusFilter || opts.statusFilter || '').trim().toLowerCase();
+    var filterValue = String(opts.filterValue || '').trim();
+    var dueFrom = String(opts.dueFrom || '').trim();
+    var dueTo = String(opts.dueTo || '').trim();
+    var routeLimit = Math.max(1, Math.min(200, parseInt(opts.limit || opts.max || 50, 10) || 50));
+    var routeOffset = Math.max(0, parseInt(opts.offset || 0, 10) || 0);
+
+    var allowedRouteActions = {
+      bills_list: true,
+      bills_by_vendor: true,
+      bills_by_property: true,
+      bills_by_wo: true,
+      bills_by_wo_number: true,
+      bills_by_invoice: true,
+      bills_due_range: true
+    };
+    if (!allowedRouteActions[routeAction]) routeAction = '';
+
+    var usedRouteLayer = false;
+    var routeRows = [];
+    var grpName = '';
+    var groupUuid = '';
+
     if (opts.scoped !== false) {
-      var grpName = getEffectiveGroupId();
+      grpName = getEffectiveGroupId();
       if (grpName) params.group_name = grpName;
       if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
+
+      groupUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
     }
-    var data = await proxyAction('bills', params);
-    var results = data.results || data.data || [];
+
+    if (routeAction) {
+      try {
+        // bills_by_wo accepts only UUID; route non-UUID values to wo_number action.
+        if (routeAction === 'bills_by_wo' && filterValue && !isUuidString(filterValue)) {
+          routeAction = 'bills_by_wo_number';
+        }
+
+        var routeParams = {
+          limit: String(routeLimit),
+          offset: String(routeOffset)
+        };
+
+        if (routeAction === 'bills_list') {
+          if (!groupUuid) throw new Error('Missing group UUID for bills_list');
+          routeParams.group_id = groupUuid;
+        } else if (routeAction === 'bills_by_vendor') {
+          routeParams.vendor_id = filterValue;
+          if (groupUuid) routeParams.group_id = groupUuid;
+        } else if (routeAction === 'bills_by_property') {
+          routeParams.property_id = filterValue;
+          if (groupUuid) routeParams.group_id = groupUuid;
+        } else if (routeAction === 'bills_by_wo') {
+          routeParams.wo_id = filterValue;
+        } else if (routeAction === 'bills_by_wo_number') {
+          routeParams.wo_number = filterValue;
+        } else if (routeAction === 'bills_by_invoice') {
+          routeParams.invoice_number = filterValue;
+        } else if (routeAction === 'bills_due_range') {
+          routeParams.due_from = dueFrom;
+          routeParams.due_to = dueTo;
+          if (groupUuid) routeParams.group_id = groupUuid;
+        }
+
+        Object.keys(routeParams).forEach(function(k) {
+          if (routeParams[k] === '' || routeParams[k] == null) delete routeParams[k];
+        });
+
+        var routeDataByFilter = await proxyAction(routeAction, routeParams);
+        routeRows = routeDataByFilter && (routeDataByFilter.data || routeDataByFilter.results)
+          ? (routeDataByFilter.data || routeDataByFilter.results)
+          : [];
+        usedRouteLayer = true;
+      } catch (routeFilterErr) {
+        console.log('fetchBills explicit route fallback: ' + (routeFilterErr.message || routeFilterErr));
+      }
+    }
+
+    if (!usedRouteLayer && opts.scoped !== false && groupUuid) {
+      // Prefer the new SQL route layer when we can provide a concrete group UUID.
+      try {
+        var routeData = await proxyAction('bills_list', {
+          group_id: groupUuid,
+          limit: String(Math.max(50, Math.min(3000, parseInt(opts.max || 3000, 10) || 3000))),
+          offset: String(opts.offset || 0)
+        });
+        routeRows = routeData && (routeData.data || routeData.results)
+          ? (routeData.data || routeData.results)
+          : [];
+        usedRouteLayer = true;
+      } catch (routeErrOuter) {
+        console.log('fetchBills route-layer fallback: ' + (routeErrOuter.message || routeErrOuter));
+      }
+    }
+
+    var results = [];
+    if (usedRouteLayer) {
+      results = Array.isArray(routeRows) ? routeRows : [];
+      _lastBillSource = 'cached';
+    } else {
+      var data = await proxyAction('bills', params);
+      results = data.results || data.data || [];
+      if (typeof data.from_cache === 'boolean') {
+        _lastBillSource = data.from_cache ? 'cached' : 'live';
+      } else {
+        _lastBillSource = 'legacy';
+      }
+    }
+
     BILLS = results.map(function(b) {
       var raw = b.raw || b;
       var status = String(b.status || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase().replace(/\s+/g, '_');
       var amountNum = parseFloat(String(b.amount != null ? b.amount : (b.total_amount != null ? b.total_amount : (raw.TotalAmount || raw.total_amount || raw.Amount || raw.amount || '0'))).replace(/[^0-9.\-]/g, '')) || 0;
+      var lineItems = Array.isArray(b.line_items)
+        ? b.line_items
+        : (Array.isArray(raw.LineItems)
+          ? raw.LineItems
+          : (Array.isArray(raw.line_items)
+            ? raw.line_items
+            : (function() {
+              if (!b.line_items_json && !raw.line_items_json) return [];
+              try {
+                var parsed = JSON.parse(b.line_items_json || raw.line_items_json || '[]');
+                return Array.isArray(parsed) ? parsed : [];
+              } catch (e) {
+                return [];
+              }
+            })()));
       return {
         id: b.id || b.Id || raw.Id || raw.id || raw.BillId || '',
         billNumber: b.bill_number || b.reference || raw.Reference || raw.reference || b.id || raw.Id || '',
@@ -6165,19 +6366,29 @@ async function fetchBills(days, opts) {
         propertyGroup: b.property_group || raw.property_group || raw.PropertyGroup || '',
         workOrderId: b.work_order_id || raw.WorkOrderId || raw.work_order_id || '',
         amount: amountNum,
-          date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
+          date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || b.due_date || raw.DueDate || raw.due_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
           status: status,
           statusLabel: b.status_label || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '—',
-          lineItems: Array.isArray(b.line_items) ? b.line_items : (Array.isArray(raw.LineItems) ? raw.LineItems : (Array.isArray(raw.line_items) ? raw.line_items : [])),
+          lineItems: lineItems,
           raw: raw
       };
     });
+
+    if (routeStatusFilter) {
+      BILLS = BILLS.filter(function(b) {
+        return String(b.status || '').toLowerCase() === routeStatusFilter;
+      });
+    }
+
     _billsLoadedAt = Date.now();
     return true;
   } catch (err) {
     console.log('fetchBills error: ' + (err.message || err));
+    _lastBillSource = 'legacy';
     BILLS = [];
     return false;
+  } finally {
+    _billsFetchInFlight = false;
   }
 }
 
@@ -8824,6 +9035,16 @@ function renderBillsSection() {
     badge.style.display = pendingBills.length > 0 ? '' : 'none';
   }
 
+  var sourceBadge = document.getElementById('billing-source-badge');
+  if (sourceBadge) {
+    var src = String(_lastBillSource || 'legacy').toLowerCase();
+    if (src !== 'live' && src !== 'cached' && src !== 'legacy') src = 'legacy';
+    sourceBadge.className = 'source-badge ' + src;
+    sourceBadge.textContent = src === 'live'
+      ? '● Live'
+      : (src === 'cached' ? '○ Cached' : '⚠ Legacy');
+  }
+
   if (filtered.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px">' +
       (BILLS.length === 0 ? 'No bills loaded — click Refresh to fetch from AppFolio' : 'No bills match current filter') + '</td></tr>';
@@ -8876,6 +9097,100 @@ function renderBillsSection() {
     footer.style.display = '';
     footer.textContent = 'Showing ' + (_billsPage * BILLS_PAGE_SIZE + 1) + '–' + Math.min((_billsPage + 1) * BILLS_PAGE_SIZE, filtered.length) + ' of ' + filtered.length + ' bills';
   }
+}
+
+function wireBillingFilters() {
+  var filterType = document.getElementById('billing-filter-type');
+  var filterInput = document.getElementById('billing-filter-input');
+  var applyBtn = document.getElementById('billing-filter-apply');
+  var resetBtn = document.getElementById('billing-filter-reset');
+  var dateRange = document.getElementById('billing-date-range');
+  var inputWrapper = document.getElementById('billing-input-wrapper');
+  var statusWrap = document.getElementById('billing-status-wrapper');
+
+  if (!filterType || !applyBtn) return;
+  if (applyBtn.dataset.wired === '1') return;
+  applyBtn.dataset.wired = '1';
+
+  var PLACEHOLDERS = {
+    bills_by_vendor: 'Vendor ID (UUID)…',
+    bills_by_property: 'Property ID (UUID)…',
+    bills_by_wo: 'Work Order UUID or Number…',
+    bills_by_wo_number: 'Work Order Number…',
+    bills_by_invoice: 'Invoice Number…'
+  };
+
+  function toggleControls() {
+    var v = String(filterType.value || '').trim();
+    var isDueRange = v === 'bills_due_range';
+    var isList = v === 'bills_list';
+
+    if (dateRange) dateRange.style.display = isDueRange ? 'flex' : 'none';
+    if (inputWrapper) inputWrapper.style.display = (isList || isDueRange) ? 'none' : 'flex';
+    if (statusWrap) statusWrap.style.display = isList ? 'flex' : 'none';
+
+    if (filterInput && PLACEHOLDERS[v]) filterInput.placeholder = PLACEHOLDERS[v];
+  }
+
+  async function applyBillingFilter() {
+    var type = String(filterType.value || 'bills_list').trim();
+    var value = filterInput ? String(filterInput.value || '').trim() : '';
+    var status = String((document.getElementById('billing-status-filter') || {}).value || '').trim();
+    var from = String((document.getElementById('billing-due-from') || {}).value || '').trim();
+    var to = String((document.getElementById('billing-due-to') || {}).value || '').trim();
+
+    applyBtn.disabled = true;
+    var originalText = applyBtn.innerHTML;
+    applyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying…';
+    try {
+      var ok = await fetchBills(365, {
+        scoped: true,
+        filterType: type,
+        filterValue: value,
+        dueFrom: from,
+        dueTo: to,
+        routeStatusFilter: status,
+        limit: 50,
+        offset: 0
+      });
+      _billsPage = 0;
+      renderBillsSection();
+      if (!ok && ok !== null) showToast('Billing filter request failed; showing cached data', { kind: 'warning' });
+    } catch (err) {
+      showToast('Billing filter failed: ' + (err.message || err), { kind: 'warning' });
+    } finally {
+      applyBtn.disabled = false;
+      applyBtn.innerHTML = originalText;
+    }
+  }
+
+  function resetBillingFilter() {
+    if (filterInput) filterInput.value = '';
+    var dueFromEl = document.getElementById('billing-due-from');
+    var dueToEl = document.getElementById('billing-due-to');
+    var statusEl = document.getElementById('billing-status-filter');
+    if (dueFromEl) dueFromEl.value = '';
+    if (dueToEl) dueToEl.value = '';
+    if (statusEl) statusEl.value = '';
+    filterType.value = 'bills_list';
+    toggleControls();
+    applyBillingFilter();
+  }
+
+  filterType.addEventListener('change', toggleControls);
+  applyBtn.addEventListener('click', applyBillingFilter);
+  if (resetBtn) resetBtn.addEventListener('click', resetBillingFilter);
+  if (filterInput) {
+    filterInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') applyBillingFilter();
+    });
+  }
+
+  document.addEventListener('groupFilterChanged', function() {
+    if (String(filterType.value || '') === 'bills_list') applyBillingFilter();
+  });
+
+  toggleControls();
 }
 
 function buildBillLineItemsHtml(lineItems) {
@@ -9104,10 +9419,22 @@ async function runBillHistorySearch() {
   var footer = document.getElementById('billHistFooter');
   if (!fromEl || !toEl || !body || !footer) return;
 
-  var dateFrom = String(fromEl.value || '').trim();
-  var dateTo = String(toEl.value || '').trim();
+  function normalizeYmd(value) {
+    var v = String(value || '').trim();
+    if (!v) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return '';
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  var dateFrom = normalizeYmd(fromEl.value);
+  var dateTo = normalizeYmd(toEl.value);
   if (!dateFrom || !dateTo) {
-    showToast('Select both From and To dates for history search');
+    showToast('Select valid From and To dates for history search');
     return;
   }
 
@@ -9115,27 +9442,57 @@ async function runBillHistorySearch() {
   footer.style.display = 'none';
 
   try {
-    var fromDt = new Date(dateFrom + 'T00:00:00');
-    var toDt = new Date(dateTo + 'T23:59:59');
-    var spanDays = 365;
-    if (!isNaN(fromDt.getTime()) && !isNaN(toDt.getTime())) {
-      spanDays = Math.max(30, Math.min(3650, Math.ceil((toDt - fromDt) / 86400000) + 30));
-    }
-    var params = {
-      date_from: dateFrom,
-      date_to: dateTo,
-      days: String(spanDays),
-      max: '8000',
-    };
+    var rows = [];
+    var usedDueRange = false;
     var grpName = getEffectiveGroupId();
-    if (grpName) params.group_name = grpName;
-    if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
+    var grpUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
 
-    var st = ($('#billStatusFilter') ? $('#billStatusFilter').value : '').trim();
-    if (st) params.status = st;
+    if (grpUuid) {
+      try {
+        var dueRangeData = await proxyAction('bills_due_range', {
+          group_id: String(grpUuid),
+          due_from: dateFrom,
+          due_to: dateTo,
+          limit: '500',
+          offset: '0'
+        });
+        rows = Array.isArray(dueRangeData.data)
+          ? dueRangeData.data
+          : (Array.isArray(dueRangeData.results) ? dueRangeData.results : []);
+        usedDueRange = true;
+        _lastBillSource = 'cached';
+      } catch (dueErr) {
+        console.log('runBillHistorySearch due_range fallback: ' + (dueErr.message || dueErr));
+      }
+    }
 
-    var data = await proxyAction('bills_history', params);
-    var rows = Array.isArray(data.results) ? data.results : [];
+    if (!usedDueRange) {
+      var fromDt = new Date(dateFrom + 'T00:00:00');
+      var toDt = new Date(dateTo + 'T23:59:59');
+      var spanDays = 365;
+      if (!isNaN(fromDt.getTime()) && !isNaN(toDt.getTime())) {
+        spanDays = Math.max(30, Math.min(3650, Math.ceil((toDt - fromDt) / 86400000) + 30));
+      }
+      var params = {
+        date_from: dateFrom,
+        date_to: dateTo,
+        days: String(spanDays),
+        max: '8000',
+      };
+      if (grpName) params.group_name = grpName;
+      if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
+
+      var st = ($('#billStatusFilter') ? $('#billStatusFilter').value : '').trim();
+      if (st) params.status = st;
+
+      var data = await proxyAction('bills_history', params);
+      rows = Array.isArray(data.results) ? data.results : [];
+      if (typeof data.from_cache === 'boolean') {
+        _lastBillSource = data.from_cache ? 'cached' : 'live';
+      } else {
+        _lastBillSource = 'legacy';
+      }
+    }
 
     if (!rows.length) {
       body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No historical bills found for selected criteria</td></tr>';
@@ -9144,26 +9501,26 @@ async function runBillHistorySearch() {
     }
 
     body.innerHTML = rows.slice(0, 500).map(function(r) {
-      var wo = String(r.work_order_id || '').trim();
-      var billId = String(r.id || '').trim();
-      var grpResolved = String(r.property_group || '').trim();
+      var wo = String(r.work_order_id || r.WorkOrderId || '').trim();
+      var billId = String(r.id || r.Id || '').trim();
+      var grpResolved = String(r.property_group || r.PropertyGroup || '').trim();
       if (!grpResolved) {
-        var nGroups = _nameToGroups[(String(r.property_name || '').trim().toLowerCase())] || [];
+        var nGroups = _nameToGroups[(String(r.property_name || r.PropertyName || '').trim().toLowerCase())] || [];
         grpResolved = nGroups[0] || '';
       }
-      var pmResolved = String(r.property_manager || '').trim();
+      var pmResolved = String(r.property_manager || r.PropertyManager || '').trim();
       if (!pmResolved && grpResolved) {
         pmResolved = getRoutingPmForGroup(grpResolved);
       }
       return '<tr>' +
-        '<td style="font-family:var(--font-mono);font-size:11px">' + (billId ? ('<button class="action-btn" data-billdetail="' + escapeHtml(billId) + '" style="padding:2px 8px">' + escapeHtml(String(r.bill_number || r.id || '—')) + '</button>') : escapeHtml(String(r.bill_number || r.id || '—'))) + '</td>' +
-        '<td>' + escapeHtml(String(r.vendor_name || r.vendor_id || '—')) + '</td>' +
-        '<td>' + escapeHtml(String(r.property_name || r.property_id || '—')) + '</td>' +
+        '<td style="font-family:var(--font-mono);font-size:11px">' + (billId ? ('<button class="action-btn" data-billdetail="' + escapeHtml(billId) + '" style="padding:2px 8px">' + escapeHtml(String(r.bill_number || r.Reference || r.id || r.Id || '—')) + '</button>') : escapeHtml(String(r.bill_number || r.Reference || r.id || r.Id || '—'))) + '</td>' +
+        '<td>' + escapeHtml(String(r.vendor_name || r.VendorName || r.vendor_id || r.VendorId || '—')) + '</td>' +
+        '<td>' + escapeHtml(String(r.property_name || r.PropertyName || r.property_id || r.PropertyId || '—')) + '</td>' +
         '<td>' + escapeHtml(grpResolved || '—') + '</td>' +
         '<td>' + escapeHtml(pmResolved || '—') + '</td>' +
-        '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || 0) + '</td>' +
-        '<td>' + escapeHtml(r.invoice_date ? formatDate(r.invoice_date) : '—') + '</td>' +
-        '<td>' + escapeHtml(String(r.status_label || r.status || '—')) + '</td>' +
+        '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || r.TotalAmount || 0) + '</td>' +
+        '<td>' + escapeHtml((r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) ? formatDate(r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) : '—') + '</td>' +
+        '<td>' + escapeHtml(String(r.status_label || r.status || r.ApprovalStatus || '—')) + '</td>' +
         '<td>' + (wo ? ('<button class="action-btn" data-wojump="' + escapeHtml(wo) + '" style="padding:2px 8px">#' + escapeHtml(wo.slice(0, 8)) + '</button>') : '<span style="color:var(--text-muted)">—</span>') + '</td>' +
         '</tr>';
     }).join('');
@@ -13559,6 +13916,7 @@ function wireUpUI() {
   if (billStatusFilter) billStatusFilter.addEventListener('change', function() { _billsPage = 0; renderBillsSection(); });
   var billHistBtn = $('#btnBillHistSearch');
   if (billHistBtn) billHistBtn.addEventListener('click', runBillHistorySearch);
+  wireBillingFilters();
 
   // Theme toggle
   $('#themeToggle').addEventListener('click', function() { toggleTheme(); });
@@ -13618,6 +13976,12 @@ function wireUpUI() {
       }
     });
     updateGlobalGroupIndicator();
+    document.dispatchEvent(new CustomEvent('groupFilterChanged', {
+      detail: {
+        groupName: currentPropertyGroup || '',
+        forcedGroupUuid: forcedPropertyGroupUuid || ''
+      }
+    }));
   }
 
   function clearPropertyGroupFilters() {
