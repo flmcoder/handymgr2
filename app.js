@@ -2423,6 +2423,7 @@ async function fetchWorkOrders() {
 }
 
 async function fetchCompletedWorkOrdersHistory(days) {
+  // Clamp lookback: minimum 30 days (to ensure meaningful results), max ~10 years (API/DB limit)
   var lookback = parseInt(days || 365, 10) || 365;
   lookback = Math.max(30, Math.min(3650, lookback));
   var data = await proxyAction('work_orders_completed_history', { days: String(lookback) });
@@ -5126,6 +5127,8 @@ var completedWOHistoryRows = [];
 var completedWOHistoryLoading = false;
 var completedWOHistoryPage = 0;
 var completedWOHistoryPageSize = 20;
+var _historyVendorFilter = '';
+var _historyPropertyFilter = '';
 var _lastWOScopedFilterGroup = '__init__';
 
 // Kanban status columns and their display labels
@@ -5220,13 +5223,11 @@ function rebuildWOScopedFilters() {
 
 function getFilteredCompletedWOHistoryRows() {
   var search = $('#woSearch') ? $('#woSearch').value : '';
-  var histVendor = $('#woHistoryVendorFilter') ? $('#woHistoryVendorFilter').value : '';
-  var histProperty = $('#woHistoryPropertyFilter') ? $('#woHistoryPropertyFilter').value : '';
   return completedWOHistoryRows.filter(function(wo) {
     if (currentWOPriority && wo.priority !== currentWOPriority) return false;
     if (currentWOType && wo.type !== currentWOType) return false;
-    var vendorMatch = histVendor || currentWOVendor;
-    var propertyMatch = histProperty || currentWOProperty;
+    var vendorMatch = _historyVendorFilter || currentWOVendor;
+    var propertyMatch = _historyPropertyFilter || currentWOProperty;
     if (vendorMatch && String(wo.vendorName || '') !== vendorMatch) return false;
     if (propertyMatch && wo.propertyName !== propertyMatch) return false;
     if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return false;
@@ -5346,6 +5347,9 @@ function renderCompletedWOHistorySection() {
 
   var histVendorSel = $('#woHistoryVendorFilter');
   var histPropertySel = $('#woHistoryPropertyFilter');
+  // Restore persisted filter values after DOM rebuild
+  if (histVendorSel && _historyVendorFilter) histVendorSel.value = _historyVendorFilter;
+  if (histPropertySel && _historyPropertyFilter) histPropertySel.value = _historyPropertyFilter;
 
   var scrollEl = $('#woHistoryScroll');
   if (scrollEl) {
@@ -5364,12 +5368,14 @@ function renderCompletedWOHistorySection() {
 
   if (histVendorSel) {
     histVendorSel.addEventListener('change', function() {
+      _historyVendorFilter = this.value;
       completedWOHistoryPage = 0;
       renderCompletedWOHistorySection();
     });
   }
   if (histPropertySel) {
     histPropertySel.addEventListener('change', function() {
+      _historyPropertyFilter = this.value;
       completedWOHistoryPage = 0;
       renderCompletedWOHistorySection();
     });

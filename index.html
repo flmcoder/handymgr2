@@ -10096,6 +10096,8 @@ var completedWOHistoryRows = [];
 var completedWOHistoryLoading = false;
 var completedWOHistoryPage = 0;
 var completedWOHistoryPageSize = 20;
+var _historyVendorFilter = '';
+var _historyPropertyFilter = '';
 var _lastWOScopedFilterGroup = '__init__';
 
 // Kanban status columns and their display labels
@@ -10197,14 +10199,12 @@ function rebuildWOScopedFilters() {
 
 function getFilteredCompletedWOHistoryRows() {
   var search = $('#woSearch') ? $('#woSearch').value : '';
-  var histVendor = $('#woHistoryVendorFilter') ? $('#woHistoryVendorFilter').value : '';
-  var histProperty = $('#woHistoryPropertyFilter') ? $('#woHistoryPropertyFilter').value : '';
   return completedWOHistoryRows.filter(function(wo) {
     if (currentWOPriority && wo.priority !== currentWOPriority) return false;
     if (currentWOType && wo.type !== currentWOType) return false;
     // Use dedicated history filters if set, otherwise fall back to global WO filters
-    var vendorMatch = histVendor || currentWOVendor;
-    var propertyMatch = histProperty || currentWOProperty;
+    var vendorMatch = _historyVendorFilter || currentWOVendor;
+    var propertyMatch = _historyPropertyFilter || currentWOProperty;
     if (vendorMatch && String(wo.vendorName || '') !== vendorMatch) return false;
     if (propertyMatch && wo.propertyName !== propertyMatch) return false;
     if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return false;
@@ -10327,17 +10327,11 @@ function renderCompletedWOHistorySection() {
     '</div>' +
   '</div>';
 
-  // Restore filter values
+  // Restore filter values from module-level state
   var histVendorSel = $('#woHistoryVendorFilter');
   var histPropertySel = $('#woHistoryPropertyFilter');
-  if (histVendorSel) {
-    var savedHistVendor = histVendorSel.getAttribute('data-prev') || '';
-    if (savedHistVendor && histVendors[savedHistVendor]) histVendorSel.value = savedHistVendor;
-  }
-  if (histPropertySel) {
-    var savedHistProperty = histPropertySel.getAttribute('data-prev') || '';
-    if (savedHistProperty && histProperties[savedHistProperty]) histPropertySel.value = savedHistProperty;
-  }
+  if (histVendorSel && _historyVendorFilter) histVendorSel.value = _historyVendorFilter;
+  if (histPropertySel && _historyPropertyFilter) histPropertySel.value = _historyPropertyFilter;
 
   // Event: drill-down row click
   var scrollEl = $('#woHistoryScroll');
@@ -10358,14 +10352,14 @@ function renderCompletedWOHistorySection() {
   // Event: vendor/property history filters
   if (histVendorSel) {
     histVendorSel.addEventListener('change', function() {
-      this.setAttribute('data-prev', this.value);
+      _historyVendorFilter = this.value;
       completedWOHistoryPage = 0;
       renderCompletedWOHistorySection();
     });
   }
   if (histPropertySel) {
     histPropertySel.addEventListener('change', function() {
-      this.setAttribute('data-prev', this.value);
+      _historyPropertyFilter = this.value;
       completedWOHistoryPage = 0;
       renderCompletedWOHistorySection();
     });
