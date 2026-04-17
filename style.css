@@ -607,7 +607,6 @@ body.role-vendors .cache-badge { display: none; }
   .global-filter-bar { padding: 6px 12px; gap: 6px; flex-wrap: wrap; }
   .global-filter-bar select { min-width: 120px; }
 }
-}
 .mobile-nav-toggle {
   display: none;
   align-items: center; justify-content: center;
@@ -1484,7 +1483,6 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   .pipe-card-elapsed { font-size: 11px; }
   .pipe-card-cost { font-size: 10px; }
   .pipe-section-head { padding: 5px 10px; font-size: 9px; }
-}
   .turn-dash-summary { font-size: 10px; }
 }
 
@@ -1710,4 +1708,32 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 @media (max-width: 900px){
   #sec-turnboard .pipe-card{box-shadow:none}
   #sec-turnboard .pipe-card:hover{transform:none}
+}
+
+.source-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.source-badge.live {
+  background: var(--accent);
+  color: #fff;
+}
+
+.source-badge.cached {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.source-badge.legacy {
+  background: var(--warning);
+  color: #fff;
 }
