@@ -139,6 +139,20 @@ body {
   justify-content: center;
   padding: max(env(safe-area-inset-top), clamp(14px, 4vw, 28px)) max(env(safe-area-inset-right), clamp(12px, 3vw, 24px)) max(env(safe-area-inset-bottom), clamp(14px, 4vw, 28px)) max(env(safe-area-inset-left), clamp(12px, 3vw, 24px));
   background: linear-gradient(155deg, var(--vault-grad-start) 0%, var(--vault-grad-mid) 55%, var(--vault-grad-end) 100%);
+  position: relative;
+  isolation: isolate;
+}
+
+#vaultScreen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 82% 18%, rgba(3, 105, 161, 0.22), transparent 0 26%),
+    radial-gradient(circle at 72% 28%, rgba(186, 230, 253, 0.18), transparent 0 34%),
+    linear-gradient(180deg, rgba(2, 6, 23, 0.08), rgba(2, 6, 23, 0.18));
 }
 
 .vault-box {
@@ -154,6 +168,8 @@ body {
   box-shadow: var(--shadow);
   padding: clamp(18px, 3vw, 34px);
   color: var(--vault-text);
+  position: relative;
+  z-index: 2;
 }
 
 @media (max-width: 640px) {
@@ -278,6 +294,16 @@ body {
   border-radius: var(--radius);
 }
 .vault-error.show { display: block; animation: fadeIn 0.2s ease; }
+.vault-error.success {
+  color: #86efac;
+  background: rgba(20, 83, 45, 0.52);
+  border: 1px solid rgba(74, 222, 128, 0.28);
+}
+.vault-error.info {
+  color: #bfdbfe;
+  background: rgba(30, 64, 175, 0.26);
+  border: 1px solid rgba(96, 165, 250, 0.24);
+}
 .vault-footer {
   margin-top: 20px;
   text-align: center;
@@ -301,6 +327,49 @@ body {
   padding: 1px 5px;
   border-radius: 3px;
 }
+.vault-panel.hidden { display: none; }
+.vault-config-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--vault-input-border);
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--vault-text-muted);
+  cursor: pointer;
+  transition: var(--transition);
+  z-index: 3;
+}
+.vault-config-btn:hover {
+  color: var(--vault-accent);
+  border-color: var(--vault-accent-strong);
+  background: rgba(15, 23, 42, 0.9);
+}
+.vault-config-btn.open {
+  color: var(--vault-accent);
+  border-color: var(--vault-accent-strong);
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.18);
+}
+.vault-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border: 1px solid var(--vault-input-border);
+  background: var(--vault-input-bg);
+  color: var(--vault-text-muted);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+.vault-back-btn:hover { color: var(--vault-accent); border-color: var(--vault-accent-strong); }
 .vault-advanced-toggle {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   font-family: var(--font-mono); font-size: 11px; color: var(--vault-text-muted);
@@ -312,11 +381,31 @@ body {
 .vault-advanced-toggle:hover { color: var(--vault-accent); border-color: var(--vault-accent-strong); }
 .vault-advanced-toggle i { transition: transform 0.2s ease; font-size: 10px; }
 .vault-advanced-toggle.open i { transform: rotate(180deg); }
+.vault-pm-toggle {
+  background: linear-gradient(180deg, #1e6dff, #1554d1);
+  border-color: #3f86ff;
+  color: #ecf4ff;
+  font-weight: 700;
+  margin-top: 10px;
+  box-shadow: 0 8px 18px rgba(30, 109, 255, 0.32);
+}
+.vault-pm-toggle:hover {
+  color: #ffffff;
+  border-color: #7eaeff;
+  box-shadow: 0 10px 22px rgba(30, 109, 255, 0.42);
+  transform: translateY(-1px);
+}
+.vault-pm-toggle i { color: #e7f1ff; }
 .vault-advanced-panel {
   display: none; padding: 0 0 16px;
   animation: fadeIn 0.2s ease;
 }
 .vault-advanced-panel.show { display: block; }
+.vault-shared-settings {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
 .vault-proxy-label {
   font-family: var(--font-mono);
   font-size: 10px; font-weight: 600;
@@ -333,6 +422,25 @@ body {
   margin-top: 6px;
   line-height: 1.6;
 }
+.vault-otp-route {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--vault-input-border);
+  border-radius: var(--radius);
+  background: rgba(15, 23, 42, 0.42);
+}
+.vault-otp-route.hidden { display: none; }
+.vault-otp-route.compact {
+  padding: 10px 12px;
+}
+.vault-otp-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--vault-accent);
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+}
+.vault-otp-title i { margin-right: 6px; }
 .vault-proxy-hint code {
   color: var(--vault-accent);
   background: var(--vault-accent-dim);
@@ -358,6 +466,53 @@ body {
 .vault-proxy-preset.active { background: var(--vault-accent-dim); border-color: var(--vault-accent-strong); color: var(--vault-accent); }
 .vault-inline-actions { display: flex; gap: 8px; margin: 8px 0 10px; }
 .vault-inline-actions .vault-proxy-preset { flex: 1; text-align: center; }
+.vault-otp-verify-row.hidden { display: none; }
+.vault-otp-summary.hidden,
+.vault-otp-request-row.hidden,
+.vault-otp-edit-row.hidden { display: none; }
+.vault-otp-summary {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+.vault-otp-summary-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--vault-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 5px;
+}
+.vault-otp-summary-value {
+  font-size: 13px;
+  color: var(--vault-text);
+  word-break: break-word;
+}
+.vault-otp-edit-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px 0 8px;
+}
+.vault-otp-edit-btn {
+  border: none;
+  background: none;
+  color: var(--vault-accent);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 0;
+}
+.vault-otp-edit-btn:hover { color: var(--vault-accent-strong); }
+.vault-otp-code-wrap .vault-input {
+  min-height: 44px;
+  font-size: 18px;
+  letter-spacing: 0.32em;
+  text-align: center;
+  padding-left: 18px;
+  padding-right: 18px;
+}
 
 .login-info {
   position: relative;
@@ -404,6 +559,32 @@ body {
   .vault-input-wrap { margin-bottom: 12px; }
   .vault-vhost-hint { font-size: 10px; margin-bottom: 12px; }
   .vault-unlock-btn { font-size: 13px; }
+}
+
+@media (max-width: 640px) {
+  .vault-unlock-btn,
+  .vault-pm-toggle {
+    min-height: 50px;
+    padding: 13px;
+    font-size: 13px;
+  }
+  .vault-back-btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .vault-inline-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .vault-inline-actions .vault-proxy-preset {
+    width: 100%;
+  }
+  .vault-config-btn {
+    width: 42px;
+    height: 42px;
+    top: 10px;
+    right: 10px;
+  }
 }
 
 /* ===================== APP SHELL (hidden until unlock) ===================== */
@@ -1395,6 +1576,7 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .pipe-card.sla-breach { border-left: 3px solid var(--danger); background: var(--danger-dim); }
 /* Radar / confirmation-gate UI */
 .pipe-card.on-radar { border-left: 3px solid #60a5fa; background: rgba(96,165,250,0.03); }
+.pipe-card.completed { border-left: 3px solid var(--success); background: var(--success-dim); }
 .dark .pipe-card.on-radar { background: rgba(96,165,250,0.07); }
 .radar-badge { font-family: var(--font-mono); font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; background: rgba(96,165,250,0.2); color: #60a5fa; text-transform: uppercase; white-space: nowrap; display: inline-block; margin-bottom: 2px; }
 .pipe-dot.gate { border: 2px dashed var(--accent) !important; background: var(--accent-dim) !important; color: var(--accent) !important; }
@@ -1429,6 +1611,34 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 .aging-badge.fresh { background: var(--success-dim); color: var(--success); }
 .aging-badge.moderate { background: var(--warning-dim); color: var(--warning); }
 .aging-badge.old { background: var(--danger-dim); color: var(--danger); }
+
+.source-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.source-badge.live {
+  background: var(--accent);
+  color: #fff;
+}
+
+.source-badge.cached {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.source-badge.legacy {
+  background: var(--warning);
+  color: #fff;
+}
 
 /* Vendor compliance warning on kanban */
 .wo-vendor-warn { font-size: 9px; color: var(--danger); margin-top: 2px; }
@@ -1947,44 +2157,66 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 <!-- ==================== VAULT UNLOCK SCREEN ==================== -->
 <div id="vaultScreen">
   <div class="vault-box">
-    <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
-    <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Sign in to continue.</div>
-    <div class="vault-user-hint" id="vaultUserHint" style="display:none"></div>
-    <div style="display:flex;justify-content:center;margin:-10px 0 14px">
-      <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
-        <span class="login-info-tip">Use one login method by entering any of the following below: passphrase, work email address, or a proxy setup pin. If your email is not recognized, contact administrator. Email logins require One-Time-Passcode sent to your RingCentral number</span>
-      </span>
+    <button class="vault-config-btn" id="advancedToggle" type="button" title="Proxy settings" aria-label="Proxy settings"><i class="fas fa-cog"></i></button>
+    <div class="vault-panel" id="vaultMainPanel">
+      <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
+      <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Sign in to continue.</div>
+      <div class="vault-user-hint" id="vaultUserHint" style="display:none"></div>
+      <div style="display:flex;justify-content:center;margin:-10px 0 14px">
+        <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
+          <span class="login-info-tip">Manager and vendor passwords go in the main field. PMs must use the PM Login via OTP button.</span>
+        </span>
+      </div>
+      <div class="vault-input-wrap">
+        <input type="password" class="vault-input" id="vaultPassphrase" placeholder="enter manager or vendor password" autocomplete="off" autofocus>
+        <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
+      </div>
+      <div class="vault-input-wrap">
+        <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off" value="flraz">
+      </div>
+      <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
+      <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
+      <button class="vault-advanced-toggle vault-pm-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
     </div>
-    <div class="vault-input-wrap">
-      <input type="password" class="vault-input" id="vaultPassphrase" placeholder="enter passphrase, work email, or setup pin" autocomplete="off" autofocus>
-      <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
+
+    <div class="vault-panel hidden" id="vaultPmPanel" aria-hidden="true">
+      <button type="button" class="vault-back-btn" id="pmLoginBackBtn"><i class="fas fa-arrow-left"></i> Back to standard login</button>
+      <img src="assets/logo.png" alt="HandyManager" class="vault-logo">
+      <div class="vault-subtitle" style="margin-top:4px">PM Login via OTP</div>
+      <div class="vault-vhost-hint">URL: <code><span id="vhostPreviewPm">flraz</span>.appfolio.com</code></div>
+      <div class="vault-otp-route" id="vaultOtpRoute" aria-hidden="false">
+        <div class="vault-otp-title"><i class="fas fa-mobile-alt"></i> Enter PM Email or Phone</div>
+        <div class="vault-input-wrap vault-otp-request-row" id="vaultOtpIdentifierWrap">
+          <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="text">
+        </div>
+        <div class="vault-inline-actions vault-otp-request-row" id="vaultOtpRequestActions">
+          <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
+        </div>
+        <div class="vault-otp-summary hidden" id="vaultOtpSentSummary">
+          <div class="vault-otp-summary-label">OTP sent to</div>
+          <div class="vault-otp-summary-value" id="vaultOtpSentValue"></div>
+        </div>
+        <div class="vault-otp-edit-row hidden" id="vaultOtpEditRow">
+          <button type="button" class="vault-otp-edit-btn" id="btnEditOtpIdentifier">Change email or phone</button>
+        </div>
+        <div class="vault-otp-verify-row hidden" id="vaultOtpVerifyRow">
+        <div class="vault-input-wrap vault-otp-code-wrap">
+          <input type="text" class="vault-input" id="vaultOtpCode" placeholder="Enter 6-digit OTP" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
+        </div>
+        <div class="vault-inline-actions">
+          <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify OTP</button>
+        </div>
+        </div>
+        <div class="vault-proxy-hint">We send your one-time code to your RingCentral phone number on file.</div>
+      </div>
     </div>
-    <div class="vault-input-wrap">
-      <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off" value="flraz">
-    </div>
-    <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
-    <button class="vault-advanced-toggle" id="advancedToggle" type="button"><i class="fas fa-chevron-down"></i> CORS Proxy <span style="color:var(--success);font-size:11px;margin-left:6px"><i class="fas fa-check-circle"></i> Pre-configured</span></button>
-    <div class="vault-advanced-panel" id="advancedPanel">
+    <div class="vault-advanced-panel vault-shared-settings" id="advancedPanel">
       <label class="vault-proxy-label">Proxy Relay URL</label>
       <div class="vault-input-wrap">
         <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
       </div>
-      <label class="vault-proxy-label">New Device Verification Required (Org Email/SMS OTP)</label>
-      <div class="vault-input-wrap">
-        <input type="email" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com" autocomplete="off">
-      </div>
-      <div class="vault-inline-actions">
-        <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
-      </div>
-      <div class="vault-input-wrap">
-        <input type="text" class="vault-input" id="vaultOtpCode" placeholder="Enter 6-digit OTP" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
-      </div>
-      <div class="vault-inline-actions">
-        <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify Device</button>
-      </div>
-      <div class="vault-proxy-hint">OTP is only sent to <code>@flraz.com</code> addresses. Contact administrator for assistance.</div>
+      <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
-    <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
     <div class="vault-error" id="vaultError"></div>
     <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session v0.9.2</span></div>
   </div>
@@ -1998,7 +2230,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Updated Build <span class="tag" id="buildBadgeTag">v9.2.1</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">v9.2.2</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -2219,8 +2451,10 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
     <button class="filter-btn" data-filter="Estimated">Estimated</button>
   </div>
-  <div class="wo-history-toggle-row">
-    <label class="wo-history-toggle"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed History</span></label>
+  <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <label class="wo-history-toggle"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed Work Orders</span></label>
+    <input type="number" id="woCompletedHistoryDays" min="7" step="30" value="30" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
+    <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Completed</button>
   </div>
   <div class="kanban-board" id="kanbanBoard"></div>
   <div id="woCompletedHistoryMount"></div>
@@ -2251,6 +2485,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
             <th>AP Evidence</th>
             <th>Confidence</th>
             <th>Suggestion</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody id="woCloseAssistBody"></tbody>
@@ -2447,9 +2682,10 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="billStatusFilter" class="filter-select" style="font-size:12px;padding:4px 8px">
         <option value="">All Statuses</option>
-        <option value="pending">Pending Approval</option>
+        <option value="pending_approval">Pending Approval</option>
         <option value="approved">Approved</option>
         <option value="paid">Paid</option>
+        <option value="void">Void</option>
       </select>
       <button class="action-btn" id="btnRefreshBills"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
@@ -2462,8 +2698,37 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   </div>
   <div class="table-wrapper">
     <div class="table-header">
-      <div class="table-title"><i class="fas fa-list-alt" style="color:var(--accent)"></i> Bills</div>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div class="table-title"><i class="fas fa-list-alt" style="color:var(--accent)"></i> Bills <span id="billing-source-badge" class="source-badge legacy">⚠ Legacy</span></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="billing-filter-type" class="filter-select" style="font-size:12px;padding:4px 8px">
+          <option value="bills_list">Group Bills</option>
+          <option value="bills_by_vendor">By Vendor</option>
+          <option value="bills_by_property">By Property</option>
+          <option value="bills_by_wo">By Work Order</option>
+          <option value="bills_by_wo_number">By WO Number</option>
+          <option value="bills_by_invoice">By Invoice</option>
+          <option value="bills_due_range">Due Date Range</option>
+        </select>
+        <span id="billing-input-wrapper" style="display:flex;align-items:center;gap:6px">
+          <input type="text" id="billing-filter-input" class="search-box" placeholder="Vendor/Property/WO/Invoice…" style="min-width:180px">
+        </span>
+        <span id="billing-date-range" style="display:none;align-items:center;gap:6px;flex-wrap:wrap">
+          <label style="font-size:11px;color:var(--text-muted)">Due</label>
+          <input type="date" id="billing-due-from" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
+          <span style="font-size:11px;color:var(--text-muted)">to</span>
+          <input type="date" id="billing-due-to" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
+        </span>
+        <span id="billing-status-wrapper" style="display:none;align-items:center;gap:6px">
+          <select id="billing-status-filter" class="filter-select" style="font-size:12px;padding:4px 8px">
+            <option value="">Any Status</option>
+            <option value="pending_approval">Pending Approval</option>
+            <option value="approved">Approved</option>
+            <option value="paid">Paid</option>
+            <option value="void">Void</option>
+          </select>
+        </span>
+        <button class="action-btn" id="billing-filter-apply" style="padding:4px 8px"><i class="fas fa-filter"></i> Apply</button>
+        <button class="action-btn" id="billing-filter-reset" style="padding:4px 8px"><i class="fas fa-undo"></i> Reset</button>
         <input type="text" id="billSearch" class="search-box" placeholder="Search vendor, property…" style="min-width:180px">
       </div>
     </div>
@@ -2484,6 +2749,38 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       </table>
     </div>
     <div class="table-footer" id="billFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
+  </div>
+
+  <div class="table-wrapper" style="margin-top:12px">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-clock-rotate-left" style="color:var(--accent)"></i> Bill History Search</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">From</label>
+        <input type="date" id="billHistFrom" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
+        <label style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">To</label>
+        <input type="date" id="billHistTo" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
+        <button class="action-btn" id="btnBillHistSearch"><i class="fas fa-search"></i> Search History</button>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Bill #</th>
+            <th>Vendor / Payee</th>
+            <th>Property</th>
+            <th>Group</th>
+            <th>Property Manager</th>
+            <th>Amount</th>
+            <th>Invoice Date</th>
+            <th>Status</th>
+            <th>WO</th>
+          </tr>
+        </thead>
+        <tbody id="billHistBody"><tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">Run a date search to load historical bills</td></tr></tbody>
+      </table>
+    </div>
+    <div class="table-footer" id="billHistFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
   </div>
 </section>
 
@@ -3146,7 +3443,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <button class="modal-close" id="whatsNewClose">&times;</button>
     </div>
     <div class="modal-body">
-        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.2.1 • Highlights (next 36h)</div>
+        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.2.2 • Highlights (next 36h)</div>
       <div style="max-height:290px;overflow-y:auto;padding-right:4px">
       <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px">
         <li style="display:flex;gap:10px;align-items:flex-start">
@@ -3220,7 +3517,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.2.1';
+var APP_VERSION = 'v9.2.2';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 
@@ -3962,6 +4259,8 @@ var API_PROXY = '';
 var _accessRole = 'full'; // 'full' | 'manager' | 'vendors' | 'pm_readonly'
 var _pmScopeGroupUuid = '';
 var _pmScopeEmail = '';
+var DEFAULT_BILLS_LOOKBACK_DAYS = 90;
+var DEFAULT_COMPLETED_WO_LOOKBACK_DAYS = 30;
 
 function normalizeAccessRole(role) {
   var value = String(role || '').trim().toLowerCase();
@@ -4056,6 +4355,7 @@ function wipeCredentials() {
 
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
 var AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+var _sessionExpiryHandled = false;
 
 function startAutoSync() {
   stopAutoSync(); // clear any existing
@@ -4083,6 +4383,42 @@ function startAutoSync() {
 
 function stopAutoSync() {
   if (_autoSyncTimer) { clearInterval(_autoSyncTimer); _autoSyncTimer = null; }
+}
+
+function clearStoredProxySessionTokens() {
+  try { localStorage.removeItem('hm_device_token'); } catch (e1) { /* */ }
+  try { localStorage.removeItem('hm_proxy_token'); } catch (e2) { /* */ }
+}
+
+function handleProxySessionExpired(contextLabel) {
+  if (_sessionExpiryHandled) return;
+  _sessionExpiryHandled = true;
+
+  stopAutoSync();
+  if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
+
+  clearStoredProxySessionTokens();
+  if (API_CREDS && API_CREDS.p) {
+    API_CREDS.p = '0'.repeat(String(API_CREDS.p).length);
+  }
+  API_CREDS = null;
+  appInitialized = false;
+
+  var vault = $('#vaultScreen');
+  if (vault) vault.style.display = 'flex';
+  var shell = $('#appShell');
+  if (shell) shell.classList.remove('unlocked');
+  setVaultPanel('main');
+  setPmOtpStep('request');
+  setVaultFeedback('Proxy session expired. Sign in again to continue.', '');
+  if ($('#vaultPassphrase')) $('#vaultPassphrase').focus();
+
+  var detail = contextLabel ? (' (' + contextLabel + ')') : '';
+  showToast('Session expired. Please sign in again' + detail + '.', {
+    kind: 'warning',
+    iconClass: 'fa-triangle-exclamation',
+    duration: 5000,
+  });
 }
 
 function lockVault() {
@@ -4164,6 +4500,83 @@ function getProxyAccessToken() {
   try { return localStorage.getItem('hm_proxy_token') || ''; } catch (e) { return ''; }
 }
 
+function isVaultUnlocked() {
+  var vault = $('#vaultScreen');
+  if (!vault) return true;
+  return vault.style.display === 'none';
+}
+
+function isProxySessionReady() {
+  if (!isVaultUnlocked()) return false;
+  if (!API_PROXY) return false;
+  if (API_CREDS) return true;
+  return !!getProxyAccessToken();
+}
+
+function hasStoredDeviceSession() {
+  try {
+    return !!(localStorage.getItem('hm_device_token') || localStorage.getItem('hm_proxy_token') || '');
+  } catch (e) {
+    return false;
+  }
+}
+
+function setVaultFeedback(message, state) {
+  var el = $('#vaultError');
+  if (!el) return;
+  el.textContent = String(message || '');
+  el.classList.remove('success', 'info');
+  if (!message) {
+    el.classList.remove('show');
+    return;
+  }
+  if (state === 'success' || state === 'info') {
+    el.classList.add(state);
+  }
+  el.classList.add('show');
+}
+
+function formatOtpIdentifierSummary(identifier) {
+  var email = normalizeOtpEmail(identifier);
+  if (email) return email;
+  var phone = normalizeOtpPhone(identifier);
+  if (!phone) return String(identifier || '').trim();
+  var digits = phone.replace(/\D+/g, '');
+  if (digits.length >= 10) {
+    return '+1 (' + digits.slice(-10, -7) + ') ' + digits.slice(-7, -4) + '-' + digits.slice(-4);
+  }
+  return phone;
+}
+
+function setPmOtpStep(step, identifier) {
+  var route = $('#vaultOtpRoute');
+  var identifierWrap = $('#vaultOtpIdentifierWrap');
+  var requestActions = $('#vaultOtpRequestActions');
+  var summary = $('#vaultOtpSentSummary');
+  var summaryValue = $('#vaultOtpSentValue');
+  var editRow = $('#vaultOtpEditRow');
+  var verifyRow = $('#vaultOtpVerifyRow');
+  var identifierInput = $('#vaultOtpEmail');
+  var codeInput = $('#vaultOtpCode');
+  var verifyBtn = $('#btnVerifyOtp');
+  var sent = step === 'verify';
+
+  if (route) route.classList.toggle('compact', sent);
+  if (identifierWrap) identifierWrap.classList.toggle('hidden', sent);
+  if (requestActions) requestActions.classList.toggle('hidden', sent);
+  if (summary) summary.classList.toggle('hidden', !sent);
+  if (editRow) editRow.classList.toggle('hidden', !sent);
+  if (verifyRow) verifyRow.classList.toggle('hidden', !sent);
+  if (identifierInput) identifierInput.disabled = sent;
+  if (summaryValue && sent) summaryValue.textContent = formatOtpIdentifierSummary(identifier || (identifierInput ? identifierInput.value : ''));
+  if (verifyBtn) verifyBtn.textContent = 'Verify OTP';
+
+  if (!sent && codeInput) codeInput.value = '';
+  if (sent && codeInput) {
+    setTimeout(function() { codeInput.focus(); codeInput.select(); }, 20);
+  }
+}
+
 async function setupTrustedDevice(setupPin, userName) {
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
@@ -4231,12 +4644,16 @@ async function requestDeviceOtp(identifier, userName) {
   return data;
 }
 
-async function verifyDeviceOtp(email, code, userName) {
+async function verifyDeviceOtp(identifier, code, userName) {
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_verify';
+  var email = normalizeOtpEmail(identifier);
+  var phone = normalizeOtpPhone(identifier);
   var payload = {
-    email: email,
+    identifier: String(identifier || '').trim(),
+    email: email || undefined,
+    phone: phone || undefined,
     code: code,
     user_name: userName || ('hm-' + (navigator && navigator.platform ? navigator.platform : 'device'))
   };
@@ -4277,17 +4694,33 @@ async function proxyAction(action, params) {
     });
   }
   var maxRetries = 2; // retry once for transient 502/503/network errors
-  var timeoutMs = action === 'turn_work_orders' ? 70000 : 45000;
+  var timeoutByAction = {
+    turn_work_orders: 120000,
+    bills_history: 120000,
+    properties: 90000,
+    bills: 90000,
+    turns: 90000,
+    unit_turns: 90000,
+    work_orders_completed_history: 90000
+  };
+  var baseTimeoutMs = timeoutByAction[action] || 60000;
   var token = getProxyAccessToken();
   var reqHeaders = { 'Accept': 'application/json' };
   if (token) reqHeaders['Authorization'] = 'Bearer ' + token;
   for (var attempt = 0; attempt <= maxRetries; attempt++) {
+    var attemptTimeoutMs = Math.min(baseTimeoutMs + (attempt * 15000), 150000);
     var res;
     try {
-      res = await fetchWithTimeout(url, { headers: reqHeaders }, timeoutMs);
+      res = await fetchWithTimeout(url, { headers: reqHeaders }, attemptTimeoutMs);
     } catch (abortErr) {
       if (abortErr.name === 'AbortError') {
-        var tmsg = 'Proxy action=' + action + ' timed out after ' + Math.round(timeoutMs / 1000) + 's';
+        if (attempt < maxRetries) {
+          var timeoutWait = Math.pow(2, attempt + 1) * 1000;
+          logApiError(0, 'Proxy action=' + action + ' timed out after ' + Math.round(attemptTimeoutMs / 1000) + 's (attempt ' + (attempt + 1) + '/' + (maxRetries + 1) + ') — retrying in ' + (timeoutWait / 1000) + 's', 'retry');
+          await sleep(timeoutWait);
+          continue;
+        }
+        var tmsg = 'Proxy action=' + action + ' timed out after ' + Math.round(attemptTimeoutMs / 1000) + 's';
         logApiError(0, tmsg, 'queued');
         throw new Error(tmsg);
       }
@@ -4313,6 +4746,18 @@ async function proxyAction(action, params) {
       }
       var errBody = '';
       try { errBody = await res.text(); } catch (e) { /* empty */ }
+      if (res.status === 401) {
+        var errBodyLower = String(errBody || '').toLowerCase();
+        var isProxySession401 = errBodyLower.indexOf('frontend bearer token') !== -1 ||
+          errBodyLower.indexOf('proxy session') !== -1 ||
+          errBodyLower.indexOf('read-only session') !== -1;
+        if (isProxySession401) {
+          handleProxySessionExpired('action=' + action);
+          var sessionMsg = 'Proxy action=' + action + ' failed: HTTP 401 — Proxy session missing or expired';
+          logApiError(401, sessionMsg, 'resolved');
+          throw new Error(sessionMsg);
+        }
+      }
       var errMsg = 'Proxy action=' + action + ' failed: HTTP ' + res.status;
       if (errBody) {
         try { var ej = JSON.parse(errBody); if (ej.error) errMsg += ' \u2014 ' + ej.error; } catch (e) { errMsg += ' \u2014 ' + errBody.substring(0, 200); }
@@ -4341,6 +4786,19 @@ async function proxyAction(action, params) {
     }
     return data;
   }
+}
+
+function buildProxyActionUrl(action, params) {
+  if (!API_PROXY) throw new Error('No proxy configured');
+  var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
+  var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
+  if (params) {
+    Object.keys(params).forEach(function(k) {
+      if (params[k] === undefined || params[k] === null) return;
+      url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+    });
+  }
+  return url;
 }
 
 // POST helper for sensitive admin actions where secrets must NOT appear in the
@@ -4380,6 +4838,13 @@ async function proxyPost(action, bodyObj, extraHeaders) {
     if (!res.ok) {
       var errBody = '';
       try { errBody = await res.text(); } catch (e) { /* empty */ }
+      if (res.status === 401) {
+        var errBodyLower = String(errBody || '').toLowerCase();
+        if (errBodyLower.indexOf('frontend bearer token') !== -1 || errBodyLower.indexOf('proxy session') !== -1) {
+          handleProxySessionExpired('post=' + action);
+          throw new Error('Proxy POST action=' + action + ' failed: HTTP 401 — Proxy session missing or expired. Sign in again.');
+        }
+      }
       throw new Error('Proxy POST action=' + action + ' failed: HTTP ' + res.status + (errBody ? ' \u2014 ' + errBody.substring(0, 200) : ''));
     }
     return res.json();
@@ -4826,6 +5291,8 @@ var _turnAutoCloseSyncInFlight = false;
 var _lastTurnAutoCloseHash = '';
 var UNIT_TURN_HISTORY = [];
 var BILLS = []; // from DB API — AP bills for WO close-assist
+var _billsFetchInFlight = false;
+var _lastBillSource = 'legacy';
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
 var _schemaHealthWarned = false;
@@ -4927,6 +5394,25 @@ function resolveGroupNameFromUuid(groupUuid) {
     return String((x && x.id) || '').trim() === gid;
   });
   return g && g.name ? String(g.name) : '';
+}
+
+function resolveGroupUuidFromName(groupName) {
+  var target = String(groupName || '').trim().toLowerCase();
+  if (!target) return '';
+
+  // If caller already passed a UUID, trust it directly.
+  if (isUuidString(target)) return target;
+
+  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
+    return String(forcedPropertyGroupUuid).trim();
+  }
+
+  var g = (PROPERTY_GROUPS || []).find(function(x) {
+    var gName = String((x && x.name) || '').trim().toLowerCase();
+    var gId = String((x && x.id) || '').trim().toLowerCase();
+    return gName === target || gId === target;
+  });
+  return g && g.id ? String(g.id).trim() : '';
 }
 
 function enforceScopedPropertyGroup() {
@@ -5280,6 +5766,7 @@ $('#vaultVhost').addEventListener('input', function() {
   var val = sanitizeVhost(this.value);
   this.value = val;
   $('#vhostPreview').textContent = val || 'yourco';
+  if ($('#vhostPreviewPm')) $('#vhostPreviewPm').textContent = val || 'yourco';
 });
 
 $('#vaultToggleVis').addEventListener('click', function() {
@@ -5295,48 +5782,100 @@ $('#vaultPassphrase').addEventListener('keydown', function(e) {
 $('#vaultVhost').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') { $('#vaultUnlockBtn').click(); }
 });
+if ($('#vaultOtpEmail')) {
+  $('#vaultOtpEmail').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { $('#btnSendOtp').click(); }
+  });
+}
+if ($('#vaultOtpCode')) {
+  $('#vaultOtpCode').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { $('#btnVerifyOtp').click(); }
+  });
+}
 
 // Advanced panel toggle
-$('#advancedToggle').addEventListener('click', function() {
-  this.classList.toggle('open');
-  $('#advancedPanel').classList.toggle('show');
-});
+if ($('#advancedToggle')) {
+  $('#advancedToggle').addEventListener('click', function() {
+    this.classList.toggle('open');
+    $('#advancedPanel').classList.toggle('show');
+  });
+}
+
+function setVaultPanel(panel) {
+  var main = $('#vaultMainPanel');
+  var pm = $('#vaultPmPanel');
+  if (!main || !pm) return;
+  var showPm = panel === 'pm';
+  main.classList.toggle('hidden', showPm);
+  pm.classList.toggle('hidden', !showPm);
+  pm.setAttribute('aria-hidden', showPm ? 'false' : 'true');
+}
+
+if ($('#pmLoginToggle')) {
+  $('#pmLoginToggle').addEventListener('click', function() {
+    setVaultPanel('pm');
+    setPmOtpStep('request');
+    if ($('#vaultOtpEmail')) $('#vaultOtpEmail').focus();
+    setVaultFeedback('Enter your PM email or phone, then click Send OTP.', 'info');
+  });
+}
+
+if ($('#pmLoginBackBtn')) {
+  $('#pmLoginBackBtn').addEventListener('click', function() {
+    setVaultPanel('main');
+    setPmOtpStep('request');
+    if ($('#vaultPassphrase')) $('#vaultPassphrase').focus();
+    setVaultFeedback('');
+  });
+}
+
+if ($('#btnEditOtpIdentifier')) {
+  $('#btnEditOtpIdentifier').addEventListener('click', function() {
+    setPmOtpStep('request');
+    setVaultFeedback('Update the email or phone number, then send a new OTP.', 'info');
+    if ($('#vaultOtpEmail')) $('#vaultOtpEmail').focus();
+  });
+}
 
 // Proxy preset buttons
 $$('.vault-proxy-preset').forEach(function(btn) {
   btn.addEventListener('click', function() {
+    var presetProxy = btn.getAttribute('data-proxy');
+    if (!presetProxy) return;
     $$('.vault-proxy-preset').forEach(function(b) { b.classList.remove('active'); });
     btn.classList.add('active');
-    $('#vaultProxy').value = btn.getAttribute('data-proxy');
+    $('#vaultProxy').value = presetProxy;
   });
 });
 
 if ($('#btnSendOtp')) {
   $('#btnSendOtp').addEventListener('click', async function() {
-    var emailRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
-    var email = normalizeOtpEmail(emailRaw);
-    if (!email) {
-      $('#vaultError').textContent = 'Enter your configured work email to receive OTP.';
-      $('#vaultError').classList.add('show');
+    var identifierRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
+    var identifier = normalizeOtpIdentifier(identifierRaw);
+    if (!identifier) {
+      setVaultFeedback('Enter a valid PM email or phone number to start PM login. US numbers work with or without +1.', '');
       return;
     }
     API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
+    if (API_PROXY) {
+      try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eSaveProxy) { /* */ }
+    }
     if (!API_PROXY) {
-      $('#vaultError').textContent = 'Proxy URL is required before requesting OTP.';
-      $('#vaultError').classList.add('show');
+      setVaultFeedback('Proxy URL is required before requesting OTP.', '');
       return;
     }
     var btn = this;
     btn.disabled = true;
     btn.textContent = 'Sending...';
-    $('#vaultError').classList.remove('show');
+    setVaultFeedback('');
     try {
-      await requestDeviceOtp(email, 'dispatcher');
-      showToast('OTP sent to ' + email, { kind: 'success' });
+      await requestDeviceOtp(identifier, 'dispatcher');
+      showToast('OTP sent', { kind: 'success' });
+      setPmOtpStep('verify', identifier);
+      setVaultFeedback('OTP code sent successfully. Enter the 6-digit verification code.', 'success');
     } catch (err) {
       var msg = (err && (err.message || String(err))) || 'OTP request failed';
-      $('#vaultError').textContent = msg;
-      $('#vaultError').classList.add('show');
+      setVaultFeedback(msg, '');
       showToast(msg, { kind: 'danger' });
     } finally {
       btn.disabled = false;
@@ -5347,30 +5886,37 @@ if ($('#btnSendOtp')) {
 
 if ($('#btnVerifyOtp')) {
   $('#btnVerifyOtp').addEventListener('click', async function() {
-    var email = normalizeOtpEmail($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
+    var identifier = normalizeOtpIdentifier($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
     var code = String(($('#vaultOtpCode') && $('#vaultOtpCode').value) || '').trim();
-    if (!email) {
-      $('#vaultError').textContent = 'Enter your configured work email first.';
-      $('#vaultError').classList.add('show');
+    if (!identifier) {
+      setPmOtpStep('request');
+      setVaultFeedback('Enter your PM email or phone number first.', '');
       return;
     }
     if (!/^\d{6}$/.test(code)) {
-      $('#vaultError').textContent = 'Enter the 6-digit OTP code.';
-      $('#vaultError').classList.add('show');
+      setVaultFeedback('Enter the 6-digit OTP code.', '');
       return;
     }
     API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
     if (!API_PROXY) {
-      $('#vaultError').textContent = 'Proxy URL is required before verifying OTP.';
-      $('#vaultError').classList.add('show');
+      setVaultFeedback('Proxy URL is required before verifying OTP.', '');
+      return;
+    }
+    var rawVhost = $('#vaultVhost').value;
+    var vhost = sanitizeVhost(rawVhost);
+    $('#vaultVhost').value = vhost;
+    $('#vhostPreview').textContent = vhost || 'yourco';
+    $('#vhostPreviewPm').textContent = vhost || 'yourco';
+    if (!vhost) {
+      setVaultFeedback('AppFolio subdomain is required (e.g. "flraz").', '');
       return;
     }
     var btn = this;
     btn.disabled = true;
     btn.textContent = 'Verifying...';
-    $('#vaultError').classList.remove('show');
+    setVaultFeedback('');
     try {
-      var verifyData = await verifyDeviceOtp(email, code, 'dispatcher');
+      var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher');
       var token = verifyData.token;
       try { localStorage.setItem('hm_device_token', token); } catch (e) { /* */ }
       try { localStorage.setItem('hm_proxy_token', token); } catch (e2) { /* */ }
@@ -5388,17 +5934,60 @@ if ($('#btnVerifyOtp')) {
         try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (e4) { /* */ }
       }
       if ($('#vaultPassphrase')) $('#vaultPassphrase').value = '';
-      showToast('Device verified — you can now connect without setup PIN.', { kind: 'success' });
+      showToast('Device verified', { kind: 'success' });
+      setVaultFeedback('OTP verified. Signing you in...', 'success');
+      btn.textContent = 'Signing in...';
+      try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eProxySave) { /* */ }
+      await unlockWithDeviceToken(token, vhost, API_PROXY);
     } catch (err) {
       var msg = (err && (err.message || String(err))) || 'OTP verification failed';
-      $('#vaultError').textContent = msg;
-      $('#vaultError').classList.add('show');
+      setVaultFeedback(msg, '');
       showToast(msg, { kind: 'danger' });
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Verify Device';
+      btn.textContent = 'Verify OTP';
     }
   });
+}
+
+async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
+  _sessionExpiryHandled = false;
+  API_VHOST = vhost;
+  API_PROXY = proxyUrl;
+  API_CREDS = { p: existingDeviceToken };
+  _accessRole = getStoredAccessRole();
+  try {
+    var sess = await proxyAction('session_info');
+    if (sess && sess.ok && sess.session) {
+      _accessRole = normalizeAccessRole(sess.session.role || _accessRole);
+      if (sess.session.property_group_uuid) {
+        forcedPropertyGroupUuid = String(sess.session.property_group_uuid);
+        forcedPropertyGroupName = '';
+        try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (scopeErr) { /* */ }
+      }
+      if (sess.session.login_email) {
+        _pmScopeEmail = String(sess.session.login_email);
+        try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeEmailErr) { /* */ }
+      }
+    }
+  } catch (sessErr) { /* non-fatal — use stored role */ }
+  persistAccessRole(_accessRole);
+  try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
+  if (!$('#vaultRememberConfig') || $('#vaultRememberConfig').checked) {
+    await saveVaultConfig(getVaultConfigFromInputs());
+  }
+  $('#vaultPassphrase').value = '';
+  $('#vaultScreen').style.display = 'none';
+  $('#appShell').classList.add('unlocked');
+  applyAccessRole();
+  await initApp();
+  if (_accessRole === 'pm_readonly') {
+    try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (eScope) { /* */ }
+    enforceScopedPropertyGroup();
+  }
+  applyAccessRole();
+  startAutoSync();
+  showToast('Connected — ' + vhost + '.appfolio.com via verified device');
 }
 
 // Sanitize proxy URL — ensure https:// prefix, trim whitespace
@@ -5415,6 +6004,12 @@ function sanitizeProxy(raw) {
 }
 
 initVaultConfigUI();
+setPmOtpStep('request');
+if ($('#vhostPreviewPm')) {
+  var vVal = sanitizeVhost((($('#vaultVhost') && $('#vaultVhost').value) || ''));
+  $('#vhostPreviewPm').textContent = vVal || 'yourco';
+}
+setVaultPanel('main');
 
 $('#vaultUnlockBtn').addEventListener('click', async function() {
   var pass = String(($('#vaultPassphrase') && $('#vaultPassphrase').value) || '').trim();
@@ -5430,9 +6025,6 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     } catch (eProxyLoad) { /* */ }
   }
   $('#vaultProxy').value = proxyUrl;
-  var existingDeviceToken = '';
-  try { existingDeviceToken = localStorage.getItem('hm_device_token') || ''; } catch (e) { /* */ }
-
   if (!vhost) {
     $('#vaultError').textContent = 'AppFolio subdomain is required (e.g. "flraz").';
     $('#vaultError').classList.add('show');
@@ -5443,8 +6035,8 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     $('#vaultError').classList.add('show');
     return;
   }
-  if (!pass && !existingDeviceToken) {
-    $('#vaultError').textContent = 'Enter your password, or verify this device with OTP first.';
+  if (!pass) {
+    $('#vaultError').textContent = 'Enter your password. For PM access, use the separate PM login field and buttons below.';
     $('#vaultError').classList.add('show');
     return;
   }
@@ -5462,36 +6054,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     var passAsIdentifier = normalizeOtpIdentifier(pass);
 
     if (passAsIdentifier) {
-      // OTP flow — send code and show the verification form
-      if ($('#vaultOtpEmail')) $('#vaultOtpEmail').value = passAsIdentifier;
-      await requestDeviceOtp(passAsIdentifier, 'dispatcher');
-      showToast('OTP sent to ' + passAsIdentifier + '. Enter the code to verify your device.', { kind: 'info', duration: 5000 });
-      $('#vaultError').textContent = 'OTP sent. Enter the 6-digit code above and click Verify Device.';
-      $('#vaultError').classList.add('show');
-      return;
-    }
-
-    if (!pass && existingDeviceToken) {
-      // Returning PM session — restore using stored device token
-      API_CREDS = { p: existingDeviceToken };
-      _accessRole = getStoredAccessRole();
-      try {
-        var sess = await proxyAction('session_info');
-        if (sess && sess.ok && sess.session) {
-          _accessRole = normalizeAccessRole(sess.session.role || _accessRole);
-          if (sess.session.property_group_uuid) {
-            forcedPropertyGroupUuid = String(sess.session.property_group_uuid);
-            forcedPropertyGroupName = '';
-            try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (scopeErr) { /* */ }
-          }
-          if (sess.session.login_email) {
-            _pmScopeEmail = String(sess.session.login_email);
-            try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeEmailErr) { /* */ }
-          }
-        }
-      } catch (sessErr) { /* non-fatal — use stored role */ }
-      persistAccessRole(_accessRole);
-      try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
+      throw new Error('PM login uses the separate PM login field and buttons below. Do not enter email or phone in the password box.');
     } else if (pass) {
       // Verify password against proxy env vars (GUI_ADMIN / GUI_GM / GUI_VENDORS)
       var roleResult = await proxyPost('verify_role', { password: pass });
@@ -5499,7 +6062,16 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         throw new Error((roleResult && roleResult.error) || 'Invalid password');
       }
       _accessRole = normalizeAccessRole(roleResult.role);
-      API_CREDS = { p: '' };
+      var sessionToken = String(roleResult.token || '');
+      if (!sessionToken) {
+        throw new Error('Login succeeded but server did not mint a session token. Check proxy DB/write access and try again.');
+      }
+      _sessionExpiryHandled = false;
+      API_CREDS = { p: sessionToken };
+      if (sessionToken) {
+        try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
+        try { localStorage.setItem('hm_proxy_token', sessionToken); } catch (eTok2) { /* */ }
+      }
       persistAccessRole(_accessRole);
     } else {
       throw new Error('Enter your password to connect.');
@@ -5692,8 +6264,9 @@ async function fetchWorkOrders() {
 }
 
 async function fetchCompletedWorkOrdersHistory(days) {
-  var lookback = parseInt(days || 365, 10) || 365;
-  var data = await proxyAction('completed_work_orders_history', { days: String(lookback) });
+  var lookback = parseInt(days || DEFAULT_COMPLETED_WO_LOOKBACK_DAYS, 10) || DEFAULT_COMPLETED_WO_LOOKBACK_DAYS;
+  lookback = Math.max(30, Math.min(3650, lookback));
+  var data = await proxyAction('work_orders_completed_history', { days: String(lookback) });
   var results = data.results || [];
   completedWOHistoryRows = results.map(function(r) {
     return {
@@ -5717,31 +6290,183 @@ async function fetchCompletedWorkOrdersHistory(days) {
   return true;
 }
 
-// Bills: Proxy ?action=bills — DB API v0
-// Used by WO close-assist to infer likely completion.
-async function fetchBills(days) {
+// Bills: Proxy actions (bills, bills_stats, bills_history, bill_detail)
+// Used by WO close-assist and Billing/AP tab.
+async function fetchBills(days, opts) {
+  if (_billsFetchInFlight) {
+    console.log('fetchBills skip: previous request still in flight');
+    return null;
+  }
+  _billsFetchInFlight = true;
   try {
-    var lookback = parseInt(days || 365, 10) || 365;
-    var data = await proxyAction('bills', { days: String(lookback), max: '1500' });
-    var results = data.results || data.data || [];
+    opts = opts || {};
+    var lookback = parseInt(days || DEFAULT_BILLS_LOOKBACK_DAYS, 10) || DEFAULT_BILLS_LOOKBACK_DAYS;
+    var params = { days: String(lookback), max: String(opts.max || 3000) };
+    if (opts.forceRefresh) params.force_refresh = 'true';
+    var routeAction = String(opts.filterType || '').trim();
+    var routeStatusFilter = String(opts.routeStatusFilter || opts.statusFilter || '').trim().toLowerCase();
+    var filterValue = String(opts.filterValue || '').trim();
+    var dueFrom = String(opts.dueFrom || '').trim();
+    var dueTo = String(opts.dueTo || '').trim();
+    var routeLimit = Math.max(1, Math.min(200, parseInt(opts.limit || opts.max || 50, 10) || 50));
+    var routeOffset = Math.max(0, parseInt(opts.offset || 0, 10) || 0);
+
+    var allowedRouteActions = {
+      bills_list: true,
+      bills_by_vendor: true,
+      bills_by_property: true,
+      bills_by_wo: true,
+      bills_by_wo_number: true,
+      bills_by_invoice: true,
+      bills_due_range: true
+    };
+    if (!allowedRouteActions[routeAction]) routeAction = '';
+
+    var usedRouteLayer = false;
+    var routeRows = [];
+    var grpName = '';
+    var groupUuid = '';
+
+    if (opts.scoped !== false) {
+      grpName = getEffectiveGroupId();
+      if (grpName) params.group_name = grpName;
+      if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
+
+      groupUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
+    }
+
+    if (routeAction) {
+      try {
+        // bills_by_wo accepts only UUID; route non-UUID values to wo_number action.
+        if (routeAction === 'bills_by_wo' && filterValue && !isUuidString(filterValue)) {
+          routeAction = 'bills_by_wo_number';
+        }
+
+        var routeParams = {
+          limit: String(routeLimit),
+          offset: String(routeOffset)
+        };
+
+        if (routeAction === 'bills_list') {
+          if (!groupUuid) throw new Error('Missing group UUID for bills_list');
+          routeParams.group_id = groupUuid;
+        } else if (routeAction === 'bills_by_vendor') {
+          routeParams.vendor_id = filterValue;
+          if (groupUuid) routeParams.group_id = groupUuid;
+        } else if (routeAction === 'bills_by_property') {
+          routeParams.property_id = filterValue;
+          if (groupUuid) routeParams.group_id = groupUuid;
+        } else if (routeAction === 'bills_by_wo') {
+          routeParams.wo_id = filterValue;
+        } else if (routeAction === 'bills_by_wo_number') {
+          routeParams.wo_number = filterValue;
+        } else if (routeAction === 'bills_by_invoice') {
+          routeParams.invoice_number = filterValue;
+        } else if (routeAction === 'bills_due_range') {
+          routeParams.due_from = dueFrom;
+          routeParams.due_to = dueTo;
+          if (groupUuid) routeParams.group_id = groupUuid;
+        }
+
+        Object.keys(routeParams).forEach(function(k) {
+          if (routeParams[k] === '' || routeParams[k] == null) delete routeParams[k];
+        });
+
+        var routeDataByFilter = await proxyAction(routeAction, routeParams);
+        routeRows = routeDataByFilter && (routeDataByFilter.data || routeDataByFilter.results)
+          ? (routeDataByFilter.data || routeDataByFilter.results)
+          : [];
+        usedRouteLayer = true;
+      } catch (routeFilterErr) {
+        console.log('fetchBills explicit route fallback: ' + (routeFilterErr.message || routeFilterErr));
+      }
+    }
+
+    if (!usedRouteLayer && opts.scoped !== false && groupUuid) {
+      // Prefer the new SQL route layer when we can provide a concrete group UUID.
+      try {
+        var routeData = await proxyAction('bills_list', {
+          group_id: groupUuid,
+          limit: String(Math.max(50, Math.min(3000, parseInt(opts.max || 3000, 10) || 3000))),
+          offset: String(opts.offset || 0)
+        });
+        routeRows = routeData && (routeData.data || routeData.results)
+          ? (routeData.data || routeData.results)
+          : [];
+        usedRouteLayer = true;
+      } catch (routeErrOuter) {
+        console.log('fetchBills route-layer fallback: ' + (routeErrOuter.message || routeErrOuter));
+      }
+    }
+
+    var results = [];
+    if (usedRouteLayer) {
+      results = Array.isArray(routeRows) ? routeRows : [];
+      _lastBillSource = 'cached';
+    } else {
+      var data = await proxyAction('bills', params);
+      results = data.results || data.data || [];
+      if (typeof data.from_cache === 'boolean') {
+        _lastBillSource = data.from_cache ? 'cached' : 'live';
+      } else {
+        _lastBillSource = 'legacy';
+      }
+    }
+
     BILLS = results.map(function(b) {
+      var raw = b.raw || b;
+      var status = String(b.status || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase().replace(/\s+/g, '_');
+      var amountNum = parseFloat(String(b.amount != null ? b.amount : (b.total_amount != null ? b.total_amount : (raw.TotalAmount || raw.total_amount || raw.Amount || raw.amount || '0'))).replace(/[^0-9.\-]/g, '')) || 0;
+      var lineItems = Array.isArray(b.line_items)
+        ? b.line_items
+        : (Array.isArray(raw.LineItems)
+          ? raw.LineItems
+          : (Array.isArray(raw.line_items)
+            ? raw.line_items
+            : (function() {
+              if (!b.line_items_json && !raw.line_items_json) return [];
+              try {
+                var parsed = JSON.parse(b.line_items_json || raw.line_items_json || '[]');
+                return Array.isArray(parsed) ? parsed : [];
+              } catch (e) {
+                return [];
+              }
+            })()));
       return {
-        id: b.Id || b.id || b.BillId || '',
-        vendorId: b.VendorId || b.vendor_id || b.PayeeId || b.payee_id || b.PayeeUuid || b.payee_uuid || '',
-        vendorName: b.VendorName || b.vendor_name || b.PayeeName || b.payee_name || b.Name || b.name || '',
-        propertyId: b.PropertyId || b.property_id || b.PropertyUuid || b.property_uuid || '',
-        propertyName: b.PropertyName || b.property_name || b.Property || b.property || '',
-        amount: b.Amount || b.amount || b.Total || b.total || '',
-        date: b.BillDate || b.bill_date || b.InvoiceDate || b.invoice_date || b.PaidOn || b.paid_on || b.CreatedAt || b.created_at || b.LastUpdatedAt || b.last_updated_at || '',
-        raw: b
+        id: b.id || b.Id || raw.Id || raw.id || raw.BillId || '',
+        billNumber: b.bill_number || b.reference || raw.Reference || raw.reference || b.id || raw.Id || '',
+        vendorId: b.vendor_id || raw.VendorId || raw.vendor_id || raw.PayeeId || raw.payee_id || raw.PayeeUuid || raw.payee_uuid || '',
+        vendorUuid: b.vendor_uuid || raw.VendorUuid || raw.vendor_uuid || raw.VendorId || raw.vendor_id || raw.PayeeUuid || raw.payee_uuid || '',
+        payeeUuid: b.payee_uuid || raw.PayeeUuid || raw.payee_uuid || raw.PayeeId || raw.payee_id || raw.VendorId || raw.vendor_id || '',
+        vendorName: b.vendor_name || raw.VendorName || raw.vendor_name || raw.PayeeName || raw.payee_name || raw.Name || raw.name || '',
+        propertyId: b.property_id || raw.PropertyId || raw.property_id || raw.PropertyUuid || raw.property_uuid || '',
+        propertyName: b.property_name || raw.PropertyName || raw.property_name || raw.Property || raw.property || '',
+        propertyGroup: b.property_group || raw.property_group || raw.PropertyGroup || '',
+        workOrderId: b.work_order_id || raw.WorkOrderId || raw.work_order_id || '',
+        amount: amountNum,
+          date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || b.due_date || raw.DueDate || raw.due_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
+          status: status,
+          statusLabel: b.status_label || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '—',
+          lineItems: lineItems,
+          raw: raw
       };
     });
+
+    if (routeStatusFilter) {
+      BILLS = BILLS.filter(function(b) {
+        return String(b.status || '').toLowerCase() === routeStatusFilter;
+      });
+    }
+
     _billsLoadedAt = Date.now();
     return true;
   } catch (err) {
     console.log('fetchBills error: ' + (err.message || err));
+    _lastBillSource = 'legacy';
     BILLS = [];
     return false;
+  } finally {
+    _billsFetchInFlight = false;
   }
 }
 
@@ -5867,11 +6592,11 @@ function normalizeTurnRecord(t) {
 async function fetchTurns() {
   try {
     setApiStatus('loading', 'Loading turns (In Progress + Completed)…');
-    var activeData = await proxyAction('turns', { days: 120, status: 'In Progress' });
+    var activeData = await proxyAction('turns', { days: 60, status: 'In Progress' });
     var activeRows = activeData.results || activeData.data || [];
     var completedRows = [];
     try {
-      var completedData = await proxyAction('turns', { days: 365, status: 'Completed' });
+      var completedData = await proxyAction('turns', { days: 30, status: 'Completed' });
       completedRows = completedData.results || completedData.data || [];
     } catch (e) {
       console.log('Completed turns fetch skipped: ' + (e.message || e));
@@ -6480,7 +7205,7 @@ async function fetchTurnWorkOrders() {
 async function fetchUnitTurnsDB() {
   try {
     setApiStatus('loading', 'Loading unit turn tracker…');
-    var data = await proxyAction('unit_turns', { days: '180' });
+    var data = await proxyAction('unit_turns', { days: '90' });
     var results = data.results || data.data || [];
     UNIT_TURN_TRACKER_BY_KEY = {};
     UNIT_TURNS_DB = results.map(function(t) {
@@ -6567,6 +7292,7 @@ async function fetchUnitTurnsDB() {
   WEBHOOK EVENTS — AppFolio signed webhook ingest feed
   ================================================================= */
 async function pollWebhookEvents() {
+  if (!isProxySessionReady()) return false;
   try {
     var data = await proxyAction('webhook_events');
     if (data && Array.isArray(data.events)) {
@@ -6579,8 +7305,8 @@ async function pollWebhookEvents() {
           var evtBody = e.body || '';
           if (evtBody.length > 500) evtBody = evtBody.substring(0, 500) + '\u2026';
           var meta = extractWebhookMeta(e);
-          // Decode event type to friendly label
-          var friendlyTitle = decodeWebhookTitle(e, meta);
+          var friendlyTitle = getWebhookDisplayTitle(e, meta);
+          var friendlyDescription = getWebhookDisplayDescription(e, meta);
           WEBHOOK_EVENTS.push({
             id: e.id || 0,
             ts: e.ts || e.timestamp || new Date().toISOString(),
@@ -6588,12 +7314,14 @@ async function pollWebhookEvents() {
             event_label: e.event_label || friendlyTitle,
             resource_type: meta.resourceType || '',
             resource_id: meta.resourceId || '',
-            resource_name: meta.resourceName || '',
+            resource_name: e.resource_name || meta.resourceName || '',
             title: friendlyTitle,
-            description: e.description || e.human_description || '',
+            human_description: e.human_description || '',
+            description: friendlyDescription,
             body: evtBody,
             priority: e.priority || 'normal',
-            source: e.source || 'appfolio'
+            source: e.source || 'appfolio',
+            raw: e.raw || null
           });
           existing[key] = true;
         }
@@ -6774,11 +7502,23 @@ function resolveWebhookResourceName(resourceType, resourceId) {
     var turn = TURNS.find(function(t) { return String(t.unitTurnId) === rid || String(t.unitId) === rid; });
     if (turn) return (turn.unit || rid.slice(0, 8)) + (turn.property ? ' - ' + turn.property : '');
   }
+  if (rtype === 'inspection' || rtype === 'unit_inspection') {
+    var insp = (typeof INSPECTIONS !== 'undefined' ? INSPECTIONS : []).find(function(i) {
+      return String(i.id || i.uuid || i.inspectionId || '') === rid;
+    });
+    if (insp) return (insp.name || insp.inspectionName || 'Inspection') + (insp.propertyName ? ' - ' + insp.propertyName : '');
+  }
+  if (rtype === 'bill') {
+    var bill = (typeof BILLS !== 'undefined' ? BILLS : []).find(function(b) {
+      return String(b.id || '') === rid;
+    });
+    if (bill) return 'Bill' + (bill.billNumber ? ' #' + bill.billNumber : '') + (bill.vendorName ? ' - ' + bill.vendorName : '');
+  }
   if (rtype === 'property_group') {
     var grp = PROPERTY_GROUPS.find(function(g) { return String(g.id) === rid; });
     if (grp) return grp.name || '';
   }
-  return '';
+  return rid.length > 12 ? rid.slice(0, 8) + '\u2026' : rid;
 }
 
 function getWebhookReadableContext(meta, e) {
@@ -6806,6 +7546,18 @@ function getWebhookPreviewText(e, meta) {
   meta = meta || extractWebhookMeta(e || {});
   var view = interpretWebhookEvent(e || {}, meta);
   return (view && view.description) || getWebhookReadableContext(meta, e) || '';
+}
+
+function getWebhookDisplayTitle(e, meta) {
+  meta = meta || extractWebhookMeta(e || {});
+  var explicitTitle = String((e && (e.title || e.event_label)) || '').trim();
+  return explicitTitle || decodeWebhookTitle(e || {}, meta) || 'Webhook Event';
+}
+
+function getWebhookDisplayDescription(e, meta) {
+  meta = meta || extractWebhookMeta(e || {});
+  var explicitDescription = String((e && (e.description || e.human_description)) || '').trim();
+  return explicitDescription || getWebhookPreviewText(e || {}, meta) || '';
 }
 
 function extractWebhookMeta(e) {
@@ -7113,14 +7865,14 @@ function renderWebhookEventList() {
     else if (rtype === 'property') { iconClass = 'fa-building'; iconColor = 'var(--accent)'; }
     var detailId = 'whPanelDetail_' + (e.id || idx);
     var meta = extractWebhookMeta(e);
-    var previewText = getWebhookPreviewText(e, meta);
+    var displayTitle = getWebhookDisplayTitle(e, meta);
+    var previewText = getWebhookDisplayDescription(e, meta);
     var rckey = (meta.resourceType && meta.resourceId) ? webhookResolveKey(meta.resourceType, meta.resourceId) : '';
     var resolved = rckey ? WEBHOOK_RESOURCE_CACHE[rckey] : null;
 
     // Build detail content
     var richTitle = (resolved && resolved.record) ? buildAppFolioStyleTitle(meta.resourceType, meta.eventType, resolved.record) : null;
-    var objectLine = richTitle || (resolved && resolved.summary && resolved.summary.title) || meta.resourceName || getWebhookReadableContext(meta, e) || previewText || '';
-    if (!objectLine && meta.resourceId) objectLine = (meta.resourceType || '') + ' / ' + meta.resourceId;
+    var objectLine = richTitle || (resolved && resolved.summary && resolved.summary.title) || '';
     var statusLine = (resolved && resolved.summary && resolved.summary.status) || '';
     var refLine    = (resolved && resolved.summary && resolved.summary.reference) ? '#' + resolved.summary.reference : '';
     var changes    = getWebhookChangeSummary(meta.payload || {});
@@ -7129,6 +7881,10 @@ function renderWebhookEventList() {
     if (rec.PropertyName) ctxParts.push(rec.PropertyName);
     if (rec.UnitName || rec.Unit) ctxParts.push(rec.UnitName || rec.Unit);
     if (rec.AssignedToName || rec.VendorName) ctxParts.push(rec.AssignedToName || rec.VendorName);
+    if (ctxParts.length === 0) {
+      var fallbackCtx = getWebhookReadableContext(meta, e);
+      if (fallbackCtx) ctxParts.push(fallbackCtx);
+    }
 
     html += '<div style="border-bottom:1px solid var(--border)">';
     // Header row — clickable to expand
@@ -7137,7 +7893,7 @@ function renderWebhookEventList() {
     html += '<div style="flex:1;min-width:0">';
     html += '<span style="color:var(--text-muted);font-size:10px">' + escapeHtml(e.ts ? timeAgo(e.ts) : '\u2014') + '</span> ';
     if (isPri) html += '<span style="color:var(--danger);font-weight:600">\u26a0 </span>';
-    html += '<strong style="color:var(--text-primary);font-size:11px">' + escapeHtml(e.title || decodeWebhookTitle(e, meta)) + '</strong>';
+    html += '<strong style="color:var(--text-primary);font-size:11px">' + escapeHtml(displayTitle) + '</strong>';
     if (previewText) html += '<div style="color:var(--text-secondary);margin-top:1px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(previewText) + '</div>';
     html += '</div>';
     html += '<i class="fas fa-chevron-down" style="font-size:9px;color:var(--text-muted);margin-top:3px;flex-shrink:0;transition:transform .15s" id="' + detailId + '_chev"></i>';
@@ -7146,6 +7902,7 @@ function renderWebhookEventList() {
     // Collapsible detail panel
     html += '<div id="' + detailId + '" style="display:none;padding:6px 8px 8px 20px;font-size:10px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-input);line-height:1.7">';
     if (objectLine) html += '<div><span style="color:var(--text-muted)">Object:</span> ' + escapeHtml(objectLine + (refLine ? ' ' + refLine : '')) + (statusLine ? ' <span style="color:var(--text-muted)">(' + escapeHtml(statusLine) + ')</span>' : '') + '</div>';
+    if (previewText) html += '<div><span style="color:var(--text-muted)">Summary:</span> ' + escapeHtml(previewText) + '</div>';
     if (ctxParts.length) html += '<div><span style="color:var(--text-muted)">Where:</span> ' + escapeHtml(ctxParts.join(' \u00b7 ')) + '</div>';
     html += '<div><span style="color:var(--text-muted)">Change:</span> ' + escapeHtml(changes) + '</div>';
     if (e.body)    html += '<div style="margin-top:2px"><span style="color:var(--text-muted)">Body:</span> ' + escapeHtml(e.body) + '</div>';
@@ -7186,6 +7943,10 @@ var _whFilters = { search: '', type: '', source: '', from: '', to: '' };
 async function loadWebhookData() {
   var body = $('#whDataBody');
   if (!body) return;
+  if (!isProxySessionReady()) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)">Sign in to load webhook events</td></tr>';
+    return;
+  }
   body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fas fa-circle-notch fa-spin"></i> Loading webhook data\u2026</td></tr>';
   try {
     var params = {
@@ -7200,14 +7961,17 @@ async function loadWebhookData() {
     var data = await proxyAction('webhook_events', params);
     var events = (data.events || []).map(function(evt) {
       var meta = extractWebhookMeta(evt);
-      var title = decodeWebhookTitle(evt, meta);
+      var title = getWebhookDisplayTitle(evt, meta);
+      var description = getWebhookDisplayDescription(evt, meta);
       return Object.assign({}, evt, {
         type: meta.eventType || evt.type || evt.event_type || 'webhook',
         resource_type: meta.resourceType || evt.resource_type || '',
         resource_id: meta.resourceId || evt.resource_id || '',
-        resource_name: meta.resourceName || evt.resource_name || '',
+        resource_name: evt.resource_name || meta.resourceName || '',
         title: title,
-        event_label: evt.event_label || title
+        event_label: evt.event_label || title,
+        description: description,
+        human_description: evt.human_description || ''
       });
     });
     events = dedupeWebhookEvents(events);
@@ -7253,11 +8017,12 @@ async function loadWebhookData() {
       // Recompute titles with resolved names and re-render current page.
       events = events.map(function(evt) {
         var meta = extractWebhookMeta(evt);
-        var title = decodeWebhookTitle(evt, meta);
+        var title = getWebhookDisplayTitle(evt, meta);
         return Object.assign({}, evt, {
           resource_name: meta.resourceName || evt.resource_name || '',
           title: title,
-          event_label: evt.event_label || title
+          event_label: evt.event_label || title,
+          description: getWebhookDisplayDescription(evt, meta)
         });
       });
       renderWebhookDataTable(events);
@@ -7280,6 +8045,8 @@ function renderWebhookDataTable(events) {
     var ckey = webhookResolveKey(meta.resourceType || e.resource_type, meta.resourceId || e.resource_id);
     var resolved = ckey ? WEBHOOK_RESOURCE_CACHE[ckey] : null;
     var changeSummary = getWebhookChangeSummary(meta.payload || {});
+    var displayTitle = getWebhookDisplayTitle(e, meta);
+    var displayDescription = getWebhookDisplayDescription(e, meta);
     var isPri = e.priority === 'urgent' || e.priority === 'high';
     var priClass = isPri ? 'color:var(--danger);font-weight:600' : 'color:var(--text-secondary)';
     var rowNum = _whPage * _whPageSize + idx + 1;
@@ -7287,12 +8054,12 @@ function renderWebhookDataTable(events) {
     html += '<td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">' + rowNum + '</td>';
     html += '<td style="font-family:var(--font-mono);font-size:11px;white-space:nowrap">' + escapeHtml(e.ts ? timeAgo(e.ts) : '\u2014') + '</td>';
     html += '<td><span class="tag wh-type-' + escapeHtml(String(e.type || 'webhook').replace(/[^a-z0-9_-]/gi, '')) + '">' + escapeHtml(e.type || 'webhook') + '</span></td>';
-    html += '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.title || '\u2014');
-    // v8 enriched data: show resource_type/resource_id if available
-    if (e.resource_type) {
-      html += ' <span style="font-size:10px;color:var(--text-muted)">(' + escapeHtml(e.resource_type);
-      if (e.resource_id) html += ':' + escapeHtml(String(e.resource_id).substring(0, 8));
-      html += ')</span>';
+    html += '<td style="max-width:300px">';
+    html += '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(displayTitle || '\u2014') + '</div>';
+    if (displayDescription) {
+      html += '<div style="font-size:10px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(displayDescription) + '</div>';
+    } else if (resolved && resolved.summary && resolved.summary.title) {
+      html += '<div style="font-size:10px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(resolved.summary.title) + '</div>';
     }
     if (e.body_status === 'empty') {
       html += ' <span style="font-size:9px;color:var(--warning)" title="Webhook body was empty (pre-v8 bug)">\u26a0 empty</span>';
@@ -7393,6 +8160,11 @@ async function loadWebhookStats() {
   var panel = $('#whStatsPanel');
   var content = $('#whStatsContent');
   if (!panel || !content) return;
+  if (!isProxySessionReady()) {
+    panel.classList.remove('hidden');
+    content.innerHTML = 'Sign in to view webhook stats.';
+    return;
+  }
   panel.classList.remove('hidden');
   content.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Loading stats\u2026';
   try {
@@ -7786,7 +8558,9 @@ async function fetchWONotes(woIdOrUuid, woContext) {
     // Use dedicated proxy action with v0 credentials (like property_groups)
     var data = await proxyAction('wo_notes', { wo_id: woRef });
     var notes = (data && data.results) ? data.results :
+                (data && data.Results) ? data.Results :
                 (data && data.data) ? data.data :
+                (data && data.Data) ? data.Data :
                 (Array.isArray(data) ? data : []);
     detailCacheSet('notes_' + woRef, notes);
     return notes;
@@ -7826,7 +8600,9 @@ function refreshCurrentWONotes(forceUuid, bypassProxyCache) {
     fetchPromise = apiFetch(notesApiPath)
       .then(function(data) {
         var notes = (data && data.results) ? data.results
+          : (data && data.Results) ? data.Results
           : (data && data.data) ? data.data
+          : (data && data.Data) ? data.Data
           : (Array.isArray(data) ? data : []);
         detailCacheSet('notes_' + targetUuid, notes);
         return notes;
@@ -8271,38 +9047,47 @@ function renderBillsSection() {
 
   // Filter
   var filtered = (BILLS || []).filter(function(b) {
-    if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) return false;
+    if (grp) {
+      var billGroup = String(b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
+      if (billGroup) {
+        if (billGroup !== String(grp).trim().toLowerCase()) return false;
+      } else if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) {
+        return false;
+      }
+    }
     if (statusFilter) {
-      var raw = b.raw || {};
-      var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
-      if (statusFilter === 'pending' && st.indexOf('pending') === -1) return false;
-      if (statusFilter === 'approved' && st.indexOf('approv') === -1) return false;
-      if (statusFilter === 'paid' && st.indexOf('paid') === -1) return false;
+      var st = String(b.status || '').toLowerCase();
+      if (statusFilter === 'pending_approval' && st !== 'pending_approval') return false;
+      if (statusFilter === 'approved' && st !== 'approved') return false;
+      if (statusFilter === 'paid' && st !== 'paid') return false;
+      if (statusFilter === 'void' && st !== 'void') return false;
     }
     if (search) {
-      var hay = (b.vendorName + ' ' + b.propertyName + ' ' + b.id).toLowerCase();
+      var hay = [
+        b.vendorName,
+        b.vendorId,
+        b.payeeUuid,
+        b.vendorUuid,
+        b.propertyName,
+        b.propertyGroup,
+        b.billNumber,
+        b.id,
+      ].join(' ').toLowerCase();
       if (hay.indexOf(search) === -1) return false;
     }
     return true;
   });
 
   // KPIs
-  var pendingBills = filtered.filter(function(b) {
-    var raw = b.raw || {};
-    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
-    return st.indexOf('pending') !== -1;
-  });
+  var pendingBills = filtered.filter(function(b) { return String(b.status || '') === 'pending_approval'; });
+  var approvedBills = filtered.filter(function(b) { return String(b.status || '') === 'approved'; });
   var paidBills = filtered.filter(function(b) {
-    var raw = b.raw || {};
-    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
+    var st = String(b.status || '');
     var d = new Date(b.date || '');
-    return st.indexOf('paid') !== -1 && !isNaN(d.getTime()) && d.getTime() >= thirtyDaysAgo;
+    return st === 'paid' && !isNaN(d.getTime()) && d.getTime() >= thirtyDaysAgo;
   });
   var uniqueVendors = new Set(filtered.map(function(b) { return b.vendorId || b.vendorName; }).filter(Boolean));
-  var outstandingTotal = filtered.reduce(function(sum, b) {
-    var raw = b.raw || {};
-    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '').toLowerCase();
-    if (st.indexOf('paid') !== -1) return sum;
+  var outstandingTotal = approvedBills.reduce(function(sum, b) {
     var n = parseFloat(String(b.amount || '0').replace(/[^0-9.\-]/g, '')) || 0;
     return sum + n;
   }, 0);
@@ -8328,6 +9113,16 @@ function renderBillsSection() {
     badge.style.display = pendingBills.length > 0 ? '' : 'none';
   }
 
+  var sourceBadge = document.getElementById('billing-source-badge');
+  if (sourceBadge) {
+    var src = String(_lastBillSource || 'legacy').toLowerCase();
+    if (src !== 'live' && src !== 'cached' && src !== 'legacy') src = 'legacy';
+    sourceBadge.className = 'source-badge ' + src;
+    sourceBadge.textContent = src === 'live'
+      ? '● Live'
+      : (src === 'cached' ? '○ Cached' : '⚠ Legacy');
+  }
+
   if (filtered.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px">' +
       (BILLS.length === 0 ? 'No bills loaded — click Refresh to fetch from AppFolio' : 'No bills match current filter') + '</td></tr>';
@@ -8341,16 +9136,26 @@ function renderBillsSection() {
   var page = filtered.slice(_billsPage * BILLS_PAGE_SIZE, (_billsPage + 1) * BILLS_PAGE_SIZE);
 
   var rows = page.map(function(b) {
-    var raw = b.raw || {};
-    var st = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '—');
-    var stLow = st.toLowerCase();
-    var stCls = stLow.indexOf('pending') !== -1 ? 'color:var(--warning)' : stLow.indexOf('approv') !== -1 ? 'color:var(--success)' : stLow.indexOf('paid') !== -1 ? 'color:var(--info)' : '';
+    var st = String(b.statusLabel || b.status || '—');
+    var stLow = String(b.status || '').toLowerCase();
+    var stCls = stLow === 'pending_approval'
+      ? 'color:var(--warning)'
+      : stLow === 'approved'
+      ? 'color:var(--success)'
+      : stLow === 'paid'
+      ? 'color:var(--info)'
+      : stLow === 'void'
+      ? 'color:var(--text-muted)'
+      : '';
     var grpName = b._propertyGroup || _nameToGroups[(b.propertyName || '').trim().toLowerCase()]?.[0] || '';
+    var vendorText = b.vendorName || b.vendorId || '—';
+    var payeeText = b.payeeUuid || b.vendorUuid || b.vendorId || '';
+    if (b.vendorName && payeeText) vendorText += ' (' + payeeText + ')';
     return '<tr>' +
-      '<td style="font-family:var(--font-mono);font-size:11px">' + escapeHtml(String(b.id || '—')) + '</td>' +
-      '<td>' + escapeHtml(b.vendorName || '—') + '</td>' +
+      '<td style="font-family:var(--font-mono);font-size:11px"><button class="action-btn" data-billdetail="' + escapeHtml(String(b.id || '')) + '" style="padding:2px 8px">' + escapeHtml(String(b.billNumber || b.id || '—')) + '</button></td>' +
+      '<td>' + escapeHtml(vendorText) + '</td>' +
       '<td>' + escapeHtml(b.propertyName || '—') + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(String(b.amount || '—')) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + currency(b.amount || 0) + '</td>' +
       '<td>' + escapeHtml(b.date ? formatDate(b.date) : '—') + '</td>' +
       '<td><span style="' + stCls + '">' + escapeHtml(st) + '</span></td>' +
       '<td style="font-size:10px;color:var(--accent)">' + escapeHtml(grpName || '—') + '</td>' +
@@ -8358,9 +9163,466 @@ function renderBillsSection() {
   });
   tbody.innerHTML = rows.join('');
 
+  Array.prototype.forEach.call(tbody.querySelectorAll('button[data-billdetail]'), function(btn) {
+    btn.addEventListener('click', function() {
+      var billId = btn.getAttribute('data-billdetail');
+      if (!billId) return;
+      showBillDetailModal(billId);
+    });
+  });
+
   if (footer) {
     footer.style.display = '';
     footer.textContent = 'Showing ' + (_billsPage * BILLS_PAGE_SIZE + 1) + '–' + Math.min((_billsPage + 1) * BILLS_PAGE_SIZE, filtered.length) + ' of ' + filtered.length + ' bills';
+  }
+}
+
+function wireBillingFilters() {
+  var filterType = document.getElementById('billing-filter-type');
+  var filterInput = document.getElementById('billing-filter-input');
+  var applyBtn = document.getElementById('billing-filter-apply');
+  var resetBtn = document.getElementById('billing-filter-reset');
+  var dateRange = document.getElementById('billing-date-range');
+  var inputWrapper = document.getElementById('billing-input-wrapper');
+  var statusWrap = document.getElementById('billing-status-wrapper');
+
+  if (!filterType || !applyBtn) return;
+  if (applyBtn.dataset.wired === '1') return;
+  applyBtn.dataset.wired = '1';
+
+  var PLACEHOLDERS = {
+    bills_by_vendor: 'Vendor ID (UUID)…',
+    bills_by_property: 'Property ID (UUID)…',
+    bills_by_wo: 'Work Order UUID or Number…',
+    bills_by_wo_number: 'Work Order Number…',
+    bills_by_invoice: 'Invoice Number…'
+  };
+
+  function toggleControls() {
+    var v = String(filterType.value || '').trim();
+    var isDueRange = v === 'bills_due_range';
+    var isList = v === 'bills_list';
+
+    if (dateRange) dateRange.style.display = isDueRange ? 'flex' : 'none';
+    if (inputWrapper) inputWrapper.style.display = (isList || isDueRange) ? 'none' : 'flex';
+    if (statusWrap) statusWrap.style.display = isList ? 'flex' : 'none';
+
+    if (filterInput && PLACEHOLDERS[v]) filterInput.placeholder = PLACEHOLDERS[v];
+  }
+
+  async function applyBillingFilter() {
+    var type = String(filterType.value || 'bills_list').trim();
+    var value = filterInput ? String(filterInput.value || '').trim() : '';
+    var status = String((document.getElementById('billing-status-filter') || {}).value || '').trim();
+    var from = String((document.getElementById('billing-due-from') || {}).value || '').trim();
+    var to = String((document.getElementById('billing-due-to') || {}).value || '').trim();
+
+    applyBtn.disabled = true;
+    var originalText = applyBtn.innerHTML;
+    applyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying…';
+    try {
+      var ok = await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, {
+        scoped: true,
+        filterType: type,
+        filterValue: value,
+        dueFrom: from,
+        dueTo: to,
+        routeStatusFilter: status,
+        limit: 50,
+        offset: 0
+      });
+      _billsPage = 0;
+      renderBillsSection();
+      if (!ok && ok !== null) showToast('Billing filter request failed; showing cached data', { kind: 'warning' });
+    } catch (err) {
+      showToast('Billing filter failed: ' + (err.message || err), { kind: 'warning' });
+    } finally {
+      applyBtn.disabled = false;
+      applyBtn.innerHTML = originalText;
+    }
+  }
+
+  function resetBillingFilter() {
+    if (filterInput) filterInput.value = '';
+    var dueFromEl = document.getElementById('billing-due-from');
+    var dueToEl = document.getElementById('billing-due-to');
+    var statusEl = document.getElementById('billing-status-filter');
+    if (dueFromEl) dueFromEl.value = '';
+    if (dueToEl) dueToEl.value = '';
+    if (statusEl) statusEl.value = '';
+    filterType.value = 'bills_list';
+    toggleControls();
+    applyBillingFilter();
+  }
+
+  filterType.addEventListener('change', toggleControls);
+  applyBtn.addEventListener('click', applyBillingFilter);
+  if (resetBtn) resetBtn.addEventListener('click', resetBillingFilter);
+  if (filterInput) {
+    filterInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') applyBillingFilter();
+    });
+  }
+
+  document.addEventListener('groupFilterChanged', function() {
+    if (String(filterType.value || '') === 'bills_list') applyBillingFilter();
+  });
+
+  toggleControls();
+}
+
+function buildBillLineItemsHtml(lineItems) {
+  if (!Array.isArray(lineItems) || lineItems.length === 0) return '<span style="color:var(--text-muted)">No line items available</span>';
+  var rows = lineItems.map(function(li) {
+    var desc = li.Description || li.description || '—';
+    var amt = li.Amount || li.amount || 0;
+    var gl = li.GlAccountId || li.gl_account_id || li.GLAccountId || '—';
+    var unit = li.UnitId || li.unit_id || '—';
+    return '<tr>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + escapeHtml(String(desc)) + '</td>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono)">' + currency(amt) + '</td>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid var(--border);font-family:var(--font-mono)">' + escapeHtml(String(gl)) + '</td>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + escapeHtml(String(unit)) + '</td>' +
+      '</tr>';
+  }).join('');
+  return '<table style="width:100%;border-collapse:collapse;font-size:11px">' +
+    '<thead><tr>' +
+    '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">Description</th>' +
+    '<th style="text-align:right;padding:4px 6px;border-bottom:1px solid var(--border)">Amount</th>' +
+    '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">GL</th>' +
+    '<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)">Unit</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+function buildBillPayloadHtml(payload) {
+  var safe = payload && typeof payload === 'object' ? payload : {};
+  var pretty = '';
+  try { pretty = JSON.stringify(safe, null, 2); } catch (e) { pretty = String(safe || ''); }
+  return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+    '<button class="action-btn" id="btnBillPayloadCopy" style="padding:3px 8px">Copy JSON</button>' +
+    '<button class="action-btn" id="btnBillPayloadDownload" style="padding:3px 8px">Download JSON</button>' +
+    '</div>' +
+    '<pre id="billPayloadPre" style="max-height:280px;overflow:auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;line-height:1.45;font-family:var(--font-mono)">' +
+    escapeHtml(pretty || '{}') +
+    '</pre>';
+}
+
+async function loadBillAttachments(billId, containerEl) {
+  if (!containerEl) return;
+  containerEl.innerHTML = '<div style="color:var(--text-muted);font-size:11px">Loading attachments…</div>';
+  try {
+    var data = await proxyAction('bill_attachments', { bill_id: String(billId) });
+    var list = data.attachments || data.results || [];
+    if (!Array.isArray(list) || list.length === 0) {
+      containerEl.innerHTML = '<div style="color:var(--text-muted);font-size:11px">No attachments on file.</div>';
+      return;
+    }
+
+    containerEl.innerHTML = list.map(function(att) {
+      var url = String(att.Url || att.url || att.DownloadUrl || att.download_url || '').trim();
+      var name = String(att.FileName || att.file_name || att.Name || att.name || att.Id || 'Attachment');
+      var ctype = String(att.ContentType || att.content_type || '').trim();
+      return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border)">' +
+        '<span style="font-size:12px">📎</span>' +
+        (url
+          ? ('<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener" style="color:var(--accent);font-size:11px;text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(name) + '</a>')
+          : ('<span style="flex:1;font-size:11px">' + escapeHtml(name) + '</span>')) +
+        (ctype ? ('<span style="color:var(--text-muted);font-size:10px">' + escapeHtml(ctype) + '</span>') : '') +
+        '</div>';
+    }).join('');
+  } catch (e) {
+    containerEl.innerHTML = '<div style="color:var(--danger);font-size:11px">Failed to load attachments.</div>';
+  }
+}
+
+async function uploadBillAttachment(billId, fileInput, statusEl, listEl) {
+  if (!fileInput || !statusEl) return;
+  var file = fileInput.files && fileInput.files[0];
+  if (!file) {
+    statusEl.style.color = 'var(--warning)';
+    statusEl.textContent = 'No file selected.';
+    return;
+  }
+
+  var allowed = ['application/pdf', 'image/png', 'image/jpeg', 'image/tiff'];
+  var fileType = String(file.type || '').toLowerCase();
+  var fileName = String(file.name || '').toLowerCase();
+  var extOk = /\.(pdf|png|jpg|jpeg|tif|tiff)$/i.test(fileName);
+  if (!(allowed.indexOf(fileType) !== -1 || extOk)) {
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Unsupported file type. Use PDF, PNG, JPG, or TIFF.';
+    return;
+  }
+
+  statusEl.style.color = 'var(--text-muted)';
+  statusEl.textContent = 'Uploading…';
+
+  try {
+    var url = buildProxyActionUrl('bill_attachment_upload', { bill_id: String(billId) });
+    var token = getProxyAccessToken();
+    var headers = { 'Accept': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
+    var form = new FormData();
+    form.append('File', file, file.name);
+
+    var resp = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: headers,
+      body: form
+    }, 60000);
+
+    var data = null;
+    try { data = await resp.json(); } catch (eJson) { data = null; }
+
+    if (resp.ok && data && data.ok) {
+      statusEl.style.color = 'var(--success)';
+      statusEl.textContent = 'Uploaded successfully.';
+      fileInput.value = '';
+      if (listEl) loadBillAttachments(billId, listEl);
+    } else {
+      var detail = data && data.detail
+        ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail))
+        : ('HTTP ' + resp.status);
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = 'Upload failed: ' + detail.substring(0, 180);
+    }
+  } catch (e) {
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Upload failed: ' + (e.message || e);
+  }
+}
+
+async function showBillDetailModal(billId) {
+  if (!billId) return;
+  try {
+    var data = await proxyAction('bill_detail', { bill_id: String(billId) });
+    var b = data.result || data.bill || null;
+    if (!b) {
+      showToast('Bill detail unavailable', { kind: 'warning' });
+      return;
+    }
+
+    var raw = b.raw || {};
+    var lineItems = b.line_items || b.lineItems || raw.LineItems || raw.line_items || [];
+    var afLink = API_VHOST
+      ? ('https://' + API_VHOST + '.appfolio.com/bills/' + encodeURIComponent(String(b.id || billId)))
+      : '';
+
+    showItemDetail('Bill — ' + String(b.bill_number || b.id || billId), [
+      { section: 'Core', icon: 'fa-file-invoice-dollar' },
+      { label: 'Bill ID', value: String(b.id || billId) },
+      { label: 'Invoice #', value: String(b.bill_number || b.reference || '—') },
+      { label: 'Status', value: String(b.status_label || b.status || '—') },
+      { label: 'Amount', value: currency(b.amount || b.total_amount || 0) },
+      { label: 'Invoice Date', value: b.invoice_date ? formatDate(b.invoice_date) : '—' },
+      { label: 'Due Date', value: b.due_date ? formatDate(b.due_date) : '—' },
+      { label: 'Posting Date', value: b.posting_date ? formatDate(b.posting_date) : '—' },
+      { section: 'Associations', icon: 'fa-link' },
+      { label: 'Vendor / Payee', value: String((b.vendor_name || '—') + ((b.payee_uuid || b.vendor_uuid || b.vendor_id) ? (' (' + (b.payee_uuid || b.vendor_uuid || b.vendor_id) + ')') : '')) },
+      { label: 'Payee UUID', value: String(b.payee_uuid || b.vendor_uuid || b.vendor_id || '—') },
+      { label: 'Property', value: String((b.property_name || '—') + (b.property_id ? (' (' + b.property_id + ')') : '')) },
+      { label: 'Property Group', value: String(b.property_group || b.propertyGroup || b._propertyGroup || '—') },
+      { label: 'Work Order', value: b.work_order_id ? String(b.work_order_id) : '—' },
+      { label: 'Reference', value: String(b.reference || '—') },
+      { label: 'Remarks', value: String(b.remarks || '—') },
+      { section: 'Line Items', icon: 'fa-list' },
+      { label: 'Items', html: buildBillLineItemsHtml(lineItems) },
+      { section: 'Attachments', icon: 'fa-paperclip' },
+      {
+        label: 'Files',
+        html: '<div id="billAttachmentList" style="min-height:26px"></div>' +
+          '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+          '<input type="file" id="billAttachFile" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" style="font-size:11px;max-width:220px" />' +
+          '<button class="action-btn" id="btnUploadBillAttachment" style="padding:4px 8px">Upload</button>' +
+          '<span id="billAttachStatus" style="font-size:11px;color:var(--text-muted)"></span>' +
+          '</div>'
+      },
+      { section: 'Full Payload', icon: 'fa-code' },
+      { label: 'Raw JSON', html: buildBillPayloadHtml(raw) }
+    ], afLink);
+
+    requestAnimationFrame(function() {
+      var listEl = document.getElementById('billAttachmentList');
+      var uploadBtn = document.getElementById('btnUploadBillAttachment');
+      var fileInput = document.getElementById('billAttachFile');
+      var statusEl = document.getElementById('billAttachStatus');
+      var payloadCopyBtn = document.getElementById('btnBillPayloadCopy');
+      var payloadDownloadBtn = document.getElementById('btnBillPayloadDownload');
+
+      if (listEl) loadBillAttachments(billId, listEl);
+      if (uploadBtn) {
+        uploadBtn.addEventListener('click', function() {
+          uploadBillAttachment(billId, fileInput, statusEl, listEl);
+        });
+      }
+      if (payloadCopyBtn && navigator && navigator.clipboard && navigator.clipboard.writeText) {
+        payloadCopyBtn.addEventListener('click', async function() {
+          try {
+            await navigator.clipboard.writeText(JSON.stringify(raw || {}, null, 2));
+            showToast('Bill payload copied', { kind: 'success' });
+          } catch (e) {
+            showToast('Copy failed', { kind: 'warning' });
+          }
+        });
+      }
+      if (payloadDownloadBtn) {
+        payloadDownloadBtn.addEventListener('click', function() {
+          try {
+            var content = JSON.stringify(raw || {}, null, 2);
+            var blob = new Blob([content], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'bill-' + String(b.id || billId || 'payload') + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          } catch (e) {
+            showToast('Download failed', { kind: 'warning' });
+          }
+        });
+      }
+    });
+  } catch (e) {
+    showToast('Bill detail failed: ' + (e.message || e), { kind: 'warning' });
+  }
+}
+
+async function runBillHistorySearch() {
+  var fromEl = document.getElementById('billHistFrom');
+  var toEl = document.getElementById('billHistTo');
+  var body = document.getElementById('billHistBody');
+  var footer = document.getElementById('billHistFooter');
+  if (!fromEl || !toEl || !body || !footer) return;
+
+  function normalizeYmd(value) {
+    var v = String(value || '').trim();
+    if (!v) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return '';
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  var dateFrom = normalizeYmd(fromEl.value);
+  var dateTo = normalizeYmd(toEl.value);
+  if (!dateFrom || !dateTo) {
+    showToast('Select valid From and To dates for history search');
+    return;
+  }
+
+  body.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">' + loadingHtml('Searching history…') + '</td></tr>';
+  footer.style.display = 'none';
+
+  try {
+    var rows = [];
+    var usedDueRange = false;
+    var grpName = getEffectiveGroupId();
+    var grpUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
+
+    if (grpUuid) {
+      try {
+        var dueRangeData = await proxyAction('bills_due_range', {
+          group_id: String(grpUuid),
+          due_from: dateFrom,
+          due_to: dateTo,
+          limit: '500',
+          offset: '0'
+        });
+        rows = Array.isArray(dueRangeData.data)
+          ? dueRangeData.data
+          : (Array.isArray(dueRangeData.results) ? dueRangeData.results : []);
+        usedDueRange = true;
+        _lastBillSource = 'cached';
+      } catch (dueErr) {
+        console.log('runBillHistorySearch due_range fallback: ' + (dueErr.message || dueErr));
+      }
+    }
+
+    if (!usedDueRange) {
+      var fromDt = new Date(dateFrom + 'T00:00:00');
+      var toDt = new Date(dateTo + 'T23:59:59');
+      var spanDays = 365;
+      if (!isNaN(fromDt.getTime()) && !isNaN(toDt.getTime())) {
+        spanDays = Math.max(30, Math.min(3650, Math.ceil((toDt - fromDt) / 86400000) + 30));
+      }
+      var params = {
+        date_from: dateFrom,
+        date_to: dateTo,
+        days: String(spanDays),
+        max: '8000',
+      };
+      if (grpName) params.group_name = grpName;
+      if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
+
+      var st = ($('#billStatusFilter') ? $('#billStatusFilter').value : '').trim();
+      if (st) params.status = st;
+
+      var data = await proxyAction('bills_history', params);
+      rows = Array.isArray(data.results) ? data.results : [];
+      if (typeof data.from_cache === 'boolean') {
+        _lastBillSource = data.from_cache ? 'cached' : 'live';
+      } else {
+        _lastBillSource = 'legacy';
+      }
+    }
+
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No historical bills found for selected criteria</td></tr>';
+      footer.style.display = 'none';
+      return;
+    }
+
+    body.innerHTML = rows.slice(0, 500).map(function(r) {
+      var wo = String(r.work_order_id || r.WorkOrderId || '').trim();
+      var billId = String(r.id || r.Id || '').trim();
+      var grpResolved = String(r.property_group || r.PropertyGroup || '').trim();
+      if (!grpResolved) {
+        var nGroups = _nameToGroups[(String(r.property_name || r.PropertyName || '').trim().toLowerCase())] || [];
+        grpResolved = nGroups[0] || '';
+      }
+      var pmResolved = String(r.property_manager || r.PropertyManager || '').trim();
+      if (!pmResolved && grpResolved) {
+        pmResolved = getRoutingPmForGroup(grpResolved);
+      }
+      return '<tr>' +
+        '<td style="font-family:var(--font-mono);font-size:11px">' + (billId ? ('<button class="action-btn" data-billdetail="' + escapeHtml(billId) + '" style="padding:2px 8px">' + escapeHtml(String(r.bill_number || r.Reference || r.id || r.Id || '—')) + '</button>') : escapeHtml(String(r.bill_number || r.Reference || r.id || r.Id || '—'))) + '</td>' +
+        '<td>' + escapeHtml(String(r.vendor_name || r.VendorName || r.vendor_id || r.VendorId || '—')) + '</td>' +
+        '<td>' + escapeHtml(String(r.property_name || r.PropertyName || r.property_id || r.PropertyId || '—')) + '</td>' +
+        '<td>' + escapeHtml(grpResolved || '—') + '</td>' +
+        '<td>' + escapeHtml(pmResolved || '—') + '</td>' +
+        '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || r.TotalAmount || 0) + '</td>' +
+        '<td>' + escapeHtml((r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) ? formatDate(r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) : '—') + '</td>' +
+        '<td>' + escapeHtml(String(r.status_label || r.status || r.ApprovalStatus || '—')) + '</td>' +
+        '<td>' + (wo ? ('<button class="action-btn" data-wojump="' + escapeHtml(wo) + '" style="padding:2px 8px">#' + escapeHtml(wo.slice(0, 8)) + '</button>') : '<span style="color:var(--text-muted)">—</span>') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    footer.style.display = '';
+    footer.textContent = 'History search returned ' + rows.length + ' bill(s) from ' + dateFrom + ' to ' + dateTo;
+
+    Array.prototype.forEach.call(body.querySelectorAll('button[data-wojump]'), function(btn) {
+      btn.addEventListener('click', function() {
+        var woId = btn.getAttribute('data-wojump');
+        if (!woId) return;
+        showWODetail(woId);
+      });
+    });
+    Array.prototype.forEach.call(body.querySelectorAll('button[data-billdetail]'), function(btn) {
+      btn.addEventListener('click', function() {
+        var billId = btn.getAttribute('data-billdetail');
+        if (!billId) return;
+        showBillDetailModal(billId);
+      });
+    });
+  } catch (e) {
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:20px">History search failed: ' + escapeHtml(String(e.message || e)) + '</td></tr>';
+    footer.style.display = 'none';
   }
 }
 
@@ -9274,7 +10536,7 @@ function renderWOCloseAssist() {
       : (BILLS.length === 0)
         ? 'No aged open WOs match current filter. ℹ️ AP bills not loaded — click “Refresh AP” above for vendor-match evidence.'
         : 'No candidates for current age/filter window.';
-    body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted)">' + noRowsMsg + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">' + noRowsMsg + '</td></tr>';
     pagination.innerHTML = '';
     woCloseAssist.currentPage = 0;
     return;
@@ -9290,16 +10552,44 @@ function renderWOCloseAssist() {
   pageItems.forEach(function(r) {
     var wo = r.wo;
     var confColor = r.confidence === 'High' ? 'var(--danger)' : (r.confidence === 'Medium' ? 'var(--warning)' : 'var(--text-muted)');
-    var billEvidence = r.billMatches.length > 0 ? (r.billMatches.length + ' AP match') : '—';
+    var leadBillId = r.billMatches.length > 0 ? String(r.billMatches[0].id || '').trim() : '';
+    var leadBillLabel = r.billMatches.length > 0
+      ? String(r.billMatches[0].billNumber || r.billMatches[0].id || 'Bill')
+      : '';
+    var billEvidence = '—';
+    if (r.billMatches.length > 0) {
+      var total = r.billMatches.reduce(function(sum, b) {
+        return sum + (parseFloat(String(b.amount || 0).replace(/[^0-9.\-]/g, '')) || 0);
+      }, 0);
+      var lead = r.billMatches.slice(0, 2).map(function(b) {
+        var bid = String(b.id || '').trim();
+        var label = String(b.billNumber || b.id || 'bill');
+        if (!bid) return '<span class="tag" style="font-family:var(--font-mono)">' + escapeHtml(label) + '</span>';
+        return '<button class="action-btn" data-billdetail="' + escapeHtml(bid) + '" style="padding:2px 6px;font-size:10px;font-family:var(--font-mono)" title="Open bill detail">' +
+          escapeHtml(label) + '</button>';
+      }).join(' ');
+      billEvidence = '<div style="display:flex;flex-direction:column;gap:4px">' +
+        '<div><span style="font-weight:600;color:var(--success)">' + r.billMatches.length + ' match' + (r.billMatches.length === 1 ? '' : 'es') + '</span> ' +
+        '<span style="color:var(--text-muted)">(' + currency(total) + ')</span></div>' +
+        '<div style="display:flex;gap:4px;flex-wrap:wrap">' + lead +
+        (r.billMatches.length > 2 ? ('<span style="font-size:10px;color:var(--text-muted)">+' + (r.billMatches.length - 2) + ' more</span>') : '') +
+        '</div></div>';
+    }
     html += '<tr>';
     html += '<td><button class="action-btn" data-woid="' + escapeHtml(String(wo.id)) + '" style="padding:2px 8px">#' + escapeHtml(String(wo.id)) + '</button></td>';
     html += '<td>' + escapeHtml(wo.propertyName || '—') + '</td>';
     html += '<td>' + escapeHtml(wo.unit || '—') + '</td>';
     html += '<td>' + r.ageDays + 'd <span style="color:var(--text-muted)">(' + r.bucket + ')</span></td>';
     html += '<td>' + escapeHtml(wo.assignedUser || wo.vendorName || '—') + '</td>';
-    html += '<td>' + escapeHtml(billEvidence) + '</td>';
+    html += '<td>' + billEvidence + '</td>';
     html += '<td><span style="font-weight:700;color:' + confColor + '">' + r.confidence + '</span></td>';
     html += '<td>' + escapeHtml(r.suggestion) + '</td>';
+    html += '<td style="white-space:nowrap">' +
+      '<button class="action-btn" data-woopen="' + escapeHtml(String(wo.id)) + '" style="padding:2px 8px;margin-right:4px" title="Open WO detail">WO</button>' +
+      (leadBillId
+        ? ('<button class="action-btn" data-billopen="' + escapeHtml(leadBillId) + '" style="padding:2px 8px" title="Open lead bill ' + escapeHtml(leadBillLabel) + '">Bill</button>')
+        : '<button class="action-btn" disabled style="padding:2px 8px;opacity:0.5" title="No AP match">Bill</button>') +
+      '</td>';
     html += '</tr>';
   });
   body.innerHTML = html;
@@ -9310,6 +10600,27 @@ function renderWOCloseAssist() {
   Array.prototype.forEach.call(body.querySelectorAll('button[data-woid]'), function(btn) {
     btn.addEventListener('click', function() {
       showWODetail(btn.getAttribute('data-woid'));
+    });
+  });
+  Array.prototype.forEach.call(body.querySelectorAll('button[data-billdetail]'), function(btn) {
+    btn.addEventListener('click', function() {
+      var billId = btn.getAttribute('data-billdetail');
+      if (!billId) return;
+      showBillDetailModal(billId);
+    });
+  });
+  Array.prototype.forEach.call(body.querySelectorAll('button[data-woopen]'), function(btn) {
+    btn.addEventListener('click', function() {
+      var woId = btn.getAttribute('data-woopen');
+      if (!woId) return;
+      showWODetail(woId);
+    });
+  });
+  Array.prototype.forEach.call(body.querySelectorAll('button[data-billopen]'), function(btn) {
+    btn.addEventListener('click', function() {
+      var billId = btn.getAttribute('data-billopen');
+      if (!billId) return;
+      showBillDetailModal(billId);
     });
   });
   var prevBtn = document.getElementById('woCloseAssistPrev');
@@ -9720,13 +11031,7 @@ async function closeTurn(turnId) {
 // Save a turn record stage to proxy
 async function saveTurnRecordStage(turnId, stage, stageData) {
   try {
-    var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
-    var url = API_PROXY + sep + 'action=turn_record_stage';
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: turnId, stage: stage, data: stageData })
-    });
+    await proxyPost('turn_record_stage', { id: turnId, stage: stage, data: stageData });
   } catch (err) {
     console.log('Save stage error: ' + (err.message || err));
   }
@@ -9735,13 +11040,7 @@ async function saveTurnRecordStage(turnId, stage, stageData) {
 // Save full turn record to proxy
 async function saveTurnRecord(record) {
   try {
-    var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
-    var url = API_PROXY + sep + 'action=turn_records';
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(record)
-    });
+    await proxyPost('turn_records', record);
   } catch (err) {
     console.log('Save turn record error: ' + (err.message || err));
   }
@@ -10217,7 +11516,6 @@ function buildTurnPipeline() {
       }
     }
     var target = (turnData && turnData.targetDays) || CONFIG.TURN_TARGET_DAYS;
-    var isStalled = !isUpcoming && elapsed > CONFIG.TURN_STALLED_DAYS && currentStageIdx >= 1 && currentStageIdx < PIPE_STAGES.length - 1;
     // Aggregate completion: ALL linked WOs must be in terminal status
     var allWOsDone = isTurnFullyComplete(matchingWOs);
     // A turn is CONFIRMED when AppFolio is tracking it (comes from unit_turn_detail report)
@@ -10239,6 +11537,7 @@ function buildTurnPipeline() {
     PIPE_STAGES.forEach(function(ps, i) {
       if (stages[ps.key] && stages[ps.key].done) currentStageIdx = i;
     });
+    var isStalled = !isUpcoming && elapsed > CONFIG.TURN_STALLED_DAYS && currentStageIdx >= 1 && currentStageIdx < PIPE_STAGES.length - 1;
     // Look up DB API unit turn data for this entry
     var dbTurnMatch = null;
     if (UNIT_TURNS_DB.length > 0) {
@@ -10480,7 +11779,7 @@ function renderTurnPipelineUI() {
       }
     }
     var slaBreach = p.sla && p.sla.breached && !p.isCompleted;
-    var cardClass = p.isCompleted ? '' : p.isUpcoming ? 'upcoming' : p.isOnRadar ? 'on-radar' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
+    var cardClass = p.isCompleted ? 'completed' : p.isUpcoming ? 'upcoming' : p.isOnRadar ? 'on-radar' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
     html += '<div class="pipe-card ' + cardClass + '" data-pipeidx="' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
 
     // Left: unit info
@@ -12258,7 +13557,7 @@ function wireUpUI() {
 
       // Lazy-load AP bills when Work Orders tab is opened (needed for WO Close Assist)
       if (tabName === 'workorders' && (!BILLS || BILLS.length === 0)) {
-        fetchBills(365).then(function() { renderWOCloseAssist(); }).catch(function() {});
+        fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS).then(function() { renderWOCloseAssist(); }).catch(function() {});
       }
 
       // Lazy-load AP Bills when Billing tab is opened
@@ -12266,7 +13565,7 @@ function wireUpUI() {
         if (!BILLS || BILLS.length === 0) {
           var billBody = document.getElementById('billBody');
           if (billBody) billBody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px">' + loadingHtml('Loading bills\u2026') + '</td></tr>';
-          fetchBills(365).then(function() {
+          fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, { scoped: true }).then(function() {
             // Re-enrich bills with _propertyGroup after load
             (BILLS || []).forEach(function(b) {
               var grps = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] ||
@@ -12381,19 +13680,32 @@ function wireUpUI() {
     $('#woCompletedHistoryToggle').addEventListener('change', async function() {
       showCompletedWOHistory = !!this.checked;
       completedWOHistoryPage = 0;
-      if (!showCompletedWOHistory) {
-        renderCompletedWOHistorySection();
-        return;
-      }
+      renderCompletedWOHistorySection();
+    });
+  }
+  if ($('#btnFetchCompletedHistory')) {
+    $('#btnFetchCompletedHistory').addEventListener('click', async function() {
+      var btn = this;
+      var daysEl = $('#woCompletedHistoryDays');
+      var days = parseInt(daysEl ? daysEl.value : String(DEFAULT_COMPLETED_WO_LOOKBACK_DAYS), 10) || DEFAULT_COMPLETED_WO_LOOKBACK_DAYS;
+      days = Math.max(30, Math.min(3650, days));
+      if (daysEl) daysEl.value = String(days);
+      showCompletedWOHistory = true;
+      if ($('#woCompletedHistoryToggle')) $('#woCompletedHistoryToggle').checked = true;
+      completedWOHistoryPage = 0;
       completedWOHistoryLoading = true;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Searching…';
       renderCompletedWOHistorySection();
       try {
-        await fetchCompletedWorkOrdersHistory(365);
+        await fetchCompletedWorkOrdersHistory(days);
       } catch (e) {
         completedWOHistoryRows = [];
         showToast('Completed history load failed: ' + ((e && e.message) || e), { kind: 'warning' });
       } finally {
         completedWOHistoryLoading = false;
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-search"></i> Search Completed';
         renderCompletedWOHistorySection();
       }
     });
@@ -12405,7 +13717,7 @@ function wireUpUI() {
       this.disabled = true;
       this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading AP\u2026';
       try {
-        var ok = await fetchBills(365);
+        var ok = await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS);
         woCloseAssist.currentPage = 0;
         renderWOCloseAssist();
         showToast(ok ? ('AP loaded — ' + BILLS.length + ' bills') : 'Could not load AP bills', ok ? { kind: 'success' } : { kind: 'warning' });
@@ -12647,7 +13959,7 @@ function wireUpUI() {
       billRefreshBtn.disabled = true;
       billRefreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading…';
       try {
-        await fetchBills(365);
+        await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, { scoped: true, forceRefresh: true });
         // Enrich bills with property group after fresh load
         (BILLS || []).forEach(function(b) {
           var grps = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] ||
@@ -12668,6 +13980,9 @@ function wireUpUI() {
   if (billSearch) billSearch.addEventListener('input', function() { _billsPage = 0; renderBillsSection(); });
   var billStatusFilter = $('#billStatusFilter');
   if (billStatusFilter) billStatusFilter.addEventListener('change', function() { _billsPage = 0; renderBillsSection(); });
+  var billHistBtn = $('#btnBillHistSearch');
+  if (billHistBtn) billHistBtn.addEventListener('click', runBillHistorySearch);
+  wireBillingFilters();
 
   // Theme toggle
   $('#themeToggle').addEventListener('click', function() { toggleTheme(); });
@@ -12727,6 +14042,12 @@ function wireUpUI() {
       }
     });
     updateGlobalGroupIndicator();
+    document.dispatchEvent(new CustomEvent('groupFilterChanged', {
+      detail: {
+        groupName: currentPropertyGroup || '',
+        forcedGroupUuid: forcedPropertyGroupUuid || ''
+      }
+    }));
   }
 
   function clearPropertyGroupFilters() {
@@ -13012,7 +14333,7 @@ async function sectionRefresh(section, btn) {
       showToast('Refreshing open work orders\u2026');
       await fetchWorkOrders();
       if (!_billsLoadedAt || (Date.now() - _billsLoadedAt) > (30 * 60 * 1000)) {
-        await fetchBills(365);
+        await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS);
       }
       renderWorkOrders();
     }
@@ -13361,7 +14682,7 @@ async function fetchAllLive() {
 
     if (BILLS.length === 0) {
       // Best-effort AP load for WO close-assist; non-blocking and non-fatal.
-      try { await withStepTimeout(function() { return fetchBills(365); }, 30000); } catch (e) { /* ignore */ }
+      try { await withStepTimeout(function() { return fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS); }, 30000); } catch (e) { /* ignore */ }
     }
 
     anySuccess = woOk || propOk || turnOk;
@@ -14271,6 +15592,10 @@ renderDashboardKPIs = function() {
   }
 
   function pollLiveEvents() {
+    if (!isProxySessionReady()) {
+      setStatus('Awaiting sign-in…');
+      return;
+    }
     proxyAction('webhook_events', { limit: 100 }).then(function(data) {
       mergeEvents(data && Array.isArray(data.events) ? data.events : []);
       setStatus('Listening for AppFolio events…');
@@ -14321,7 +15646,7 @@ renderDashboardKPIs = function() {
 })();
 
 /* ================================================================
-  HANDYMANAGER v9.1a — PART 3: DISPATCH CONTROL MODULE
+  HANDYMANAGER v9.2.2 — PART 3: DISPATCH CONTROL MODULE
    All proxy calls use existing proxyAction() + API_PROXY.
    Tech UUIDs must hold "Maintenance Tech" role in AppFolio or
    every automated PATCH returns 422 "User not found".
@@ -14572,11 +15897,20 @@ function dispatchPost(action, body) {
   }
   var sep = base.indexOf('?')!==-1?'&':'?';
   var url = base + sep + 'action=' + encodeURIComponent(action);
+  var headers = { 'Content-Type': 'application/json' };
+  var token = getProxyAccessToken();
+  if (token) {
+    headers['Authorization'] = 'Bearer ' + token;
+    headers['x-proxy-token'] = token;
+  }
   return fetch(url, {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    method:'POST', headers: headers, body:JSON.stringify(body)
   }).then(function(r){
     if (!r.ok) {
       return r.text().then(function(t) {
+        if (r.status === 401) {
+          throw new Error('Dispatch ' + action + ' unauthorized: reconnect in Vault (missing or invalid proxy token).');
+        }
         throw new Error('Dispatch ' + action + ' failed: HTTP ' + r.status + (t ? ' — ' + t.substring(0, 200) : ''));
       });
     }
@@ -14988,10 +16322,9 @@ var DispatchQueue = {
   markExempt: async function(woId, woNum) {
     if (!confirm('Mark WO #'+woNum+' as exempt?\n\nThis writes a system note to AppFolio and stops automated reassignment for this WO.')) return;
     try {
-      var sep=API_PROXY.indexOf('?')!==-1?'&':'?';
-      await fetch(API_PROXY+sep+'action=passthrough&path='+encodeURIComponent('/api/v0/work_orders/'+woId+'/notes'), {
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({Body:':stop-auto: Manual admin exemption applied via HandyManager Dispatch Control.'})
+      await proxyPost('wo_note_create', {
+        uuid: woId,
+        body_text: ':stop-auto: Manual admin exemption applied via HandyManager Dispatch Control.'
       });
       v9Toast('Exemption applied','WO '+woNum+' is now exempt','success');
       DispatchControl.refresh();
@@ -15189,9 +16522,15 @@ var DispatchComms = {
     var btn = document.getElementById('btnDispatchSendTestSms');
     var resultEl = document.getElementById('dispatchTestResult');
     var phone = phoneEl ? String(phoneEl.value || '').trim() : '';
+    var adminKey = getDispatchAdminKey();
     if (!/^\+\d{10,15}$/.test(phone)) {
       if (resultEl) resultEl.textContent = 'Enter a valid E.164 phone number such as +15551234567.';
       v9Toast('Invalid phone number', 'Use E.164 format like +15551234567', 'warning');
+      return;
+    }
+    if (!adminKey) {
+      if (resultEl) resultEl.textContent = 'Set PROXY_ADMIN_KEY in the Database tab before sending test links.';
+      v9Toast('Admin key required', 'Set PROXY_ADMIN_KEY in Database tab first', 'warning');
       return;
     }
 
@@ -15204,6 +16543,7 @@ var DispatchComms = {
 
     try {
       var response = await dispatchPost('send_magic_link_test_sms', {
+        key: adminKey,
         phone: phone,
         tech_name: 'Dispatch Test',
         tech_id: 'dispatch-test'
@@ -15801,7 +17141,7 @@ document.addEventListener('keydown',function(e){
 });
 
 /* ================================================================
-  HANDYMANAGER v9.1a — PART 4: LIVE WEBHOOK EVENT ENGINE
+  HANDYMANAGER v9.2.2 — PART 4: LIVE WEBHOOK EVENT ENGINE
 
    Decodes every webhook event into human-readable labels,
    fires v9Toast for important events (completions/escalations),
@@ -15933,11 +17273,13 @@ function decodeWebhookEventV9(evt) {
   function _clearUnseen(){_unseenCount=0;_updateBadge();}
 
   async function _seedLastId(){
+    if (!isProxySessionReady()) return;
     try{var d=await proxyAction('webhook_events',{limit:1});if(d.ok&&d.events&&d.events.length)_lastId=d.events[0].id||0;}catch(e){}
   }
 
   async function _poll(){
     if(_isPolling||!API_PROXY)return;
+    if(!isProxySessionReady()) return;
     _isPolling=true;
     try{
       var data=await proxyAction('webhook_live',{since_id:String(_lastId),limit:'20'});
