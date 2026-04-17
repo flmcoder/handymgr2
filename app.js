@@ -780,6 +780,8 @@ function wipeCredentials() {
 
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
 var AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000;
+// ── Session renewal: touch session_info every 4 min to slide expiry window ─
+var SESSION_RENEWAL_MS = 4 * 60 * 1000; // 4 minutes
 
 function startAutoSync() {
   stopAutoSync();
@@ -806,6 +808,33 @@ function stopAutoSync() {
   if (_autoSyncTimer) { clearInterval(_autoSyncTimer); _autoSyncTimer = null; }
 }
 
+// ── Session renewal: keep-alive ping that slides the token expiry window ───
+function startSessionRenewal() {
+  stopSessionRenewal();
+  _sessionRenewalTimer = setInterval(async function() {
+    if (!API_CREDS || !API_VHOST) return;
+    var token = getProxyAccessToken();
+    if (!token) return; // no device token — password-only session not in Turso
+    try {
+      var sess = await proxyAction('session_info');
+      if (!sess || !sess.ok) {
+        handleProxySessionExpired('session renewal');
+      }
+    } catch (err) {
+      var msg = String((err && err.message) || '');
+      // 401 = session is genuinely expired; surface it
+      if (msg.indexOf('401') !== -1) {
+        handleProxySessionExpired('session renewal');
+      }
+      // Other transient errors (429, 503, timeout) are non-fatal — keep session alive
+    }
+  }, SESSION_RENEWAL_MS);
+}
+
+function stopSessionRenewal() {
+  if (_sessionRenewalTimer) { clearInterval(_sessionRenewalTimer); _sessionRenewalTimer = null; }
+}
+
 function lockVault() {
   wipeCredentials();
   appInitialized = false;
@@ -815,6 +844,7 @@ function lockVault() {
   _vendorsLazyLoaded = false; _inspLazyLoaded = false;
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
   stopAutoSync();
+  stopSessionRenewal();
   // Note: IndexedDB cache is NOT cleared on lock — data persists for next unlock
   updateCacheBadge('offline');
   $('#appShell').classList.remove('unlocked');
@@ -1556,6 +1586,7 @@ var WEBHOOK_EVENTS = [];
 var _schemaHealthWarned = false;
 var _webhookPollTimer = null;
 var _autoSyncTimer = null;      // 30-min background selective refresh
+var _sessionRenewalTimer = null; // 4-min session keep-alive (slides Turso token expiry)
 var _vendorsLazyLoaded = false; // lazy-load flag — vendors fetched on tab click
 var _inspLazyLoaded = false;   // lazy-load flag — inspections fetched on tab click
 var _whLazyLoaded = false;     // lazy-load flag — webhook data loaded on tab click
@@ -2192,39 +2223,30 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
     } else if (pass) {
       // Verify password against proxy env vars (GUI_ADMIN / GUI_GM / GUI_VENDORS)
-      // Handle 505 gracefully: password verified but session token creation failed (Turso schema issue)
       var roleResult;
       try {
         roleResult = await proxyPost('verify_role', { password: pass });
       } catch (verifyErr) {
+        // Detect the 505 "password verified but token failed" scenario — proxy schema issue
         var verifyErrMsg = String(verifyErr && verifyErr.message || '');
-        var is505TokenFail = verifyErrMsg.indexOf('505') !== -1 && verifyErrMsg.indexOf('Password verified') !== -1;
-        if (is505TokenFail) {
-          var roleFromErr = 'admin';
-          var tokenFailBody = verifyErrMsg.replace(/^.*?\u2014\s*/, '');
-          try {
-            var parsedErrBody = JSON.parse(tokenFailBody);
-            if (parsedErrBody.role) roleFromErr = parsedErrBody.role;
-          } catch (pe) { /* use default */ }
-          roleResult = { ok: true, role: roleFromErr, token: '', _degraded: true };
-          console.warn('verify_role returned 505 — password verified, proceeding with degraded session.');
-        } else {
-          throw verifyErr;
+        if (verifyErrMsg.indexOf('505') !== -1 && verifyErrMsg.indexOf('Password verified') !== -1) {
+          // Surface a clear error — operator must fix the trusted_devices table on the proxy
+          throw new Error('trusted_devices table missing or has a schema issue');
         }
+        throw verifyErr;
       }
       if (!roleResult || !roleResult.ok) {
         throw new Error((roleResult && roleResult.error) || 'Invalid password');
       }
       _accessRole = normalizeAccessRole(roleResult.role);
       var sessionToken = String(roleResult.token || '');
-      if (sessionToken) {
-        API_CREDS = { p: sessionToken };
-        try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
-        try { localStorage.setItem('hm_proxy_token', sessionToken); } catch (eTok2) { /* */ }
-      } else {
-        API_CREDS = { p: '' };
-        showToast('Connected in degraded mode — proxy DB write issue prevents persistent sessions.', { kind: 'warning', duration: 7000 });
+      if (!sessionToken) {
+        // verify_role returned ok but no token — proxy schema issue (INSERT silently failed)
+        throw new Error('trusted_devices table missing or has a schema issue');
       }
+      API_CREDS = { p: sessionToken };
+      try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
+      try { localStorage.setItem('hm_proxy_token', sessionToken); } catch (eTok2) { /* */ }
       persistAccessRole(_accessRole);
     } else {
       throw new Error('Enter your password to connect.');
@@ -2245,6 +2267,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     }
     applyAccessRole();
     startAutoSync();
+    startSessionRenewal();
     if (_accessRole === 'vendors') {
       showToast('Vendor access \u2014 connecting to ' + vhost + '.appfolio.com via proxy');
     } else {
