@@ -126,7 +126,7 @@ export function rowsAsObjects(result: any): Record<string, any>[] {
 // ── ensureTables ──────────────────────────────────────────────────────────────
 // Creates/migrates all tables to match the current schema version.
 // Uses a version sentinel in proxy_config to track schema state.
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 let _tablesReady = false;
 
 export async function ensureTables(): Promise<void> {
@@ -1014,6 +1014,8 @@ export async function ensureTables(): Promise<void> {
       id                   TEXT PRIMARY KEY,
       work_order_number    TEXT UNIQUE NOT NULL,
       property_map_id      TEXT NOT NULL,
+      property_id          TEXT,
+      unit_id              TEXT,
       vendor_id            TEXT,
       occupancy_id         TEXT,
       status               TEXT,
@@ -1032,16 +1034,23 @@ export async function ensureTables(): Promise<void> {
       FOREIGN KEY(turn_tracking_uuid) REFERENCES unit_turn_tracker(tracking_uuid)
     )`);
 
+    // Additive migrations for existing work_order_map installs.
+    try { await sqlite.execute(`ALTER TABLE work_order_map ADD COLUMN property_id TEXT`); } catch (_) {}
+    try { await sqlite.execute(`ALTER TABLE work_order_map ADD COLUMN unit_id TEXT`); } catch (_) {}
+
     await sqlite.execute(`CREATE TABLE IF NOT EXISTS billing_map (
       id                       TEXT PRIMARY KEY,
       vendor_id                TEXT,
       property_map_id          TEXT,
+      property_id              TEXT,
       work_order_id            TEXT,
       work_order_number        TEXT,
       invoice_date             TEXT,
       due_date                 TEXT,
       total_amount             REAL,
       check_memo               TEXT,
+      approval_status          TEXT,
+      bill_number              TEXT,
       management_company_payee INTEGER DEFAULT 0,
       line_items_json          TEXT,
       last_updated_at          TEXT,
@@ -1049,6 +1058,24 @@ export async function ensureTables(): Promise<void> {
       FOREIGN KEY(vendor_id) REFERENCES vendor_map(id),
       FOREIGN KEY(property_map_id) REFERENCES property_map(id),
       FOREIGN KEY(work_order_id) REFERENCES work_order_map(id)
+    )`);
+
+    // Additive migrations for existing billing_map installs.
+    try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN property_id TEXT`); } catch (_) {}
+    try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN approval_status TEXT`); } catch (_) {}
+    try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN bill_number TEXT`); } catch (_) {}
+
+    await sqlite.execute(`CREATE TABLE IF NOT EXISTS bill_line_items (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      bill_id        TEXT NOT NULL,
+      unit_id        TEXT,
+      gl_account_id  TEXT,
+      amount         REAL,
+      description    TEXT,
+      line_item_type TEXT,
+      quantity       REAL,
+      unit_price     REAL,
+      cached_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
 
     await sqlite.execute(`CREATE TABLE IF NOT EXISTS open_work_orders_view (
@@ -1149,6 +1176,8 @@ export async function ensureTables(): Promise<void> {
         `CREATE INDEX IF NOT EXISTS idx_vm_name ON vendor_map(name)`,
         `CREATE INDEX IF NOT EXISTS idx_wom_number ON work_order_map(work_order_number)`,
         `CREATE INDEX IF NOT EXISTS idx_wom_property ON work_order_map(property_map_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_wom_property_id ON work_order_map(property_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_wom_unit_id ON work_order_map(unit_id)`,
         `CREATE INDEX IF NOT EXISTS idx_wom_vendor ON work_order_map(vendor_id)`,
         `CREATE INDEX IF NOT EXISTS idx_wom_status ON work_order_map(status)`,
         `CREATE INDEX IF NOT EXISTS idx_wom_priority ON work_order_map(priority)`,
@@ -1157,10 +1186,15 @@ export async function ensureTables(): Promise<void> {
         `CREATE INDEX IF NOT EXISTS idx_wom_occupancy ON work_order_map(occupancy_id)`,
         `CREATE INDEX IF NOT EXISTS idx_bm_vendor ON billing_map(vendor_id)`,
         `CREATE INDEX IF NOT EXISTS idx_bm_property ON billing_map(property_map_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_bm_property_id ON billing_map(property_id)`,
         `CREATE INDEX IF NOT EXISTS idx_bm_wo_id ON billing_map(work_order_id)`,
         `CREATE INDEX IF NOT EXISTS idx_bm_wo_number ON billing_map(work_order_number)`,
         `CREATE INDEX IF NOT EXISTS idx_bm_invoice ON billing_map(invoice_date)`,
         `CREATE INDEX IF NOT EXISTS idx_bm_due ON billing_map(due_date)`,
+        `CREATE INDEX IF NOT EXISTS idx_bm_approval ON billing_map(approval_status)`,
+        `CREATE INDEX IF NOT EXISTS idx_bli_bill_id ON bill_line_items(bill_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_bli_unit ON bill_line_items(unit_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_bli_gl ON bill_line_items(gl_account_id)`,
         `CREATE INDEX IF NOT EXISTS idx_owov_group ON open_work_orders_view(property_group_id)`,
         `CREATE INDEX IF NOT EXISTS idx_owov_vendor ON open_work_orders_view(vendor_id)`,
         `CREATE INDEX IF NOT EXISTS idx_owov_is_turn ON open_work_orders_view(is_turn_wo)`,
@@ -1464,4 +1498,256 @@ export async function webhookCleanup(): Promise<{
   }
 
   return { deleted_old: deletedOld, deleted_overflow: deletedOverflow };
+}
+
+// ── Relational upsert helpers ─────────────────────────────────────────────────
+// Side-write helpers called from handlers after a fresh API fetch.
+// Accept raw AppFolio rows (v0 PascalCase or v2 snake_case), normalise, and
+// batch-upsert into the relational map tables using multi-row INSERT statements
+// (one round-trip per 50 rows).  All errors are caught — callers are never
+// affected.  Tables are populated lazily: each entity family must be upserted
+// before dependents (properties → vendors → work_orders → bills) for FK
+// consistency, but partial failures are silently retried on the next sync.
+
+const _UPSERT_BATCH = 50;
+
+function _s(v: unknown, max = 500): string | null {
+  const s = String(v ?? "").trim();
+  return s ? s.substring(0, max) : null;
+}
+
+function _r(v: unknown): number | null {
+  const n = parseFloat(String(v ?? "").replace(/[^0-9.-]/g, ""));
+  return isFinite(n) ? n : null;
+}
+
+// Upsert raw property rows from DB API v0 /properties.
+// Sets property_map.id = AF property UUID so work_order_map.property_map_id
+// can use the same value as a FK reference.
+export async function upsertPropertyRows(rows: any[]): Promise<void> {
+  const now = Date.now();
+  for (let i = 0; i < rows.length; i += _UPSERT_BATCH) {
+    const chunk = rows.slice(i, i + _UPSERT_BATCH);
+    const ph: string[] = [];
+    const vals: unknown[] = [];
+    for (const row of chunk) {
+      const id = _s(row.Id || row.id || row.property_id);
+      if (!id) continue;
+      const pgIds: string[] = Array.isArray(row.PropertyGroupIds || row.property_group_ids)
+        ? (row.PropertyGroupIds || row.property_group_ids)
+            .map((v: unknown) => String(v ?? "").trim())
+            .filter(Boolean)
+        : [];
+      ph.push("(?,?,?,?,?,?,?,?,?,?)");
+      vals.push(
+        id,                                                         // id = AF property UUID
+        id,                                                         // property_id
+        null,                                                       // unit_id
+        0,                                                          // is_unit
+        pgIds[0] ?? null,                                           // property_group_id
+        _s(row.Name || row.PropertyName || row.property_name),     // property_name
+        null,                                                       // unit_name
+        _s(row.Address1 || row.StreetAddress || row.address),      // address
+        _s(row.City || row.city),                                   // city
+        now,                                                        // cached_at
+      );
+    }
+    if (ph.length === 0) continue;
+    try {
+      await sqlite.execute({
+        sql: `INSERT OR REPLACE INTO property_map
+              (id, property_id, unit_id, is_unit, property_group_id,
+               property_name, unit_name, address, city, cached_at)
+              VALUES ${ph.join(",")}`,
+        args: vals,
+      });
+    } catch (_) {}
+  }
+}
+
+// Upsert raw vendor rows from Reports API v2 vendor_directory.
+export async function upsertVendorRows(rows: any[]): Promise<void> {
+  const now = Date.now();
+  for (let i = 0; i < rows.length; i += _UPSERT_BATCH) {
+    const chunk = rows.slice(i, i + _UPSERT_BATCH);
+    const ph: string[] = [];
+    const vals: unknown[] = [];
+    for (const row of chunk) {
+      const id = _s(row.vendor_id || row.VendorId || row.Id || row.id);
+      if (!id) continue;
+      const name =
+        _s(
+          row.company_name ||
+            row.CompanyName ||
+            [row.first_name || row.FirstName, row.last_name || row.LastName]
+              .filter(Boolean)
+              .join(" ") ||
+            row.name ||
+            row.Name,
+        ) ?? id;
+      ph.push("(?,?,?,?,?,?,?,?)");
+      vals.push(
+        id,
+        name,
+        _s(row.company_name || row.CompanyName),
+        _s(row.email || row.Email),
+        _s(row.phone || row.Phone || row.phone_numbers),
+        _s(row.license_number || row.LicenseNumber),
+        _s(row.insurance_expiry || row.InsuranceExpiry),
+        now,
+      );
+    }
+    if (ph.length === 0) continue;
+    try {
+      await sqlite.execute({
+        sql: `INSERT OR REPLACE INTO vendor_map
+              (id, name, company_name, email, phone, license_number, insurance_expiry, cached_at)
+              VALUES ${ph.join(",")}`,
+        args: vals,
+      });
+    } catch (_) {}
+  }
+}
+
+// Upsert raw work order rows from Reports API v2 work_order report.
+// property_map_id is set to the AF property UUID (consistent with
+// upsertPropertyRows which keys property_map.id by AF UUID).
+// If property_map hasn't been populated yet the INSERT fails the FK check
+// and is silently skipped; it succeeds on the next sync after properties load.
+export async function upsertWorkOrderRows(rows: any[]): Promise<void> {
+  const now = Date.now();
+  for (let i = 0; i < rows.length; i += _UPSERT_BATCH) {
+    const chunk = rows.slice(i, i + _UPSERT_BATCH);
+    const ph: string[] = [];
+    const vals: unknown[] = [];
+    for (const row of chunk) {
+      const id = _s(row.work_order_id || row.WorkOrderId || row.Id || row.id);
+      if (!id) continue;
+      const woNumber = _s(row.work_order_number || row.WorkOrderNumber || row.Number);
+      if (!woNumber) continue;
+      const propertyId = _s(row.property_id || row.PropertyId) ?? "";
+      // property_map_id = AF property UUID (property_map.id keyed by AF UUID)
+      const propertyMapId = propertyId || id;
+      const assignedRaw = row.assigned_users ?? row.AssignedUsers ?? [];
+      ph.push("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      vals.push(
+        id,
+        woNumber,
+        propertyMapId,                                                        // property_map_id (FK)
+        propertyId || null,                                                   // property_id (denorm)
+        _s(row.unit_id || row.UnitId),                                        // unit_id
+        _s(row.vendor_id || row.VendorId),                                    // vendor_id
+        _s(row.status || row.Status),
+        _s(row.priority || row.Priority),
+        _s(row.category || row.Category || row.work_order_type || row.WorkOrderType),
+        _s(row.description || row.Description || row.subject || row.Subject, 500),
+        typeof assignedRaw === "string" ? assignedRaw : JSON.stringify(assignedRaw),
+        _s(row.created_date || row.CreatedDate || row.created_at || row.CreatedAt)?.slice(0, 10) ?? null,
+        _s(row.completed_date || row.CompletedDate || row.closed_date)?.slice(0, 10) ?? null,
+        _s(row.last_updated_at || row.LastUpdatedAt)?.slice(0, 24) ?? null,
+        now,
+      );
+    }
+    if (ph.length === 0) continue;
+    try {
+      await sqlite.execute({
+        sql: `INSERT OR REPLACE INTO work_order_map
+              (id, work_order_number, property_map_id, property_id, unit_id, vendor_id,
+               status, priority, category, description, assigned_users_json,
+               created_date, completed_date, last_updated_at, cached_at)
+              VALUES ${ph.join(",")}`,
+        args: vals,
+      });
+    } catch (_) {}
+  }
+}
+
+// Upsert raw bill rows from DB API v0 /bills.
+// Also expands LineItems into bill_line_items (delete-then-insert per bill).
+// property_map_id is kept null to avoid FK violations when property_map
+// hasn't been populated yet; property_id (denormalized) is always written.
+export async function upsertBillingRows(rows: any[]): Promise<void> {
+  const now = Date.now();
+
+  // First pass: upsert billing_map rows
+  for (let i = 0; i < rows.length; i += _UPSERT_BATCH) {
+    const chunk = rows.slice(i, i + _UPSERT_BATCH);
+    const ph: string[] = [];
+    const vals: unknown[] = [];
+    for (const row of chunk) {
+      const id = _s(row.Id || row.id || row.BillId || row.bill_id);
+      if (!id) continue;
+      const propertyId = _s(row.PropertyId || row.property_id);
+      const lineItems = Array.isArray(row.LineItems)
+        ? row.LineItems
+        : (Array.isArray(row.line_items) ? row.line_items : []);
+      ph.push("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      vals.push(
+        id,
+        _s(row.VendorId || row.vendor_id || row.PayeeId || row.payee_id),     // vendor_id
+        null,                                                                   // property_map_id (null avoids FK miss)
+        propertyId,                                                             // property_id (denorm)
+        _s(row.WorkOrderId || row.work_order_id),                              // work_order_id
+        _s(row.WorkOrderNumber || row.work_order_number),                      // work_order_number
+        _s(row.InvoiceDate || row.invoice_date)?.slice(0, 10) ?? null,
+        _s(row.DueDate || row.due_date)?.slice(0, 10) ?? null,
+        _r(row.TotalAmount || row.total_amount || row.Amount || row.amount),
+        _s(row.CheckMemo || row.check_memo || row.Remarks || row.remarks, 500),
+        _s(row.ApprovalStatus || row.approval_status || row.Status || row.status), // approval_status
+        _s(row.Reference || row.reference || id),                              // bill_number
+        lineItems.length > 0 ? JSON.stringify(lineItems) : null,               // line_items_json
+        _s(row.LastUpdatedAt || row.last_updated_at)?.slice(0, 24) ?? null,
+        now,
+      );
+    }
+    if (ph.length === 0) continue;
+    try {
+      await sqlite.execute({
+        sql: `INSERT OR REPLACE INTO billing_map
+              (id, vendor_id, property_map_id, property_id, work_order_id, work_order_number,
+               invoice_date, due_date, total_amount, check_memo, approval_status, bill_number,
+               line_items_json, last_updated_at, cached_at)
+              VALUES ${ph.join(",")}`,
+        args: vals,
+      });
+    } catch (_) {}
+  }
+
+  // Second pass: expand line items into bill_line_items
+  for (const row of rows) {
+    const billId = _s(row.Id || row.id || row.BillId || row.bill_id);
+    if (!billId) continue;
+    const lineItems = Array.isArray(row.LineItems)
+      ? row.LineItems
+      : (Array.isArray(row.line_items) ? row.line_items : []);
+    if (lineItems.length === 0) continue;
+    try {
+      await sqlite.execute({ sql: `DELETE FROM bill_line_items WHERE bill_id = ?`, args: [billId] });
+      for (let i = 0; i < lineItems.length; i += _UPSERT_BATCH) {
+        const chunk = lineItems.slice(i, i + _UPSERT_BATCH);
+        const ph: string[] = [];
+        const vals: unknown[] = [];
+        for (const li of chunk) {
+          ph.push("(?,?,?,?,?,?,?,?)");
+          vals.push(
+            billId,
+            _s(li.UnitId || li.unit_id || li.UnitUuid || li.unit_uuid),
+            _s(li.GlAccountId || li.gl_account_id || li.GlAccount || li.gl_account),
+            _r(li.Amount || li.amount),
+            _s(li.Description || li.description, 500),
+            _s(li.LineItemType || li.line_item_type || li.Type || li.type),
+            _r(li.Quantity || li.quantity),
+            _r(li.UnitPrice || li.unit_price || li.Rate || li.rate),
+          );
+        }
+        await sqlite.execute({
+          sql: `INSERT INTO bill_line_items
+                (bill_id, unit_id, gl_account_id, amount, description,
+                 line_item_type, quantity, unit_price)
+                VALUES ${ph.join(",")}`,
+          args: vals,
+        });
+      }
+    } catch (_) {}
+  }
 }
