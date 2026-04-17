@@ -22,7 +22,7 @@
       this.canvas.style.height = '100%';
       this.canvas.style.background = 'transparent';
       this.canvas.style.pointerEvents = 'none';
-      this.canvas.style.zIndex = '0';
+      this.canvas.style.zIndex = '1';
 
       const vaultScreen = document.getElementById('vaultScreen');
       if (vaultScreen) {
@@ -181,13 +181,22 @@
             continue;
           }
           wave.radius += wave.speed;
-          wave.opacity = (wave.isDroplet ? 0.28 : 0.22) * (1 - wave.radius / wave.maxRadius);
+          wave.opacity = (wave.isDroplet ? 0.4 : 0.3) * (1 - wave.radius / wave.maxRadius);
           if (wave.opacity <= 0.001) continue;
 
-          this.ctx.strokeStyle = `rgba(147, 197, 253, ${wave.opacity})`;
-          this.ctx.lineWidth = wave.lineWidth || (wave.isDroplet ? 1 : 0.9);
+          this.ctx.shadowBlur = wave.isDroplet ? 12 : 8;
+          this.ctx.shadowColor = `rgba(8, 47, 73, ${Math.min(0.24, wave.opacity)})`;
+          this.ctx.strokeStyle = `rgba(3, 105, 161, ${Math.min(0.6, wave.opacity * 1.45)})`;
+          this.ctx.lineWidth = (wave.lineWidth || (wave.isDroplet ? 1 : 0.9)) + 0.2;
           this.ctx.beginPath();
           this.ctx.arc(wave.x, wave.y, wave.radius, 0, Math.PI * 2);
+          this.ctx.stroke();
+
+          this.ctx.shadowBlur = 0;
+          this.ctx.strokeStyle = `rgba(186, 230, 253, ${Math.min(0.4, wave.opacity * 0.9)})`;
+          this.ctx.lineWidth = Math.max(0.8, (wave.lineWidth || 1) * 0.52);
+          this.ctx.beginPath();
+          this.ctx.arc(wave.x, wave.y, Math.max(0, wave.radius - 0.6), 0, Math.PI * 2);
           this.ctx.stroke();
         }
       } catch (_) {
