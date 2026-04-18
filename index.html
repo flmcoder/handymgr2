@@ -1018,6 +1018,14 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .vendor-card.manual-compliant { border-left:3px solid var(--success); border-left-style:dashed; }
 .vendor-quick-actions { display: none; }
 .vendor-qa-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px; border-radius: 8px; background: var(--bg-input); color: var(--text-secondary); text-decoration: none; font-family: var(--font-mono); font-size: 11px; font-weight: 600; border: 1px solid var(--border); transition: var(--transition); }
+.vendor-crossnav { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.vendor-crossnav-btn { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 8px; border-radius: 6px; font-family: var(--font-mono); font-size: 10px; font-weight: 600; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-secondary); cursor: pointer; white-space: nowrap; transition: var(--transition); }
+.vendor-crossnav-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.vendor-crossnav-btn.xn-wo { border-color: rgba(245,158,11,0.35); color: var(--warning); }
+.vendor-crossnav-btn.xn-wo:hover { background: rgba(245,158,11,0.1); border-color: var(--warning); }
+.vendor-crossnav-btn.xn-hist { border-color: rgba(148,163,184,0.35); }
+.vendor-crossnav-btn.xn-bills { border-color: rgba(59,130,246,0.35); color: #3b82f6; }
+.vendor-crossnav-btn.xn-bills:hover { background: rgba(59,130,246,0.1); border-color: #3b82f6; }
 .vendor-cat-select { font-family:var(--font-mono); font-size:10px; padding:2px 6px; border-radius:6px; border:1px solid var(--border); background:var(--bg-input); color:var(--text-primary); cursor:pointer; max-width:132px; }
 .vendor-render-meta { grid-column: 1 / -1; font-size: 11px; color: var(--text-muted); background: var(--bg-card); border: 1px dashed var(--border); border-radius: var(--radius); padding: 8px 10px; font-family: var(--font-mono); }
 .vendor-load-more-wrap { grid-column: 1 / -1; display: flex; justify-content: center; }
@@ -12315,6 +12323,39 @@ function navigateToBillsForVendor(vendorName) {
   }
 }
 
+function navigateToOpenWOsForVendor(vendorName) {
+  var woTab = document.querySelector('.nav-tab[data-tab="workorders"]');
+  if (woTab) woTab.click();
+  // Switch to active sub-panel
+  var activeSubBtn = document.querySelector('[data-wo-subtab="active"]');
+  if (activeSubBtn) activeSubBtn.click();
+  // Apply vendor filter
+  currentWOVendor = vendorName;
+  var vendorSel = $('#woVendorFilter');
+  if (vendorSel) vendorSel.value = vendorName;
+  renderWorkOrders();
+}
+
+function navigateToCompletedWOsForVendor(vendorName) {
+  var woTab = document.querySelector('.nav-tab[data-tab="workorders"]');
+  if (woTab) woTab.click();
+  // Switch to completed sub-panel
+  var completedSubBtn = document.querySelector('[data-wo-subtab="completed"]');
+  if (completedSubBtn) completedSubBtn.click();
+  // Set vendor filter so renderCompletedWOHistorySection() respects it
+  currentWOVendor = vendorName;
+  var vendorSel = $('#woVendorFilter');
+  if (vendorSel) vendorSel.value = vendorName;
+  // Trigger search if history not yet loaded, otherwise re-render
+  var fetchBtn = $('#btnFetchCompletedHistory');
+  if (fetchBtn && !completedWOHistoryRows.length) {
+    fetchBtn.click();
+  } else {
+    completedWOHistoryPage = 0;
+    renderCompletedWOHistorySection();
+  }
+}
+
 function renderVendors(search) {
   var container = $('#vendorGrid');
   if (!container) return;
@@ -12495,11 +12536,32 @@ function renderVendors(search) {
       if (v.email) html += '<a class="vendor-qa-btn" href="mailto:' + escapeHtml(v.email) + '" onclick="event.stopPropagation()" title="Email ' + escapeHtml(v.email) + '"><i class="fas fa-envelope"></i> Email</a>';
       html += '</div>';
     }
-    if (v.insurance) {
-      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Insurance</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (exp ? 'var(--danger)' : wrn ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.insurance) + (exp ? ' (EXPIRED)' : wrn ? ' (' + due + 'd)' : '') + '</span></div>';
+    if (v.address) {
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Address</span><span class="vendor-row-value" style="font-size:10px">' + escapeHtml(v.address) + '</span></div>';
     }
-    html += '<div class="vendor-quick-actions" style="margin-top:6px">';
-    html += '<button class="vendor-qa-btn" onclick="event.stopPropagation();navigateToBillsForVendor(' + JSON.stringify(v.name || '') + ')" title="View bills for this vendor in the current property group"><i class="fas fa-file-invoice-dollar"></i> View Bills</button>';
+    if (v.insurance) {
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Liability Ins.</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (exp ? 'var(--danger)' : wrn ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.insurance) + (exp ? ' \u26a0\ufe0f EXPIRED' : wrn ? ' (' + due + 'd)' : '') + '</span></div>';
+    }
+    if (v.autoInsurance) {
+      var aed = new Date(v.autoInsurance); var aexp = aed < today; var adue = daysBetween(today, aed);
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Auto Ins.</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (aexp ? 'var(--danger)' : adue <= 60 ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.autoInsurance) + (aexp ? ' \u26a0\ufe0f EXPIRED' : adue <= 60 ? ' (' + adue + 'd)' : '') + '</span></div>';
+    }
+    if (v.workersComp) {
+      var wced = new Date(v.workersComp); var wcexp = wced < today; var wcdue = daysBetween(today, wced);
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Workers Comp</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (wcexp ? 'var(--danger)' : wcdue <= 60 ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.workersComp) + (wcexp ? ' \u26a0\ufe0f EXPIRED' : wcdue <= 60 ? ' (' + wcdue + 'd)' : '') + '</span></div>';
+    }
+    if (v.doNotUse) {
+      html += '<div class="vendor-row vendor-row-compact" style="color:var(--danger);font-weight:700"><span class="vendor-row-label" style="color:var(--danger)">⛔ Status</span><span class="vendor-row-value">DO NOT USE</span></div>';
+    }
+    if (v.tags) {
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Tags</span><span class="vendor-row-value" style="font-size:10px">' + escapeHtml(v.tags) + '</span></div>';
+    }
+    // Cross-section navigation
+    var vNameJson = JSON.stringify(v.name || '');
+    html += '<div class="vendor-crossnav">';
+    html += '<button class="vendor-crossnav-btn xn-wo" onclick="event.stopPropagation();navigateToOpenWOsForVendor(' + vNameJson + ')" title="Open Work Orders for this vendor"><i class="fas fa-wrench"></i> Open WOs</button>';
+    html += '<button class="vendor-crossnav-btn xn-hist" onclick="event.stopPropagation();navigateToCompletedWOsForVendor(' + vNameJson + ')" title="Completed Work Orders for this vendor"><i class="fas fa-history"></i> Completed WOs</button>';
+    html += '<button class="vendor-crossnav-btn xn-bills" onclick="event.stopPropagation();navigateToBillsForVendor(' + vNameJson + ')" title="AP Bills for this vendor"><i class="fas fa-file-invoice-dollar"></i> Bills</button>';
     html += '</div>';
     html += '</div>';
   });
