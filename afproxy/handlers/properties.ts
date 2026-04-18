@@ -374,6 +374,11 @@ export async function handlePropertyMap(
           // Non-fatal: keep empty groupIds when value is not parseable.
         }
       }
+      // Fallback: singular PropertyGroupId (AppFolio v0 returns this form)
+      if (groupIds.length === 0) {
+        const singular = String(p.PropertyGroupId || p.property_group_id || "").trim();
+        if (singular) groupIds = [singular];
+      }
 
       propMap[p.Id] = {
         name: p.Name || p.PropertyName || "",

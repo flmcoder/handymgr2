@@ -1,0 +1,2450 @@
+// ============================================================================
+// HandyManager — Val Town CORS Proxy v8.9
+// ============================================================================
+// v8.1 additions: Turso external DB support, storage budget management,
+//   auto-eviction, webhook cleanup, 533 error handling, dual rowsAsObjects.
+// v8 base: SQLite caching, fixed webhook body capture (JWS decode),
+//   cache invalidation via webhooks, management endpoints, turn_records.
+//
+// AUTH: Uses Val Town Environment Variables (same as v7):
+//   AF_V2_CLIENT_ID     = Reports API v2 client ID        (flraz.appfolio.com)
+//   AF_V2_CLIENT_SECRET = Reports API v2 client secret    (flraz.appfolio.com)
+//   AF_V0_AUTH          = Database API v0 Base64 token     (api.appfolio.com)
+//   AF_DEVELOPER_ID     = AppFolio developer UUID          (shared)
+//
+// SETUP:
+//   1. Create a new Val Town HTTP val (or update your existing flr-appfolio val)
+//   2. Paste this entire file as the val's code
+//   3. Ensure the 4 environment variables above are set in Val Town Settings
+//   4. Save / deploy — tables are auto-created on first request
+//   5. Hit ?action=ping to verify it's live
+//   6. Hit ?action=cache_stats to verify SQLite tables exist
+//   7. Register the val's URL as your AppFolio webhook endpoint
+//   8. (Optional) Hit ?action=migrate_v8 to mark old empty webhook events
+// ============================================================================
+
+// IMPORTANT: Use global.ts (account-scoped) — NOT main.ts (val-scoped)
+// global.ts returns rows as arrays → our rowsAsObjects() helper depends on this
+// main.ts returns rows as objects with a DIFFERENT (val-specific) database
+import { createClient } from "npm:@libsql/client@0.14.0/web";
+import { blob } from "https://esm.town/v/std/blob";
+
+// ---- External Turso database support (optional, 5 GB free tier) ----
+// Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN env vars to use Turso instead of
+// Val Town's built-in 10 MB SQLite.  If unset, falls back to Val Town global.ts.
+const TURSO_URL = Deno.env.get("TURSO_DATABASE_URL") || "";
+const TURSO_TOKEN = Deno.env.get("TURSO_AUTH_TOKEN") || "";
+
+let sqlite: any;
+if (TURSO_URL && TURSO_TOKEN) {
+  sqlite = createClient({ url: TURSO_URL, authToken: TURSO_TOKEN });
+} else {
+  const vtMod = await import("https://esm.town/v/std/sqlite/global.ts");
+  sqlite = vtMod.sqlite;
+}
+
+// ========================== CONFIG ==========================================
+// Credentials via Val Town Environment Variables — keeps secrets OUT of source
+const AF_VHOST = "flraz";
+const AF_REPORTS = `https://${AF_VHOST}.appfolio.com`; // Reports API v2
+const AF_DB = "https://api.appfolio.com"; // Database API v0
+
+const V2_CLIENT_ID = Deno.env.get("AF_V2_CLIENT_ID") || "";
+const V2_CLIENT_SECRET = Deno.env.get("AF_V2_CLIENT_SECRET") || "";
+const V0_AUTH_TOKEN = Deno.env.get("AF_V0_AUTH") || "";
+const DEV = Deno.env.get("AF_DEVELOPER_ID") || "";
+
+// v2: standard Basic auth — btoa(client_id:client_secret) at runtime
+const AUTH_V2 = "Basic " + btoa(V2_CLIENT_ID + ":" + V2_CLIENT_SECRET);
+// v0: pre-encoded Base64 token from AppFolio docs — used as-is
+// Falls back to v2 auth if V0_AUTH_TOKEN is not set
+const AUTH_V0 = V0_AUTH_TOKEN ? "Basic " + V0_AUTH_TOKEN : AUTH_V2;
+
+// Reports API v2 headers (flraz.appfolio.com)
+const reportsHeaders = (): Record<string, string> => ({
+  "Authorization": AUTH_V2,
+  "X-AppFolio-Developer-ID": DEV,
+  "Accept": "application/json",
+});
+
+// Database API v0 headers (api.appfolio.com)
+const dbHeaders = (): Record<string, string> => ({
+  "Authorization": AUTH_V0,
+  "X-AppFolio-Developer-ID": DEV,
+  "Accept": "application/json",
+});
+// ============================================================================
+
+// ========================== CORS ============================================
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Accept, Authorization",
+};
+
+function corsJson(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+  });
+}
+// ============================================================================
+
+// ========================== CACHE CONFIG ====================================
+const CACHE_TTL: Record<string, number> = {
+  work_orders: 15,
+  turns: 30,
+  turn_work_orders: 15,
+  vendors: 120,
+  inspections: 60,
+  property_groups: 360,
+  properties: 360,
+  property_map: 360,
+  recent_tasks: 10,
+  upcoming_moveouts: 30,
+  labor: 10,
+  bills: 30,
+};
+
+const WEBHOOK_CACHE_MAP: Record<string, string[]> = {
+  work_order: ["work_orders", "turn_work_orders", "recent_tasks", "labor"],
+  unit_turn: ["turns", "turn_work_orders"],
+  vendor: ["vendors"],
+  inspection: ["inspections"],
+  task: ["recent_tasks"],
+  property: ["properties", "property_groups", "property_map"],
+  tenant: ["upcoming_moveouts"],
+  lease: ["upcoming_moveouts"],
+  bill: ["bills"],
+};
+
+// ---- Storage budget (Val Town free plan = 10 MB total) ----
+const STORAGE_BUDGET_BYTES = TURSO_URL ? 500_000_000 : 7 * 1024 * 1024; // 500 MB Turso / 7 MB VT
+const WEBHOOK_MAX_EVENTS = 500;
+const WEBHOOK_MAX_DAYS = 30;
+// ============================================================================
+
+// ========================== SQLITE HELPERS ==================================
+
+// Dual-format rowsAsObjects:
+//   Val Town global.ts → rows are arrays   (e.g. [1, "foo", "bar"])
+//   Turso / main.ts    → rows are objects   (e.g. { id: 1, name: "foo" })
+// Handles both transparently so the rest of the code stays unchanged.
+function rowsAsObjects(result: any): Record<string, any>[] {
+  if (!result.rows || result.rows.length === 0) return [];
+  const firstRow = result.rows[0];
+
+  // Turso / object rows — already keyed, just normalize via columns if present
+  if (firstRow && typeof firstRow === "object" && !Array.isArray(firstRow)) {
+    if (result.columns) {
+      return result.rows.map((row: any) => {
+        const obj: Record<string, any> = {};
+        for (const col of result.columns) obj[col] = row[col];
+        return obj;
+      });
+    }
+    return result.rows as Record<string, any>[];
+  }
+
+  // Val Town array rows — convert using positional columns
+  if (!result.columns) return [];
+  return result.rows.map((row: any) => {
+    const obj: Record<string, any> = {};
+    for (let i = 0; i < result.columns.length; i++) {
+      obj[result.columns[i]] = row[i];
+    }
+    return obj;
+  });
+}
+
+let _tablesReady = false;
+
+async function ensureTables(): Promise<void> {
+  if (_tablesReady) return; // only run once per cold start
+
+  try {
+    // ---- api_cache table (new in v8 — safe to CREATE) ----
+    await sqlite.execute(`CREATE TABLE IF NOT EXISTS api_cache (
+      cache_key    TEXT PRIMARY KEY,
+      entity_type  TEXT NOT NULL,
+      data         TEXT NOT NULL,
+      cached_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at   TEXT,
+      record_count INTEGER DEFAULT 0
+    )`);
+
+    // ---- turn_records table (new in v8 — safe to CREATE) ----
+    await sqlite.execute(`CREATE TABLE IF NOT EXISTS turn_records (
+      unit_turn_id TEXT PRIMARY KEY,
+      data         TEXT NOT NULL,
+      updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+
+    // ---- webhook_events: may exist from v7 with a different schema ----
+    // Strategy: check PRAGMA table_info, and if columns are missing, drop + recreate.
+    // ALTER TABLE ADD COLUMN with NOT NULL DEFAULT (expression) can fail on older libsql.
+    const V8_WH_COLS = new Set([
+      "id",
+      "received_at",
+      "raw_body",
+      "resource_type",
+      "resource_id",
+      "event_type",
+      "processed",
+      "processed_at",
+    ]);
+
+    let needsRecreate = false;
+    try {
+      const info = await sqlite.execute(`PRAGMA table_info(webhook_events)`);
+      const existingCols = new Set(
+        rowsAsObjects(info).map((r: any) => r.name as string),
+      );
+      if (existingCols.size === 0) {
+        // Table doesn't exist yet — create fresh
+        needsRecreate = false; // will be created below
+      } else {
+        // Check for missing v8 columns
+        for (const col of V8_WH_COLS) {
+          if (!existingCols.has(col)) {
+            console.log(
+              `webhook_events missing column '${col}' — will recreate table`,
+            );
+            needsRecreate = true;
+            break;
+          }
+        }
+      }
+    } catch (_) {
+      // PRAGMA failed = table doesn't exist, create below
+    }
+
+    if (needsRecreate) {
+      // Preserve existing data: rename → create → copy → drop old
+      try {
+        await sqlite.execute(
+          `ALTER TABLE webhook_events RENAME TO webhook_events_v7_bak`,
+        );
+        console.log("Renamed webhook_events → webhook_events_v7_bak");
+      } catch (_) {
+        // Rename failed (maybe table doesn't exist) — that's ok, just create fresh
+        try {
+          await sqlite.execute(`DROP TABLE IF EXISTS webhook_events`);
+        } catch (_2) {}
+      }
+    }
+
+    await sqlite.execute(`CREATE TABLE IF NOT EXISTS webhook_events (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      received_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+      raw_body      TEXT    NOT NULL,
+      resource_type TEXT,
+      resource_id   TEXT,
+      event_type    TEXT,
+      processed     INTEGER NOT NULL DEFAULT 0,
+      processed_at  TEXT
+    )`);
+
+    // If we renamed the old table, copy data over
+    if (needsRecreate) {
+      try {
+        // Copy only columns that existed in v7 (id, raw_body, and maybe ts)
+        const bakInfo = await sqlite.execute(
+          `PRAGMA table_info(webhook_events_v7_bak)`,
+        );
+        const bakCols = new Set(
+          rowsAsObjects(bakInfo).map((r: any) => r.name as string),
+        );
+
+        if (bakCols.has("raw_body")) {
+          const tsCol = bakCols.has("ts") ? "ts" : "datetime('now')";
+          await sqlite.execute(
+            `INSERT INTO webhook_events (id, received_at, raw_body)
+             SELECT id, ${tsCol}, raw_body FROM webhook_events_v7_bak`,
+          );
+          console.log("Migrated data from webhook_events_v7_bak");
+        }
+        await sqlite.execute(`DROP TABLE IF EXISTS webhook_events_v7_bak`);
+        console.log("Dropped webhook_events_v7_bak");
+      } catch (migErr: any) {
+        console.log(
+          `webhook_events migration partial: ${
+            migErr.message?.substring(0, 120)
+          }`,
+        );
+        try {
+          await sqlite.execute(`DROP TABLE IF EXISTS webhook_events_v7_bak`);
+        } catch (_) {}
+      }
+    }
+
+    // Indexes — each in its own execute so one failure doesn't block the rest
+    try {
+      await sqlite.execute(
+        `CREATE INDEX IF NOT EXISTS idx_wh_resource ON webhook_events(resource_type, resource_id)`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `CREATE INDEX IF NOT EXISTS idx_wh_received ON webhook_events(received_at DESC)`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `CREATE INDEX IF NOT EXISTS idx_cache_type ON api_cache(entity_type)`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `CREATE INDEX IF NOT EXISTS idx_cache_expires ON api_cache(expires_at)`,
+      );
+    } catch (_) {}
+
+    // Cold-start housekeeping: trim old webhook events to stay within budget
+    try {
+      await webhookCleanup();
+    } catch (_) {}
+
+    _tablesReady = true;
+    console.log("ensureTables: all tables ready ✓");
+  } catch (err: any) {
+    // If ensureTables fails entirely, still mark ready so we don't infinite-retry
+    // and block every single request. Individual handlers have their own try-catch.
+    _tablesReady = true;
+    console.log(
+      `ensureTables ERROR (proceeding anyway): ${
+        err.message?.substring(0, 200)
+      }`,
+    );
+  }
+}
+
+// Legacy v7 compat — v8 table schema already covers this
+async function ensureLegacyWebhookTable() {
+  // no-op; _tablesReady guard in ensureTables() handles everything
+}
+
+// ---- Chunked cache: splits large payloads per INSERT ----
+// Turso: 4 MB per row (well within 5 GB free tier, faster fewer chunks)
+// Val Town: 750 KB per row (leaves room under 1 MB SQL limit, fits 10 MB quota)
+const CHUNK_LIMIT = TURSO_URL ? 4_000_000 : 750_000;
+
+async function cacheGet(cacheKey: string, entityType: string) {
+  try {
+    const ttl = CACHE_TTL[entityType] || 15;
+    const result = await sqlite.execute({
+      sql: `SELECT data, cached_at, record_count
+            FROM api_cache
+            WHERE cache_key = ?
+              AND datetime(cached_at, '+' || ? || ' minutes') > datetime('now')`,
+      args: [cacheKey, ttl],
+    });
+    const rows = rowsAsObjects(result);
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    const meta = JSON.parse(row.data);
+
+    // Check if this is a chunked entry (meta row stores {_chunks: N})
+    if (meta && typeof meta._chunks === "number") {
+      let fullJson = "";
+      for (let i = 0; i < meta._chunks; i++) {
+        const chunkResult = await sqlite.execute({
+          sql: `SELECT data FROM api_cache WHERE cache_key = ?`,
+          args: [`${cacheKey}::${i}`],
+        });
+        const chunkRows = rowsAsObjects(chunkResult);
+        if (chunkRows.length === 0) {
+          console.log(`Cache GET: chunk ${i} missing for ${cacheKey}`);
+          return null; // incomplete chunks — treat as cache miss
+        }
+        fullJson += chunkRows[0].data;
+      }
+      return {
+        data: JSON.parse(fullJson),
+        cached_at: row.cached_at,
+        record_count: row.record_count,
+        from_cache: true,
+      };
+    }
+
+    // Non-chunked (small payload) — return directly
+    return {
+      data: meta,
+      cached_at: row.cached_at,
+      record_count: row.record_count,
+      from_cache: true,
+    };
+  } catch (err: any) {
+    console.log(
+      `Cache GET error for ${entityType}: ${err.message?.substring(0, 120)}`,
+    );
+    return null;
+  }
+}
+
+async function cacheSet(
+  cacheKey: string,
+  entityType: string,
+  data: unknown,
+  recordCount = 0,
+) {
+  try {
+    const jsonStr = JSON.stringify(data);
+    const sizeKB = (jsonStr.length / 1024).toFixed(0);
+    const ttl = CACHE_TTL[entityType] || 15;
+    const expiresAt = new Date(Date.now() + ttl * 60_000).toISOString();
+
+    // Evict old data if needed to fit within storage budget
+    await evictCacheIfNeeded(jsonStr.length);
+
+    // First: delete any existing chunks and the meta row
+    await sqlite.execute({
+      sql: `DELETE FROM api_cache WHERE cache_key LIKE ?`,
+      args: [`${cacheKey}::%`],
+    });
+    await sqlite.execute({
+      sql: `DELETE FROM api_cache WHERE cache_key = ?`,
+      args: [cacheKey],
+    });
+
+    if (jsonStr.length <= CHUNK_LIMIT) {
+      // Small enough for a single row
+      await sqlite.execute({
+        sql:
+          `INSERT INTO api_cache (cache_key, entity_type, data, cached_at, expires_at, record_count)
+              VALUES (?, ?, ?, datetime('now'), ?, ?)`,
+        args: [cacheKey, entityType, jsonStr, expiresAt, recordCount],
+      });
+      console.log(
+        `Cache SET: ${entityType} (${sizeKB} KB, ${recordCount} records, TTL ${ttl}m)`,
+      );
+    } else {
+      // Chunked: split JSON string into CHUNK_LIMIT-sized pieces
+      const numChunks = Math.ceil(jsonStr.length / CHUNK_LIMIT);
+      for (let i = 0; i < numChunks; i++) {
+        const chunk = jsonStr.substring(i * CHUNK_LIMIT, (i + 1) * CHUNK_LIMIT);
+        await sqlite.execute({
+          sql:
+            `INSERT INTO api_cache (cache_key, entity_type, data, cached_at, expires_at, record_count)
+                VALUES (?, ?, ?, datetime('now'), ?, ?)`,
+          args: [`${cacheKey}::${i}`, entityType, chunk, expiresAt, 0],
+        });
+      }
+      // Meta row: stores the chunk count so cacheGet knows to reassemble
+      await sqlite.execute({
+        sql:
+          `INSERT INTO api_cache (cache_key, entity_type, data, cached_at, expires_at, record_count)
+              VALUES (?, ?, ?, datetime('now'), ?, ?)`,
+        args: [
+          cacheKey,
+          entityType,
+          JSON.stringify({ _chunks: numChunks }),
+          expiresAt,
+          recordCount,
+        ],
+      });
+      console.log(
+        `Cache SET (chunked): ${entityType} (${sizeKB} KB → ${numChunks} chunks, ${recordCount} records, TTL ${ttl}m)`,
+      );
+    }
+  } catch (err: any) {
+    // Non-fatal — API response is still returned even if cache write fails
+    console.log(
+      `Cache WRITE FAILED for ${entityType}: ${err.message?.substring(0, 150)}`,
+    );
+  }
+}
+
+async function cacheInvalidate(entityType: string) {
+  // Delete both regular and chunked entries for this entity type
+  await sqlite.execute({
+    sql: `DELETE FROM api_cache WHERE entity_type = ?`,
+    args: [entityType],
+  });
+}
+
+// ---- Storage budget helpers ----
+
+/** Returns total bytes used by api_cache table */
+async function getCacheSizeBytes(): Promise<number> {
+  try {
+    const res = await sqlite.execute(
+      `SELECT COALESCE(SUM(LENGTH(data)), 0) AS total FROM api_cache`,
+    );
+    const rows = rowsAsObjects(res);
+    return Number(rows[0]?.total || 0);
+  } catch {
+    return 0;
+  }
+}
+
+/** Returns total bytes used by webhook_events table */
+async function getWebhookSizeBytes(): Promise<number> {
+  try {
+    const res = await sqlite.execute(
+      `SELECT COALESCE(SUM(LENGTH(raw_body)), 0) AS total FROM webhook_events`,
+    );
+    const rows = rowsAsObjects(res);
+    return Number(rows[0]?.total || 0);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Evict oldest cache entries by entity type until the incoming payload fits
+ * within STORAGE_BUDGET_BYTES.  Purges expired entries first, then oldest
+ * entity types one at a time.
+ */
+async function evictCacheIfNeeded(incomingBytes: number): Promise<void> {
+  // 1. Purge expired entries first (free space without losing live data)
+  try {
+    await sqlite.execute(
+      `DELETE FROM api_cache WHERE datetime(expires_at) < datetime('now')`,
+    );
+  } catch {}
+
+  let used = await getCacheSizeBytes();
+  if (used + incomingBytes <= STORAGE_BUDGET_BYTES) return; // fits already
+
+  // 2. Evict oldest entity types until space is available
+  try {
+    const entityTypes = await sqlite.execute(
+      `SELECT entity_type, MIN(cached_at) AS oldest
+       FROM api_cache
+       GROUP BY entity_type
+       ORDER BY oldest ASC`,
+    );
+    for (const et of rowsAsObjects(entityTypes)) {
+      if (used + incomingBytes <= STORAGE_BUDGET_BYTES) break;
+      await sqlite.execute({
+        sql: `DELETE FROM api_cache WHERE entity_type = ?`,
+        args: [et.entity_type],
+      });
+      console.log(`Evicted cache: ${et.entity_type} to free space`);
+      used = await getCacheSizeBytes();
+    }
+  } catch (e: any) {
+    console.log(`evictCacheIfNeeded error: ${e.message?.substring(0, 100)}`);
+  }
+}
+
+/**
+ * Webhook housekeeping: trim events older than WEBHOOK_MAX_DAYS and cap at
+ * WEBHOOK_MAX_EVENTS.  Runs automatically on cold start (ensureTables).
+ */
+async function webhookCleanup(): Promise<
+  { deleted_old: number; deleted_overflow: number }
+> {
+  let deletedOld = 0;
+  let deletedOverflow = 0;
+
+  try {
+    // Delete events older than 30 days
+    const cutoff = new Date(Date.now() - WEBHOOK_MAX_DAYS * 86400_000)
+      .toISOString();
+    const r1 = await sqlite.execute({
+      sql: `DELETE FROM webhook_events WHERE received_at < ?`,
+      args: [cutoff],
+    });
+    deletedOld = r1.rowsAffected || 0;
+
+    // Cap at WEBHOOK_MAX_EVENTS (keep newest)
+    const countRes = await sqlite.execute(
+      `SELECT COUNT(*) AS n FROM webhook_events`,
+    );
+    const count = Number(rowsAsObjects(countRes)[0]?.n || 0);
+    if (count > WEBHOOK_MAX_EVENTS) {
+      const excess = count - WEBHOOK_MAX_EVENTS;
+      await sqlite.execute({
+        sql: `DELETE FROM webhook_events WHERE id IN (
+                SELECT id FROM webhook_events ORDER BY id ASC LIMIT ?
+              )`,
+        args: [excess],
+      });
+      deletedOverflow = excess;
+    }
+  } catch (e: any) {
+    console.log(`webhookCleanup error: ${e.message?.substring(0, 100)}`);
+  }
+  return { deleted_old: deletedOld, deleted_overflow: deletedOverflow };
+}
+// ============================================================================
+
+// ========================== FETCH WITH TIMEOUT + RATE LIMIT =================
+const FETCH_TIMEOUT_MS = 30000; // 30s default — bumped from 15s for large reports
+
+// Small delay helper
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Fetch with timeout, auto-retry on 429 (rate limit) with Retry-After header
+async function fetchWithTimeout(
+  url: string,
+  opts: RequestInit = {},
+  timeoutMs = FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const MAX_RETRIES = 3;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, { ...opts, signal: controller.signal });
+      clearTimeout(timer);
+
+      if (resp.status === 429 && attempt < MAX_RETRIES) {
+        // Rate limited — respect Retry-After header
+        const retryAfter = parseInt(resp.headers.get("Retry-After") || "2", 10);
+        const waitMs = Math.min(retryAfter * 1000, 60_000); // cap at 60s
+        console.log(
+          `Rate limited (429) — waiting ${retryAfter}s before retry ${
+            attempt + 1
+          }/${MAX_RETRIES}`,
+        );
+        await delay(waitMs);
+        continue;
+      }
+      if (resp.status === 503 && attempt < MAX_RETRIES) {
+        // Service unavailable — exponential backoff
+        const waitMs = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+        console.log(
+          `Service unavailable (503) — waiting ${waitMs / 1000}s before retry ${
+            attempt + 1
+          }/${MAX_RETRIES}`,
+        );
+        await delay(waitMs);
+        continue;
+      }
+      if (resp.status === 533 && attempt < MAX_RETRIES) {
+        // AppFolio database maintenance (typically 9 PM – 4 AM PST)
+        const waitMs = Math.min(30_000, Math.pow(2, attempt + 2) * 1000); // 4s, 8s, 16s
+        console.log(
+          `DB maintenance (533) — waiting ${waitMs / 1000}s before retry ${
+            attempt + 1
+          }/${MAX_RETRIES}`,
+        );
+        await delay(waitMs);
+        continue;
+      }
+      return resp;
+    } catch (err) {
+      clearTimeout(timer);
+      if (attempt < MAX_RETRIES && (err as Error).name === "AbortError") {
+        // Timeout — retry with extended timeout
+        console.log(
+          `Timeout on attempt ${attempt + 1} for ${
+            url.substring(0, 80)
+          }… retrying`,
+        );
+        await delay(1000);
+        continue;
+      }
+      throw err;
+    }
+  }
+  // Should not reach here, but just in case
+  throw new Error(
+    `fetchWithTimeout: max retries exceeded for ${url.substring(0, 80)}`,
+  );
+}
+
+// Rate-limit aware: small delay between paginated requests
+// AppFolio: 8 req/s, 256 req/min → safe pace = ~150ms between requests
+const PAGE_DELAY_MS = 150;
+// ============================================================================
+
+// ========================== APPFOLIO API HELPERS ============================
+
+// Helper: ISO date N days ago (matches v7)
+function daysAgo(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().split("T")[0];
+}
+
+function today(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
+// Reports API v2 — POST to initiate with JSON body, GET to paginate
+// Auth: AUTH_V2 (btoa client_id:client_secret)
+// Base: https://flraz.appfolio.com/api/v2/reports/{report}.json
+async function fetchReport(
+  reportName: string,
+  filters: Record<string, any> = {},
+): Promise<any[]> {
+  const reportUrl = `${AF_REPORTS}/api/v2/reports/${reportName}.json`;
+
+  // Initial POST with JSON body (NOT form-encoded — matches v7)
+  const initResp = await fetchWithTimeout(reportUrl, {
+    method: "POST",
+    headers: { ...reportsHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(filters),
+  });
+
+  if (!initResp.ok) {
+    const errText = await initResp.text().catch(() => "");
+    throw new Error(
+      `Report ${reportName} failed: ${initResp.status} ${initResp.statusText} — ${
+        errText.substring(0, 300)
+      }`,
+    );
+  }
+
+  let data = await initResp.json();
+  let allRows: any[] = [];
+
+  if (data.results) allRows = allRows.concat(data.results);
+  else if (Array.isArray(data.data)) allRows = allRows.concat(data.data);
+  else if (Array.isArray(data)) return data;
+
+  // Paginate via next_page_url (GET requests, up to 50 pages)
+  let nextUrl: string | null = data.next_page_url || data.next_page_path ||
+    null;
+  let page = 1;
+  while (nextUrl && page < 50) {
+    if (page > 1) await delay(PAGE_DELAY_MS); // rate-limit pacing
+    const fullUrl = nextUrl.startsWith("http")
+      ? nextUrl
+      : `${AF_REPORTS}${nextUrl}`;
+    const pageResp = await fetchWithTimeout(fullUrl, {
+      headers: reportsHeaders(),
+    });
+    if (!pageResp.ok) break;
+    data = await pageResp.json();
+    if (data.results) allRows = allRows.concat(data.results);
+    else if (Array.isArray(data.data)) allRows = allRows.concat(data.data);
+    else break;
+    nextUrl = data.next_page_url || data.next_page_path || null;
+    page++;
+  }
+  return allRows;
+}
+
+// Database API v0 — REST with Developer-ID header
+// Auth: AUTH_V0 (pre-encoded Base64 token, separate from v2)
+// Base: https://api.appfolio.com/api/v0/{resource}
+// Rate limits: 8 req/s, 256 req/min, 4096 req/hr
+async function fetchDbApi(
+  path: string,
+  maxRecords = 9999,
+): Promise<any[]> {
+  let allResults: any[] = [];
+  let nextPath: string | null = path;
+  let pageNum = 0;
+
+  while (nextPath && allResults.length < maxRecords) {
+    if (pageNum > 0) await delay(PAGE_DELAY_MS); // rate-limit pacing
+    const fullUrl = nextPath.startsWith("http")
+      ? nextPath
+      : `${AF_DB}${nextPath}`;
+    const resp = await fetchWithTimeout(fullUrl, { headers: dbHeaders() });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      throw new Error(
+        `DB API failed: ${resp.status} — ${errText.substring(0, 200)}`,
+      );
+    }
+    const data = await resp.json();
+    const results = data.results || data.data ||
+      (Array.isArray(data) ? data : []);
+    allResults = allResults.concat(results);
+    nextPath = data.next_page_path || null;
+    if (results.length === 0) break;
+    pageNum++;
+  }
+  return allResults.slice(0, maxRecords);
+}
+// ============================================================================
+
+// ========================== ACTION HANDLERS =================================
+
+// ---------- work_orders (Reports API v2 — work_order report) ----------------
+// Matches v7: uses work_order_statuses, status_date_range_from, status_date
+async function handleWorkOrders(params: Record<string, string>) {
+  const days = parseInt(params.days || "180", 10);
+  const cacheKey = `work_orders_${days}`;
+  const cached = await cacheGet(cacheKey, "work_orders");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  // Open WO status codes: 0=New, 1=EstReq, 2=Estimated, 9=Assigned,
+  // 3=Scheduled, 6=Waiting, 8=WorkDone, 12=ReadyToBill
+  const results = await fetchReport("work_order", {
+    work_order_statuses: ["0", "1", "2", "9", "3", "6", "8", "12"],
+    status_date_range_from: daysAgo(days),
+    status_date: "0",
+  });
+
+  await cacheSet(cacheKey, "work_orders", results, results.length);
+  return { ok: true, results, count: results.length, from_cache: false };
+}
+
+// ---------- vendors (Reports API v2 — vendor_directory report) --------------
+// Matches v7: vendor_directory (not "vendor"), active only
+async function handleVendors(_params: Record<string, string>) {
+  const cacheKey = "vendors";
+  const cached = await cacheGet(cacheKey, "vendors");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  const results = await fetchReport("vendor_directory", {
+    vendor_visibility: "active",
+  });
+  await cacheSet(cacheKey, "vendors", results, results.length);
+  return { ok: true, results, count: results.length, from_cache: false };
+}
+
+// ---------- properties (Reports API v2 — property_directory report) ---------
+// Matches v7: property_directory (not "property"), active only
+async function handleProperties(_params: Record<string, string>) {
+  const cacheKey = "properties";
+  const cached = await cacheGet(cacheKey, "properties");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  const results = await fetchReport("property_directory", {
+    property_visibility: "active",
+  });
+  await cacheSet(cacheKey, "properties", results, results.length);
+  return { ok: true, results, count: results.length, from_cache: false };
+}
+
+// ---------- turns (Reports API v2 — unit_turn_detail report) ----------------
+// Matches v7: move_out_date_from, unit_turn_status, property_visibility
+async function handleTurns(params: Record<string, string>) {
+  const days = parseInt(params.days || "90", 10);
+  const status = params.status || "In Progress";
+  const cacheKey = `turns_${days}_${status.replace(/\s+/g, "_")}`;
+  const cached = await cacheGet(cacheKey, "turns");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  const results = await fetchReport("unit_turn_detail", {
+    move_out_date_from: daysAgo(days),
+    unit_turn_status: status,
+    property_visibility: "active",
+  });
+  await cacheSet(cacheKey, "turns", results, results.length);
+  return { ok: true, results, count: results.length, from_cache: false };
+}
+
+// ---------- inspections (Reports API v2 — unit_inspection report) -----------
+// Matches v7: last_inspection_on_from, include_blank_inspection_date
+async function handleInspections(params: Record<string, string>) {
+  const fromDate = params.from_date ||
+    daysAgo(parseInt(params.days || "180", 10));
+  const cacheKey = `inspections_${fromDate}`;
+  const cached = await cacheGet(cacheKey, "inspections");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  const results = await fetchReport("unit_inspection", {
+    last_inspection_on_from: fromDate,
+    include_blank_inspection_date: "1",
+  });
+  await cacheSet(cacheKey, "inspections", results, results.length);
+  return { ok: true, results, count: results.length, from_cache: false };
+}
+
+// ---------- labor (Reports API v2 — work_order_labor_summary) ---------------
+// Matches v7 exactly
+async function handleLabor(params: Record<string, string>) {
+  const days = parseInt(params.days || "1", 10);
+  const statusCodes = params.statuses || "8"; // default: Work Done
+  const cacheKey = `labor_${days}_${statusCodes}`;
+  const cached = await cacheGet(cacheKey, "labor");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  const results = await fetchReport("work_order_labor_summary", {
+    work_order_statuses: statusCodes.split(","),
+    labor_performed_from: daysAgo(days),
+    labor_performed_to: today(),
+  });
+  await cacheSet(cacheKey, "labor", results, results.length);
+  return { ok: true, results, count: results.length, from_cache: false };
+}
+
+// ---------- property_groups (DB API v0 — with domain fallback) --------------
+// Matches v7: URL-encoded filter, page size 100, 401 fallback to tenant domain
+async function handlePropertyGroups(params: Record<string, string>) {
+  const cacheKey = "property_groups";
+  const cached = await cacheGet(cacheKey, "property_groups");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  // DB API v0 requires filters[Id] or filters[LastUpdatedAtFrom] on all list endpoints
+  const lastFrom = params["filters[LastUpdatedAtFrom]"] || "2024-01-01T00:00:00Z";
+  const pgSize = params["page[size]"] || "100";
+  const pgPath = `/api/v0/property_groups?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(lastFrom)}&page%5Bsize%5D=${pgSize}`;
+
+  let pgResp = await fetchWithTimeout(`${AF_DB}${pgPath}`, {
+    headers: dbHeaders(),
+  });
+
+  // Fallback: if DB API domain returns 401, try tenant domain with v0 creds
+  let domainUsed = AF_DB;
+  if (pgResp.status === 401) {
+    domainUsed = AF_REPORTS;
+    pgResp = await fetchWithTimeout(`${AF_REPORTS}${pgPath}`, {
+      headers: dbHeaders(),
+    });
+  }
+
+  if (!pgResp.ok) {
+    const errBody = await pgResp.text().catch(() => "");
+    return {
+      ok: false,
+      error: "property_groups fetch failed: HTTP " + pgResp.status,
+      status: pgResp.status,
+      domain: domainUsed,
+      detail: errBody.substring(0, 500),
+    };
+  }
+
+  const pgData = await pgResp.json();
+  let allGroups = pgData.results || pgData.data ||
+    (Array.isArray(pgData) ? pgData : []);
+
+  // Paginate if needed
+  let nextPage: string | null = pgData.next_page_path || null;
+  let page = 1;
+  while (nextPage && page < 20) {
+    const fullUrl = nextPage.startsWith("http")
+      ? nextPage
+      : `${domainUsed}${nextPage}`;
+    const nr = await fetchWithTimeout(fullUrl, { headers: dbHeaders() });
+    if (!nr.ok) break;
+    const nd = await nr.json();
+    const nResults = nd.results || nd.data || [];
+    allGroups = allGroups.concat(nResults);
+    nextPage = nd.next_page_path || null;
+    if (nResults.length === 0) break;
+    page++;
+  }
+
+  await cacheSet(cacheKey, "property_groups", allGroups, allGroups.length);
+  return {
+    ok: true,
+    results: allGroups,
+    count: allGroups.length,
+    domain: domainUsed,
+    from_cache: false,
+  };
+}
+
+// ---------- property_map (DB API v0 — UUID→{name,address} with fallback) ----
+// Matches v7: URL-encoded filter, page size 200, 401 fallback, stores address
+async function handlePropertyMap(_params: Record<string, string>) {
+  const cacheKey = "property_map";
+  const cached = await cacheGet(cacheKey, "property_map");
+  if (cached) {
+    return {
+      ok: true,
+      property_uuid_map: cached.data,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  // DB API v0 requires filters[LastUpdatedAtFrom] on list endpoints
+  const pmPath = "/api/v0/properties?filters%5BLastUpdatedAtFrom%5D=2024-01-01T00%3A00%3A00Z&page%5Bsize%5D=200";
+
+  let pmResp = await fetchWithTimeout(`${AF_DB}${pmPath}`, {
+    headers: dbHeaders(),
+  });
+  let pmDomain = AF_DB;
+  if (pmResp.status === 401) {
+    pmDomain = AF_REPORTS;
+    pmResp = await fetchWithTimeout(`${AF_REPORTS}${pmPath}`, {
+      headers: dbHeaders(),
+    });
+  }
+
+  if (!pmResp.ok) {
+    const errBody = await pmResp.text().catch(() => "");
+    return {
+      ok: false,
+      error: "property_map fetch failed: HTTP " + pmResp.status,
+      domain: pmDomain,
+      detail: errBody.substring(0, 500),
+    };
+  }
+
+  const pmData = await pmResp.json();
+  let dbProps = pmData.results || pmData.data ||
+    (Array.isArray(pmData) ? pmData : []);
+
+  // Paginate (cap at 2000)
+  let pmNext: string | null = pmData.next_page_path || null;
+  let pmPage = 1;
+  while (pmNext && dbProps.length < 2000 && pmPage < 20) {
+    const fu = pmNext.startsWith("http") ? pmNext : `${pmDomain}${pmNext}`;
+    const nr = await fetchWithTimeout(fu, { headers: dbHeaders() });
+    if (!nr.ok) break;
+    const nd = await nr.json();
+    const nR = nd.results || nd.data || [];
+    dbProps = dbProps.concat(nR);
+    pmNext = nd.next_page_path || null;
+    if (nR.length === 0) break;
+    pmPage++;
+  }
+
+  // Build UUID → { name, address } map (matches v7)
+  const propMap: Record<string, { name: string; address: string }> = {};
+  dbProps.forEach((p: any) => {
+    if (p.Id) {
+      propMap[p.Id] = {
+        name: p.Name || p.PropertyName || "",
+        address: p.Address1 || p.StreetAddress || "",
+      };
+    }
+  });
+
+  await cacheSet(
+    cacheKey,
+    "property_map",
+    propMap,
+    Object.keys(propMap).length,
+  );
+  return {
+    ok: true,
+    property_uuid_map: propMap,
+    count: Object.keys(propMap).length,
+    domain: pmDomain,
+    from_cache: false,
+  };
+}
+
+// ---------- recent_tasks (DB API v0 — /api/v0/tasks) ------------------------
+// Matches v7: capped at 50
+async function handleRecentTasks(_params: Record<string, string>) {
+  const cacheKey = "recent_tasks";
+  const cached = await cacheGet(cacheKey, "recent_tasks");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  try {
+    const results = await fetchDbApi("/api/v0/tasks?page[size]=50", 50);
+    await cacheSet(cacheKey, "recent_tasks", results, results.length);
+    return { ok: true, results, count: results.length, from_cache: false };
+  } catch (err: any) {
+    // DB API v0 /tasks endpoint may not be available for all accounts
+    console.log(`recent_tasks fetch failed: ${err.message?.substring(0, 120)}`);
+    return {
+      ok: true,
+      results: [],
+      count: 0,
+      from_cache: false,
+      warning: "Tasks API unavailable",
+    };
+  }
+}
+
+// ---------- upcoming_moveouts (Reports API v2 — tenant_directory) -----------
+// Matches v7: detailed columns, tenant_statuses, post-fetch date filtering
+async function handleUpcomingMoveouts(params: Record<string, string>) {
+  const days = parseInt(params.days || "60", 10);
+  const cacheKey = `upcoming_moveouts_${days}`;
+  const cached = await cacheGet(cacheKey, "upcoming_moveouts");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  const rows = await fetchReport("tenant_directory", {
+    tenant_visibility: "active",
+    tenant_statuses: ["0", "4"], // Current + Notice
+    property_visibility: "active",
+    columns: [
+      "property",
+      "property_name",
+      "property_id",
+      "unit",
+      "unit_id",
+      "tenant",
+      "status",
+      "move_out",
+      "move_in",
+      "phone_numbers",
+      "emails",
+      "occupancy_id",
+      "rent",
+    ],
+  });
+
+  // Filter: only tenants with a move_out date within the window
+  const now = new Date();
+  const cutoffFuture = new Date();
+  cutoffFuture.setDate(cutoffFuture.getDate() + days);
+  const cutoffPast = new Date();
+  cutoffPast.setDate(cutoffPast.getDate() - 14); // include recent move-outs too
+
+  const filtered = rows.filter((r: any) => {
+    if (!r.move_out) return false;
+    const moDate = new Date(r.move_out);
+    return moDate >= cutoffPast && moDate <= cutoffFuture;
+  });
+
+  await cacheSet(cacheKey, "upcoming_moveouts", filtered, filtered.length);
+  return {
+    ok: true,
+    results: filtered,
+    count: filtered.length,
+    from_cache: false,
+  };
+}
+
+// ---------- turn_work_orders (DB API v0 — client-side Unit Turn filter) -----
+// Matches v7: fetch all WOs with LastUpdatedAtFrom, then filter Type==="Unit Turn"
+async function handleTurnWorkOrders(params: Record<string, string>) {
+  const days = parseInt(params.days || "90", 10);
+  const cacheKey = `turn_work_orders_${days}`;
+  const cached = await cacheGet(cacheKey, "turn_work_orders");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  const fromDate = new Date();
+  fromDate.setDate(fromDate.getDate() - days);
+  const path = `/api/v0/work_orders?filters[LastUpdatedAtFrom]=${
+    encodeURIComponent(fromDate.toISOString())
+  }&page[size]=200`;
+  const rows = await fetchDbApi(path, 500);
+
+  // Filter for Unit Turn type on the server side (matches v7)
+  const turnWOs = rows.filter((wo: any) => wo.Type === "Unit Turn");
+
+  await cacheSet(cacheKey, "turn_work_orders", turnWOs, turnWOs.length);
+  return {
+    ok: true,
+    results: turnWOs,
+    count: turnWOs.length,
+    from_cache: false,
+  };
+}
+
+// ---------- wo_notes (DB API v0 — with domain fallback) ---------------------
+// Matches v7: domain fallback on 401
+async function handleWoNotes(params: Record<string, string>) {
+  const woId = params.wo_id;
+  if (!woId) return { ok: false, error: "Missing wo_id parameter" };
+
+  try {
+    const notesPath = `/api/v0/work_orders/${encodeURIComponent(woId)}/notes`;
+    let notesResp = await fetchWithTimeout(`${AF_DB}${notesPath}`, {
+      headers: dbHeaders(),
+    });
+
+    // Fallback: if DB API domain returns 401, try tenant domain with v0 creds
+    let notesDomain = AF_DB;
+    if (notesResp.status === 401) {
+      notesDomain = AF_REPORTS;
+      notesResp = await fetchWithTimeout(`${AF_REPORTS}${notesPath}`, {
+        headers: dbHeaders(),
+      });
+    }
+
+    if (!notesResp.ok) {
+      const errBody = await notesResp.text().catch(() => "");
+      return {
+        ok: false,
+        error: "wo_notes fetch failed: HTTP " + notesResp.status,
+        status: notesResp.status,
+        domain: notesDomain,
+        detail: errBody.substring(0, 500),
+      };
+    }
+
+    const notesData = await notesResp.json();
+    const notes = notesData.results ||
+      notesData.data ||
+      (Array.isArray(notesData) ? notesData : []);
+    return {
+      ok: true,
+      results: notes,
+      count: notes.length,
+      domain: notesDomain,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+// ---------- webhook_resolve (resolve resource_type/resource_id to live record)
+// Purpose: resource IDs are opaque UUIDs; this endpoint resolves them via API lookup.
+async function handleWebhookResolve(params: Record<string, string>) {
+  const resourceType = (params.resource_type || params.type || "").trim();
+  const resourceId = (params.resource_id || params.id || "").trim();
+  if (!resourceType || !resourceId) {
+    return {
+      ok: false,
+      error: "Missing resource_type/type or resource_id/id",
+    };
+  }
+
+  const normalizeType = (raw: string): string => {
+    let t = String(raw || "").trim().toLowerCase();
+    if (!t) return "";
+    if (t.includes(".")) t = t.split(".")[0];
+    t = t.replace(/[^a-z0-9_]/g, "");
+    if (t.endsWith("ies")) t = t.slice(0, -3) + "y";
+    else if (t.endsWith("s")) t = t.slice(0, -1);
+    return t;
+  };
+
+  const singular = normalizeType(resourceType);
+  const endpointMap: Record<string, string> = {
+    work_order: "work_orders",
+    unit_turn: "unit_turns",
+    inspection: "inspections",
+    vendor: "vendors",
+    property: "properties",
+    tenant: "tenants",
+    lease: "leases",
+    bill: "bills",
+    task: "tasks",
+  };
+  const collection = endpointMap[singular] || `${singular}s`;
+  const byIdPath = `/api/v0/${collection}/${encodeURIComponent(resourceId)}`;
+  const byFilterPath =
+    `/api/v0/${collection}?filters[Id]=${encodeURIComponent(resourceId)}&page[size]=1`;
+
+  const toSummary = (record: any) => {
+    const title =
+      record.Title ||
+      record.Name ||
+      record.Unit ||
+      record.PropertyName ||
+      record.Description ||
+      record.Id ||
+      resourceId;
+    const status =
+      record.Status ||
+      record.WorkOrderStatus ||
+      record.UnitTurnStatus ||
+      record.State ||
+      "";
+    const reference =
+      record.Number ||
+      record.Reference ||
+      record.WorkOrderNumber ||
+      record.Unit ||
+      "";
+    return { title, status, reference };
+  };
+
+  const fetchRecord = async (path: string): Promise<{ ok: boolean; record?: any; domain?: string; status?: number; detail?: string }> => {
+    let domain = AF_REPORTS;
+    let r = await fetchWithTimeout(`${AF_REPORTS}${path}`, { headers: dbHeaders() });
+    if (r.status === 401 || r.status === 403 || r.status === 404) {
+      domain = AF_DB;
+      r = await fetchWithTimeout(`${AF_DB}${path}`, { headers: dbHeaders() });
+    }
+    if (!r.ok) {
+      const detail = await r.text().catch(() => "");
+      return { ok: false, domain, status: r.status, detail: detail.substring(0, 500) };
+    }
+    const payload = await r.json().catch(() => ({}));
+    const record = (payload && payload.data && !Array.isArray(payload.data) ? payload.data : null) ||
+      (payload && payload.data && Array.isArray(payload.data) ? payload.data[0] : null) ||
+      (payload && payload.results && payload.results[0]) ||
+      (Array.isArray(payload) ? payload[0] : null) ||
+      payload ||
+      null;
+    return { ok: !!record, record, domain, status: r.status };
+  };
+
+  // 1) Direct /{id}
+  let found = await fetchRecord(byIdPath);
+  if (!found.ok) {
+    // 2) Fallback /?filters[Id]=...
+    found = await fetchRecord(byFilterPath);
+  }
+
+  if (!found.ok || !found.record) {
+    return {
+      ok: false,
+      error: `resolve failed: HTTP ${found.status || 404}`,
+      status: found.status || 404,
+      domain: found.domain || `${AF_REPORTS} + ${AF_DB}`,
+      resource_type: singular,
+      resource_id: resourceId,
+      endpoint: byIdPath,
+      detail: found.detail || "Not found via ID or filters[Id] lookup",
+    };
+  }
+
+  return {
+    ok: true,
+    resource_type: singular,
+    resource_id: resourceId,
+    endpoint: found.domain === AF_DB ? byFilterPath : byIdPath,
+    domain: found.domain || AF_REPORTS,
+    summary: toSummary(found.record),
+    record: found.record,
+  };
+}
+
+// ---------- bills (DB API v0 — matches v7) ----------------------------------
+async function handleBills(params: Record<string, string>) {
+  const days = parseInt(params.days || "180", 10);
+  const max = parseInt(params.max || "200", 10);
+  const cacheKey = `bills_${days}`;
+  const cached = await cacheGet(cacheKey, "bills");
+  if (cached) {
+    return {
+      ok: true,
+      results: cached.data,
+      count: cached.record_count,
+      cached_at: cached.cached_at,
+      from_cache: true,
+    };
+  }
+
+  const fromDate = new Date();
+  fromDate.setDate(fromDate.getDate() - days);
+  const path = `/api/v0/bills?filters[LastUpdatedAtFrom]=${
+    encodeURIComponent(fromDate.toISOString())
+  }`;
+  const results = await fetchDbApi(path, max);
+
+  await cacheSet(cacheKey, "bills", results, results.length);
+  return { ok: true, results, count: results.length, from_cache: false };
+}
+
+// ---------- turn_records (SQLite — GET reads, POST writes) ------------------
+async function handleTurnRecords(
+  params: Record<string, string>,
+  req?: Request,
+): Promise<any> {
+  // POST: save/update a turn record
+  if (req && req.method === "POST") {
+    try {
+      const body = await req.json();
+      const id = body.id || body.unit_turn_id;
+      if (!id) return { ok: false, error: "Missing id/unit_turn_id" };
+
+      await sqlite.execute({
+        sql:
+          `INSERT OR REPLACE INTO turn_records (unit_turn_id, data, updated_at)
+              VALUES (?, ?, datetime('now'))`,
+        args: [id, JSON.stringify(body)],
+      });
+      return { ok: true, message: "Turn record saved" };
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  }
+
+  // GET: return all turn records
+  const result = await sqlite.execute(
+    `SELECT unit_turn_id, data, updated_at FROM turn_records ORDER BY updated_at DESC`,
+  );
+  const rows = rowsAsObjects(result);
+  const records = rows.map((r) => {
+    try {
+      return JSON.parse(r.data);
+    } catch {
+      return { unit_turn_id: r.unit_turn_id, data: r.data };
+    }
+  });
+  return { ok: true, records, count: records.length };
+}
+
+// ---------- turn_record_stage (POST only — update a specific stage) ---------
+async function handleTurnRecordStage(req: Request): Promise<any> {
+  try {
+    const body = await req.json();
+    const id = body.id;
+    const stage = body.stage;
+    const stageData = body.data;
+    if (!id || !stage) return { ok: false, error: "Missing id or stage" };
+
+    const existing = await sqlite.execute({
+      sql: `SELECT data FROM turn_records WHERE unit_turn_id = ?`,
+      args: [id],
+    });
+
+    let record: any = {};
+    const existingRows = rowsAsObjects(existing);
+    if (existingRows.length > 0) {
+      try {
+        record = JSON.parse(existingRows[0].data);
+      } catch {
+        /* start fresh */
+      }
+    }
+
+    if (!record.stages) record.stages = {};
+    record.stages[stage] = {
+      ...record.stages[stage],
+      ...stageData,
+      updatedAt: new Date().toISOString(),
+    };
+    record.unit_turn_id = id;
+    record.updatedAt = new Date().toISOString();
+
+    await sqlite.execute({
+      sql: `INSERT OR REPLACE INTO turn_records (unit_turn_id, data, updated_at)
+            VALUES (?, ?, datetime('now'))`,
+      args: [id, JSON.stringify(record)],
+    });
+
+    return { ok: true, message: `Stage '${stage}' saved for ${id}` };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+// ---------- generic report (pass any report name + JSON filters) ------------
+// Matches v7: ?action=report&name=work_order_labor_summary, POST body=filters
+async function handleGenericReport(
+  params: Record<string, string>,
+  req: Request,
+): Promise<any> {
+  const reportName = params.name;
+  if (!reportName) {
+    return { ok: false, error: "Missing 'name' param for report action" };
+  }
+  let filters: Record<string, any> = {};
+  if (req.method === "POST") {
+    try {
+      filters = await req.json();
+    } catch {
+      /* empty filters */
+    }
+  }
+  const rows = await fetchReport(reportName, filters);
+  return { ok: true, count: rows.length, results: rows };
+}
+
+// ---------- ping (health check — tests both API domains like v7) ------------
+async function handlePing() {
+  const t0 = Date.now();
+  const [dbResp, rptResp] = await Promise.allSettled([
+    fetch(`${AF_DB}/api/v0/properties?filters%5BLastUpdatedAtFrom%5D=2025-01-01T00%3A00%3A00Z&page%5Bsize%5D=1`, {
+      headers: dbHeaders(),
+    }),
+    fetch(`${AF_REPORTS}/api/v2/reports/property_directory.json`, {
+      method: "POST",
+      headers: { ...reportsHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        property_visibility: "active",
+        paginate_results: true,
+        per_page: 1,
+      }),
+    }),
+  ]);
+  const elapsed = Date.now() - t0;
+  const dbOk = dbResp.status === "fulfilled" && dbResp.value.ok;
+  const rptOk = rptResp.status === "fulfilled" && rptResp.value.ok;
+
+  let dbDetail = "";
+  let rptDetail = "";
+  try {
+    if (dbResp.status === "fulfilled") {
+      dbDetail = (await dbResp.value.text()).substring(0, 200);
+    }
+  } catch {}
+  try {
+    if (rptResp.status === "fulfilled") {
+      rptDetail = (await rptResp.value.text()).substring(0, 100);
+    }
+  } catch {}
+
+  return {
+    ok: dbOk || rptOk, // ok if EITHER API is reachable (not both)
+    db_api: {
+      ok: dbOk,
+      domain: AF_DB,
+      status: dbResp.status === "fulfilled" ? dbResp.value.status : 0,
+      detail: dbOk ? "Connected" : dbDetail,
+    },
+    reports_api: {
+      ok: rptOk,
+      domain: AF_REPORTS,
+      status: rptResp.status === "fulfilled" ? rptResp.value.status : 0,
+      detail: rptOk ? "Connected" : rptDetail,
+    },
+    latency_ms: elapsed,
+    timestamp: new Date().toISOString(),
+    version: "v8.9",
+    proxy: "v8.9",
+    database: TURSO_URL ? "turso" : "valtown_sqlite",
+    vhost: AF_VHOST,
+  };
+}
+
+// ========================== DEBUG SQLITE =====================================
+async function handleDebugSqlite(): Promise<any> {
+  const diag: any = { ok: true, timestamp: new Date().toISOString() };
+
+  // 1) List all tables and their schemas
+  try {
+    const tables = await sqlite.execute(
+      `SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name`,
+    );
+    diag.tables_raw = tables;
+    diag.tables_obj = rowsAsObjects(tables);
+  } catch (e: any) {
+    diag.tables_error = e.message;
+  }
+
+  // 2) List all indexes
+  try {
+    const indexes = await sqlite.execute(
+      `SELECT name, tbl_name, sql FROM sqlite_master WHERE type='index' ORDER BY tbl_name, name`,
+    );
+    diag.indexes_raw = indexes;
+    diag.indexes_obj = rowsAsObjects(indexes);
+  } catch (e: any) {
+    diag.indexes_error = e.message;
+  }
+
+  // 3) PRAGMA table_info for each expected table
+  for (const tbl of ["webhook_events", "api_cache", "turn_records"]) {
+    try {
+      const info = await sqlite.execute(`PRAGMA table_info(${tbl})`);
+      diag[`pragma_${tbl}_raw`] = info;
+      diag[`pragma_${tbl}_obj`] = rowsAsObjects(info);
+    } catch (e: any) {
+      diag[`pragma_${tbl}_error`] = e.message;
+    }
+  }
+
+  // 4) Test a simple SELECT on webhook_events to see what happens
+  try {
+    const testSelect = await sqlite.execute(
+      `SELECT * FROM webhook_events LIMIT 1`,
+    );
+    diag.webhook_test_raw = testSelect;
+    diag.webhook_test_obj = rowsAsObjects(testSelect);
+  } catch (e: any) {
+    diag.webhook_test_error = e.message;
+  }
+
+  // 5) Test a simple SELECT on api_cache
+  try {
+    const cacheTest = await sqlite.execute(
+      `SELECT cache_key, entity_type, cached_at, record_count FROM api_cache LIMIT 3`,
+    );
+    diag.cache_test_raw = cacheTest;
+    diag.cache_test_obj = rowsAsObjects(cacheTest);
+  } catch (e: any) {
+    diag.cache_test_error = e.message;
+  }
+
+  // 6) Show _tablesReady state
+  diag._tablesReady = _tablesReady;
+
+  return diag;
+}
+
+// ========================== WEBHOOK HANDLER ==================================
+
+function decodeBase64Url(input: string): string {
+  const b64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+  return atob(padded);
+}
+
+function normalizeWebhookFields(payload: any): {
+  payload: any;
+  eventType: string | null;
+  resourceType: string | null;
+  resourceId: string | null;
+  eventId: string | null;
+} {
+  const p = payload && typeof payload === "object" ? payload : {};
+  const topic = String(p.topic || "").trim().toLowerCase();
+  const evt = String(p.event_type || "").trim().toLowerCase();
+  const event = String(p.event || "").trim().toLowerCase();
+  const eventType = event || (topic && evt ? `${topic}.${evt}` : (evt || null));
+  const resourceType =
+    (p.resource_type && String(p.resource_type).trim()) ||
+    (topic && topic.split(".")[0]) ||
+    (event && event.split(".")[0]) ||
+    null;
+  const resourceId =
+    (p.resource_id && String(p.resource_id).trim()) ||
+    (p.id && String(p.id).trim()) ||
+    (p.resource && p.resource.id && String(p.resource.id).trim()) ||
+    null;
+  const eventId =
+    (p.event_id && String(p.event_id).trim()) ||
+    (p.idempotency_key && String(p.idempotency_key).trim()) ||
+    null;
+
+  return {
+    payload: p,
+    eventType,
+    resourceType,
+    resourceId,
+    eventId,
+  };
+}
+
+function parseIncomingWebhook(rawBody: string): {
+  payload: any;
+  eventType: string | null;
+  resourceType: string | null;
+  resourceId: string | null;
+  eventId: string | null;
+  parseMode: string;
+} {
+  const raw = String(rawBody || "").trim();
+  if (!raw) {
+    return {
+      payload: {},
+      eventType: null,
+      resourceType: null,
+      resourceId: null,
+      eventId: null,
+      parseMode: "empty",
+    };
+  }
+
+  // Compact JWS format: header.payload.signature
+  try {
+    const parts = raw.split(".");
+    if (parts.length === 3) {
+      const payloadJson = decodeBase64Url(parts[1]);
+      const payload = JSON.parse(payloadJson);
+      return {
+        ...normalizeWebhookFields(payload),
+        parseMode: "jws",
+      };
+    }
+  } catch {
+    // Fall through to plain JSON attempt.
+  }
+
+  // Plain JSON payload
+  try {
+    const payload = JSON.parse(raw);
+    return {
+      ...normalizeWebhookFields(payload),
+      parseMode: "json",
+    };
+  } catch {
+    return {
+      payload: {},
+      eventType: null,
+      resourceType: null,
+      resourceId: null,
+      eventId: null,
+      parseMode: "unknown",
+    };
+  }
+}
+
+async function handleWebhookPost(req: Request): Promise<any> {
+  const rawBody = await req.text();
+  const parsed = parseIncomingWebhook(rawBody);
+  const resourceType = parsed.resourceType;
+  const resourceId = parsed.resourceId;
+  const eventType = parsed.eventType;
+
+  // Store in SQLite
+  await sqlite.execute({
+    sql:
+      `INSERT INTO webhook_events (raw_body, resource_type, resource_id, event_type)
+          VALUES (?, ?, ?, ?)`,
+    args: [rawBody, resourceType, resourceId, eventType],
+  });
+
+  // Invalidate relevant caches
+  if (resourceType && WEBHOOK_CACHE_MAP[resourceType]) {
+    for (const et of WEBHOOK_CACHE_MAP[resourceType]) {
+      await cacheInvalidate(et);
+    }
+  }
+
+  return {
+    ok: true,
+    event_type: eventType,
+    resource_type: resourceType,
+    resource_id: resourceId,
+    parse_mode: parsed.parseMode,
+  };
+}
+
+// ========================== WEBHOOK QUERY ENDPOINTS ==========================
+
+async function handleWebhookEvents(params: Record<string, string>) {
+  const limit = parseInt(params.limit || "200", 10);
+  const offset = parseInt(params.offset || "0", 10);
+  const sinceId = parseInt(params.since_id || "0", 10);
+  const search = params.search || "";
+  const typeFilter = params.type || "";
+  const sourceFilter = params.source || "";
+  const fromDate = params.from || "";
+  const toDate = params.to || "";
+
+  const conditions: string[] = [];
+  const args: any[] = [];
+
+  if (sinceId > 0) {
+    conditions.push("id > ?");
+    args.push(sinceId);
+  }
+  if (search) {
+    conditions.push(
+      "(event_type LIKE ? OR resource_type LIKE ? OR resource_id LIKE ?)",
+    );
+    const s = `%${search}%`;
+    args.push(s, s, s);
+  }
+  if (typeFilter) {
+    conditions.push("event_type LIKE ?");
+    args.push(`%${typeFilter}%`);
+  }
+  if (sourceFilter === "appfolio" || sourceFilter === "has_data") {
+    conditions.push("length(raw_body) > 2");
+  } else if (sourceFilter === "empty") {
+    conditions.push("length(raw_body) <= 2");
+  }
+  if (fromDate) {
+    conditions.push("received_at >= ?");
+    args.push(fromDate);
+  }
+  if (toDate) {
+    conditions.push("received_at <= ?");
+    args.push(toDate);
+  }
+
+  const whereClause = conditions.length > 0
+    ? "WHERE " + conditions.join(" AND ")
+    : "";
+
+  const result = await sqlite.execute({
+    sql: `SELECT id, received_at as ts, event_type as type,
+                 resource_type, resource_id, raw_body,
+                 CASE WHEN length(raw_body) > 2 THEN 'has_data' ELSE 'empty' END as body_status
+          FROM webhook_events
+          ${whereClause}
+          ORDER BY id DESC
+          LIMIT ? OFFSET ?`,
+    args: [...args, limit, offset],
+  });
+
+  const total = await sqlite.execute({
+    sql: `SELECT COUNT(*) as cnt FROM webhook_events ${whereClause}`,
+    args: args,
+  });
+
+  const eventRows = rowsAsObjects(result);
+  const totalRows = rowsAsObjects(total);
+
+  return {
+    ok: true,
+    count: eventRows.length,
+    total: totalRows[0]?.cnt || 0,
+    events: eventRows.map((r) => {
+      const parsed = parseIncomingWebhook(r.raw_body || "");
+      const rawObj: any = parsed.payload || {};
+      const src = r.body_status === "has_data" ? "appfolio" : "empty";
+      const resolvedType = parsed.eventType || r.type || null;
+      const resolvedResourceType = parsed.resourceType || r.resource_type || null;
+      const resolvedResourceId = parsed.resourceId || r.resource_id || null;
+      const title = resolvedType
+        ? `${resolvedType} → ${resolvedResourceType || "?"}/${resolvedResourceId || "?"}`
+        : "Webhook Event";
+      return {
+        id: r.id,
+        ts: r.ts,
+        type: resolvedType,
+        event_type: rawObj.event_type || resolvedType || null,
+        topic: rawObj.topic || null,
+        event_id: parsed.eventId || rawObj.event_id || null,
+        resource_type: resolvedResourceType,
+        resource_id: resolvedResourceId,
+        body_status: r.body_status,
+        title,
+        body: r.raw_body || "",
+        priority: "normal",
+        source: src,
+        raw: rawObj,
+      };
+    }),
+  };
+}
+
+async function handleWebhookStats(_params: Record<string, string>) {
+  const totalResult = await sqlite.execute(
+    `SELECT COUNT(*) as total,
+            SUM(CASE WHEN processed = 0 THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN length(raw_body) > 2 THEN 1 ELSE 0 END) as has_data,
+            SUM(CASE WHEN length(raw_body) <= 2 THEN 1 ELSE 0 END) as empty_body
+     FROM webhook_events`,
+  );
+
+  const byType = await sqlite.execute(
+    `SELECT COALESCE(event_type, 'unknown') as type, COUNT(*) as count
+     FROM webhook_events
+     GROUP BY event_type
+     ORDER BY count DESC`,
+  );
+
+  const bySource = await sqlite.execute(
+    `SELECT CASE WHEN length(raw_body) > 2 THEN 'appfolio' ELSE 'empty' END as source,
+            COUNT(*) as count
+     FROM webhook_events
+     GROUP BY source`,
+  );
+
+  const byDay = await sqlite.execute(
+    `SELECT date(received_at) as day, COUNT(*) as count
+     FROM webhook_events
+     WHERE received_at >= datetime('now', '-30 days')
+     GROUP BY day
+     ORDER BY day DESC`,
+  );
+
+  const statsRows = rowsAsObjects(totalResult);
+  const stats = statsRows[0] || {};
+  return {
+    ok: true,
+    total: stats.total || 0,
+    pending: stats.pending || 0,
+    has_data: stats.has_data || 0,
+    empty_body: stats.empty_body || 0,
+    by_type: rowsAsObjects(byType),
+    by_source: rowsAsObjects(bySource),
+    by_day: rowsAsObjects(byDay),
+  };
+}
+
+// ========================== CACHE MANAGEMENT ENDPOINTS =======================
+
+async function handleCacheStats() {
+  const stats = await sqlite.execute(
+    `SELECT entity_type,
+            COUNT(*) as entries,
+            MAX(cached_at) as last_cached,
+            SUM(record_count) as total_records
+     FROM api_cache
+     GROUP BY entity_type`,
+  );
+  const webhookCount = await sqlite.execute(
+    `SELECT COUNT(*) as total,
+            SUM(CASE WHEN processed = 0 THEN 1 ELSE 0 END) as pending,
+            MAX(id) as max_id
+     FROM webhook_events`,
+  );
+  const turnRecordCount = await sqlite.execute(
+    `SELECT COUNT(*) as total FROM turn_records`,
+  );
+  const whRows = rowsAsObjects(webhookCount);
+  const trRows = rowsAsObjects(turnRecordCount);
+
+  // Storage usage breakdown
+  const cacheBytes = await getCacheSizeBytes();
+  const webhookBytes = await getWebhookSizeBytes();
+  const totalBytes = cacheBytes + webhookBytes;
+  const budgetMB = (STORAGE_BUDGET_BYTES / 1024 / 1024).toFixed(1);
+
+  return {
+    ok: true,
+    version: "v8.9",
+    database: TURSO_URL ? "turso" : "valtown_sqlite",
+    cache: rowsAsObjects(stats),
+    webhooks: whRows[0] || { total: 0, pending: 0, max_id: 0 },
+    turn_records: trRows[0]?.total || 0,
+    storage: {
+      cache_bytes: cacheBytes,
+      webhook_bytes: webhookBytes,
+      total_bytes: totalBytes,
+      total_mb: (totalBytes / 1024 / 1024).toFixed(2),
+      budget_mb: budgetMB,
+      usage_pct: ((totalBytes / STORAGE_BUDGET_BYTES) * 100).toFixed(1),
+    },
+  };
+}
+
+// Manual storage cleanup endpoint
+async function handleStorageCleanup() {
+  const before = await getCacheSizeBytes();
+  // 1. Purge expired cache entries
+  await sqlite.execute(
+    `DELETE FROM api_cache WHERE datetime(expires_at) < datetime('now')`,
+  );
+  // 2. Run webhook cleanup
+  const wh = await webhookCleanup();
+  const after = await getCacheSizeBytes();
+  return {
+    ok: true,
+    freed_bytes: before - after,
+    freed_mb: ((before - after) / 1024 / 1024).toFixed(2),
+    webhook_deleted: wh,
+    cache_bytes_now: after,
+  };
+}
+
+async function handleCacheInvalidate(params: Record<string, string>) {
+  const entityType = params.type;
+  if (!entityType) {
+    await sqlite.execute(`DELETE FROM api_cache`);
+    return { ok: true, message: "All caches cleared" };
+  }
+  await cacheInvalidate(entityType);
+  return { ok: true, message: `Cache cleared for ${entityType}` };
+}
+
+async function handleForceRefresh(params: Record<string, string>) {
+  const entityType = params.type;
+  if (!entityType) return { ok: false, error: "Missing type parameter" };
+
+  await cacheInvalidate(entityType);
+
+  switch (entityType) {
+    case "work_orders":
+      return handleWorkOrders(params);
+    case "turns":
+      return handleTurns(params);
+    case "turn_work_orders":
+      return handleTurnWorkOrders(params);
+    case "vendors":
+      return handleVendors(params);
+    case "inspections":
+      return handleInspections(params);
+    case "properties":
+      return handleProperties(params);
+    case "property_groups":
+      return handlePropertyGroups(params);
+    case "property_map":
+      return handlePropertyMap(params);
+    case "recent_tasks":
+      return handleRecentTasks(params);
+    case "upcoming_moveouts":
+      return handleUpcomingMoveouts(params);
+    case "labor":
+      return handleLabor(params);
+    case "bills":
+      return handleBills(params);
+    default:
+      return { ok: false, error: `Unknown entity type: ${entityType}` };
+  }
+}
+
+// ========================== MIGRATION ========================================
+
+async function handleMigrateV8() {
+  const result = await sqlite.execute(
+    `UPDATE webhook_events
+     SET processed = 1, processed_at = datetime('now')
+     WHERE length(raw_body) <= 2 AND processed = 0`,
+  );
+  return {
+    ok: true,
+    message: `Marked ${
+      (result as any).rowsAffected || 0
+    } empty events as processed`,
+  };
+}
+
+async function handleWebhookMigrate() {
+  // blob→SQLite migration for webhook events
+  let migrated = 0;
+  try {
+    const stored = await blob.getJSON("webhook_events");
+    if (Array.isArray(stored) && stored.length > 0) {
+      for (const evt of stored) {
+        await sqlite.execute({
+          sql:
+            `INSERT INTO webhook_events (received_at, raw_body, resource_type, resource_id, event_type)
+                VALUES (?, ?, ?, ?, ?)`,
+          args: [
+            evt.ts || new Date().toISOString(),
+            JSON.stringify(evt),
+            evt.resource_type || null,
+            evt.resource_id || null,
+            evt.type || null,
+          ],
+        });
+        migrated++;
+      }
+      // Clear blob after successful migration
+      await blob.setJSON("webhook_events", []);
+    }
+  } catch {
+    /* no blob data to migrate */
+  }
+  return {
+    ok: true,
+    migrated,
+    message: migrated > 0
+      ? `Migrated ${migrated} events from blob`
+      : "No blob data to migrate",
+  };
+}
+
+// ========================== PASSTHROUGH / RAW PROXY =========================
+
+// Matches v7: routes /api/v0/... → api.appfolio.com, /api/v2/... → flraz.appfolio.com
+// Uses correct credentials per API version
+async function handlePassthrough(
+  params: Record<string, string>,
+  req: Request,
+): Promise<any> {
+  const targetPath = params.path;
+  if (!targetPath) return { ok: false, error: "Missing path parameter" };
+
+  let cleanPath = targetPath;
+  if (targetPath.startsWith("http")) {
+    try {
+      const u = new URL(targetPath);
+      cleanPath = u.pathname + u.search;
+    } catch {
+      /* use as-is */
+    }
+  }
+
+  // Route to correct domain AND credentials based on API version
+  const isV0 = cleanPath.startsWith("/api/v0");
+  const baseDomain = isV0 ? AF_DB : AF_REPORTS;
+  const targetUrl = `${baseDomain}${cleanPath}`;
+  const hdrs: Record<string, string> = isV0
+    ? { ...dbHeaders() }
+    : { ...reportsHeaders() };
+  const ct = req.headers.get("content-type");
+  if (ct) hdrs["Content-Type"] = ct;
+
+  const resp = await fetchWithTimeout(targetUrl, {
+    method: req.method,
+    headers: hdrs,
+    body: req.method !== "GET" && req.method !== "HEAD"
+      ? await req.text()
+      : undefined,
+  });
+
+  const body = await resp.text();
+  return new Response(body, {
+    status: resp.status,
+    statusText: resp.statusText,
+    headers: {
+      "Content-Type": resp.headers.get("Content-Type") || "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "*",
+    },
+  });
+}
+
+// ========================== SQL ADMIN ENDPOINTS =============================
+// Guarded by PROXY_ADMIN_KEY env var — set it in Val Town settings to enable.
+// Both endpoints require ?key=<PROXY_ADMIN_KEY> in the request URL.
+
+async function handleSqlQuery(
+  params: Record<string, string>,
+  req: Request,
+): Promise<any> {
+  const adminKey = Deno.env.get("PROXY_ADMIN_KEY") || "";
+  if (!adminKey) {
+    return {
+      ok: false,
+      error: "sql_query disabled: set PROXY_ADMIN_KEY env var in Val Town to enable",
+    };
+  }
+  if ((params.key || "") !== adminKey) {
+    return { ok: false, error: "Unauthorized: invalid or missing key" };
+  }
+
+  let query = params.query || params.sql || "";
+  if (!query) {
+    try {
+      const ct = req.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        const body = await req.json();
+        query = body.query || body.sql || "";
+      } else {
+        const text = await req.text();
+        const form = new URLSearchParams(text);
+        query = form.get("query") || form.get("sql") || "";
+      }
+    } catch { /* keep empty */ }
+  }
+  if (!query) return { ok: false, error: "Missing query parameter" };
+
+  const normalized = query.trim().replace(/\s+/g, " ").toUpperCase();
+  const allowed =
+    normalized.startsWith("SELECT") ||
+    normalized.startsWith("PRAGMA") ||
+    normalized.startsWith("EXPLAIN") ||
+    normalized.startsWith("WITH");
+  if (!allowed) {
+    return {
+      ok: false,
+      error:
+        "sql_query only allows SELECT / PRAGMA / EXPLAIN / WITH. Use sql_execute for writes.",
+    };
+  }
+
+  try {
+    const result = await sqlite.execute(query);
+    const columns: string[] = result.columns || [];
+    const rows = rowsAsObjects(result);
+    return { ok: true, rows, columns, count: rows.length };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+async function handleSqlExecute(
+  params: Record<string, string>,
+  req: Request,
+): Promise<any> {
+  const adminKey = Deno.env.get("PROXY_ADMIN_KEY") || "";
+  if (!adminKey) {
+    return {
+      ok: false,
+      error: "sql_execute disabled: set PROXY_ADMIN_KEY env var in Val Town to enable",
+    };
+  }
+  if ((params.key || "") !== adminKey) {
+    return { ok: false, error: "Unauthorized: invalid or missing key" };
+  }
+
+  let sqlStmt = params.query || params.sql || "";
+  let sqlArgs: any[] = [];
+  if (!sqlStmt) {
+    try {
+      const ct = req.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        const body = await req.json();
+        sqlStmt = body.sql || body.query || "";
+        sqlArgs = body.args || body.params || [];
+      } else {
+        const text = await req.text();
+        const form = new URLSearchParams(text);
+        sqlStmt = form.get("query") || form.get("sql") || "";
+      }
+    } catch { /* keep empty */ }
+  }
+  if (!sqlStmt) return { ok: false, error: "Missing sql/query parameter" };
+
+  // Prevent accidental SELECT via execute — use sql_query instead
+  const normalized = sqlStmt.trim().toUpperCase();
+  if (normalized.startsWith("SELECT") || normalized.startsWith("EXPLAIN")) {
+    return {
+      ok: false,
+      error: "Use sql_query for SELECT/EXPLAIN statements",
+    };
+  }
+
+  try {
+    const result = await sqlite.execute({ sql: sqlStmt, args: sqlArgs });
+    return {
+      ok: true,
+      rowsAffected: result.rowsAffected || 0,
+      lastInsertRowid: result.lastInsertRowid != null
+        ? Number(result.lastInsertRowid)
+        : null,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+// ============================================================================
+
+// ========================== MAIN ROUTER =====================================
+
+export default async function (req: Request): Promise<Response> {
+  // CORS preflight — always respond immediately
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
+  try {
+    // Validate environment variables (matches v7)
+    if (!V2_CLIENT_ID || !V2_CLIENT_SECRET || !DEV) {
+      return corsJson(
+        {
+          ok: false,
+          error:
+            "Missing environment variables. Required: AF_V2_CLIENT_ID, AF_V2_CLIENT_SECRET, AF_DEVELOPER_ID, AF_V0_AUTH.",
+        },
+        500,
+      );
+    }
+
+    // Initialize SQLite tables (no-op after first run)
+    await ensureTables();
+
+    const url = new URL(req.url);
+    const action = url.searchParams.get("action");
+    const params = Object.fromEntries(url.searchParams.entries());
+
+    // ---- Webhook POST (AppFolio sends POST with no ?action param) ----
+    if (req.method === "POST" && !action) {
+      const result = await handleWebhookPost(req);
+      return corsJson(result);
+    }
+
+    // ---- POST actions ----
+    if (req.method === "POST" && action) {
+      let result: any;
+      switch (action) {
+        case "turn_records":
+          result = await handleTurnRecords(params, req);
+          break;
+        case "turn_record_stage":
+          result = await handleTurnRecordStage(req);
+          break;
+        case "report":
+          result = await handleGenericReport(params, req);
+          break;
+        case "passthrough":
+          result = await handlePassthrough(params, req);
+          // passthrough returns a raw Response
+          if (result instanceof Response) return result;
+          break;
+        case "webhook":
+          // Legacy v7 webhook POST format (action=webhook)
+          result = await handleWebhookPost(req);
+          break;
+        case "webhook_resolve":
+          result = await handleWebhookResolve(params);
+          break;
+        default:
+          result = { ok: false, error: `Unknown POST action: ${action}` };
+      }
+      return corsJson(result);
+    }
+
+    // ---- GET actions ----
+    let result: any;
+    switch (action) {
+      // Data endpoints (cached)
+      case "work_orders":
+        result = await handleWorkOrders(params);
+        break;
+      case "vendors":
+        result = await handleVendors(params);
+        break;
+      case "properties":
+        result = await handleProperties(params);
+        break;
+      case "turns":
+        result = await handleTurns(params);
+        break;
+      case "inspections":
+        result = await handleInspections(params);
+        break;
+      case "property_groups":
+        result = await handlePropertyGroups(params);
+        break;
+      case "property_map":
+        result = await handlePropertyMap(params);
+        break;
+      case "recent_tasks":
+        result = await handleRecentTasks(params);
+        break;
+      case "upcoming_moveouts":
+        result = await handleUpcomingMoveouts(params);
+        break;
+      case "turn_work_orders":
+        result = await handleTurnWorkOrders(params);
+        break;
+      case "labor":
+        result = await handleLabor(params);
+        break;
+      case "bills":
+        result = await handleBills(params);
+        break;
+
+      // Detail endpoints (not cached)
+      case "wo_notes":
+        result = await handleWoNotes(params);
+        break;
+      case "turn_records":
+        result = await handleTurnRecords(params);
+        break;
+
+      // Generic report (GET form — typically use POST for filters)
+      case "report":
+        result = await handleGenericReport(params, req);
+        break;
+
+      // Webhook endpoints
+      case "webhook_events":
+        result = await handleWebhookEvents(params);
+        break;
+      case "webhook_stats":
+        result = await handleWebhookStats(params);
+        break;
+      case "webhook_resolve":
+        result = await handleWebhookResolve(params);
+        break;
+      case "webhook_migrate":
+        result = await handleWebhookMigrate();
+        break;
+
+      // SQL admin (guarded by PROXY_ADMIN_KEY)
+      case "sql_query":
+        result = await handleSqlQuery(params, req);
+        break;
+      case "sql_execute":
+        result = await handleSqlExecute(params, req);
+        break;
+
+      // Cache management
+      case "cache_stats":
+        result = await handleCacheStats();
+        break;
+      case "cache_invalidate":
+        result = await handleCacheInvalidate(params);
+        break;
+      case "force_refresh":
+        result = await handleForceRefresh(params);
+        break;
+      case "storage_cleanup":
+        result = await handleStorageCleanup();
+        break;
+
+      // Migration
+      case "migrate_v8":
+        result = await handleMigrateV8();
+        break;
+
+      // Health
+      case "ping":
+        result = await handlePing();
+        break;
+
+      // Diagnostic — dump raw SQLite info to see actual row format + schemas
+      case "debug_sqlite":
+        result = await handleDebugSqlite();
+        break;
+
+      // Passthrough for direct API calls (GET form)
+      case "passthrough":
+        result = await handlePassthrough(params, req);
+        if (result instanceof Response) return result;
+        break;
+
+      // Raw proxy — v7 compat: ?path=/api/v0/... (no action param needed)
+      default:
+        // Check if there's a ?path= param (v7 raw proxy pattern)
+        if (params.path) {
+          result = await handlePassthrough(params, req);
+          if (result instanceof Response) return result;
+        } else if (!action) {
+          // No action, no path — show help
+          result = {
+            ok: true,
+            proxy: "v8.9",
+            database: TURSO_URL ? "turso" : "valtown_sqlite",
+            reports_domain: AF_REPORTS,
+            db_domain: AF_DB,
+            endpoints: [
+              "?action=ping",
+              "?action=work_orders&days=180",
+              "?action=vendors",
+              "?action=properties",
+              "?action=turns&days=90",
+              "?action=inspections&days=180",
+              "?action=labor&days=1&statuses=8",
+              "?action=property_groups",
+              "?action=property_map",
+              "?action=upcoming_moveouts&days=60",
+              "?action=turn_work_orders&days=90",
+              "?action=bills&days=180",
+              "?action=wo_notes&wo_id=UUID",
+              "?action=recent_tasks",
+              "?action=turn_records",
+              "?action=webhook_events",
+              "?action=webhook_stats",
+              "?action=webhook_resolve&resource_type=work_order&resource_id=UUID",
+              "?action=cache_stats",
+              "?action=cache_invalidate&type=ENTITY",
+              "?action=force_refresh&type=ENTITY",
+              "?action=storage_cleanup",
+              "?action=debug_sqlite",
+              "?action=sql_query&key=KEY&query=SELECT...",
+              "?action=sql_execute&key=KEY&query=UPDATE... (also POST)",
+              "?action=report&name=REPORT_NAME (POST with filters)",
+              "?action=passthrough&path=/api/v0/...",
+            ],
+          };
+        } else {
+          result = { ok: false, error: `Unknown action: ${action}` };
+        }
+    }
+
+    return corsJson(result);
+  } catch (err: any) {
+    console.error("Proxy v8.9 error:", err);
+    return corsJson(
+      { ok: false, error: err.message || "Internal server error" },
+      500,
+    );
+  }
+}

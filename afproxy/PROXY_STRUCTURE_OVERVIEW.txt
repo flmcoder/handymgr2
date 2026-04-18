@@ -1,0 +1,138 @@
+HandyManager Proxy Structure Overview
+Version context: v9.2.2 series
+Audience: New engineers onboarding to afproxy
+
+Purpose
+- main.ts is the HTTP router and auth wall.
+- handlers/ contains action-level business logic.
+- lib/ contains shared integrations and utilities.
+- config.ts + db.ts provide environment and persistence primitives.
+
+Top-Level Layout
+- root: main.ts, config.ts, db.ts, deno.json, landing.html, readme.md
+- lib/: shared APIs/utilities (AppFolio, auth, fetch/retry, rate limits, SMS)
+- handlers/: feature-specific endpoint handlers
+- tests/: smoke and regression checks
+
+ROOT FILES
+
+main.ts
+- handler (default export): central request router, action dispatch, auth/rate-limit gate, GET/POST switches.
+- Key internal helpers: jsonResp, extractFrontendToken, isFrontendAuthorized, readSettingsTable, upsertSettingTable.
+
+config.ts
+- reportsHeaders, dbHeaders: AppFolio header builders.
+- Exported constants: API hosts, auth/env values, CORS headers, cache/storage limits, version constants.
+
+db.ts
+- ensureTables: schema bootstrap.
+- rowsAsObjects: result normalization helper.
+- Cache API: cacheGet, cacheSet, cacheInvalidate.
+- Storage controls: getCacheSizeBytes, getWebhookSizeBytes, evictCacheIfNeeded, webhookCleanup.
+
+LIB DIRECTORY
+
+lib/appfolio.ts
+- Validation: isValidAppfolioDate, isValidAppfolioDateTimeUtc, isValidAppfolioAmount, isValidAppfolioWorkOrderStatus.
+- Transport helpers: fetchReport, fetchDbApi.
+- Work-order helpers: postWoNote, patchWorkOrder, resolveWebhookResource.
+
+lib/audit.ts
+- auditLog: persistence/logging helper for auditable operations.
+
+lib/auth.ts
+- Short links: buildShortLinkUrl, isDispatchShortLink, createShortLink, resolveShortLink.
+- Magic links/tokens: signMagicToken, verifyMagicToken, createMagicLinkSession, generateMagicLink, lookupMagicToken, markTokenUsed.
+
+lib/fetchUtils.ts
+- Core transport: fetchWithTimeout.
+- Utilities: delay, daysAgo, today, corsJson, snapDays.
+
+lib/rateLimit.ts
+- checkRateLimit: sliding-window limiter.
+
+lib/ringcentral.ts
+- getRCAccessToken, sendSMS, sendBulkSMS.
+
+HANDLERS DIRECTORY
+
+handlers/workOrders.ts
+- handleWorkOrders, handleCompletedWorkOrdersHistory, handleWoNotes, handleWoDetail, handleWoNoteCreate,
+  handleTurnWorkOrders, handleLabor, handleRecentTasks, handleWoBilledAmount.
+
+handlers/vendors.ts
+- handleVendors, handleVendorOverride.
+
+handlers/inspections.ts
+- handleInspections.
+
+handlers/bills.ts
+- handleBills (routes list/stats/detail/history/sync/attachments behavior by action).
+
+handlers/properties.ts
+- handleProperties, handlePropertyGroups, handlePropertyMap, handleUpcomingMoveouts, getTenantContact.
+
+handlers/turns.ts
+- handleTurns, handleTurnsIncremental, handleUnitTurns, handleUnitTurnsSync,
+  handleUnitTurnWorkOrderLink, handleUnitTurnWorkOrderUnlink,
+  handleTurnRecords, handleTurnRecordStage, handleClosedTurns, handleUnitTurnsHistory.
+
+handlers/webhook.ts
+- handleWebhookPost, handleWebhookEvents, handleWebhookLive, handleWebhookFeed,
+  handleWebhookStats, handleWebhookResolve, handleMigrateV8, handleWebhookMigrate, handleWebhookCleanupEndpoint.
+- interpretWebhookEvent: canonical event labeling/description mapper.
+
+handlers/passthrough.ts
+- handlePassthrough, handleGenericReport, handlePing,
+  handleCacheStats, handleCacheInvalidate, handleForceRefresh,
+  handleStorageCleanup, handleDebugSqlite, handleSqlQuery, handleSqlExecute.
+
+handlers/deviceAuth.ts
+- Device/OTP auth: handleDeviceSetup, handleDeviceOtpRequest, handleDeviceOtpVerify, getTrustedDeviceSession.
+- PM/admin identity: handlePmProxyUsersList, handlePmProxyUserUpsert, handlePmProxyUserDelete,
+  handleTrustedDeviceList, handleTrustedDeviceRevoke, handleVerifyRole.
+
+handlers/pmProxyUsers.ts
+- handlePmProxyUsers.
+
+handlers/reassignment.ts
+- Cron orchestration: handleNoonWarningCron, handleMidnightReassignCron.
+- Assignment engine helpers exported for reuse: scanForStopCommand, applyStopExemption,
+  getNextAvailableTech, updateTechGrades, recalculateTechGrades, executeTier2Blast.
+
+handlers/queue.ts
+- handleReassignmentQueue.
+
+handlers/routingMonitor.ts
+- handleRoutingMonitor.
+
+handlers/techRoster.ts
+- handleTechRoster, handleDispatchSyncAssignees, handleDispatchSeedReassignmentTest.
+
+handlers/tenantComms.ts
+- Portal flows: handlePortalValidate, handlePortalSchedule, handlePortalReschedule,
+  handlePortalNote, handlePortalNoContact, handlePortalReassignRequest.
+- Messaging/magic links: handleGenerateMagicLink, handleSendTenantSMS, handleSendMagicLinkTestSMS.
+- Logs/queue: handleTenantCommsLog, handleAddMonitoredWO, handleRemoveMonitoredWO.
+
+handlers/users.ts
+- handleUsers.
+
+handlers/magicPortal.ts
+- handleMagicPortal (HTML portal rendering route).
+
+handlers/woComparison.ts
+- handleWoComparisonReport.
+
+Quick Mental Model For New Engineers
+1) Request enters main.ts default handler.
+2) Auth and rate limits are applied first.
+3) Action is routed to one handler function.
+4) Handler calls lib/ and db.ts helpers.
+5) Standard JSON response (or raw Response for specific routes like CSV/HTML/passthrough).
+
+Where To Start For Common Tasks
+- Add a new endpoint: main.ts switch + new/updated handler export.
+- Add AppFolio fetch logic: lib/appfolio.ts, then call from handler.
+- Adjust auth/session behavior: handlers/deviceAuth.ts + main.ts auth gate.
+- Tune cache behavior: db.ts cache functions + handlers/passthrough.ts cache endpoints.

@@ -148,10 +148,17 @@ export async function handleCompletedWorkOrdersHistory(
 
   const cached = await cacheGet(cacheKey, "work_orders_history");
   if (cached) {
+    let cachedResults: any[] = cached.data || [];
+    const allowedIds = await resolveGroupPropertyIds(params);
+    if (allowedIds) {
+      cachedResults = cachedResults.filter((r: any) =>
+        propertyInScope(String(r.property_id || r.PropertyId || ""), allowedIds)
+      );
+    }
     return {
       ok: true,
-      results: cached.data,
-      count: cached.record_count,
+      results: cachedResults,
+      count: cachedResults.length,
       cached_at: cached.cached_at,
       from_cache: true,
     };
@@ -450,10 +457,17 @@ export async function handleTurnWorkOrders(
 
   const cached = await cacheGet(cacheKey, "turn_work_orders");
   if (cached) {
+    let cachedResults: any[] = cached.data || [];
+    const allowedIds = await resolveGroupPropertyIds(params);
+    if (allowedIds) {
+      cachedResults = cachedResults.filter((wo: any) =>
+        propertyInScope(String(wo?.PropertyId || wo?.property_id || wo?.UnitId || wo?.unit_id || ""), allowedIds)
+      );
+    }
     return {
       ok: true,
-      results: cached.data,
-      count: cached.record_count,
+      results: cachedResults,
+      count: cachedResults.length,
       cached_at: cached.cached_at,
       from_cache: true,
     };
@@ -466,12 +480,23 @@ export async function handleTurnWorkOrders(
     encodeURIComponent(fromDate.toISOString())
   }&page[size]=200`;
 
-  const rows = await fetchDbApi(path, 500);
-  const turnWOs = rows.filter((wo: any) =>
-    String(wo?.Type || wo?.type || "").trim().toLowerCase() === "unit turn"
-  );
+  const rows = await fetchDbApi(path, 2000);
+  const TURN_CATEGORIES = ["unit turn", "make ready", "turn", "turnover"];
+  const turnWOs = rows.filter((wo: any) => {
+    const cat = String(wo?.Category || wo?.category || wo?.Type || wo?.type || "").trim().toLowerCase();
+    return TURN_CATEGORIES.includes(cat);
+  });
 
   await cacheSet(cacheKey, "turn_work_orders", turnWOs, turnWOs.length);
+
+  // Server-side PM scope enforcement — runs on both cache-miss and cache-hit paths.
+  const allowedIds = await resolveGroupPropertyIds(params);
+  if (allowedIds) {
+    const scoped = turnWOs.filter((wo: any) =>
+      propertyInScope(String(wo?.PropertyId || wo?.property_id || wo?.UnitId || wo?.unit_id || ""), allowedIds)
+    );
+    return { ok: true, results: scoped, count: scoped.length, from_cache: false };
+  }
   return {
     ok: true,
     results: turnWOs,

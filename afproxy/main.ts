@@ -1034,7 +1034,13 @@ export default async function handler(req: Request): Promise<Response> {
         case "bills_by_invoice":
         case "bills_due_range":
         case "bills_list":
-          result = await handleBillsRoute(req, sqlite, url.searchParams);
+          {
+            const billsParams = new URLSearchParams(url.searchParams);
+            if (params.sessionScopeUuid && !billsParams.get("group_id")) {
+              billsParams.set("group_id", params.sessionScopeUuid);
+            }
+            result = await handleBillsRoute(req, sqlite, billsParams);
+          }
           if (result instanceof Response) return result;
           break;
         // ── WO Comparison Report ──────────────────────────────────────────────

@@ -4283,7 +4283,7 @@ function getStoredAccessRole() {
 function isTabAllowedForRole(tabName) {
   if (_accessRole === 'vendors') return tabName === 'vendors';
   if (_accessRole === 'pm_readonly') {
-    var pmAllowedTabs = ['dashboard', 'workorders', 'routing', 'billing', 'turnboard', 'vendors', 'inspections', 'errors'];
+    var pmAllowedTabs = ['dashboard', 'workorders', 'billing', 'turnboard', 'vendors', 'inspections', 'errors'];
     return pmAllowedTabs.indexOf(tabName) !== -1;
   }
   if (_accessRole === 'manager') {
@@ -7280,6 +7280,11 @@ async function fetchUnitTurnsDB() {
         if (!turn.moveIn && dbMatch.moveIn) turn.moveIn = dbMatch.moveIn;
         if (!turn.turnEnd && dbMatch.turnEnd) turn.turnEnd = dbMatch.turnEnd;
         if (dbMatch.link) turn.dbLink = dbMatch.link;
+        if (!turn.linkedWorkOrders || turn.linkedWorkOrders.length === 0) {
+          turn.linkedWorkOrders = dbMatch.linkedWorkOrders || [];
+        }
+        if (!turn.trackingUuid && dbMatch.trackingUuid) turn.trackingUuid = dbMatch.trackingUuid;
+        if (!turn.trackingCode && dbMatch.trackingCode) turn.trackingCode = dbMatch.trackingCode;
       });
     }
     return true;
@@ -11323,10 +11328,15 @@ function buildTurnPipeline() {
       tracked.linkedWorkOrders.forEach(function(w) {
         var idVal = String(w.id || '').trim();
         if (!idVal) return;
-        var dupe = wos.find(function(x) { return String(x.id) === idVal; });
-        if (!dupe) return;
-        if (w.status) dupe.status = w.status;
-        if (w.dbApiId) dupe.dbApiId = w.dbApiId;
+        var dupe = wos.find(function(x) { return String(x.id) === idVal || (w.dbApiId && String(x.dbApiId) === String(w.dbApiId)); });
+        if (dupe) {
+          // Update status/dbApiId from the authoritative tracker record
+          if (w.status) dupe.status = w.status;
+          if (w.dbApiId) dupe.dbApiId = w.dbApiId;
+        } else {
+          // Manually-linked WO not yet in reports or DB API results — surface it
+          wos.push({ source: 'tracker', id: idVal, dbApiId: w.dbApiId || '', status: w.status || '', description: '', created: w.created || '', vendor: '', priority: '' });
+        }
       });
     }
     return wos;
