@@ -443,6 +443,13 @@ export async function handleWebhookLive(
   const sinceId = parseInt(params.since_id || "0", 10);
   const limit = parseInt(params.limit || "15", 10);
 
+  // Check cache first
+  if (webhookLiveCache && 
+      (Date.now() - webhookLiveCache.timestamp) < WEBHOOK_LIVE_CACHE_TTL &&
+      webhookLiveCache.sinceId === sinceId) {
+    return webhookLiveCache.data;
+  }
+
   try {
     const result = await sqlite.execute({
       sql: `SELECT id, received_at, raw_body, event_type,
@@ -480,13 +487,22 @@ export async function handleWebhookLive(
       ? Math.max(...rows.map((r: any) => Number(r.id)))
       : sinceId;
 
-    return {
+    const result = {
       ok: true,
       events,
       count: events.length,
       max_id: maxId,
       has_new: events.length > 0,
     };
+
+    // Cache the result
+    webhookLiveCache = {
+      data: result,
+      timestamp: Date.now(),
+      sinceId
+    };
+
+    return result;
   } catch (e: any) {
     return { ok: false, error: e.message, events: [], max_id: sinceId };
   }

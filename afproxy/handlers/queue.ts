@@ -253,7 +253,7 @@ export async function handleReassignmentQueue(
       };
     });
 
-    return {
+    const result = {
       ok: true,
       stats,
       queue: enrichedQueue,
@@ -273,6 +273,16 @@ export async function handleReassignmentQueue(
         branch,
       },
     };
+
+    // Cache the result
+    queueCache = {
+      data: result,
+      timestamp: Date.now(),
+      branch,
+      woId
+    };
+
+    return result;
   } catch (e: any) {
     return { ok: false, error: e.message };
   }

@@ -14237,7 +14237,7 @@ function wireUpUI() {
   var _tabRenderMap = {
     dashboard: function() { renderDashboardKPIs(); },
     workorders: function() { renderWorkOrders(); },
-    routing: function() { loadRoutingEventsAndStats().catch(function() {}); },
+    routing: function() { loadRoutingEventsAndStats().catch(function() {}); loadRoutingCapabilities().catch(function() {}); },
     payroll: function() { renderPayroll(); },
     billing: function() { renderBillsSection(); },
     turnboard: function() { renderTurnPipelineUI(); },
@@ -15844,7 +15844,7 @@ renderDashboardKPIs = function() {
     };
   }
 
-  _pollTimer = setInterval(pollLiveEvents, 15000);
+  _pollTimer = setInterval(pollLiveEvents, 30000);
   setTimeout(pollLiveEvents, 2000);
   render();
 })();
@@ -15890,7 +15890,7 @@ var DISPATCH = {
   _lastAssigneeSyncAt: 0,
   tier1GroupUuid: '',
   tier2GroupUuid: '',
-  _pollTimer: null, _lastAuditMax: 0, POLL_MS: 12000,
+  _pollTimer: null, _lastAuditMax: 0, POLL_MS: 30000,
 };
 
 var DISPATCH_BRANCHES = {
@@ -17485,7 +17485,7 @@ function decodeWebhookEventV9(evt) {
 // ── Live event engine (replaces basic WebhookLive poll) ─────────
 (function initLiveEventEngineV9(){
   var _lastId=0, _events=[], _unseenCount=0, _pollTimer=null, _isPolling=false;
-  var POLL_MS=8000;
+  var POLL_MS=20000;
 
   function _getEl(id){return document.getElementById(id);}
 
