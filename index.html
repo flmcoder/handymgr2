@@ -37,6 +37,10 @@
   --radius: 8px;
   --radius-lg: 12px;
   --shadow: 0 1px 8px rgba(0,0,0,0.06);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.10);
+  --radius-sm: 4px;
+  --radius-xl: 16px;
   --transition: 0.2s ease;
 
   /* Unlock screen coordinated blue palette */
@@ -77,6 +81,8 @@ html.dark {
   --warning: #f59e0b;
   --purple: #8b7cf6;
   --shadow: 0 10px 30px rgba(0,0,0,0.35);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.2);
+  --shadow-md: 0 4px 20px rgba(0,0,0,0.45);
 
   --vault-grad-start: #075985;
   --vault-grad-mid: #00adea;
@@ -1205,6 +1211,21 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .wo-history-scroll::-webkit-scrollbar-thumb { background: var(--accent); border-radius:999px; }
 .wo-history-pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 14px 14px; border-top:1px solid var(--border); }
 .wo-history-pagination .page-label { font-family: var(--font-mono); font-size:11px; color:var(--text-muted); }
+
+/* WO section sub-tabs */
+.wo-subtabs { display: flex; gap: 4px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.wo-subtab { font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 6px 14px; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--text-muted); cursor: pointer; transition: var(--transition); display: inline-flex; align-items: center; gap: 5px; }
+.wo-subtab:hover { background: var(--bg-card-hover); color: var(--text-secondary); border-color: var(--border); }
+.wo-subtab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.wo-subpanel { }
+
+/* Collapsible panel */
+.collapsible-panel .table-header { cursor: pointer; user-select: none; }
+.collapsible-panel .table-header:hover { background: var(--bg-card-hover); }
+.collapse-indicator { margin-left: auto; font-size: 10px; color: var(--text-muted); transition: transform var(--transition); }
+.collapsible-panel.collapsed .collapse-indicator { transform: rotate(-90deg); }
+.collapsible-panel.collapsed .panel-body { display: none; }
+
 #woModal .modal { max-height: 85vh; }
 #woModal .modal-body { max-height: calc(85vh - 132px); overflow-y: auto; }
 
@@ -2421,45 +2442,56 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <button class="action-btn primary" id="btnNewWO"><i class="fas fa-plus"></i> New WO</button>
     </div>
   </div>
-  <div class="kanban-filters" id="woFilters">
-    <select id="woPriorityFilter"><option value="">All Priorities</option><option value="Urgent">Urgent</option><option value="Normal">Normal</option><option value="Low">Low</option></select>
-    <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
-    <select id="woVendorFilter"><option value="">All Vendors</option></select>
-    <select id="woPropertyFilter"><option value="">All Properties</option></select>
-    <select id="woAgeFilter">
-      <option value="">Any Age</option>
-      <option value="7">7+ days old</option>
-      <option value="14">14+ days old</option>
-      <option value="30">30+ days old</option>
-      <option value="60">60+ days old</option>
-      <option value="90">90+ days old</option>
-    </select>
-    <select id="woSort">
-      <option value="oldest">Oldest First</option>
-      <option value="newest">Newest First</option>
-      <option value="priority">Priority (Urgent First)</option>
-    </select>
-    <div style="display:inline-flex;align-items:center;gap:4px;padding:4px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
-      <span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Aging</span>
-      <input id="woAgeYellow" type="number" min="1" step="1" value="14" title="Yellow threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-      <input id="woAgeOrange" type="number" min="1" step="1" value="30" title="Orange threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-      <input id="woAgeRed" type="number" min="1" step="1" value="60" title="Red threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-      <button class="filter-btn" id="btnSaveWOAging" style="padding:6px 8px"><i class="fas fa-save"></i> Save</button>
-    </div>
-    <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
-    <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
-    <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
-    <button class="filter-btn" data-filter="Estimated">Estimated</button>
+  <div class="wo-subtabs" id="woSubtabs">
+    <button class="wo-subtab active" data-wo-subtab="active"><i class="fas fa-wrench"></i> Active Orders</button>
+    <button class="wo-subtab" data-wo-subtab="completed"><i class="fas fa-history"></i> Completed Search</button>
   </div>
-  <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <label class="wo-history-toggle"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed Work Orders</span></label>
-    <input type="number" id="woCompletedHistoryDays" min="7" step="30" value="30" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
-    <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Completed</button>
-  </div>
-  <div class="kanban-board" id="kanbanBoard"></div>
-  <div id="woCompletedHistoryMount"></div>
 
-  <div class="table-wrapper" style="margin-top:12px">
+  <div class="wo-subpanel" id="wo-subpanel-active">
+    <div class="kanban-filters" id="woFilters">
+      <select id="woPriorityFilter"><option value="">All Priorities</option><option value="Urgent">Urgent</option><option value="Normal">Normal</option><option value="Low">Low</option></select>
+      <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
+      <select id="woVendorFilter"><option value="">All Vendors</option></select>
+      <select id="woPropertyFilter"><option value="">All Properties</option></select>
+      <select id="woAgeFilter">
+        <option value="">Any Age</option>
+        <option value="7">7+ days old</option>
+        <option value="14">14+ days old</option>
+        <option value="30">30+ days old</option>
+        <option value="60">60+ days old</option>
+        <option value="90">90+ days old</option>
+      </select>
+      <select id="woSort">
+        <option value="oldest">Oldest First</option>
+        <option value="newest">Newest First</option>
+        <option value="priority">Priority (Urgent First)</option>
+      </select>
+      <div style="display:inline-flex;align-items:center;gap:4px;padding:4px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
+        <span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Aging</span>
+        <input id="woAgeYellow" type="number" min="1" step="1" value="14" title="Yellow threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
+        <input id="woAgeOrange" type="number" min="1" step="1" value="30" title="Orange threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
+        <input id="woAgeRed" type="number" min="1" step="1" value="60" title="Red threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
+        <button class="filter-btn" id="btnSaveWOAging" style="padding:6px 8px"><i class="fas fa-save"></i> Save</button>
+      </div>
+      <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
+      <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
+      <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
+      <button class="filter-btn" data-filter="Estimated">Estimated</button>
+    </div>
+    <div class="kanban-board" id="kanbanBoard"></div>
+  </div>
+
+  <div class="wo-subpanel" id="wo-subpanel-completed" style="display:none">
+    <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <label class="wo-history-toggle" style="display:none"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed Work Orders</span></label>
+      <input type="number" id="woCompletedHistoryDays" min="7" step="30" value="30" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
+      <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Completed</button>
+    </div>
+    <div id="woCompletedHistoryMount"></div>
+  </div>
+
+  <!-- Close Assist - collapsible, starts collapsed -->
+  <div class="table-wrapper collapsible-panel collapsed" id="woCloseAssistPanel" style="margin-top:12px">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-clipboard-check" style="color:var(--warning)"></i> WO Close Assist</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -2471,50 +2503,57 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
         </select>
         <button class="sec-refresh" id="btnRefreshCloseAssist"><i class="fas fa-receipt"></i> Refresh AP</button>
       </div>
+      <span class="collapse-indicator"><i class="fas fa-chevron-down"></i></span>
     </div>
-    <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woCloseAssistSummary">Loading…</div>
-    <div class="table-scroll wo-close-assist-scroll" id="woCloseAssistContainer">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>WO</th>
-            <th>Property</th>
-            <th>Unit</th>
-            <th>Age</th>
-            <th>Assigned</th>
-            <th>AP Evidence</th>
-            <th>Confidence</th>
-            <th>Suggestion</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="woCloseAssistBody"></tbody>
-      </table>
+    <div class="panel-body">
+      <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woCloseAssistSummary">Loading…</div>
+      <div class="table-scroll wo-close-assist-scroll" id="woCloseAssistContainer">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>WO</th>
+              <th>Property</th>
+              <th>Unit</th>
+              <th>Age</th>
+              <th>Assigned</th>
+              <th>AP Evidence</th>
+              <th>Confidence</th>
+              <th>Suggestion</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="woCloseAssistBody"></tbody>
+        </table>
+      </div>
+      <div class="wo-close-assist-pagination" id="woCloseAssistPagination"></div>
     </div>
-    <div class="wo-close-assist-pagination" id="woCloseAssistPagination"></div>
   </div>
 
-  <div class="table-wrapper" style="margin-top:12px">
+  <!-- Follow-Up Queue - collapsible, starts collapsed -->
+  <div class="table-wrapper collapsible-panel collapsed" id="woFollowupPanel" style="margin-top:12px">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-flag" style="color:var(--warning)"></i> WO Follow-Up Queue</div>
+      <span class="collapse-indicator"><i class="fas fa-chevron-down"></i></span>
     </div>
-    <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woFollowupSummary">Loading…</div>
-    <div class="table-scroll">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>WO</th>
-            <th>Property</th>
-            <th>Unit</th>
-            <th>Description</th>
-            <th>Status</th>
-            <th>Flagged</th>
-            <th>Notes</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="woFollowupBody"></tbody>
-      </table>
+    <div class="panel-body">
+      <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woFollowupSummary">Loading…</div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>WO</th>
+              <th>Property</th>
+              <th>Unit</th>
+              <th>Description</th>
+              <th>Status</th>
+              <th>Flagged</th>
+              <th>Notes</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="woFollowupBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 </section>
@@ -3658,6 +3697,68 @@ function showToast(msg, durationOrOpts) {
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+// ── hmConfirm / hmPrompt ──────────────────────────────────────────────────────
+// Promise-based modal replacements for native confirm() and prompt().
+// Uses the existing .modal-overlay / .modal CSS classes.
+function hmConfirm(msg, opts) {
+  var o = opts || {};
+  var okLabel = o.okLabel || 'Confirm';
+  var okClass = o.danger ? 'background:var(--danger);color:#fff;border:1px solid var(--danger)' : 'background:var(--accent);color:#fff;border:1px solid var(--accent)';
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay show';
+    overlay.style.zIndex = '9999';
+    overlay.innerHTML =
+      '<div class="modal" style="max-width:420px">' +
+        '<div class="modal-head"><h3>' + escapeHtml(o.title || 'Confirm') + '</h3></div>' +
+        '<div class="modal-body"><p style="margin:0;line-height:1.6;white-space:pre-wrap">' + escapeHtml(msg) + '</p></div>' +
+        '<div class="modal-footer">' +
+          '<button class="hm-modal-cancel" style="background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">Cancel</button>' +
+          '<button class="hm-modal-ok" style="' + okClass + ';border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">' + escapeHtml(okLabel) + '</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    function done(v) { overlay.remove(); resolve(v); }
+    overlay.querySelector('.hm-modal-ok').addEventListener('click', function() { done(true); });
+    overlay.querySelector('.hm-modal-cancel').addEventListener('click', function() { done(false); });
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) done(false); });
+    overlay.querySelector('.hm-modal-ok').focus();
+  });
+}
+
+function hmPrompt(msg, defaultVal, opts) {
+  var o = opts || {};
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay show';
+    overlay.style.zIndex = '9999';
+    overlay.innerHTML =
+      '<div class="modal" style="max-width:420px">' +
+        '<div class="modal-head"><h3>' + escapeHtml(o.title || 'Input') + '</h3></div>' +
+        '<div class="modal-body">' +
+          '<p style="margin:0 0 12px;line-height:1.6">' + escapeHtml(msg) + '</p>' +
+          '<input class="hm-modal-input" type="text" style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text-primary);font-family:var(--font-mono);font-size:12px;box-sizing:border-box">' +
+        '</div>' +
+        '<div class="modal-footer">' +
+          '<button class="hm-modal-cancel" style="background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">Cancel</button>' +
+          '<button class="hm-modal-ok" style="background:var(--accent);color:#fff;border:1px solid var(--accent);border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">OK</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    var inp = overlay.querySelector('.hm-modal-input');
+    inp.value = defaultVal || '';
+    setTimeout(function() { inp.focus(); inp.select(); }, 30);
+    function done(v) { overlay.remove(); resolve(v); }
+    overlay.querySelector('.hm-modal-ok').addEventListener('click', function() { done(inp.value); });
+    overlay.querySelector('.hm-modal-cancel').addEventListener('click', function() { done(null); });
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') done(inp.value);
+      if (e.key === 'Escape') done(null);
+    });
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) done(null); });
+  });
+}
 function loadingHtml(msg) { return '<div class="loading-overlay"><i class="fas fa-circle-notch"></i><p>' + escapeHtml(msg) + '</p></div>'; }
 function emptyHtml(icon, msg) { return '<div class="empty-state"><i class="fas ' + icon + '"></i><p>' + escapeHtml(msg) + '</p></div>'; }
 
@@ -11010,7 +11111,7 @@ function renderTurnHistoryPanel() {
 // Close a turn — POST to proxy, then re-render
 async function closeTurn(turnId) {
   if (!turnId) return;
-  if (!confirm('Close this turn? It will be hidden from the active board.')) return;
+  if (!await hmConfirm('Close this turn? It will be hidden from the active board.', { title: 'Close Turn', okLabel: 'Close Turn' })) return;
   try {
     var entry = TURN_PIPE_DATA.find(function(p) { return p.id === turnId; }) || null;
     var r = await proxyPost('closed_turns', {
@@ -13040,9 +13141,9 @@ async function initRoutingMonitor() {
     }
     if ($('#btnRoutingCapAdd')) {
       $('#btnRoutingCapAdd').addEventListener('click', async function() {
-        var trade = prompt('Work type name (example: Locksmith):', '');
+        var trade = await hmPrompt('Work type name (example: Locksmith):', '', { title: 'Add Work Type' });
         if (!trade) return;
-        var kwRaw = prompt('Keywords (comma separated):', '');
+        var kwRaw = await hmPrompt('Keywords (comma separated):', '', { title: 'Add Work Type' });
         var keywords = String(kwRaw || '').split(',').map(function(k) { return k.trim(); }).filter(Boolean);
         await proxyPost('routing_monitor', { op: 'capability_upsert', trade: trade.trim(), keywords: keywords, active: 1 });
         await loadRoutingCapabilities();
@@ -13090,11 +13191,11 @@ async function initRoutingMonitor() {
           var cid = Number(editBtn.getAttribute('data-routing-cap-edit') || '0');
           var cur = ROUTING_CAPABILITIES.find(function(c) { return Number(c.id) === cid; });
           if (!cur) return;
-          var trade = prompt('Work type name:', String(cur.trade || ''));
+          var trade = await hmPrompt('Work type name:', String(cur.trade || ''), { title: 'Edit Work Type' });
           if (!trade) return;
           var kws = [];
           try { kws = typeof cur.keywords === 'string' ? JSON.parse(cur.keywords) : (cur.keywords || []); } catch (er) { kws = []; }
-          var kwRaw = prompt('Keywords (comma separated):', kws.join(', '));
+          var kwRaw = await hmPrompt('Keywords (comma separated):', kws.join(', '), { title: 'Edit Work Type' });
           if (kwRaw === null) return;
           var nextKws = String(kwRaw).split(',').map(function(k) { return k.trim(); }).filter(Boolean);
           await proxyPost('routing_monitor', { op: 'capability_upsert', id: cur.id, trade: trade.trim(), keywords: nextKws, active: Number(cur.active) === 1 ? 1 : 0 });
@@ -13104,7 +13205,7 @@ async function initRoutingMonitor() {
         if (delBtn) {
           var did = Number(delBtn.getAttribute('data-routing-cap-del') || '0');
           if (!did) return;
-          if (!confirm('Delete this work type rule?')) return;
+          if (!await hmConfirm('Delete this work type rule?', { title: 'Delete Rule', okLabel: 'Delete', danger: true })) return;
           await proxyPost('routing_monitor', { op: 'capability_delete', id: did });
           await loadRoutingCapabilities();
         }
@@ -13707,6 +13808,34 @@ function wireUpUI() {
       renderWOCloseAssist();
     });
   }
+  // WO sub-tabs
+  $$('[data-wo-subtab]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var tab = this.dataset.woSubtab;
+      $$('[data-wo-subtab]').forEach(function(b) { b.classList.remove('active'); });
+      this.classList.add('active');
+      $$('.wo-subpanel').forEach(function(p) { p.style.display = 'none'; });
+      var panel = $('#wo-subpanel-' + tab);
+      if (panel) panel.style.display = '';
+    });
+  });
+
+  // Collapsible panels
+  $$('.collapsible-panel').forEach(function(panel) {
+    var hdr = panel.querySelector('.table-header');
+    if (!hdr) return;
+    hdr.addEventListener('click', function(e) {
+      if (e.target.closest('button,select,input,a')) return;
+      panel.classList.toggle('collapsed');
+      try { localStorage.setItem('wo-panel-' + panel.id, panel.classList.contains('collapsed') ? '1' : '0'); } catch(_) {}
+    });
+    // Restore state
+    try {
+      var saved = localStorage.getItem('wo-panel-' + panel.id);
+      if (saved === '0') panel.classList.remove('collapsed');
+    } catch(_) {}
+  });
+
   if ($('#woCompletedHistoryToggle')) {
     $('#woCompletedHistoryToggle').addEventListener('change', async function() {
       showCompletedWOHistory = !!this.checked;
@@ -15318,9 +15447,9 @@ renderDashboardKPIs = function() {
     });
   }
 
-  function deletePmUser(userUuid) {
+  async function deletePmUser(userUuid) {
     if (!userUuid) return;
-    if (!confirm('Delete this PM login user?')) return;
+    if (!await hmConfirm('Delete this PM login user?', { title: 'Delete PM User', okLabel: 'Delete', danger: true })) return;
     if (!API_PROXY) {
       try { var _savedProxy2 = localStorage.getItem('hm_proxy_url'); if (_savedProxy2) API_PROXY = _savedProxy2; } catch (e) { /* */ }
     }
@@ -16351,7 +16480,7 @@ function renderDispatchComms(comms) {
 
 var DispatchQueue = {
   markExempt: async function(woId, woNum) {
-    if (!confirm('Mark WO #'+woNum+' as exempt?\n\nThis writes a system note to AppFolio and stops automated reassignment for this WO.')) return;
+    if (!await hmConfirm('Mark WO #'+woNum+' as exempt?\n\nThis writes a system note to AppFolio and stops automated reassignment for this WO.', { title: 'Mark Exempt', okLabel: 'Mark Exempt' })) return;
     try {
       await proxyPost('wo_note_create', {
         uuid: woId,
@@ -16362,7 +16491,7 @@ var DispatchQueue = {
     } catch(e) { v9Toast('Exemption failed',e.message,'danger'); }
   },
   clearExempt: async function(woId) {
-    if (!confirm('Clear exemption for WO '+woId+'?\n\nIt will re-enter automation on the next cron run.')) return;
+    if (!await hmConfirm('Clear exemption for WO '+woId+'?\n\nIt will re-enter automation on the next cron run.', { title: 'Clear Exemption', okLabel: 'Clear Exemption' })) return;
     try {
       var key=getDispatchAdminKey();
       if(!key){v9Toast('Admin key required','Set PROXY_ADMIN_KEY in Database tab','warning');return;}
@@ -16448,7 +16577,7 @@ var DispatchRoster = {
     var active=Number(document.getElementById('rosterTechActive').value);
     if(!id||!name){v9Toast('Validation error','UUID and Name are required','warning');return;}
     if(phone&&!phone.startsWith('+')){v9Toast('Invalid phone','Must start with + (E.164): +15205551234','warning');return;}
-    if(!this._editing&&id.length<30){if(!confirm('The UUID "'+id+'" looks short. Is this a valid AppFolio user UUID?\n\nThe user must have the Maintenance Tech role enabled or reassignment PATCHes will return 422.'))return;}
+    if(!this._editing&&id.length<30){if(!await hmConfirm('The UUID "'+id+'" looks short. Is this a valid AppFolio user UUID?\n\nThe user must have the Maintenance Tech role enabled or reassignment PATCHes will return 422.', { title: 'UUID Warning', okLabel: 'Continue Anyway' }))return;}
     try {
       var r=await dispatchPost('tech_roster',{tech_id:id,tech_name:name,tech_phone:phone,tier:tier,geo_zone:zone,active:active});
       if(r.ok){
@@ -16466,7 +16595,7 @@ var DispatchRoster = {
     } catch(e){v9Toast('Save failed',e.message,'danger');}
   },
   toggleActive: async function(techId,techName,currentlyActive) {
-    if(!confirm((currentlyActive?'Deactivate':'Reactivate')+' '+techName+'?'))return;
+    if(!await hmConfirm((currentlyActive?'Deactivate':'Reactivate')+' '+techName+'?', { title: currentlyActive ? 'Deactivate Tech' : 'Reactivate Tech', okLabel: currentlyActive ? 'Deactivate' : 'Reactivate', danger: currentlyActive }))return;
     try {
       var r=await dispatchPost('tech_roster',{tech_id:techId,tech_name:techName,active:currentlyActive?0:1});
       if(r.ok){v9Toast(techName+(currentlyActive?' deactivated':' reactivated'),'',currentlyActive?'warning':'success');DispatchControl.refresh();}
@@ -16474,7 +16603,7 @@ var DispatchRoster = {
     }catch(e){v9Toast('Action failed',e.message,'danger');}
   },
   toggleHidden: async function(techId, techName, currentlyHidden) {
-    if (!confirm((currentlyHidden ? 'Unhide ' : 'Hide ') + techName + ' from active dispatch roster?')) return;
+    if (!await hmConfirm((currentlyHidden ? 'Unhide ' : 'Hide ') + techName + ' from active dispatch roster?', { title: currentlyHidden ? 'Unhide Assignee' : 'Hide Assignee', okLabel: currentlyHidden ? 'Unhide' : 'Hide' })) return;
     if (currentlyHidden) {
       delete DISPATCH.hiddenAssignees[String(techId)];
     } else {
