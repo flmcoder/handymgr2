@@ -706,29 +706,50 @@ export async function handleBillsRoute(
     if (!woId) {
       return billsJson({ ok: false, error: "Missing required query param: wo_id" }, 400);
     }
-    dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.work_order_id = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-    countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.work_order_id = ?";
-    dataArgs = [woId, limit, offset];
-    countArgs = [woId];
+    if (groupId) {
+      dataSql = "SELECT bm.* FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.work_order_id = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
+      countSql = "SELECT COUNT(*) AS total FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.work_order_id = ?";
+      dataArgs = [groupId, woId, limit, offset];
+      countArgs = [groupId, woId];
+    } else {
+      dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.work_order_id = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
+      countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.work_order_id = ?";
+      dataArgs = [woId, limit, offset];
+      countArgs = [woId];
+    }
   } else if (action === "bills_by_wo_number") {
     const woNumber = normalizeLikeText(params.get("wo_number"));
     if (!woNumber) {
       return billsJson({ ok: false, error: "Missing required query param: wo_number" }, 400);
     }
-    dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.work_order_number = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-    countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.work_order_number = ?";
-    dataArgs = [woNumber, limit, offset];
-    countArgs = [woNumber];
+    if (groupId) {
+      dataSql = "SELECT bm.* FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.work_order_number = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
+      countSql = "SELECT COUNT(*) AS total FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.work_order_number = ?";
+      dataArgs = [groupId, woNumber, limit, offset];
+      countArgs = [groupId, woNumber];
+    } else {
+      dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.work_order_number = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
+      countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.work_order_number = ?";
+      dataArgs = [woNumber, limit, offset];
+      countArgs = [woNumber];
+    }
   } else if (action === "bills_by_invoice") {
     const invoiceNumber = normalizeLikeText(params.get("invoice_number"));
     if (!invoiceNumber) {
       return billsJson({ ok: false, error: "Missing required query param: invoice_number" }, 400);
     }
     // billing_map stores invoice_date; this route maps invoice_number input to that field.
-    dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.invoice_date = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-    countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.invoice_date = ?";
-    dataArgs = [invoiceNumber, limit, offset];
-    countArgs = [invoiceNumber];
+    if (groupId) {
+      dataSql = "SELECT bm.* FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.invoice_date = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
+      countSql = "SELECT COUNT(*) AS total FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.invoice_date = ?";
+      dataArgs = [groupId, invoiceNumber, limit, offset];
+      countArgs = [groupId, invoiceNumber];
+    } else {
+      dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.invoice_date = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
+      countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.invoice_date = ?";
+      dataArgs = [invoiceNumber, limit, offset];
+      countArgs = [invoiceNumber];
+    }
   } else if (action === "bills_due_range") {
     const dueFrom = normalizeLikeText(params.get("due_from"));
     const dueTo = normalizeLikeText(params.get("due_to"));

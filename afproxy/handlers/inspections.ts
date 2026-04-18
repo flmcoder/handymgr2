@@ -8,7 +8,7 @@
 // inspection date are included in the results (matches v8.9).
 // ============================================================================
 
-import { cacheGet, cacheSet } from "../db.ts";
+import { cacheGet, cacheSet, rowsAsObjects, sqlite } from "../db.ts";
 import { fetchReport } from "../lib/appfolio.ts";
 import { daysAgo, snapDays } from "../lib/fetchUtils.ts";
 
@@ -97,7 +97,8 @@ export async function handleInspections(
   const fromDate = params.from_date || daysAgo(lookbackDays);
   // Default active_only=1 — exclude inactive/off-market units
   const activeOnly = String(params.active_only || "1") === "1";
-  const cacheKey = `inspections_${fromDate}_${activeOnly ? "active" : "all"}`;
+  const groupUuid = String(params.group_uuid || params.group_id || "").trim();
+  const cacheKey = `inspections_${fromDate}_${activeOnly ? "active" : "all"}${groupUuid ? `_${groupUuid}` : ""}`;
 
   const cached = await cacheGet(cacheKey, "inspections");
   if (cached) {
@@ -174,6 +175,28 @@ export async function handleInspections(
     return !!activeOccupancyKeys?.has(key);
   });
 
-  await cacheSet(cacheKey, "inspections", results, results.length);
-  return { ok: true, results, count: results.length, from_cache: false };
+  // Apply property group scope if the session is scoped to a group.
+  // Reads the group_resolution_cache materialized mapping for fast lookup.
+  let scopedResults = results;
+  if (groupUuid) {
+    try {
+      const grcRes = await sqlite.execute({
+        sql: "SELECT property_map_id FROM group_resolution_cache WHERE property_group_id = ?",
+        args: [groupUuid],
+      });
+      const allowedIds = new Set(
+        rowsAsObjects(grcRes).map((row: any) => String(row.property_map_id || "").trim()).filter(Boolean),
+      );
+      if (allowedIds.size > 0) {
+        scopedResults = results.filter((r: Record<string, unknown>) =>
+          allowedIds.has(String(r.property_id || "").trim())
+        );
+      }
+    } catch {
+      // group_resolution_cache may be empty on first boot — return unscoped results
+    }
+  }
+
+  await cacheSet(cacheKey, "inspections", scopedResults, scopedResults.length);
+  return { ok: true, results: scopedResults, count: scopedResults.length, from_cache: false };
 }
