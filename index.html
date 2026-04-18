@@ -37,6 +37,10 @@
   --radius: 8px;
   --radius-lg: 12px;
   --shadow: 0 1px 8px rgba(0,0,0,0.06);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.10);
+  --radius-sm: 4px;
+  --radius-xl: 16px;
   --transition: 0.2s ease;
 
   /* Unlock screen coordinated blue palette */
@@ -77,6 +81,8 @@ html.dark {
   --warning: #f59e0b;
   --purple: #8b7cf6;
   --shadow: 0 10px 30px rgba(0,0,0,0.35);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.2);
+  --shadow-md: 0 4px 20px rgba(0,0,0,0.45);
 
   --vault-grad-start: #075985;
   --vault-grad-mid: #00adea;
@@ -1012,6 +1018,14 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .vendor-card.manual-compliant { border-left:3px solid var(--success); border-left-style:dashed; }
 .vendor-quick-actions { display: none; }
 .vendor-qa-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px; border-radius: 8px; background: var(--bg-input); color: var(--text-secondary); text-decoration: none; font-family: var(--font-mono); font-size: 11px; font-weight: 600; border: 1px solid var(--border); transition: var(--transition); }
+.vendor-crossnav { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.vendor-crossnav-btn { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 8px; border-radius: 6px; font-family: var(--font-mono); font-size: 10px; font-weight: 600; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-secondary); cursor: pointer; white-space: nowrap; transition: var(--transition); }
+.vendor-crossnav-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.vendor-crossnav-btn.xn-wo { border-color: rgba(245,158,11,0.35); color: var(--warning); }
+.vendor-crossnav-btn.xn-wo:hover { background: rgba(245,158,11,0.1); border-color: var(--warning); }
+.vendor-crossnav-btn.xn-hist { border-color: rgba(148,163,184,0.35); }
+.vendor-crossnav-btn.xn-bills { border-color: rgba(59,130,246,0.35); color: #3b82f6; }
+.vendor-crossnav-btn.xn-bills:hover { background: rgba(59,130,246,0.1); border-color: #3b82f6; }
 .vendor-cat-select { font-family:var(--font-mono); font-size:10px; padding:2px 6px; border-radius:6px; border:1px solid var(--border); background:var(--bg-input); color:var(--text-primary); cursor:pointer; max-width:132px; }
 .vendor-render-meta { grid-column: 1 / -1; font-size: 11px; color: var(--text-muted); background: var(--bg-card); border: 1px dashed var(--border); border-radius: var(--radius); padding: 8px 10px; font-family: var(--font-mono); }
 .vendor-load-more-wrap { grid-column: 1 / -1; display: flex; justify-content: center; }
@@ -1205,6 +1219,21 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .wo-history-scroll::-webkit-scrollbar-thumb { background: var(--accent); border-radius:999px; }
 .wo-history-pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 14px 14px; border-top:1px solid var(--border); }
 .wo-history-pagination .page-label { font-family: var(--font-mono); font-size:11px; color:var(--text-muted); }
+
+/* WO section sub-tabs */
+.wo-subtabs { display: flex; gap: 4px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.wo-subtab { font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 6px 14px; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--text-muted); cursor: pointer; transition: var(--transition); display: inline-flex; align-items: center; gap: 5px; }
+.wo-subtab:hover { background: var(--bg-card-hover); color: var(--text-secondary); border-color: var(--border); }
+.wo-subtab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.wo-subpanel { }
+
+/* Collapsible panel */
+.collapsible-panel .table-header { cursor: pointer; user-select: none; }
+.collapsible-panel .table-header:hover { background: var(--bg-card-hover); }
+.collapse-indicator { margin-left: auto; font-size: 10px; color: var(--text-muted); transition: transform var(--transition); }
+.collapsible-panel.collapsed .collapse-indicator { transform: rotate(-90deg); }
+.collapsible-panel.collapsed .panel-body { display: none; }
+
 #woModal .modal { max-height: 85vh; }
 #woModal .modal-body { max-height: calc(85vh - 132px); overflow-y: auto; }
 
@@ -2421,45 +2450,56 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
       <button class="action-btn primary" id="btnNewWO"><i class="fas fa-plus"></i> New WO</button>
     </div>
   </div>
-  <div class="kanban-filters" id="woFilters">
-    <select id="woPriorityFilter"><option value="">All Priorities</option><option value="Urgent">Urgent</option><option value="Normal">Normal</option><option value="Low">Low</option></select>
-    <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
-    <select id="woVendorFilter"><option value="">All Vendors</option></select>
-    <select id="woPropertyFilter"><option value="">All Properties</option></select>
-    <select id="woAgeFilter">
-      <option value="">Any Age</option>
-      <option value="7">7+ days old</option>
-      <option value="14">14+ days old</option>
-      <option value="30">30+ days old</option>
-      <option value="60">60+ days old</option>
-      <option value="90">90+ days old</option>
-    </select>
-    <select id="woSort">
-      <option value="oldest">Oldest First</option>
-      <option value="newest">Newest First</option>
-      <option value="priority">Priority (Urgent First)</option>
-    </select>
-    <div style="display:inline-flex;align-items:center;gap:4px;padding:4px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
-      <span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Aging</span>
-      <input id="woAgeYellow" type="number" min="1" step="1" value="14" title="Yellow threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-      <input id="woAgeOrange" type="number" min="1" step="1" value="30" title="Orange threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-      <input id="woAgeRed" type="number" min="1" step="1" value="60" title="Red threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-      <button class="filter-btn" id="btnSaveWOAging" style="padding:6px 8px"><i class="fas fa-save"></i> Save</button>
-    </div>
-    <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
-    <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
-    <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
-    <button class="filter-btn" data-filter="Estimated">Estimated</button>
+  <div class="wo-subtabs" id="woSubtabs">
+    <button class="wo-subtab active" data-wo-subtab="active"><i class="fas fa-wrench"></i> Active Orders</button>
+    <button class="wo-subtab" data-wo-subtab="completed"><i class="fas fa-history"></i> Completed Search</button>
   </div>
-  <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <label class="wo-history-toggle"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed Work Orders</span></label>
-    <input type="number" id="woCompletedHistoryDays" min="7" step="30" value="30" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
-    <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Completed</button>
-  </div>
-  <div class="kanban-board" id="kanbanBoard"></div>
-  <div id="woCompletedHistoryMount"></div>
 
-  <div class="table-wrapper" style="margin-top:12px">
+  <div class="wo-subpanel" id="wo-subpanel-active">
+    <div class="kanban-filters" id="woFilters">
+      <select id="woPriorityFilter"><option value="">All Priorities</option><option value="Urgent">Urgent</option><option value="Normal">Normal</option><option value="Low">Low</option></select>
+      <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
+      <select id="woVendorFilter"><option value="">All Vendors</option></select>
+      <select id="woPropertyFilter"><option value="">All Properties</option></select>
+      <select id="woAgeFilter">
+        <option value="">Any Age</option>
+        <option value="7">7+ days old</option>
+        <option value="14">14+ days old</option>
+        <option value="30">30+ days old</option>
+        <option value="60">60+ days old</option>
+        <option value="90">90+ days old</option>
+      </select>
+      <select id="woSort">
+        <option value="oldest">Oldest First</option>
+        <option value="newest">Newest First</option>
+        <option value="priority">Priority (Urgent First)</option>
+      </select>
+      <div style="display:inline-flex;align-items:center;gap:4px;padding:4px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
+        <span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Aging</span>
+        <input id="woAgeYellow" type="number" min="1" step="1" value="14" title="Yellow threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
+        <input id="woAgeOrange" type="number" min="1" step="1" value="30" title="Orange threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
+        <input id="woAgeRed" type="number" min="1" step="1" value="60" title="Red threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
+        <button class="filter-btn" id="btnSaveWOAging" style="padding:6px 8px"><i class="fas fa-save"></i> Save</button>
+      </div>
+      <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
+      <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
+      <button class="filter-btn" data-filter="Estimate Requested">Est. Req.</button>
+      <button class="filter-btn" data-filter="Estimated">Estimated</button>
+    </div>
+    <div class="kanban-board" id="kanbanBoard"></div>
+  </div>
+
+  <div class="wo-subpanel" id="wo-subpanel-completed" style="display:none">
+    <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <label class="wo-history-toggle" style="display:none"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed Work Orders</span></label>
+      <input type="number" id="woCompletedHistoryDays" min="7" step="30" value="30" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
+      <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Completed</button>
+    </div>
+    <div id="woCompletedHistoryMount"></div>
+  </div>
+
+  <!-- Close Assist - collapsible, starts collapsed -->
+  <div class="table-wrapper collapsible-panel collapsed" id="woCloseAssistPanel" style="margin-top:12px">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-clipboard-check" style="color:var(--warning)"></i> WO Close Assist</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -2471,50 +2511,57 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
         </select>
         <button class="sec-refresh" id="btnRefreshCloseAssist"><i class="fas fa-receipt"></i> Refresh AP</button>
       </div>
+      <span class="collapse-indicator"><i class="fas fa-chevron-down"></i></span>
     </div>
-    <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woCloseAssistSummary">Loading…</div>
-    <div class="table-scroll wo-close-assist-scroll" id="woCloseAssistContainer">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>WO</th>
-            <th>Property</th>
-            <th>Unit</th>
-            <th>Age</th>
-            <th>Assigned</th>
-            <th>AP Evidence</th>
-            <th>Confidence</th>
-            <th>Suggestion</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="woCloseAssistBody"></tbody>
-      </table>
+    <div class="panel-body">
+      <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woCloseAssistSummary">Loading…</div>
+      <div class="table-scroll wo-close-assist-scroll" id="woCloseAssistContainer">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>WO</th>
+              <th>Property</th>
+              <th>Unit</th>
+              <th>Age</th>
+              <th>Assigned</th>
+              <th>AP Evidence</th>
+              <th>Confidence</th>
+              <th>Suggestion</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="woCloseAssistBody"></tbody>
+        </table>
+      </div>
+      <div class="wo-close-assist-pagination" id="woCloseAssistPagination"></div>
     </div>
-    <div class="wo-close-assist-pagination" id="woCloseAssistPagination"></div>
   </div>
 
-  <div class="table-wrapper" style="margin-top:12px">
+  <!-- Follow-Up Queue - collapsible, starts collapsed -->
+  <div class="table-wrapper collapsible-panel collapsed" id="woFollowupPanel" style="margin-top:12px">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-flag" style="color:var(--warning)"></i> WO Follow-Up Queue</div>
+      <span class="collapse-indicator"><i class="fas fa-chevron-down"></i></span>
     </div>
-    <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woFollowupSummary">Loading…</div>
-    <div class="table-scroll">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>WO</th>
-            <th>Property</th>
-            <th>Unit</th>
-            <th>Description</th>
-            <th>Status</th>
-            <th>Flagged</th>
-            <th>Notes</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="woFollowupBody"></tbody>
-      </table>
+    <div class="panel-body">
+      <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woFollowupSummary">Loading…</div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>WO</th>
+              <th>Property</th>
+              <th>Unit</th>
+              <th>Description</th>
+              <th>Status</th>
+              <th>Flagged</th>
+              <th>Notes</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="woFollowupBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 </section>
@@ -3658,6 +3705,68 @@ function showToast(msg, durationOrOpts) {
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+// ── hmConfirm / hmPrompt ──────────────────────────────────────────────────────
+// Promise-based modal replacements for native confirm() and prompt().
+// Uses the existing .modal-overlay / .modal CSS classes.
+function hmConfirm(msg, opts) {
+  var o = opts || {};
+  var okLabel = o.okLabel || 'Confirm';
+  var okClass = o.danger ? 'background:var(--danger);color:#fff;border:1px solid var(--danger)' : 'background:var(--accent);color:#fff;border:1px solid var(--accent)';
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay show';
+    overlay.style.zIndex = '9999';
+    overlay.innerHTML =
+      '<div class="modal" style="max-width:420px">' +
+        '<div class="modal-head"><h3>' + escapeHtml(o.title || 'Confirm') + '</h3></div>' +
+        '<div class="modal-body"><p style="margin:0;line-height:1.6;white-space:pre-wrap">' + escapeHtml(msg) + '</p></div>' +
+        '<div class="modal-footer">' +
+          '<button class="hm-modal-cancel" style="background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">Cancel</button>' +
+          '<button class="hm-modal-ok" style="' + okClass + ';border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">' + escapeHtml(okLabel) + '</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    function done(v) { overlay.remove(); resolve(v); }
+    overlay.querySelector('.hm-modal-ok').addEventListener('click', function() { done(true); });
+    overlay.querySelector('.hm-modal-cancel').addEventListener('click', function() { done(false); });
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) done(false); });
+    overlay.querySelector('.hm-modal-ok').focus();
+  });
+}
+
+function hmPrompt(msg, defaultVal, opts) {
+  var o = opts || {};
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay show';
+    overlay.style.zIndex = '9999';
+    overlay.innerHTML =
+      '<div class="modal" style="max-width:420px">' +
+        '<div class="modal-head"><h3>' + escapeHtml(o.title || 'Input') + '</h3></div>' +
+        '<div class="modal-body">' +
+          '<p style="margin:0 0 12px;line-height:1.6">' + escapeHtml(msg) + '</p>' +
+          '<input class="hm-modal-input" type="text" style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text-primary);font-family:var(--font-mono);font-size:12px;box-sizing:border-box">' +
+        '</div>' +
+        '<div class="modal-footer">' +
+          '<button class="hm-modal-cancel" style="background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">Cancel</button>' +
+          '<button class="hm-modal-ok" style="background:var(--accent);color:#fff;border:1px solid var(--accent);border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">OK</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    var inp = overlay.querySelector('.hm-modal-input');
+    inp.value = defaultVal || '';
+    setTimeout(function() { inp.focus(); inp.select(); }, 30);
+    function done(v) { overlay.remove(); resolve(v); }
+    overlay.querySelector('.hm-modal-ok').addEventListener('click', function() { done(inp.value); });
+    overlay.querySelector('.hm-modal-cancel').addEventListener('click', function() { done(null); });
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') done(inp.value);
+      if (e.key === 'Escape') done(null);
+    });
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) done(null); });
+  });
+}
 function loadingHtml(msg) { return '<div class="loading-overlay"><i class="fas fa-circle-notch"></i><p>' + escapeHtml(msg) + '</p></div>'; }
 function emptyHtml(icon, msg) { return '<div class="empty-state"><i class="fas ' + icon + '"></i><p>' + escapeHtml(msg) + '</p></div>'; }
 
@@ -4283,7 +4392,7 @@ function getStoredAccessRole() {
 function isTabAllowedForRole(tabName) {
   if (_accessRole === 'vendors') return tabName === 'vendors';
   if (_accessRole === 'pm_readonly') {
-    var pmAllowedTabs = ['dashboard', 'workorders', 'routing', 'billing', 'turnboard', 'vendors', 'inspections', 'errors'];
+    var pmAllowedTabs = ['dashboard', 'workorders', 'billing', 'turnboard', 'vendors', 'inspections', 'errors'];
     return pmAllowedTabs.indexOf(tabName) !== -1;
   }
   if (_accessRole === 'manager') {
@@ -6283,7 +6392,9 @@ async function fetchCompletedWorkOrdersHistory(days) {
       priority: r.priority || r.Priority || 'Normal',
       type: r.work_order_type || r.Type || '',
       description: r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
-      tenant: r.primary_tenant || r.PrimaryTenant || ''
+      tenant: r.primary_tenant || r.PrimaryTenant || '',
+      completedBy: r.completed_by || r.CompletedBy || '',
+      paidBy: r.paid_by || r.PaidBy || ''
     };
   });
   completedWOHistoryPage = 0;
@@ -7278,6 +7389,11 @@ async function fetchUnitTurnsDB() {
         if (!turn.moveIn && dbMatch.moveIn) turn.moveIn = dbMatch.moveIn;
         if (!turn.turnEnd && dbMatch.turnEnd) turn.turnEnd = dbMatch.turnEnd;
         if (dbMatch.link) turn.dbLink = dbMatch.link;
+        if (!turn.linkedWorkOrders || turn.linkedWorkOrders.length === 0) {
+          turn.linkedWorkOrders = dbMatch.linkedWorkOrders || [];
+        }
+        if (!turn.trackingUuid && dbMatch.trackingUuid) turn.trackingUuid = dbMatch.trackingUuid;
+        if (!turn.trackingCode && dbMatch.trackingCode) turn.trackingCode = dbMatch.trackingCode;
       });
     }
     return true;
@@ -7518,7 +7634,8 @@ function resolveWebhookResourceName(resourceType, resourceId) {
     var grp = PROPERTY_GROUPS.find(function(g) { return String(g.id) === rid; });
     if (grp) return grp.name || '';
   }
-  return rid.length > 12 ? rid.slice(0, 8) + '\u2026' : rid;
+  // No local match and not yet resolved — caller should queue enrichment.
+  return '\u2014\u00a0Unresolved';
 }
 
 function getWebhookReadableContext(meta, e) {
@@ -10199,7 +10316,7 @@ function renderCompletedWOHistorySection() {
   var pageRows = rows.slice(start, start + completedWOHistoryPageSize);
   var bodyHtml = '';
   if (!rows.length) {
-    bodyHtml = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No completed work orders match the current filters.</td></tr>';
+    bodyHtml = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">No completed work orders match the current filters.</td></tr>';
   } else {
     pageRows.forEach(function(wo) {
       bodyHtml += '<tr>' +
@@ -10210,13 +10327,15 @@ function renderCompletedWOHistorySection() {
         '<td>' + escapeHtml(String(wo.status || '—')) + '</td>' +
         '<td>' + escapeHtml(formatDate(wo.completedOn)) + '</td>' +
         '<td>' + escapeHtml(wo.amountBilled ? currency(wo.amountBilled) : '—') + '</td>' +
+        '<td>' + escapeHtml(String(wo.type || '—')) + '</td>' +
+        '<td style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(String(wo.description || '')) + '">' + escapeHtml(String(wo.description || '—')) + '</td>' +
       '</tr>';
     });
   }
 
   mount.innerHTML = '<div class="table-wrapper" style="margin-top:12px">' +
     '<div class="table-header"><div class="table-title"><i class="fas fa-history" style="color:var(--info)"></i> Completed Work Order History</div><div class="section-subtitle">Terminal statuses only • read-only</div></div>' +
-    '<div class="wo-history-scroll" id="woHistoryScroll"><table class="data-table"><thead><tr><th>WO #</th><th>Unit</th><th>Property</th><th>Vendor</th><th>Status</th><th>Completed Date</th><th>Amount Billed</th></tr></thead><tbody>' + bodyHtml + '</tbody></table></div>' +
+    '<div class="wo-history-scroll" id="woHistoryScroll"><table class="data-table"><thead><tr><th>WO #</th><th>Unit</th><th>Property</th><th>Vendor</th><th>Status</th><th>Completed Date</th><th>Amount Billed</th><th>Type</th><th>Description</th></tr></thead><tbody>' + bodyHtml + '</tbody></table></div>' +
     '<div class="wo-history-pagination"><button class="action-btn" id="woHistoryPrev"' + (completedWOHistoryPage === 0 ? ' disabled' : '') + '>← Prev</button><span class="page-label">Page ' + (completedWOHistoryPage + 1) + ' of ' + totalPages + '</span><button class="action-btn" id="woHistoryNext"' + (completedWOHistoryPage >= totalPages - 1 ? ' disabled' : '') + '>Next →</button></div>' +
   '</div>';
 
@@ -11000,7 +11119,7 @@ function renderTurnHistoryPanel() {
 // Close a turn — POST to proxy, then re-render
 async function closeTurn(turnId) {
   if (!turnId) return;
-  if (!confirm('Close this turn? It will be hidden from the active board.')) return;
+  if (!await hmConfirm('Close this turn? It will be hidden from the active board.', { title: 'Close Turn', okLabel: 'Close Turn' })) return;
   try {
     var entry = TURN_PIPE_DATA.find(function(p) { return p.id === turnId; }) || null;
     var r = await proxyPost('closed_turns', {
@@ -11031,13 +11150,7 @@ async function closeTurn(turnId) {
 // Save a turn record stage to proxy
 async function saveTurnRecordStage(turnId, stage, stageData) {
   try {
-    var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
-    var url = API_PROXY + sep + 'action=turn_record_stage';
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: turnId, stage: stage, data: stageData })
-    });
+    await proxyPost('turn_record_stage', { id: turnId, stage: stage, data: stageData });
   } catch (err) {
     console.log('Save stage error: ' + (err.message || err));
   }
@@ -11046,13 +11159,7 @@ async function saveTurnRecordStage(turnId, stage, stageData) {
 // Save full turn record to proxy
 async function saveTurnRecord(record) {
   try {
-    var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
-    var url = API_PROXY + sep + 'action=turn_records';
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(record)
-    });
+    await proxyPost('turn_records', record);
   } catch (err) {
     console.log('Save turn record error: ' + (err.message || err));
   }
@@ -11330,10 +11437,15 @@ function buildTurnPipeline() {
       tracked.linkedWorkOrders.forEach(function(w) {
         var idVal = String(w.id || '').trim();
         if (!idVal) return;
-        var dupe = wos.find(function(x) { return String(x.id) === idVal; });
-        if (!dupe) return;
-        if (w.status) dupe.status = w.status;
-        if (w.dbApiId) dupe.dbApiId = w.dbApiId;
+        var dupe = wos.find(function(x) { return String(x.id) === idVal || (w.dbApiId && String(x.dbApiId) === String(w.dbApiId)); });
+        if (dupe) {
+          // Update status/dbApiId from the authoritative tracker record
+          if (w.status) dupe.status = w.status;
+          if (w.dbApiId) dupe.dbApiId = w.dbApiId;
+        } else {
+          // Manually-linked WO not yet in reports or DB API results — surface it
+          wos.push({ source: 'tracker', id: idVal, dbApiId: w.dbApiId || '', status: w.status || '', description: '', created: w.created || '', vendor: '', priority: '' });
+        }
       });
     }
     return wos;
@@ -12198,6 +12310,52 @@ function resolveVendorCompliance(v) {
   return { compliant: v.compliant, isManual: false };
 }
 
+function navigateToBillsForVendor(vendorName) {
+  // Switch to billing tab
+  var billingTab = document.querySelector('.nav-tab[data-tab="billing"]');
+  if (billingTab) billingTab.click();
+  // Pre-fill vendor search and re-render
+  var billSearch = $('#billSearch');
+  if (billSearch) {
+    billSearch.value = vendorName;
+    _billsPage = 0;
+    renderBillsSection();
+  }
+}
+
+function navigateToOpenWOsForVendor(vendorName) {
+  var woTab = document.querySelector('.nav-tab[data-tab="workorders"]');
+  if (woTab) woTab.click();
+  // Switch to active sub-panel
+  var activeSubBtn = document.querySelector('[data-wo-subtab="active"]');
+  if (activeSubBtn) activeSubBtn.click();
+  // Apply vendor filter
+  currentWOVendor = vendorName;
+  var vendorSel = $('#woVendorFilter');
+  if (vendorSel) vendorSel.value = vendorName;
+  renderWorkOrders();
+}
+
+function navigateToCompletedWOsForVendor(vendorName) {
+  var woTab = document.querySelector('.nav-tab[data-tab="workorders"]');
+  if (woTab) woTab.click();
+  // Switch to completed sub-panel
+  var completedSubBtn = document.querySelector('[data-wo-subtab="completed"]');
+  if (completedSubBtn) completedSubBtn.click();
+  // Set vendor filter so renderCompletedWOHistorySection() respects it
+  currentWOVendor = vendorName;
+  var vendorSel = $('#woVendorFilter');
+  if (vendorSel) vendorSel.value = vendorName;
+  // Trigger search if history not yet loaded, otherwise re-render
+  var fetchBtn = $('#btnFetchCompletedHistory');
+  if (fetchBtn && !completedWOHistoryRows.length) {
+    fetchBtn.click();
+  } else {
+    completedWOHistoryPage = 0;
+    renderCompletedWOHistorySection();
+  }
+}
+
 function renderVendors(search) {
   var container = $('#vendorGrid');
   if (!container) return;
@@ -12378,9 +12536,33 @@ function renderVendors(search) {
       if (v.email) html += '<a class="vendor-qa-btn" href="mailto:' + escapeHtml(v.email) + '" onclick="event.stopPropagation()" title="Email ' + escapeHtml(v.email) + '"><i class="fas fa-envelope"></i> Email</a>';
       html += '</div>';
     }
-    if (v.insurance) {
-      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Insurance</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (exp ? 'var(--danger)' : wrn ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.insurance) + (exp ? ' (EXPIRED)' : wrn ? ' (' + due + 'd)' : '') + '</span></div>';
+    if (v.address) {
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Address</span><span class="vendor-row-value" style="font-size:10px">' + escapeHtml(v.address) + '</span></div>';
     }
+    if (v.insurance) {
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Liability Ins.</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (exp ? 'var(--danger)' : wrn ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.insurance) + (exp ? ' \u26a0\ufe0f EXPIRED' : wrn ? ' (' + due + 'd)' : '') + '</span></div>';
+    }
+    if (v.autoInsurance) {
+      var aed = new Date(v.autoInsurance); var aexp = aed < today; var adue = daysBetween(today, aed);
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Auto Ins.</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (aexp ? 'var(--danger)' : adue <= 60 ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.autoInsurance) + (aexp ? ' \u26a0\ufe0f EXPIRED' : adue <= 60 ? ' (' + adue + 'd)' : '') + '</span></div>';
+    }
+    if (v.workersComp) {
+      var wced = new Date(v.workersComp); var wcexp = wced < today; var wcdue = daysBetween(today, wced);
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Workers Comp</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (wcexp ? 'var(--danger)' : wcdue <= 60 ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.workersComp) + (wcexp ? ' \u26a0\ufe0f EXPIRED' : wcdue <= 60 ? ' (' + wcdue + 'd)' : '') + '</span></div>';
+    }
+    if (v.doNotUse) {
+      html += '<div class="vendor-row vendor-row-compact" style="color:var(--danger);font-weight:700"><span class="vendor-row-label" style="color:var(--danger)">⛔ Status</span><span class="vendor-row-value">DO NOT USE</span></div>';
+    }
+    if (v.tags) {
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Tags</span><span class="vendor-row-value" style="font-size:10px">' + escapeHtml(v.tags) + '</span></div>';
+    }
+    // Cross-section navigation
+    var vNameJson = JSON.stringify(v.name || '');
+    html += '<div class="vendor-crossnav">';
+    html += '<button class="vendor-crossnav-btn xn-wo" onclick="event.stopPropagation();navigateToOpenWOsForVendor(' + vNameJson + ')" title="Open Work Orders for this vendor"><i class="fas fa-wrench"></i> Open WOs</button>';
+    html += '<button class="vendor-crossnav-btn xn-hist" onclick="event.stopPropagation();navigateToCompletedWOsForVendor(' + vNameJson + ')" title="Completed Work Orders for this vendor"><i class="fas fa-history"></i> Completed WOs</button>';
+    html += '<button class="vendor-crossnav-btn xn-bills" onclick="event.stopPropagation();navigateToBillsForVendor(' + vNameJson + ')" title="AP Bills for this vendor"><i class="fas fa-file-invoice-dollar"></i> Bills</button>';
+    html += '</div>';
     html += '</div>';
   });
   if (filtered.length > visible.length) {
@@ -13021,9 +13203,9 @@ async function initRoutingMonitor() {
     }
     if ($('#btnRoutingCapAdd')) {
       $('#btnRoutingCapAdd').addEventListener('click', async function() {
-        var trade = prompt('Work type name (example: Locksmith):', '');
+        var trade = await hmPrompt('Work type name (example: Locksmith):', '', { title: 'Add Work Type' });
         if (!trade) return;
-        var kwRaw = prompt('Keywords (comma separated):', '');
+        var kwRaw = await hmPrompt('Keywords (comma separated):', '', { title: 'Add Work Type' });
         var keywords = String(kwRaw || '').split(',').map(function(k) { return k.trim(); }).filter(Boolean);
         await proxyPost('routing_monitor', { op: 'capability_upsert', trade: trade.trim(), keywords: keywords, active: 1 });
         await loadRoutingCapabilities();
@@ -13071,11 +13253,11 @@ async function initRoutingMonitor() {
           var cid = Number(editBtn.getAttribute('data-routing-cap-edit') || '0');
           var cur = ROUTING_CAPABILITIES.find(function(c) { return Number(c.id) === cid; });
           if (!cur) return;
-          var trade = prompt('Work type name:', String(cur.trade || ''));
+          var trade = await hmPrompt('Work type name:', String(cur.trade || ''), { title: 'Edit Work Type' });
           if (!trade) return;
           var kws = [];
           try { kws = typeof cur.keywords === 'string' ? JSON.parse(cur.keywords) : (cur.keywords || []); } catch (er) { kws = []; }
-          var kwRaw = prompt('Keywords (comma separated):', kws.join(', '));
+          var kwRaw = await hmPrompt('Keywords (comma separated):', kws.join(', '), { title: 'Edit Work Type' });
           if (kwRaw === null) return;
           var nextKws = String(kwRaw).split(',').map(function(k) { return k.trim(); }).filter(Boolean);
           await proxyPost('routing_monitor', { op: 'capability_upsert', id: cur.id, trade: trade.trim(), keywords: nextKws, active: Number(cur.active) === 1 ? 1 : 0 });
@@ -13085,7 +13267,7 @@ async function initRoutingMonitor() {
         if (delBtn) {
           var did = Number(delBtn.getAttribute('data-routing-cap-del') || '0');
           if (!did) return;
-          if (!confirm('Delete this work type rule?')) return;
+          if (!await hmConfirm('Delete this work type rule?', { title: 'Delete Rule', okLabel: 'Delete', danger: true })) return;
           await proxyPost('routing_monitor', { op: 'capability_delete', id: did });
           await loadRoutingCapabilities();
         }
@@ -13688,6 +13870,34 @@ function wireUpUI() {
       renderWOCloseAssist();
     });
   }
+  // WO sub-tabs
+  $$('[data-wo-subtab]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var tab = this.dataset.woSubtab;
+      $$('[data-wo-subtab]').forEach(function(b) { b.classList.remove('active'); });
+      this.classList.add('active');
+      $$('.wo-subpanel').forEach(function(p) { p.style.display = 'none'; });
+      var panel = $('#wo-subpanel-' + tab);
+      if (panel) panel.style.display = '';
+    });
+  });
+
+  // Collapsible panels
+  $$('.collapsible-panel').forEach(function(panel) {
+    var hdr = panel.querySelector('.table-header');
+    if (!hdr) return;
+    hdr.addEventListener('click', function(e) {
+      if (e.target.closest('button,select,input,a')) return;
+      panel.classList.toggle('collapsed');
+      try { localStorage.setItem('wo-panel-' + panel.id, panel.classList.contains('collapsed') ? '1' : '0'); } catch(_) {}
+    });
+    // Restore state
+    try {
+      var saved = localStorage.getItem('wo-panel-' + panel.id);
+      if (saved === '0') panel.classList.remove('collapsed');
+    } catch(_) {}
+  });
+
   if ($('#woCompletedHistoryToggle')) {
     $('#woCompletedHistoryToggle').addEventListener('change', async function() {
       showCompletedWOHistory = !!this.checked;
@@ -15299,9 +15509,9 @@ renderDashboardKPIs = function() {
     });
   }
 
-  function deletePmUser(userUuid) {
+  async function deletePmUser(userUuid) {
     if (!userUuid) return;
-    if (!confirm('Delete this PM login user?')) return;
+    if (!await hmConfirm('Delete this PM login user?', { title: 'Delete PM User', okLabel: 'Delete', danger: true })) return;
     if (!API_PROXY) {
       try { var _savedProxy2 = localStorage.getItem('hm_proxy_url'); if (_savedProxy2) API_PROXY = _savedProxy2; } catch (e) { /* */ }
     }
@@ -16332,19 +16542,18 @@ function renderDispatchComms(comms) {
 
 var DispatchQueue = {
   markExempt: async function(woId, woNum) {
-    if (!confirm('Mark WO #'+woNum+' as exempt?\n\nThis writes a system note to AppFolio and stops automated reassignment for this WO.')) return;
+    if (!await hmConfirm('Mark WO #'+woNum+' as exempt?\n\nThis writes a system note to AppFolio and stops automated reassignment for this WO.', { title: 'Mark Exempt', okLabel: 'Mark Exempt' })) return;
     try {
-      var sep=API_PROXY.indexOf('?')!==-1?'&':'?';
-      await fetch(API_PROXY+sep+'action=passthrough&path='+encodeURIComponent('/api/v0/work_orders/'+woId+'/notes'), {
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({Body:':stop-auto: Manual admin exemption applied via HandyManager Dispatch Control.'})
+      await proxyPost('wo_note_create', {
+        uuid: woId,
+        body_text: ':stop-auto: Manual admin exemption applied via HandyManager Dispatch Control.'
       });
       v9Toast('Exemption applied','WO '+woNum+' is now exempt','success');
       DispatchControl.refresh();
     } catch(e) { v9Toast('Exemption failed',e.message,'danger'); }
   },
   clearExempt: async function(woId) {
-    if (!confirm('Clear exemption for WO '+woId+'?\n\nIt will re-enter automation on the next cron run.')) return;
+    if (!await hmConfirm('Clear exemption for WO '+woId+'?\n\nIt will re-enter automation on the next cron run.', { title: 'Clear Exemption', okLabel: 'Clear Exemption' })) return;
     try {
       var key=getDispatchAdminKey();
       if(!key){v9Toast('Admin key required','Set PROXY_ADMIN_KEY in Database tab','warning');return;}
@@ -16430,7 +16639,7 @@ var DispatchRoster = {
     var active=Number(document.getElementById('rosterTechActive').value);
     if(!id||!name){v9Toast('Validation error','UUID and Name are required','warning');return;}
     if(phone&&!phone.startsWith('+')){v9Toast('Invalid phone','Must start with + (E.164): +15205551234','warning');return;}
-    if(!this._editing&&id.length<30){if(!confirm('The UUID "'+id+'" looks short. Is this a valid AppFolio user UUID?\n\nThe user must have the Maintenance Tech role enabled or reassignment PATCHes will return 422.'))return;}
+    if(!this._editing&&id.length<30){if(!await hmConfirm('The UUID "'+id+'" looks short. Is this a valid AppFolio user UUID?\n\nThe user must have the Maintenance Tech role enabled or reassignment PATCHes will return 422.', { title: 'UUID Warning', okLabel: 'Continue Anyway' }))return;}
     try {
       var r=await dispatchPost('tech_roster',{tech_id:id,tech_name:name,tech_phone:phone,tier:tier,geo_zone:zone,active:active});
       if(r.ok){
@@ -16448,7 +16657,7 @@ var DispatchRoster = {
     } catch(e){v9Toast('Save failed',e.message,'danger');}
   },
   toggleActive: async function(techId,techName,currentlyActive) {
-    if(!confirm((currentlyActive?'Deactivate':'Reactivate')+' '+techName+'?'))return;
+    if(!await hmConfirm((currentlyActive?'Deactivate':'Reactivate')+' '+techName+'?', { title: currentlyActive ? 'Deactivate Tech' : 'Reactivate Tech', okLabel: currentlyActive ? 'Deactivate' : 'Reactivate', danger: currentlyActive }))return;
     try {
       var r=await dispatchPost('tech_roster',{tech_id:techId,tech_name:techName,active:currentlyActive?0:1});
       if(r.ok){v9Toast(techName+(currentlyActive?' deactivated':' reactivated'),'',currentlyActive?'warning':'success');DispatchControl.refresh();}
@@ -16456,7 +16665,7 @@ var DispatchRoster = {
     }catch(e){v9Toast('Action failed',e.message,'danger');}
   },
   toggleHidden: async function(techId, techName, currentlyHidden) {
-    if (!confirm((currentlyHidden ? 'Unhide ' : 'Hide ') + techName + ' from active dispatch roster?')) return;
+    if (!await hmConfirm((currentlyHidden ? 'Unhide ' : 'Hide ') + techName + ' from active dispatch roster?', { title: currentlyHidden ? 'Unhide Assignee' : 'Hide Assignee', okLabel: currentlyHidden ? 'Unhide' : 'Hide' })) return;
     if (currentlyHidden) {
       delete DISPATCH.hiddenAssignees[String(techId)];
     } else {
@@ -17256,7 +17465,10 @@ function decodeWebhookEventV9(evt) {
   if(handlers){try{view=(handlers[action]||handlers['updated']||null);if(view)view=view(meta.payload||{});}catch(e){view=null;}}
   if(!view){
     var fallbackTitle=typeof decodeWebhookTitle==='function'?decodeWebhookTitle(evt,meta):'Webhook Event';
-    view={title:fallbackTitle||'Webhook Event',desc:meta.resourceName||evt.resource_name||'',severity:'info',icon:'fa-plug',color:'var(--purple)'};
+    var fallbackDesc=meta.resourceName||evt.resource_name||'';
+    // If resource is identified but not yet resolved, mark pending so enrichment pass can update it.
+    if(!fallbackDesc&&meta.resourceId&&meta.resourceType)fallbackDesc='\u29d7 Resolving\u2026';
+    view={title:fallbackTitle||'Webhook Event',desc:fallbackDesc,severity:'info',icon:'fa-plug',color:'var(--purple)'};
   }
   var eventKey=rType+'.'+action;
   return {
@@ -17336,6 +17548,35 @@ function decodeWebhookEventV9(evt) {
       _renderFeed();
       var st=_getEl('live-feed-status');
       if(st)st.innerHTML='<span class="feed-pulse"></span> Live · '+new Date().toLocaleTimeString();
+
+      // Progressive enrichment: resolve sparse-payload events asynchronously.
+      // Cap at 10 per poll cycle to stay well under AppFolio rate limits.
+      (async function _enrichLiveEvents(newEvts){
+        var PENDING='\u29d7 Resolving\u2026';
+        var toEnrich=newEvts.filter(function(v){
+          if(!v.resource_id||!v.resource_type)return false;
+          var k=webhookResolveKey(v.resource_type,v.resource_id);
+          return k&&!WEBHOOK_RESOURCE_CACHE[k]&&!WEBHOOK_RESOURCE_INFLIGHT[k];
+        });
+        if(!toEnrich.length)return;
+        var changed=false;
+        for(var i=0;i<Math.min(10,toEnrich.length);i++){
+          var item=toEnrich[i];
+          var got=await resolveWebhookResource(item.resource_type,item.resource_id);
+          if(got&&got.summary){
+            var resolvedName=(got.summary.title||'')+(got.summary.reference&&got.summary.title?'':got.summary.reference?'#'+got.summary.reference:'');
+            if(resolvedName){
+              _events.forEach(function(ev){
+                if(ev.resource_id===item.resource_id&&ev.resource_type===item.resource_type){
+                  if(!ev.desc||ev.desc===PENDING){ev.desc=resolvedName;changed=true;}
+                }
+              });
+            }
+          }
+          await sleep(140+Math.floor(Math.random()*40));
+        }
+        if(changed)_renderFeed();
+      })(decoded);
     }catch(e){
       var st2=_getEl('live-feed-status');
       if(st2)st2.innerHTML='<span class="feed-pulse"></span> Reconnecting…';
@@ -17370,12 +17611,24 @@ function decodeWebhookEventV9(evt) {
   // Public API
   window.LiveEngineV9={
     resolve:function(rType,rId){
-      v9Toast('Resolving…',rType+' / '+String(rId).substring(0,14),'info',2500);
+      v9Toast('Resolving\u2026',rType+' / '+String(rId).substring(0,14),'info',2500);
       proxyAction('webhook_resolve',{resource_type:rType,resource_id:rId}).then(function(data){
         if(data.ok&&data.record){
           var s=data.summary||{};
+          var resolvedName=(s.title||'')+(s.reference?(' #'+s.reference):'');
+          // Update matching events in feed with resolved name, then re-render.
+          var changed=false;
+          var PENDING='\u29d7 Resolving\u2026';
+          _events.forEach(function(ev){
+            if(ev.resource_id===rId&&ev.resource_type===rType){
+              if(!ev.desc||ev.desc===PENDING||ev.desc==='\u2014\u00a0Unresolved'){
+                ev.desc=resolvedName||s.title||rType;changed=true;
+              }
+            }
+          });
+          if(changed)_renderFeed();
           showItemDetail((s.title||rType)+(s.reference?' #'+s.reference:''),
-            [{section:'Resolved Record',icon:'fa-link'},{label:'Title',value:s.title||'—'},{label:'Status',value:s.status||'—'},{label:'UUID',value:rId||'—'}],null);
+            [{section:'Resolved Record',icon:'fa-link'},{label:'Title',value:s.title||'\u2014'},{label:'Status',value:s.status||'\u2014'},{label:'UUID',value:rId||'\u2014'}],null);
         }else{v9Toast('Could not resolve',data.error||'Record not found','warning');}
       }).catch(function(e){v9Toast('Resolve failed',e.message,'danger');});
     },
