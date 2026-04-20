@@ -1,10 +1,10 @@
 // ============================================================================
-// config.ts — Fort Lowell Realty HandyManager Proxy v9.2.2
+// config.ts — Fort Lowell Realty HandyManager Proxy v9.2.6
 // by Aaron Dunn
 // ============================================================================
 
 // Single source of truth for operator-visible runtime/app version.
-export const PROXY_APP_VERSION = "v9.2.2";
+export const PROXY_APP_VERSION = "v9.2.6";
 
 // ── Turso ────────────────────────────────────────────────────────────────────
 export const TURSO_DATABASE_URL = Deno.env.get("TURSO_DATABASE_URL") || "";

@@ -114,7 +114,7 @@ export async function handleWoComparisonReport(
   params: Record<string, string>,
   _req?: Request,
 ): Promise<any> {
-  const fromDate = params.from_date || "2026-01-01";
+  const fromDate = params.from_date || new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
   const toDate = params.to_date || today();
   const groupFilter = (params.group || "all").toLowerCase();
   const format = (params.format || "json").toLowerCase();

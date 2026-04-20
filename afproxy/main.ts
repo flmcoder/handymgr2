@@ -1,5 +1,5 @@
 // ============================================================================
-// main.ts — HandyManager Proxy v9.2.2
+// main.ts — HandyManager Proxy v9.2.6
 // Fort Lowell Realty & Property Management
 // Val Town HTTP Entry Point — Router ONLY.
 //
@@ -46,6 +46,8 @@ import {
   handleCompletedWorkOrdersHistory,
   handleLabor,
   handleRecentTasks,
+  handleWoAttachmentUpload,
+  handleWoAttachments,
   handleTurnWorkOrders,
   handleWoBilledAmount,
   handleWoDetail,
@@ -56,12 +58,18 @@ import {
 import { handleVendorOverride, handleVendors } from "./handlers/vendors.ts";
 import { handleInspections } from "./handlers/inspections.ts";
 import { handleBills, handleBillsRoute } from "./handlers/bills.ts";
+import { handleUnits, handleUnitLookup } from "./handlers/units.ts";
 import {
   handleProperties,
   handlePropertyGroups,
   handlePropertyMap,
   handleUpcomingMoveouts,
 } from "./handlers/properties.ts";
+import {
+  handlePropertyNotes,
+  handleListings,
+  handlePropertyStats,
+} from "./handlers/properties_extended.ts";
 import {
   handleAdminSyncRoute,
   handleMigrateV8,
@@ -100,7 +108,7 @@ import {
   handleStorageCleanup,
 } from "./handlers/passthrough.ts";
 
-// ── v9.2.2 Reassignment engine handlers ──────────────────────────────────────
+// ── v9.2.3 Reassignment engine handlers ──────────────────────────────────────
 import {
   handleMidnightReassignCron,
   handleNoonWarningCron,
@@ -111,9 +119,11 @@ import {
   handleGenerateMagicLink,
   handlePortalNoContact,
   handlePortalNote,
+  handlePortalPhotoUpload,
   handlePortalReassignRequest,
   handlePortalReschedule,
   handlePortalSchedule,
+  handlePortalStatus,
   handlePortalValidate,
   handleRemoveMonitoredWO,
   handleSendMagicLinkTestSMS,
@@ -400,6 +410,8 @@ export default async function handler(req: Request): Promise<Response> {
       "portal_schedule",
       "portal_reschedule",
       "portal_note",
+      "portal_status",
+      "portal_photo_upload",
       "portal_no_contact",
       "portal_reassign_request",
       "send_tenant_sms",
@@ -625,6 +637,9 @@ export default async function handler(req: Request): Promise<Response> {
         case "wo_note_create":
           result = await handleWoNoteCreate(req);
           break;
+        case "wo_attachment_upload":
+          result = await handleWoAttachmentUpload(params, req);
+          break;
         case "bill_attachment_upload":
           result = await handleBills(params, req, action);
           break;
@@ -764,7 +779,7 @@ export default async function handler(req: Request): Promise<Response> {
           break;
         }
 
-        // v9.2.2 — tech roster upsert
+        // v9.2.3 — tech roster upsert
         case "tech_roster":
           result = await handleTechRoster(params, req);
           break;
@@ -792,7 +807,7 @@ export default async function handler(req: Request): Promise<Response> {
           break;
         }
 
-        // v9.2.2 — tenant SMS via magic link portal
+        // v9.2.3 — tenant SMS via magic link portal
         case "send_tenant_sms":
           result = await handleSendTenantSMS(req);
           break;
@@ -808,6 +823,12 @@ export default async function handler(req: Request): Promise<Response> {
         case "portal_note":
           result = await handlePortalNote(req);
           break;
+        case "portal_status":
+          result = await handlePortalStatus(req);
+          break;
+        case "portal_photo_upload":
+          result = await handlePortalPhotoUpload(req);
+          break;
         case "portal_no_contact":
           result = await handlePortalNoContact(req);
           break;
@@ -818,7 +839,7 @@ export default async function handler(req: Request): Promise<Response> {
           result = await handleGenerateMagicLink(req);
           break;
 
-        // v9.2.2 — monitored work order queue management
+        // v9.2.3 — monitored work order queue management
         case "add_monitored_work_order":
           result = await handleAddMonitoredWO(req);
           break;
@@ -826,12 +847,12 @@ export default async function handler(req: Request): Promise<Response> {
           result = await handleRemoveMonitoredWO(req);
           break;
 
-        // v9.2.2 — dispatch test message / magic link verification
+        // v9.2.3 — dispatch test message / magic link verification
         case "send_magic_link_test_sms":
           result = await handleSendMagicLinkTestSMS(req);
           break;
 
-        // v9.2.2 — cron triggers (also accept POST from cron vals)
+        // v9.2.3 — cron triggers (also accept POST from cron vals)
         case "noon_warning_cron":
           result = await handleNoonWarningCron(params);
           break;
@@ -839,14 +860,14 @@ export default async function handler(req: Request): Promise<Response> {
           result = await handleMidnightReassignCron(params);
           break;
 
-        // v9.2.2 — dispatch roster sync aliases
+        // v9.2.3 — dispatch roster sync aliases
         case "dispatch_sync_assignees":
         case "sync_assignee_roster":
         case "reassignment_sync_assignees":
           result = await handleDispatchSyncAssignees(params, req);
           break;
 
-        // v9.2.2 — dispatch test queue seed aliases
+        // v9.2.3 — dispatch test queue seed aliases
         case "dispatch_seed_reassignment_test":
         case "seed_reassignment_queue_test":
         case "reassignment_queue_seed":
@@ -876,7 +897,7 @@ export default async function handler(req: Request): Promise<Response> {
 
     // ── GET / HEAD actions ────────────────────────────────────────────────────
     if (req.method === "GET" || req.method === "HEAD") {
-      if (action === "wo_detail" || action === "wo_notes") {
+      if (action === "wo_detail" || action === "wo_notes" || action === "wo_attachments") {
         const woRef = String(params.uuid || params.wo_id || params.id || "").trim() || "(missing)";
         const woReadRl = checkRateLimit(
           `wo-read:${action}:${requestIp}:${woRef}`,
@@ -935,6 +956,9 @@ export default async function handler(req: Request): Promise<Response> {
         case "wo_detail":
           result = await handleWoDetail(params);
           break;
+        case "wo_attachments":
+          result = await handleWoAttachments(params);
+          break;
         case "wo_billed_amount":
           result = await handleWoBilledAmount(params);
           break;
@@ -984,6 +1008,26 @@ export default async function handler(req: Request): Promise<Response> {
         case "upcoming_moveouts":
           result = await handleUpcomingMoveouts(params);
           break;
+          case "property_notes":
+            result = await handlePropertyNotes(params);
+            break;
+          case "listings":
+            result = await handleListings(params);
+            break;
+          case "property_listings":
+            result = await handleListings(params);
+            break;
+          case "property_stats":
+            result = await handlePropertyStats(params);
+            break;
+
+          // ── Units ────────────────────────────────────────────────────────────
+          case "units":
+            result = await handleUnits(params);
+            break;
+          case "unit_lookup":
+            result = await handleUnitLookup(params);
+            break;
 
         // ── Turn pipeline ─────────────────────────────────────────────────────
         case "turns":
@@ -1029,6 +1073,7 @@ export default async function handler(req: Request): Promise<Response> {
           break;
         case "bills_by_vendor":
         case "bills_by_property":
+        case "bills_by_unit":
         case "bills_by_wo":
         case "bills_by_wo_number":
         case "bills_by_invoice":
@@ -1107,7 +1152,7 @@ export default async function handler(req: Request): Promise<Response> {
           if (result instanceof Response) return result;
           break;
 
-        // ── v9.2.2 Cron triggers ──────────────────────────────────────────────
+        // ── v9.2.3 Cron triggers ──────────────────────────────────────────────
         // These are also callable via GET for manual testing.
         // Auth checked above via isCronAuthorized().
         case "noon_warning_cron":
@@ -1117,7 +1162,7 @@ export default async function handler(req: Request): Promise<Response> {
           result = await handleMidnightReassignCron(params);
           break;
 
-        // ── v9.2.2 Dispatch Control data ──────────────────────────────────────
+        // ── v9.2.3 Dispatch Control data ──────────────────────────────────────
         // AssignedUsers must reference a Maintenance Tech role user .
         case "reassignment_queue":
           result = await handleReassignmentQueue(params);
@@ -1217,7 +1262,7 @@ export default async function handler(req: Request): Promise<Response> {
           result = await handleUsers(params);
           break;
 
-        // v9.2.2 — dispatch sync/seed aliases (GET for manual testing)
+        // v9.2.3 — dispatch sync/seed aliases (GET for manual testing)
         case "dispatch_sync_assignees":
         case "sync_assignee_roster":
         case "reassignment_sync_assignees":
@@ -1405,7 +1450,7 @@ export default async function handler(req: Request): Promise<Response> {
     // 503 and 533 from AppFolio are retried automatically in fetchWithTimeout .
     // If a semantic error (422) bubbles here, check parameter validity .
     console.error(
-      `[HandyManager v9.2.2] Unhandled error on action "${action}":`,
+      `[HandyManager v9.2.3] Unhandled error on action "${action}":`,
       err,
     );
     return jsonResp(

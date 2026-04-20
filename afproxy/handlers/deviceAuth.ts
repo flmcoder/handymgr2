@@ -17,10 +17,8 @@ function generateUuid(): string {
   if (globalThis.crypto && globalThis.crypto.getRandomValues) {
     globalThis.crypto.getRandomValues(bytes);
   } else {
-    // Last resort: use Math.random (not cryptographically secure but sufficient for IDs)
-    for (let i = 0; i < 16; i++) {
-      bytes[i] = Math.floor(Math.random() * 256);
-    }
+    // Last resort: throw — Deno always has crypto so this is unreachable
+    throw new Error("Crypto API unavailable — cannot generate secure UUIDs");
   }
   bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
   bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant
@@ -246,7 +244,9 @@ function deriveOtpIdentityEmail(
 }
 
 function generateOtpCode(): string {
-  const value = Math.floor(Math.random() * 1000000);
+  const arr = new Uint32Array(1);
+  crypto.getRandomValues(arr);
+  const value = arr[0] % 1000000;
   return value.toString().padStart(6, "0");
 }
 

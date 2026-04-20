@@ -58,7 +58,7 @@ function isTechHidden(
 function techBranch(v: any): "phoenix" | "tucson" | "unknown" {
   const z = String(v?.geo_zone || "").toLowerCase();
   if (z.includes("tucson")) return "tucson";
-  if (z.includes("phoenix") || z) return "phoenix";
+  if (z.includes("phoenix") || z === "central" || z === "") return "phoenix";
   return "unknown";
 }
 
@@ -272,14 +272,6 @@ export async function handleReassignmentQueue(
         generated_at: new Date().toISOString(),
         branch,
       },
-    };
-
-    // Cache the result
-    queueCache = {
-      data: result,
-      timestamp: Date.now(),
-      branch,
-      woId
     };
 
     return result;
