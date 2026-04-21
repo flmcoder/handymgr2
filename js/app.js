@@ -34,7 +34,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.2.6';
+var APP_VERSION = 'v9.2.7';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 
@@ -721,7 +721,7 @@ function isWOFlagged(woId) { return !!WO_FLAGS[woId]; }
    ================================================================= */
 var VENDOR_OVERRIDES = {};
 var VENDOR_CATEGORIES = ['Employee', 'In-House Tech', 'Vendor', 'Subcontractor', 'Utilities', 'HOA', 'Insurance', 'Uncategorized'];
-var VENDOR_TRADE_CATEGORIES = ['General', 'HVAC', 'Plumbing', 'Electrical', 'Appliance', 'Flooring', 'Painting', 'Landscaping', 'Cleaning', 'Roofing', 'Pest Control', 'Pool/Spa', 'Locksmith', 'Security', 'Other'];
+var VENDOR_TRADE_CATEGORIES = ['General', 'HVAC', 'Plumbing', 'Electrical', 'Appliance', 'Flooring', 'Painting', 'Landscaping', 'Cleaning', 'Roofing', 'Pest Control', 'Pool/Spa', 'Locksmith', 'Security', 'Garage', 'Fences/Gates', 'Drywall', 'Gutter', 'Turnover', 'Other'];
 
 function normalizeVendorTradeCategory(value) {
   var raw = String(value || '').trim().toLowerCase();
@@ -739,7 +739,12 @@ function normalizeVendorTradeCategory(value) {
   if (raw.indexOf('pool') !== -1 || raw.indexOf('spa') !== -1) return 'Pool/Spa';
   if (raw.indexOf('lock') !== -1 || raw.indexOf('key') !== -1) return 'Locksmith';
   if (raw.indexOf('security') !== -1 || raw.indexOf('alarm') !== -1 || raw.indexOf('camera') !== -1) return 'Security';
-  if (raw.indexOf('general') !== -1 || raw.indexOf('handyman') !== -1 || raw.indexOf('maintenance') !== -1) return 'General';
+  if (raw.indexOf('garage') !== -1 || raw.indexOf('door') !== -1 && raw.indexOf('garage') !== -1) return 'Garage';
+  if (raw.indexOf('fence') !== -1 || raw.indexOf('gate') !== -1) return 'Fences/Gates';
+  if (raw.indexOf('drywall') !== -1 || raw.indexOf('plaster') !== -1) return 'Drywall';
+  if (raw.indexOf('gutter') !== -1) return 'Gutter';
+  if (raw.indexOf('turnover') !== -1 || raw.indexOf('turn over') !== -1 || raw.indexOf('make ready') !== -1) return 'Turnover';
+  if (raw.indexOf('general') !== -1 || raw.indexOf('handyman') !== -1 || raw.indexOf('handyperson') !== -1 || raw.indexOf('maintenance') !== -1) return 'General';
   return 'Other';
 }
 
@@ -1249,14 +1254,64 @@ async function verifyDeviceOtp(identifier, code, userName) {
   return data;
 }
 
-// ---- Timeout helper ----
-// Wraps a promise with an AbortController-based timeout (defaults 45s)
-function fetchWithTimeout(url, opts, timeoutMs) {
-  timeoutMs = timeoutMs || 45000;
-  var controller = new AbortController();
-  var timer = setTimeout(function() { controller.abort(); }, timeoutMs);
-  var fetchOpts = Object.assign({}, opts || {}, { signal: controller.signal });
-  return fetch(url, fetchOpts).finally(function() { clearTimeout(timer); });
+// ---- Resilient timeout + retry helper ----
+// Backward compatible with existing callers that pass a numeric timeout as arg #3.
+async function fetchWithTimeout(url, opts, timeoutMsOrRetries, baseBackoffMs) {
+  var options = Object.assign({}, opts || {});
+  var timeoutMs = Number(options.timeout || 0) || 15000;
+  var retries = 3;
+  var backoffMs = Number(baseBackoffMs || 0) || 2000;
+
+  if (typeof timeoutMsOrRetries === 'number') {
+    if (timeoutMsOrRetries > 20) timeoutMs = timeoutMsOrRetries;
+    else retries = Math.max(0, timeoutMsOrRetries);
+  }
+
+  delete options.timeout;
+
+  var attempt = 0;
+  while (true) {
+    var controller = new AbortController();
+    var timer = setTimeout(function() { controller.abort(); }, timeoutMs);
+    try {
+      var response = await fetch(url, Object.assign({}, options, { signal: controller.signal }));
+      clearTimeout(timer);
+
+      // Treat transient proxy/server failures as retryable, but return final response
+      // when attempts are exhausted so existing callers can handle status codes.
+      if (!response.ok && response.status >= 500 && attempt < retries) {
+        var serverJitter = Math.floor(Math.random() * 500);
+        var serverDelay = backoffMs + serverJitter;
+        console.warn('[Network Fluctuated] Proxy/server HTTP ' + response.status + '. Retrying in ' + Math.round(serverDelay / 1000) + 's... (' + (retries - attempt) + ' attempts left)');
+        await new Promise(function(resolve) { setTimeout(resolve, serverDelay); });
+        backoffMs = backoffMs * 2;
+        attempt++;
+        continue;
+      }
+
+      return response;
+    } catch (err) {
+      clearTimeout(timer);
+      var msg = String((err && err.message) || '').toLowerCase();
+      var isNetworkError =
+        (err && err.name === 'AbortError') ||
+        msg.indexOf('fetch') !== -1 ||
+        msg.indexOf('network') !== -1 ||
+        msg.indexOf('name_not_resolved') !== -1 ||
+        msg.indexOf('quic') !== -1;
+
+      if (attempt < retries && isNetworkError) {
+        var jitter = Math.floor(Math.random() * 500);
+        var delay = backoffMs + jitter;
+        console.warn('[Network Fluctuated] ' + ((err && err.message) || 'network error') + '. Retrying in ' + Math.round(delay / 1000) + 's... (' + (retries - attempt) + ' attempts left)');
+        await new Promise(function(resolve) { setTimeout(resolve, delay); });
+        backoffMs = backoffMs * 2;
+        attempt++;
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 // ---- Proxy action endpoint caller ----
@@ -2077,6 +2132,28 @@ function extractBillPropertyId(rawBill, normalizedLineItems) {
   ).trim();
 }
 
+function getNormalizedBillDisplayNumber(billLike) {
+  var b = billLike && typeof billLike === 'object' ? billLike : {};
+  var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
+  var preferred = String(
+    b.billNumber || b.bill_number || b.reference ||
+    raw.InvoiceNumber || raw.invoice_number || raw.Reference || raw.reference || ''
+  ).trim();
+
+  if (preferred && !isUuidString(preferred)) return preferred;
+
+  var fallbackRef = String(raw.Reference || raw.reference || '').trim();
+  if (fallbackRef && !isUuidString(fallbackRef)) return fallbackRef;
+
+  var fallbackInvoice = String(raw.InvoiceNumber || raw.invoice_number || '').trim();
+  if (fallbackInvoice && !isUuidString(fallbackInvoice)) return fallbackInvoice;
+
+  var id = String(b.id || raw.Id || raw.id || '').trim();
+  if (!id) return '—';
+  if (isUuidString(id)) return 'BILL-' + id.slice(0, 8).toUpperCase();
+  return id;
+}
+
 function resolveVendorNameFromMaps(vendorId, fallback) {
   var key = String(vendorId || '').trim();
   if (!key || !window.AppDB || !window.AppDB.vendors) return String(fallback || '').trim();
@@ -2818,6 +2895,31 @@ $('#woModalClose').addEventListener('click', function() { closeModal('woModal');
 $('#woModalCloseBtn').addEventListener('click', function() { closeModal('woModal'); });
 $('#newWOModalClose').addEventListener('click', function() { closeModal('newWOModal'); });
 $('#newWOCancelBtn').addEventListener('click', function() { closeModal('newWOModal'); });
+
+// Vendor detail modal — close buttons and cross-tab routing
+if ($('#vendorDetailModalClose'))    $('#vendorDetailModalClose').addEventListener('click', function() { closeModal('vendorDetailModal'); });
+if ($('#vendorDetailModalCloseBtn')) $('#vendorDetailModalCloseBtn').addEventListener('click', function() { closeModal('vendorDetailModal'); });
+if ($('#vdmBtnOpenWOs')) {
+  $('#vdmBtnOpenWOs').addEventListener('click', function() {
+    var v = VENDORS.find(function(vn) { return String(vn.id) === _currentSelectedVendorId; });
+    closeModal('vendorDetailModal');
+    if (v) navigateToOpenWOsForVendor(v.name);
+  });
+}
+if ($('#vdmBtnCompletedWOs')) {
+  $('#vdmBtnCompletedWOs').addEventListener('click', function() {
+    var v = VENDORS.find(function(vn) { return String(vn.id) === _currentSelectedVendorId; });
+    closeModal('vendorDetailModal');
+    if (v) navigateToCompletedWOsForVendor(v.name);
+  });
+}
+if ($('#vdmBtnBills')) {
+  $('#vdmBtnBills').addEventListener('click', function() {
+    var v = VENDORS.find(function(vn) { return String(vn.id) === _currentSelectedVendorId; });
+    closeModal('vendorDetailModal');
+    if (v) navigateToBillsForVendor(v.name);
+  });
+}
 
 /* =================================================================
    COMMUNICATION TEMPLATES (local — no API endpoint for these)
@@ -6018,7 +6120,7 @@ function renderBillsSection() {
     var st = String(b.statusLabel || b.status || '—');
     var stKey = String(st).trim().toLowerCase().replace(/\s+/g, '-');
     var stLow = String(b.status || '').toLowerCase();
-    var billNum = String(b.billNumber || b.id || '—');
+    var billNum = getNormalizedBillDisplayNumber(b);
     var amountVal = Number(b.amount || 0);
     var vendorText = b.vendorName || b.vendorId || '—';
     var payeeText = b.payeeUuid || b.vendorUuid || b.vendorId || '';
@@ -6367,6 +6469,7 @@ async function showBillDetailModal(billId) {
       { label: 'Payee UUID', value: String(b.payee_uuid || b.vendor_uuid || b.vendor_id || '—') },
       { label: 'Property', value: String((b.property_name || '—') + (b.property_id ? (' (' + b.property_id + ')') : '')) },
       { label: 'Property Group', value: String(b.property_group || b.propertyGroup || b._propertyGroup || '—') },
+      { label: 'Property Manager', value: String(b.pm_name || b.property_manager || raw.pm_name || raw.property_manager || raw.PropertyManager || '—') },
       { label: 'Work Order', value: b.work_order_id ? String(b.work_order_id) : '—' },
       { label: 'Reference', value: String(b.reference || '—') },
       { label: 'Remarks', value: String(b.remarks || '—') },
@@ -6432,6 +6535,136 @@ async function showBillDetailModal(billId) {
   } catch (e) {
     showToast('Bill detail failed: ' + (e.message || e), { kind: 'warning' });
   }
+}
+
+var BILL_HISTORY_ROWS = [];
+var BILL_HISTORY_PAGE = 0;
+var BILL_HISTORY_PAGE_SIZE = 100;
+
+function renderBillHistoryPage(dateFrom, dateTo) {
+  var body = document.getElementById('billHistBody');
+  var footer = document.getElementById('billHistFooter');
+  if (!body || !footer) return;
+
+  if (!Array.isArray(BILL_HISTORY_ROWS) || BILL_HISTORY_ROWS.length === 0) {
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No historical bills found for selected criteria</td></tr>';
+    footer.style.display = 'none';
+    return;
+  }
+
+  var totalRows = BILL_HISTORY_ROWS.length;
+  var totalPages = Math.max(1, Math.ceil(totalRows / BILL_HISTORY_PAGE_SIZE));
+  BILL_HISTORY_PAGE = Math.max(0, Math.min(BILL_HISTORY_PAGE, totalPages - 1));
+  var start = BILL_HISTORY_PAGE * BILL_HISTORY_PAGE_SIZE;
+  var end = Math.min(start + BILL_HISTORY_PAGE_SIZE, totalRows);
+  var pageRows = BILL_HISTORY_ROWS.slice(start, end);
+
+  body.innerHTML = pageRows.map(function(r) {
+    var wo = String(r.work_order_id || r.WorkOrderId || '').trim();
+    var billId = String(r.id || r.Id || '').trim();
+    var vendorId = String(r.vendor_id || r.VendorId || r.payee_uuid || r.PayeeUuid || '').trim();
+    var vendorName = String(r.vendor_name || r.VendorName || '').trim();
+    if (!vendorName) vendorName = resolveVendorNameFromMaps(vendorId, vendorId || '—') || '—';
+
+    var propertyId = String(r.property_id || r.PropertyId || '').trim();
+    var propertyMeta = resolvePropertyMetaFromMaps(
+      propertyId,
+      String(r.property_name || r.PropertyName || '').trim(),
+      String(r.property_group_id || r.property_group_uuid || r.PropertyGroupId || r.PropertyGroupUuid || '').trim(),
+    );
+    var propertyName = String(r.property_name || r.PropertyName || propertyMeta.name || propertyId || '—').trim() || '—';
+
+    var grpResolved = String(
+      r.property_group_name || r.property_group || r.PropertyGroup || propertyMeta.groupName || '',
+    ).trim();
+    if (!grpResolved) {
+      var nGroups = _nameToGroups[(propertyName.toLowerCase())] || [];
+      grpResolved = nGroups[0] || '';
+    }
+
+    var pmResolved = String(r.pm_name || r.property_manager || r.PropertyManager || '').trim();
+    if (!pmResolved && grpResolved) {
+      pmResolved = getRoutingPmForGroup(grpResolved);
+    }
+
+    var rowAttrs = '';
+    if (billId) {
+      rowAttrs = ' class="clickable-row" data-billdetail="' + escapeHtml(billId) + '" tabindex="0" role="button" aria-label="Open bill detail"';
+    }
+
+    return '<tr' + rowAttrs + '>' +
+      '<td style="font-family:var(--font-mono);font-size:11px">' + (billId ? ('<button class="action-btn" data-billdetail="' + escapeHtml(billId) + '" style="padding:2px 8px">' + escapeHtml(getNormalizedBillDisplayNumber(r)) + '</button>') : escapeHtml(getNormalizedBillDisplayNumber(r))) + '</td>' +
+      '<td>' + escapeHtml(vendorName) + '</td>' +
+      '<td>' + escapeHtml(propertyName) + '</td>' +
+      '<td>' + escapeHtml(grpResolved || '—') + '</td>' +
+      '<td>' + escapeHtml(pmResolved || '—') + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || r.TotalAmount || 0) + '</td>' +
+      '<td>' + escapeHtml((r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) ? formatDate(r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) : '—') + '</td>' +
+      '<td>' + escapeHtml(String(r.status_label || r.status || r.ApprovalStatus || '—')) + '</td>' +
+      '<td>' + (wo ? ('<button class="action-btn" data-wojump="' + escapeHtml(wo) + '" style="padding:2px 8px">#' + escapeHtml(wo.slice(0, 8)) + '</button>') : '<span style="color:var(--text-muted)">—</span>') + '</td>' +
+      '</tr>';
+  }).join('');
+
+  footer.style.display = '';
+  footer.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+      '<span>History search returned ' + totalRows + ' bill(s) from ' + escapeHtml(dateFrom) + ' to ' + escapeHtml(dateTo) + '.</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:8px">' +
+        '<button class="action-btn" id="billHistPrevPage" style="padding:3px 8px"' + (BILL_HISTORY_PAGE <= 0 ? ' disabled' : '') + '>Prev</button>' +
+        '<span style="font-family:var(--font-mono);font-size:11px">Page ' + (BILL_HISTORY_PAGE + 1) + ' / ' + totalPages + '</span>' +
+        '<button class="action-btn" id="billHistNextPage" style="padding:3px 8px"' + (BILL_HISTORY_PAGE >= (totalPages - 1) ? ' disabled' : '') + '>Next</button>' +
+      '</span>' +
+    '</div>';
+
+  var prevBtn = document.getElementById('billHistPrevPage');
+  var nextBtn = document.getElementById('billHistNextPage');
+  if (prevBtn) {
+    prevBtn.addEventListener('click', function() {
+      if (BILL_HISTORY_PAGE <= 0) return;
+      BILL_HISTORY_PAGE -= 1;
+      renderBillHistoryPage(dateFrom, dateTo);
+    });
+  }
+  if (nextBtn) {
+    nextBtn.addEventListener('click', function() {
+      if (BILL_HISTORY_PAGE >= (totalPages - 1)) return;
+      BILL_HISTORY_PAGE += 1;
+      renderBillHistoryPage(dateFrom, dateTo);
+    });
+  }
+
+  Array.prototype.forEach.call(body.querySelectorAll('[data-wojump]'), function(btn) {
+    btn.addEventListener('click', function(evt) {
+      evt.stopPropagation();
+      var woId = btn.getAttribute('data-wojump');
+      if (!woId) return;
+      showWODetail(woId);
+    });
+  });
+
+  Array.prototype.forEach.call(body.querySelectorAll('button[data-billdetail]'), function(btn) {
+    btn.addEventListener('click', function(evt) {
+      evt.stopPropagation();
+      var billId = btn.getAttribute('data-billdetail');
+      if (!billId) return;
+      showBillDetailModal(billId);
+    });
+  });
+
+  Array.prototype.forEach.call(body.querySelectorAll('tr[data-billdetail]'), function(row) {
+    row.addEventListener('click', function() {
+      var billId = row.getAttribute('data-billdetail');
+      if (!billId) return;
+      showBillDetailModal(billId);
+    });
+    row.addEventListener('keydown', function(evt) {
+      if (evt.key !== 'Enter' && evt.key !== ' ') return;
+      evt.preventDefault();
+      var billId = row.getAttribute('data-billdetail');
+      if (!billId) return;
+      showBillDetailModal(billId);
+    });
+  });
 }
 
 async function runBillHistorySearch() {
@@ -6517,54 +6750,19 @@ async function runBillHistorySearch() {
     }
 
     if (!rows.length) {
+      BILL_HISTORY_ROWS = [];
+      BILL_HISTORY_PAGE = 0;
       body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No historical bills found for selected criteria</td></tr>';
       footer.style.display = 'none';
       return;
     }
 
-    body.innerHTML = rows.slice(0, 500).map(function(r) {
-      var wo = String(r.work_order_id || r.WorkOrderId || '').trim();
-      var billId = String(r.id || r.Id || '').trim();
-      var grpResolved = String(r.property_group || r.PropertyGroup || '').trim();
-      if (!grpResolved) {
-        var nGroups = _nameToGroups[(String(r.property_name || r.PropertyName || '').trim().toLowerCase())] || [];
-        grpResolved = nGroups[0] || '';
-      }
-      var pmResolved = String(r.property_manager || r.PropertyManager || '').trim();
-      if (!pmResolved && grpResolved) {
-        pmResolved = getRoutingPmForGroup(grpResolved);
-      }
-      return '<tr>' +
-        '<td style="font-family:var(--font-mono);font-size:11px">' + (billId ? ('<button class="action-btn" data-billdetail="' + escapeHtml(billId) + '" style="padding:2px 8px">' + escapeHtml(String(r.bill_number || r.Reference || r.id || r.Id || '—')) + '</button>') : escapeHtml(String(r.bill_number || r.Reference || r.id || r.Id || '—'))) + '</td>' +
-        '<td>' + escapeHtml(String(r.vendor_name || r.VendorName || r.vendor_id || r.VendorId || '—')) + '</td>' +
-        '<td>' + escapeHtml(String(r.property_name || r.PropertyName || r.property_id || r.PropertyId || '—')) + '</td>' +
-        '<td>' + escapeHtml(grpResolved || '—') + '</td>' +
-        '<td>' + escapeHtml(pmResolved || '—') + '</td>' +
-        '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || r.TotalAmount || 0) + '</td>' +
-        '<td>' + escapeHtml((r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) ? formatDate(r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) : '—') + '</td>' +
-        '<td>' + escapeHtml(String(r.status_label || r.status || r.ApprovalStatus || '—')) + '</td>' +
-        '<td>' + (wo ? ('<button class="action-btn" data-wojump="' + escapeHtml(wo) + '" style="padding:2px 8px">#' + escapeHtml(wo.slice(0, 8)) + '</button>') : '<span style="color:var(--text-muted)">—</span>') + '</td>' +
-        '</tr>';
-    }).join('');
-
-    footer.style.display = '';
-    footer.textContent = 'History search returned ' + rows.length + ' bill(s) from ' + dateFrom + ' to ' + dateTo;
-
-    Array.prototype.forEach.call(body.querySelectorAll('button[data-wojump]'), function(btn) {
-      btn.addEventListener('click', function() {
-        var woId = btn.getAttribute('data-wojump');
-        if (!woId) return;
-        showWODetail(woId);
-      });
-    });
-    Array.prototype.forEach.call(body.querySelectorAll('button[data-billdetail]'), function(btn) {
-      btn.addEventListener('click', function() {
-        var billId = btn.getAttribute('data-billdetail');
-        if (!billId) return;
-        showBillDetailModal(billId);
-      });
-    });
+    BILL_HISTORY_ROWS = rows.slice();
+    BILL_HISTORY_PAGE = 0;
+    renderBillHistoryPage(dateFrom, dateTo);
   } catch (e) {
+    BILL_HISTORY_ROWS = [];
+    BILL_HISTORY_PAGE = 0;
     body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:20px">History search failed: ' + escapeHtml(String(e.message || e)) + '</td></tr>';
     footer.style.display = 'none';
   }
@@ -6998,11 +7196,22 @@ var currentWOVendor = '';
 var currentWOProperty = '';
 var currentWOAgeFilter = '';
 var currentWOSort = 'oldest';
+var currentWOView = 'board'; // 'board' | 'list'
 var currentActivityFilter = 'all';
 var expandedWOColumn = '';
 var kanbanBoardScrollState = { left: 0, top: 0 };
 var woCloseAssist = { currentPage: 0, pageSize: 10 };
 var showCompletedWOHistory = false;
+
+function setWOView(viewType) {
+  currentWOView = viewType === 'list' ? 'list' : 'board';
+  var board = $('#kanbanBoard');
+  if (board) board.classList.toggle('layout-list', currentWOView === 'list');
+  var boardBtn = $('#btnWOViewBoard');
+  var listBtn  = $('#btnWOViewList');
+  if (boardBtn) boardBtn.classList.toggle('active', currentWOView === 'board');
+  if (listBtn)  listBtn.classList.toggle('active',  currentWOView === 'list');
+}
 var completedWOHistoryRows = [];
 var completedWOHistoryLoading = false;
 var completedWOHistoryPage = 0;
@@ -9711,6 +9920,75 @@ function resolveVendorCompliance(v) {
   return { compliant: v.compliant, isManual: false };
 }
 
+/* Strict "Do Not Use" evaluation: AppFolio flag OR expired insurance dates */
+var _currentSelectedVendorId = null;
+
+function isVendorDoNotUse(v) {
+  if (v.doNotUse) return true;
+  var today = new Date();
+  if (v.insurance && new Date(v.insurance) < today) return true;
+  if (v.workersComp && new Date(v.workersComp) < today) return true;
+  return false;
+}
+
+function openVendorModal(vendorId) {
+  _currentSelectedVendorId = String(vendorId || '');
+  var v = VENDORS.find(function(vn) { return String(vn.id) === _currentSelectedVendorId; });
+  if (!v) return;
+
+  var today = new Date();
+  var expiredDocs = [];
+  var insExpired = v.insurance && new Date(v.insurance) < today;
+  var wcExpired  = v.workersComp && new Date(v.workersComp) < today;
+  if (insExpired) expiredDocs.push('Liability Insurance Expired');
+  if (wcExpired)  expiredDocs.push('Workers Comp Expired');
+  if (v.doNotUse) expiredDocs.push('Flagged by AppFolio');
+  var isDNU = expiredDocs.length > 0;
+
+  var nameEl   = $('#vdmName');
+  var tradeEl  = $('#vdmTrade');
+  var badgeEl  = $('#vdmStatusBadge');
+  var warnEl   = $('#vdmWarning');
+  var docsEl   = $('#vdmExpiredDocs');
+  var phoneEl  = $('#vdmPhone');
+  var emailEl  = $('#vdmEmail');
+  var insEl    = $('#vdmInsurance');
+  var wcEl     = $('#vdmWorkersComp');
+  var afLink   = $('#vdmAfLink');
+
+  if (nameEl)  nameEl.textContent  = v.name || '—';
+  if (tradeEl) tradeEl.textContent = getVendorTradeCategory(v);
+  if (phoneEl) phoneEl.textContent = v.phone || '—';
+  if (emailEl) emailEl.textContent = v.email || '—';
+
+  if (insEl) {
+    insEl.textContent = v.insurance || 'Not on file';
+    insEl.style.color = insExpired ? 'var(--danger)' : (v.insurance && daysBetween(today, new Date(v.insurance)) <= 60 ? 'var(--warning)' : 'var(--text-secondary)');
+  }
+  if (wcEl) {
+    wcEl.textContent = v.workersComp || 'Not on file';
+    wcEl.style.color = wcExpired ? 'var(--danger)' : (v.workersComp && daysBetween(today, new Date(v.workersComp)) <= 60 ? 'var(--warning)' : 'var(--text-secondary)');
+  }
+
+  if (badgeEl) {
+    badgeEl.textContent = isDNU ? 'DO NOT USE' : 'Active';
+    badgeEl.style.background = isDNU ? 'rgba(211,47,47,.15)' : 'rgba(46,125,50,.15)';
+    badgeEl.style.color = isDNU ? 'var(--danger)' : 'var(--success)';
+    badgeEl.style.borderColor = isDNU ? 'var(--danger)' : 'var(--success)';
+  }
+
+  if (warnEl)  warnEl.style.display = isDNU ? '' : 'none';
+  if (docsEl)  docsEl.textContent   = expiredDocs.join(' & ');
+
+  var afUrl = appfolioUrl('vendor', v.id);
+  if (afLink) {
+    afLink.href = afUrl || '#';
+    afLink.style.display = afUrl ? '' : 'none';
+  }
+
+  openModal('vendorDetailModal');
+}
+
 function navigateToBillsForVendor(vendorName) {
   // Switch to billing tab
   var billingTab = document.querySelector('.nav-tab[data-tab="billing"]');
@@ -10292,6 +10570,11 @@ function renderRoutingScorecard() {
   var html = '';
   ROUTING_PM_STATS.forEach(function(r) {
     var last = r.last_flagged ? formatDate(r.last_flagged) : '-';
+    var total = Number(r.total_flagged || 0);
+    var potentialBypass = Number(r.pending || 0) + Number(r.approved_external || 0);
+    var riskLabel = 'Low';
+    if (potentialBypass >= 5 || (total > 0 && (potentialBypass / total) >= 0.6)) riskLabel = 'High';
+    else if (potentialBypass >= 2 || (total > 0 && (potentialBypass / total) >= 0.35)) riskLabel = 'Medium';
     html += '<tr>' +
       '<td><strong>' + escapeHtml(String(r.pm_name || 'Unmapped PM')) + '</strong></td>' +
       '<td>' + escapeHtml(String(r.total_flagged || '0')) + '</td>' +
@@ -10299,6 +10582,7 @@ function renderRoutingScorecard() {
       '<td>' + escapeHtml(String(r.pending || '0')) + '</td>' +
       '<td>' + escapeHtml(String(r.approved_external || '0')) + '</td>' +
       '<td>' + escapeHtml(String(r.reassigned || '0')) + '</td>' +
+      '<td>' + escapeHtml(String(potentialBypass)) + ' <span class="status-badge status-' + riskLabel.toLowerCase() + '">' + escapeHtml(riskLabel) + '</span></td>' +
       '<td style="font-family:var(--font-mono);font-size:11px">' + escapeHtml(last) + '</td>' +
       '</tr>';
   });
@@ -10340,7 +10624,7 @@ function renderRoutingEventsTable(query) {
   if (nextBtn) nextBtn.disabled = ROUTING_PAGE >= totalPages;
 
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="11" style="color:var(--text-muted)">No flagged routing events match current filters.</td></tr>';
+    body.innerHTML = '<tr><td colspan="12" style="color:var(--text-muted)">No flagged routing events match current filters.</td></tr>';
     return;
   }
 
@@ -10349,17 +10633,31 @@ function renderRoutingEventsTable(query) {
     var conf = String(r.confidence || 'medium');
     var rev = String(r.review_status || 'pending');
     var flaggedAt = r.detected_at ? timeAgo(r.detected_at) : '-';
+    var matchLabel = String(r.matched_trade || '-').trim();
+    var riskInsight = '';
+    if (rev === 'approved_external') {
+      riskInsight = 'External approved; FLM bid path likely bypassed.';
+    } else if (rev === 'pending') {
+      riskInsight = conf === 'high'
+        ? 'High-risk bypass candidate. Verify FLM was offered bid/work first.'
+        : 'Review needed: confirm FLM had first-look opportunity.';
+    } else if (rev === 'reassign_inhouse') {
+      riskInsight = 'Recovered in-house routing path.';
+    } else {
+      riskInsight = 'Reviewed and dismissed.';
+    }
     html += '<tr data-routing-id="' + escapeHtml(String(r.id)) + '">' +
       '<td style="font-family:var(--font-mono)">' + escapeHtml(String(r.wo_number || '').replace(/^.*(\d{4,})$/, '$1')) + '</td>' +
       '<td>' + escapeHtml(String(r.property_name || '-')) + '</td>' +
       '<td>' + escapeHtml(String(r.property_group || '-')) + '</td>' +
       '<td><strong>' + escapeHtml(String(r.pm_name || 'Unmapped PM')) + '</strong></td>' +
       '<td>' + escapeHtml(String(r.vendor_name || '-')) + '</td>' +
-      '<td>' + escapeHtml(String(r.matched_trade || '-')) + '</td>' +
+      '<td>' + escapeHtml(matchLabel) + '</td>' +
       '<td><span class="routing-badge ' + conf + '">' + escapeHtml(conf) + '</span></td>' +
       '<td>' + escapeHtml(String(r.wo_status || '-')) + '</td>' +
       '<td style="font-family:var(--font-mono);font-size:11px">' + escapeHtml(flaggedAt) + '</td>' +
       '<td class="routing-review ' + rev + '">' + escapeHtml(rev.replace('_', ' ')) + '</td>' +
+      '<td style="max-width:260px;white-space:normal;line-height:1.35">' + escapeHtml(riskInsight) + '</td>' +
       '<td>' +
       '<button class="filter-btn" data-routing-review="approved_external" data-routing-id="' + escapeHtml(String(r.id)) + '" style="padding:4px 6px">Approve</button> ' +
       '<button class="filter-btn" data-routing-review="reassign_inhouse" data-routing-id="' + escapeHtml(String(r.id)) + '" style="padding:4px 6px;color:var(--success)">Reassign</button> ' +
@@ -10392,6 +10690,131 @@ function renderRoutingCapabilities() {
       '</tr>';
   });
   body.innerHTML = html;
+}
+
+function buildRoutingWorkTypesEditorHtml() {
+  var rows = '';
+  if (!ROUTING_CAPABILITIES.length) {
+    rows = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:12px">No work types configured.</td></tr>';
+  } else {
+    ROUTING_CAPABILITIES.forEach(function(c) {
+      var kws = [];
+      if (Array.isArray(c.keywords)) kws = c.keywords;
+      else if (typeof c.keywords === 'string') {
+        try { kws = JSON.parse(c.keywords); } catch (e) { kws = []; }
+      }
+      rows += '<tr>' +
+        '<td><strong>' + escapeHtml(String(c.trade || '')) + '</strong></td>' +
+        '<td style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(kws.join(', ')) + '</td>' +
+        '<td><label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" data-routing-cap-modal-toggle="' + escapeHtml(String(c.id)) + '"' + (Number(c.active) === 1 ? ' checked' : '') + '> ' + (Number(c.active) === 1 ? 'On' : 'Off') + '</label></td>' +
+        '<td><button class="filter-btn" data-routing-cap-modal-edit="' + escapeHtml(String(c.id)) + '" style="padding:4px 6px">Edit</button> <button class="filter-btn" data-routing-cap-modal-del="' + escapeHtml(String(c.id)) + '" style="padding:4px 6px;color:var(--danger)">Delete</button></td>' +
+        '</tr>';
+    });
+  }
+
+  return '' +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+      '<button class="action-btn" id="btnRoutingCapModalAdd"><i class="fas fa-plus"></i> Add Work Type</button>' +
+      '<button class="action-btn" id="btnRoutingCapModalRefresh"><i class="fas fa-sync-alt"></i> Refresh</button>' +
+      '<span style="font-size:11px;color:var(--text-muted)">Changes save directly to routing SQL tables.</span>' +
+    '</div>' +
+    '<div class="table-scroll" style="max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:10px">' +
+      '<table class="data-table" style="margin:0">' +
+        '<thead><tr><th>Work Type</th><th>Keywords</th><th>Enabled</th><th>Actions</th></tr></thead>' +
+        '<tbody id="routingCapabilitiesModalBody">' + rows + '</tbody>' +
+      '</table>' +
+    '</div>';
+}
+
+function openRoutingWorkTypesModal() {
+  showItemDetail('Routing Work Type Rules', [
+    { section: 'Rule Editor', icon: 'fa-sliders-h' },
+    { label: 'Work Types', html: buildRoutingWorkTypesEditorHtml() }
+  ]);
+
+  requestAnimationFrame(function() {
+    var mount = document.getElementById('routingCapabilitiesModalBody');
+    var addBtn = document.getElementById('btnRoutingCapModalAdd');
+    var refreshBtn = document.getElementById('btnRoutingCapModalRefresh');
+
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', async function() {
+        await loadRoutingCapabilities();
+        openRoutingWorkTypesModal();
+      });
+    }
+
+    if (addBtn) {
+      addBtn.addEventListener('click', async function() {
+        var trade = await hmPrompt('Work type name (example: Locksmith):', '', { title: 'Add Work Type' });
+        if (!trade) return;
+        var kwRaw = await hmPrompt('Keywords (comma separated):', '', { title: 'Add Work Type' });
+        var keywords = String(kwRaw || '').split(',').map(function(k) { return k.trim(); }).filter(Boolean);
+        await proxyPost('routing_monitor', { op: 'capability_upsert', trade: trade.trim(), keywords: keywords, active: 1 });
+        await loadRoutingCapabilities();
+        await loadRoutingEventsAndStats();
+        openRoutingWorkTypesModal();
+      });
+    }
+
+    if (!mount) return;
+    mount.addEventListener('change', async function(e) {
+      var chk = e.target.closest('[data-routing-cap-modal-toggle]');
+      if (!chk) return;
+      var capId = Number(chk.getAttribute('data-routing-cap-modal-toggle') || '0');
+      var cap = ROUTING_CAPABILITIES.find(function(c) { return Number(c.id) === capId; });
+      if (!cap) return;
+      var parsedKeywords = [];
+      if (typeof cap.keywords === 'string') {
+        try { parsedKeywords = JSON.parse(cap.keywords || '[]'); } catch (er) { parsedKeywords = []; }
+      } else {
+        parsedKeywords = cap.keywords || [];
+      }
+      await proxyPost('routing_monitor', {
+        op: 'capability_upsert',
+        id: cap.id,
+        trade: cap.trade,
+        keywords: parsedKeywords,
+        active: chk.checked ? 1 : 0
+      });
+      await loadRoutingCapabilities();
+      await loadRoutingEventsAndStats();
+      openRoutingWorkTypesModal();
+    });
+
+    mount.addEventListener('click', async function(e) {
+      var editBtn = e.target.closest('[data-routing-cap-modal-edit]');
+      var delBtn = e.target.closest('[data-routing-cap-modal-del]');
+
+      if (editBtn) {
+        var cid = Number(editBtn.getAttribute('data-routing-cap-modal-edit') || '0');
+        var cur = ROUTING_CAPABILITIES.find(function(c) { return Number(c.id) === cid; });
+        if (!cur) return;
+        var trade = await hmPrompt('Work type name:', String(cur.trade || ''), { title: 'Edit Work Type' });
+        if (!trade) return;
+        var kws = [];
+        try { kws = typeof cur.keywords === 'string' ? JSON.parse(cur.keywords) : (cur.keywords || []); } catch (er) { kws = []; }
+        var kwRaw = await hmPrompt('Keywords (comma separated):', kws.join(', '), { title: 'Edit Work Type' });
+        if (kwRaw === null) return;
+        var nextKws = String(kwRaw).split(',').map(function(k) { return k.trim(); }).filter(Boolean);
+        await proxyPost('routing_monitor', { op: 'capability_upsert', id: cur.id, trade: trade.trim(), keywords: nextKws, active: Number(cur.active) === 1 ? 1 : 0 });
+        await loadRoutingCapabilities();
+        await loadRoutingEventsAndStats();
+        openRoutingWorkTypesModal();
+        return;
+      }
+
+      if (delBtn) {
+        var did = Number(delBtn.getAttribute('data-routing-cap-modal-del') || '0');
+        if (!did) return;
+        if (!await hmConfirm('Delete this work type rule?', { title: 'Delete Rule', okLabel: 'Delete', danger: true })) return;
+        await proxyPost('routing_monitor', { op: 'capability_delete', id: did });
+        await loadRoutingCapabilities();
+        await loadRoutingEventsAndStats();
+        openRoutingWorkTypesModal();
+      }
+    });
+  });
 }
 
 function renderRoutingPmMapEditor() {
@@ -10556,10 +10979,7 @@ async function initRoutingMonitor() {
     }
     if ($('#btnRoutingCapToggle')) {
       $('#btnRoutingCapToggle').addEventListener('click', function() {
-        var wrap = $('#routingCapabilitiesWrap');
-        if (!wrap) return;
-        var isHidden = window.getComputedStyle(wrap).display === 'none';
-        wrap.style.display = isHidden ? '' : 'none';
+        openRoutingWorkTypesModal();
       });
     }
     if ($('#btnRoutingMapToggle')) {
@@ -11013,35 +11433,11 @@ function wireUpUI() {
         });
         return;
       }
-      // Vendor card click (detail modal)
+      // Vendor card click — open vendor detail modal
       var card = e.target.closest('.vendor-card');
       if (card && !e.target.closest('.vendor-cat-select') && !e.target.closest('.vendor-trade-cat-select')) {
         var vid2 = card.getAttribute('data-vendorid');
-        var v = VENDORS.find(function(vn) { return String(vn.id) === vid2; });
-        if (!v) return;
-        var cRes = resolveVendorCompliance(v);
-        var vCat = getVendorCategory(v.id) || 'Uncategorized';
-        var compText = cRes.compliant ? 'Compliant' : (v.compliantStatus || 'Non-Compliant');
-        if (cRes.isManual) compText += ' (manual override)';
-        showItemDetail('Vendor \u2014 ' + v.name, [
-          { section: 'Vendor Info', icon: 'fa-hard-hat' },
-          { label: 'Name', value: v.name },
-          { label: 'ID', value: String(v.id) },
-          { label: 'Category', value: vCat },
-          { label: 'Trade Category', value: getVendorTradeCategory(v) },
-          { label: 'Type (API)', value: v.vendorType || '\u2014' },
-          { label: 'Trades', value: v.trades || '\u2014' },
-          { section: 'Contact', icon: 'fa-phone' },
-          { label: 'Phone', value: v.phone || '\u2014' },
-          { label: 'Email', value: v.email || '\u2014' },
-          { label: 'Address', value: v.address || '\u2014' },
-          { section: 'Compliance', icon: 'fa-shield-alt' },
-          { label: 'Status', value: compText },
-          { label: 'Liability Ins. Exp.', value: v.insurance || '\u2014' },
-          { label: 'Auto Ins. Exp.', value: v.autoInsurance || '\u2014' },
-          { label: 'Workers Comp Exp.', value: v.workersComp || '\u2014' },
-          { label: 'Do Not Use', value: v.doNotUse ? 'YES' : 'No' }
-        ], appfolioUrl('vendor', v.id));
+        openVendorModal(vid2);
       }
     });
     vendGrid.addEventListener('change', function(e) {
@@ -13275,17 +13671,47 @@ renderDashboardKPIs = function() {
     status.innerHTML = '<span class="feed-pulse"></span> ' + escapeHtml(text);
   }
 
-  function pollLiveEvents() {
-    if (!isProxySessionReady()) {
-      setStatus('Awaiting sign-in…');
-      return;
+  async function safePollWebhookEvents() {
+    try {
+      if (typeof pollWebhookEvents === 'function') {
+        await pollWebhookEvents();
+      }
+    } catch (err) {
+      console.debug('Webhook poll cycle skipped due to network/proxy disconnect.');
     }
-    proxyAction('webhook_events', { limit: 100 }).then(function(data) {
+  }
+
+  async function safePollLiveEvents() {
+    try {
+      if (!isProxySessionReady()) {
+        setStatus('Awaiting sign-in…');
+        return;
+      }
+      var data = await proxyAction('webhook_events', { limit: 100 });
       mergeEvents(data && Array.isArray(data.events) ? data.events : []);
       setStatus('Listening for AppFolio events…');
-    }).catch(function() {
+    } catch (err) {
       setStatus('Live feed temporarily unavailable. Retrying…');
-    });
+      console.debug('Live events poll cycle skipped due to network/proxy disconnect.');
+    }
+  }
+
+  var POLL_INTERVAL_MS = 30000;
+  async function _poll() {
+    if (_pollTimer) {
+      clearTimeout(_pollTimer);
+      _pollTimer = null;
+    }
+    try {
+      await Promise.allSettled([
+        safePollWebhookEvents(),
+        safePollLiveEvents()
+      ]);
+    } catch (criticalErr) {
+      console.error('Critical error in webhook polling engine:', criticalErr);
+    } finally {
+      _pollTimer = setTimeout(_poll, POLL_INTERVAL_MS);
+    }
   }
 
   window.WebhookLive = {
@@ -13306,8 +13732,13 @@ renderDashboardKPIs = function() {
     };
   }
 
-  _pollTimer = setInterval(pollLiveEvents, 30000);
-  setTimeout(pollLiveEvents, 2000);
+  setTimeout(_poll, 2000);
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) {
+      console.log('Tab active: forcing immediate webhook poll sync...');
+      _poll();
+    }
+  });
   render();
 })();
 
