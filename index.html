@@ -2260,7 +2260,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">v9.2.6</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">v9.2.2</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -2787,12 +2787,12 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
         <thead>
           <tr>
             <th>Bill #</th>
-            <th>Vendor / Payee</th>
+            <th>Vendor</th>
             <th>Property</th>
             <th>Amount</th>
             <th>Date</th>
             <th>Status</th>
-            <th>Group</th>
+            <th>Linked WO</th>
           </tr>
         </thead>
         <tbody id="billBody"><tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">Load bills using the Refresh button above</td></tr></tbody>
@@ -2846,6 +2846,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
           <option value="">All Groups</option>
         </select>
         <button id="refreshPropertiesBtn" style="padding:6px 12px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);border-radius:4px;cursor:pointer;font-size:13px;"><i class="fas fa-sync-alt"></i> Refresh</button>
+        <button id="btnBulkNoteOpen" onclick="openBulkNoteModal()" style="padding:6px 12px;border:1px solid var(--accent);background:var(--bg-secondary);color:var(--accent);border-radius:4px;cursor:pointer;font-size:13px;"><i class="fas fa-pen-to-square"></i> Bulk Update Notes</button>
       </div>
     </div>
     <div class="table-scroll">
@@ -2901,6 +2902,10 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
         <option value="">All Properties</option>
       </select>
       <div class="search-box" style="width:180px"><i class="fas fa-search"></i><input type="text" placeholder="Search turns…" id="turnPipeSearch"></div>
+      <div class="pipe-view-toggle" title="Switch between list and kanban view">
+        <button class="pipe-view-btn active" id="btnTurnViewList" onclick="toggleTurnView('list')"><i class="fas fa-list"></i> List</button>
+        <button class="pipe-view-btn" id="btnTurnViewKanban" onclick="toggleTurnView('kanban')"><i class="fas fa-columns"></i> Kanban</button>
+      </div>
       <button class="sec-refresh" id="btnRefreshTurns"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
@@ -2921,8 +2926,10 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
     <div class="pipe-legend-label" style="text-align:right">Status</div>
   </div>
 
-  <!-- Turn Pipeline Cards (JS rendered) -->
+  <!-- Turn Pipeline: List view -->
   <div id="turnPipeline" class="turn-pipeline"></div>
+  <!-- Turn Pipeline: Kanban view (hidden until toggled) -->
+  <div id="turnKanban" class="kanban-board" style="display:none;padding-top:4px"></div>
 </section>
 
 <section class="section" id="sec-inspections">
@@ -3518,6 +3525,79 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
         <i class="fas fa-external-link-alt"></i> View in AppFolio
       </a>
       <button class="action-btn" id="itemDetailCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Update Notes Modal -->
+<div class="modal-overlay" id="bulkNoteModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-head">
+      <h3><i class="fas fa-pen-to-square" style="color:var(--accent);margin-right:6px"></i> Bulk Update Property Notes</h3>
+      <button class="modal-close" id="bulkNoteModalClose">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
+        Adds a note to every property in the current group filter.
+        Leave the group filter on <em>All Groups</em> to target all properties.
+      </p>
+      <div style="margin-bottom:10px">
+        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Target group</label>
+        <div id="bulkNoteTargetGroup" style="font-size:13px;font-weight:600;color:var(--text-primary)">—</div>
+        <div id="bulkNotePropertyCount" style="font-size:11px;color:var(--text-muted)"></div>
+      </div>
+      <div style="margin-bottom:10px">
+        <label for="bulkNoteText" style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Note text <span style="color:var(--danger)">*</span></label>
+        <textarea id="bulkNoteText" rows="5" placeholder="Enter the note to append to each property…" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);font-size:13px;resize:vertical;font-family:inherit;"></textarea>
+      </div>
+      <div id="bulkNoteStatus" style="min-height:20px;font-size:12px;color:var(--text-muted)"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="action-btn primary" id="bulkNoteSubmitBtn" onclick="executeBulkNoteUpdate()"><i class="fas fa-check"></i> Post Notes</button>
+      <button class="action-btn" id="bulkNoteCloseBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Turn Detail Modal — opened from Kanban card click -->
+<div class="modal-overlay" id="turnDetailModal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-head">
+      <div>
+        <h3 id="tdmUnit" style="margin:0;color:var(--accent)">Unit</h3>
+        <div id="tdmProperty" style="font-size:12px;color:var(--text-muted);margin-top:2px"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="tdmStage" class="tag" style="font-size:12px"></span>
+        <button class="modal-close" id="turnDetailClose">&times;</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:20px;margin-bottom:14px;padding:10px;background:var(--bg-secondary);border-radius:var(--radius);flex-wrap:wrap">
+        <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Move-Out</div><div id="tdmMoveOut" style="font-weight:700;font-size:13px;color:var(--text-primary)">—</div></div>
+        <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Move-In</div><div id="tdmMoveIn" style="font-weight:700;font-size:13px;color:var(--text-primary)">—</div></div>
+        <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Elapsed</div><div id="tdmElapsed" style="font-weight:700;font-size:13px;color:var(--text-primary)">—</div></div>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Associated Work Orders</div>
+      <div class="table-scroll" style="max-height:320px">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>WO #</th>
+              <th>Description</th>
+              <th>Status</th>
+              <th>Vendor</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tdmWOBody">
+            <tr><td colspan="5" style="text-align:center;padding:14px;color:var(--text-muted)">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="action-btn" id="turnDetailCloseBtn">Close</button>
     </div>
   </div>
 </div>
