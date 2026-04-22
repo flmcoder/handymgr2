@@ -34,7 +34,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.2.7';
+var APP_VERSION = 'v9.6.8';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 
@@ -3368,10 +3368,10 @@ async function fetchBills(days, opts) {
 
     if (opts.scoped !== false) {
       grpName = getEffectiveGroupId();
-      if (grpName) params.group_name = grpName;
-      if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
-
       groupUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
+      // Only send UUID scope to server-side filters; when UUID is missing,
+      // rely on client-side property-group association maps to avoid empty legacy responses.
+      if (groupUuid) params.group_uuid = groupUuid;
     }
 
     if (!routeAction) {
@@ -3540,13 +3540,19 @@ async function fetchBills(days, opts) {
       });
     }
 
-    // Strict client-side scope guard: if a group UUID is active, never render bills from other groups.
-    if (opts.scoped !== false && groupUuid) {
+    // Strict client-side scope guard.
+    if (opts.scoped !== false && (groupUuid || grpName)) {
       var groupUuidLower = String(groupUuid || '').trim().toLowerCase();
+      var groupNameLower = String(grpName || '').trim().toLowerCase();
+      var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
       mappedBills = mappedBills.filter(function(b) {
         var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
-        if (billGroupUuid) return billGroupUuid === groupUuidLower;
-        return isInPropertyGroup(b.propertyId, b.propertyName, grpName);
+        if (groupUuidLower && billGroupUuid) return billGroupUuid === groupUuidLower;
+        var billGroupName = String(resolveBillGroupName(b) || b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
+        if (groupNameLower && billGroupName) return billGroupName === groupNameLower;
+        if (hasGroupMaps) return isInPropertyGroup(b.propertyId, b.propertyName, grpName);
+        // If maps are not ready yet and no explicit group fields are present, avoid false-empty results.
+        return true;
       });
     }
 
@@ -6415,6 +6421,7 @@ function renderBillsSection() {
 
   var grp = getEffectiveGroupId();
   var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+  var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
   var activePropertyId = String(window.filteredPropertyId || '').trim();
   var activeUnitId = String(window.filteredUnitId || '').trim();
   var statusFilter = ($('#billStatusFilter') ? $('#billStatusFilter').value : '').toLowerCase();
@@ -6442,8 +6449,8 @@ function renderBillsSection() {
         var billGroup = String(b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
         if (billGroup) {
           if (billGroup !== String(grp).trim().toLowerCase()) return false;
-        } else if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) {
-          return false;
+        } else if (hasGroupMaps) {
+          if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) return false;
         }
       }
     }
