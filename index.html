@@ -84,7 +84,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">v9.2.7</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">0.0.1</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -580,6 +580,11 @@
     <div class="kpi-card green"><div class="kpi-label">Paid This Period</div><div class="kpi-value" id="billKpiPaid">—</div><div class="kpi-sub" id="billKpiPaidSub">last 30 days</div></div>
     <div class="kpi-card purple"><div class="kpi-label">Vendors w/ Open Bills</div><div class="kpi-value" id="billKpiVendors">—</div><div class="kpi-sub" id="billKpiVendorsSub">distinct payees</div></div>
   </div>
+  <div class="section-subtabs" id="billingSubtabs">
+    <button class="section-subtab active" data-billing-subtab="queue"><i class="fas fa-list-alt"></i> Bills Queue</button>
+    <button class="section-subtab" data-billing-subtab="history"><i class="fas fa-clock-rotate-left"></i> Bill History</button>
+  </div>
+  <div class="section-subpanel active" id="billing-subpanel-queue">
   <div class="table-wrapper">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-list-alt" style="color:var(--accent)"></i> Bills <span id="billing-source-badge" class="source-badge legacy">⚠ Legacy</span></div>
@@ -635,7 +640,9 @@
     </div>
     <div class="table-footer" id="billFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
   </div>
+  </div>
 
+  <div class="section-subpanel" id="billing-subpanel-history" style="display:none">
   <div class="table-wrapper" style="margin-top:12px">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-clock-rotate-left" style="color:var(--accent)"></i> Bill History Search</div>
@@ -667,6 +674,7 @@
     </div>
     <div class="table-footer" id="billHistFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
   </div>
+  </div>
 </section>
 
 <section class="section" id="sec-properties">
@@ -684,6 +692,11 @@
         <button id="btnBulkNoteOpen" onclick="openBulkNoteModal()" style="padding:6px 12px;border:1px solid var(--accent);background:var(--bg-secondary);color:var(--accent);border-radius:4px;cursor:pointer;font-size:13px;"><i class="fas fa-pen-to-square"></i> Bulk Update Notes</button>
       </div>
     </div>
+    <div class="section-subtabs" id="propertiesSubtabs">
+      <button class="section-subtab active" data-properties-subtab="directory"><i class="fas fa-table"></i> Directory</button>
+      <button class="section-subtab" data-properties-subtab="bulk"><i class="fas fa-pen-to-square"></i> Bulk Notes</button>
+    </div>
+    <div class="section-subpanel active" id="properties-subpanel-directory">
     <div class="table-scroll">
       <table class="data-table" id="propertiesTable">
         <thead>
@@ -704,6 +717,31 @@
           <tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">Loading properties...</td></tr>
         </tbody>
       </table>
+    </div>
+    <div class="table-footer" id="propertiesFooter" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 12px;font-size:11px;color:var(--text-muted)">
+      <div id="propertiesPageMeta">Page 1 of 1</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <label for="propertiesPageSize" style="font-size:11px;color:var(--text-muted)">Rows</label>
+        <select id="propertiesPageSize" class="filter-select" style="font-size:11px;padding:3px 6px">
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+        </select>
+        <button class="action-btn" id="propertiesPrevPage" style="padding:3px 8px">Prev</button>
+        <button class="action-btn" id="propertiesNextPage" style="padding:3px 8px">Next</button>
+      </div>
+    </div>
+    </div>
+    <div class="section-subpanel" id="properties-subpanel-bulk" style="display:none">
+      <div class="table-wrapper properties-bulk-panel">
+        <div class="table-header">
+          <div class="table-title"><i class="fas fa-pen-to-square" style="color:var(--accent)"></i> Bulk Property Note Updates</div>
+        </div>
+        <div class="properties-bulk-content">
+          <p id="propertiesBulkScopeText">Use the active property-group filter and search above to scope which properties will receive the note update.</p>
+          <button class="action-btn primary" onclick="openBulkNoteModal()"><i class="fas fa-pen"></i> Open Bulk Note Composer</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1514,62 +1552,6 @@
     </div>
     <div class="modal-footer">
       <button class="action-btn" id="vendorDetailModalCloseBtn">Close</button>
-    </div>
-  </div>
-</div>
-
-<!-- What's New Modal (shown once per 36h after vault unlock) -->
-<div class="modal-overlay" id="whatsNewModal">
-  <div class="modal" style="max-width:560px">
-    <div class="modal-head">
-      <h3><i class="fas fa-star" style="color:var(--accent);margin-right:8px"></i> What's New</h3>
-      <button class="modal-close" id="whatsNewClose">&times;</button>
-    </div>
-    <div class="modal-body">
-        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px" id="versionBadge">v9.2.7 • Highlights & Changelog</div>
-      <div style="max-height:290px;overflow-y:auto;padding-right:4px">
-      <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px">
-        <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--accent);flex-shrink:0;margin-top:1px"><i class="fas fa-building"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Property operations panel</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">New Properties tab now includes per-property notes/listings details and direct bill scoping from property detail.</div></div>
-        </li>
-        <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--warning);flex-shrink:0;margin-top:1px"><i class="fas fa-filter"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Billing scope chip</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Billing now shows an active property scope chip with one-click clear when navigated from a property record.</div></div>
-        </li>
-        <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--success);flex-shrink:0;margin-top:1px"><i class="fas fa-database"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Current property counts</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Property rows now display live bill, note, and listing counts from proxy-side aggregates.</div></div>
-        </li>
-        <li style="display:flex;gap:10px;align-items:flex-start">
-          <span style="color:var(--accent);flex-shrink:0;margin-top:1px"><i class="fas fa-book"></i></span>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Version & changelog sync</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Version badges, APP_VERSION, and proxy README changelog are now aligned at v9.2.7.</div></div>
-          </div>
-        </div>
-        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
-          <div style="font-weight:700;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">v9.2.7</div>
-          <div style="display:flex;flex-direction:column;gap:8px;">
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Version regression fixed</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Topbar build badge and APP_VERSION are now aligned so the app no longer reports an older 9.2.2 build while running newer code.</div></div>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Resilient fetch retries</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Core fetch timeout helper now includes exponential backoff + jitter for transient browser/network drops and proxy 5xx responses.</div></div>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Armored webhook polling</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Live webhook polling now uses an unbreakable setTimeout loop with Promise.allSettled and visibility wake-up refresh, preventing feed freezes after network interruptions.</div></div>
-          </div>
-        </div>
-        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
-          <div style="font-weight:700;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">v9.2.4</div>
-          <div style="display:flex;flex-direction:column;gap:8px;">
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Unit tracking</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Units are now cached from AppFolio (/api/v0/units) and linked to properties. The Properties panel shows unit counts per property.</div></div>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Property detail — Units tab</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Property detail modal now shows a Units tab with status (Occupied/Vacant/Notice), bed/bath, and a per-unit Bills filter shortcut.</div></div>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">Billing unit scope</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Billing view now supports unit-level drill-down for multifamily. Scope chip shows Property › Unit with individual Clear Unit / Clear All buttons.</div></div>
-          <div><div style="font-weight:600;font-size:13px;color:var(--text-primary)">billing_map unit_id</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Bills are now stored with unit_id in billing_map. bills_by_unit route added to proxy for server-side unit-scoped bill queries.</div></div>
-        </li>
-      </ul>
-      </div>
-    </div>
-    <div class="modal-footer" style="justify-content:space-between;align-items:center">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:pointer">
-        <input type="checkbox" id="whatsNewDontShow" style="accent-color:var(--accent)"> Don't show again
-      </label>
-      <button class="action-btn primary" id="whatsNewDismiss"><i class="fas fa-check"></i> Got it</button>
     </div>
   </div>
 </div>
