@@ -278,12 +278,27 @@ function appfolioUrl(type, id) {
 // Uses pre-computed UUID-based lookup maps built by resolvePropertyGroupNames.
 // Maps are: _nameToGroups (name→groups), _idToGroups (id→groups), _uuidToGroups (uuid→groups).
 var _isInGroupMissLogCount = 0; // throttle miss logs
+
+function normalizePropertyLookupKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function groupsByPropertyName(propertyName) {
+  var lower = String(propertyName || '').trim().toLowerCase();
+  if (!lower) return [];
+  var byExact = _nameToGroups[lower] || [];
+  if (byExact.length) return byExact;
+  var normalized = normalizePropertyLookupKey(lower);
+  if (!normalized) return [];
+  return _nameToGroups[normalized] || [];
+}
+
 function isInPropertyGroup(propertyId, propertyName, groupName) {
   if (!groupName) return true; // no filter = show all
 
   // 1. Fast lookup by property name (covers both Reports API and DB API names)
   if (propertyName) {
-    var groups = _nameToGroups[String(propertyName).trim().toLowerCase()];
+    var groups = groupsByPropertyName(propertyName);
     if (groups && groups.indexOf(groupName) !== -1) return true;
   }
 
@@ -326,6 +341,16 @@ function _addToGroupMap(map, key, groupName) {
   var k = String(key);
   if (!map[k]) map[k] = [];
   if (map[k].indexOf(groupName) === -1) map[k].push(groupName);
+}
+
+function _addNameToGroupMap(name, groupName) {
+  var lower = String(name || '').trim().toLowerCase();
+  if (!lower) return;
+  _addToGroupMap(_nameToGroups, lower, groupName);
+  var normalized = normalizePropertyLookupKey(lower);
+  if (normalized && normalized !== lower) {
+    _addToGroupMap(_nameToGroups, normalized, groupName);
+  }
 }
 
 // Populates the GLOBAL group filter dropdown (replaces per-tab dropdowns)
@@ -2296,6 +2321,15 @@ function extractBillPropertyId(rawBill, normalizedLineItems) {
   ).trim();
 }
 
+function extractBillUnitId(rawBill, normalizedLineItems) {
+  var lineItems = Array.isArray(normalizedLineItems) ? normalizedLineItems : [];
+  var first = lineItems[0] || {};
+  return String(
+    rawBill.unit_id || rawBill.UnitId || rawBill.unitId || rawBill.UnitUUID || rawBill.unit_uuid ||
+    first.UnitId || first.unit_id || first.unitId || first.UnitUUID || first.unit_uuid || ''
+  ).trim();
+}
+
 function getNormalizedBillDisplayNumber(billLike) {
   var b = billLike && typeof billLike === 'object' ? billLike : {};
   var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
@@ -2333,18 +2367,41 @@ function resolveVendorNameFromMaps(vendorId, fallback) {
 function resolvePropertyMetaFromMaps(propertyId, fallbackName, fallbackGroupId) {
   var key = String(propertyId || '').trim();
   var fallback = {
+    id: key,
     name: String(fallbackName || '').trim(),
     groupId: String(fallbackGroupId || '').trim(),
     groupName: '',
+    siteManager: '',
   };
-  if (!key || !window.AppDB || !window.AppDB.properties) return fallback;
-  var prop = window.AppDB.properties.get(key);
+  var prop = null;
+  if (key && window.AppDB && window.AppDB.properties) {
+    prop = window.AppDB.properties.get(key) || null;
+  }
+
+  // Fallback lookup by property name (handles cases where bills provide name but not id).
+  if (!prop && fallback.name) {
+    var fbLower = String(fallback.name || '').trim().toLowerCase();
+    var fbNorm = normalizePropertyLookupKey(fallback.name || '');
+    prop = (PROPERTIES || []).find(function(p) {
+      var pName = String((p && p.name) || '').trim().toLowerCase();
+      if (!pName) return false;
+      if (pName === fbLower) return true;
+      return normalizePropertyLookupKey(pName) === fbNorm;
+    }) || null;
+  }
+
   if (!prop) return fallback;
-  var groupId = String(prop.propertyGroupId || prop.PropertyGroupId || prop.property_group_id || fallback.groupId || '').trim();
+
+  var groupId = String(prop.propertyGroupId || prop.PropertyGroupId || prop.property_group_id || (Array.isArray(prop._groupIds) ? prop._groupIds[0] : '') || fallback.groupId || '').trim();
+  var groupName = String(prop.propertyGroup || prop.groupName || prop.property_group || prop.portfolio || prop._propertyGroup || '').trim();
+  var siteManager = String(prop.siteManager || prop.site_manager || prop.property_manager || prop.PropertyManager || '').trim();
+
   return {
+    id: String(prop.id || prop.Id || prop.property_id || prop.PropertyId || key || '').trim(),
     name: String(prop.name || prop.Name || prop.property_name || prop.PropertyName || fallback.name || '').trim(),
     groupId: groupId,
-    groupName: String(prop.propertyGroup || prop.groupName || prop.property_group || '').trim(),
+    groupName: groupName,
+    siteManager: siteManager,
   };
 }
 
@@ -3320,6 +3377,11 @@ function resolveBillGroupName(b) {
   if (pname && pname !== 'multiple/unknown') {
     var nGroups = _nameToGroups[pname];
     if (nGroups && nGroups.length) return nGroups[0];
+    var normalizedName = normalizePropertyLookupKey(pname);
+    if (normalizedName) {
+      var nGroupsNormalized = _nameToGroups[normalizedName];
+      if (nGroupsNormalized && nGroupsNormalized.length) return nGroupsNormalized[0];
+    }
   }
 
   return '';
@@ -3489,6 +3551,7 @@ async function fetchBills(days, opts) {
               }
             })()));
       var propertyId = extractBillPropertyId(raw, lineItems);
+      var unitId = extractBillUnitId(raw, lineItems);
       var propertyMeta = resolvePropertyMetaFromMaps(
         propertyId,
         b.property_name || raw.PropertyName || raw.property_name || raw.Property || raw.property || '',
@@ -3506,10 +3569,12 @@ async function fetchBills(days, opts) {
         vendorUuid: b.vendor_uuid || raw.VendorUuid || raw.vendor_uuid || raw.VendorId || raw.vendor_id || raw.PayeeUuid || raw.payee_uuid || '',
         payeeUuid: b.payee_uuid || raw.PayeeUuid || raw.payee_uuid || raw.PayeeId || raw.payee_id || raw.VendorId || raw.vendor_id || '',
         vendorName: vendorName,
-        propertyId: propertyId,
+        propertyId: propertyMeta.id || propertyId,
+        unitId: unitId,
         propertyName: propertyMeta.name || 'Multiple/Unknown',
         propertyGroup: propertyMeta.groupName || b.property_group || raw.property_group || raw.PropertyGroup || '',
         propertyGroupId: propertyMeta.groupId,
+        propertyManager: propertyMeta.siteManager || b.property_manager || raw.property_manager || raw.PropertyManager || '',
         workOrderId: b.work_order_id || raw.WorkOrderId || raw.work_order_id || '',
         amount: amountNum,
           date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || b.due_date || raw.DueDate || raw.due_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
@@ -4074,7 +4139,7 @@ async function resolvePropertyGroupNames() {
           diag.uuidHits++;
           if (resolvedNames.indexOf(mName) === -1) resolvedNames.push(mName);
           // Index by DB API name (lowercase, trimmed)
-          _addToGroupMap(_nameToGroups, mName.toLowerCase(), g.name);
+          _addNameToGroupMap(mName, g.name);
         } else {
           diag.uuidMisses++;
         }
@@ -4138,7 +4203,7 @@ async function resolvePropertyGroupNames() {
               uGroups.forEach(function(gn) {
                 _addToGroupMap(_idToGroups, String(p.id), gn);
                 // Also ensure the Reports API name is indexed
-                _addToGroupMap(_nameToGroups, pNameLower, gn);
+                _addNameToGroupMap(pNameLower, gn);
               });
             }
           });
@@ -4170,7 +4235,7 @@ async function resolvePropertyGroupNames() {
           });
           if (prop && prop.id) {
             _addToGroupMap(_idToGroups, String(prop.id), g.name);
-            _addToGroupMap(_nameToGroups, (prop.name || '').trim().toLowerCase(), g.name);
+            _addNameToGroupMap(prop.name || '', g.name);
           }
         });
       }
@@ -4182,7 +4247,7 @@ async function resolvePropertyGroupNames() {
           var gName = g.name.trim();
           if (portfolio && (portfolio === gName || portfolio.toLowerCase() === gName.toLowerCase())) {
             diag.portfolioMatches++;
-            _addToGroupMap(_nameToGroups, (p.name || '').trim().toLowerCase(), g.name);
+            _addNameToGroupMap(p.name || '', g.name);
             _addToGroupMap(_idToGroups, String(p.id), g.name);
           }
         });
@@ -4202,20 +4267,20 @@ async function resolvePropertyGroupNames() {
   // Runs after maps are built so each item carries its group for display and PM scope checks.
   try {
     WORK_ORDERS.forEach(function(wo) {
-      var byName = _nameToGroups[(wo.propertyName || '').trim().toLowerCase()] || [];
+      var byName = groupsByPropertyName(wo.propertyName || '');
       var byId   = _idToGroups[String(wo.propertyId || '')] || [];
       var grps = byName.length ? byName : byId;
       wo._propertyGroup = grps[0] || '';
     });
     TURNS.forEach(function(t) {
-      var byName = _nameToGroups[(t.property || '').trim().toLowerCase()] || [];
+      var byName = groupsByPropertyName(t.property || '');
       var byId   = _idToGroups[String(t.propertyId || '')] || [];
       var grps = byName.length ? byName : byId;
       t._propertyGroup = grps[0] || '';
     });
     // Enrich BILLS with _propertyGroup if already loaded
     (BILLS || []).forEach(function(b) {
-      var byName = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] || [];
+      var byName = groupsByPropertyName(b.propertyName || '');
       var byId   = _idToGroups[String(b.propertyId || '')] || [];
       var grps = byName.length ? byName : byId;
       b._propertyGroup = grps[0] || '';
@@ -6495,7 +6560,10 @@ function renderBillsSection() {
         b.payeeUuid,
         b.vendorUuid,
         b.propertyName,
+        b.propertyId,
+        b.unitId,
         b.propertyGroup,
+        b.propertyManager,
         b.workOrderId,
         b.billNumber,
         b.id,
@@ -6506,7 +6574,7 @@ function renderBillsSection() {
       if (String(b.propertyId || '').trim() !== activePropertyId) return false;
     }
     if (activeUnitId) {
-      if (String(b.unit_id || b.unitId || '').trim() !== activeUnitId) return false;
+      if (String(b.unitId || b.unit_id || '').trim() !== activeUnitId) return false;
     }
     return true;
   });
@@ -6576,6 +6644,9 @@ function renderBillsSection() {
     var payeeText = b.payeeUuid || b.vendorUuid || b.vendorId || '';
     if (b.vendorName && payeeText) vendorText += ' (' + payeeText + ')';
     var propertyText = String(b.propertyName || '—');
+    var propertyIdText = String(b.propertyId || '').trim();
+    var unitIdText = String(b.unitId || '').trim();
+    var pmText = String(b.propertyManager || '').trim();
     var workOrderId = String(b.workOrderId || '').trim();
     var woBadge = workOrderId
       ? ('<span title="Linked Work Order: ' + escapeHtml(workOrderId) + '"><i class="fas fa-wrench" style="color:var(--accent)"></i></span>')
@@ -6584,10 +6655,18 @@ function renderBillsSection() {
     var groupCell = groupName
       ? '<span class="tag" style="font-size:10px;padding:1px 6px">' + escapeHtml(groupName) + '</span>'
       : '<span style="color:var(--text-muted)">—</span>';
+    var linkBits = [];
+    if (propertyIdText) linkBits.push('PID ' + propertyIdText);
+    if (unitIdText) linkBits.push('UNIT ' + unitIdText);
+    if (groupName) linkBits.push('GROUP ' + groupName);
+    if (pmText) linkBits.push('PM ' + pmText);
+    var linkageHtml = linkBits.length
+      ? ('<div style="margin-top:2px;font-size:10px;font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(linkBits.join(' | ')) + '">' + escapeHtml(linkBits.join(' | ')) + '</div>')
+      : '';
     return '<tr class="bill-row clickable-row" data-billdetail="' + escapeHtml(String(b.id || '')) + '" tabindex="0" role="button" aria-label="Open bill ' + escapeHtml(billNum) + '">' +
       '<td style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--accent)">' + escapeHtml(billNum) + '</td>' +
       '<td>' + escapeHtml(vendorText) + '</td>' +
-      '<td><span style="display:inline-block;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(propertyText) + '">' + escapeHtml(propertyText) + '</span></td>' +
+      '<td><span style="display:inline-block;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(propertyText) + '">' + escapeHtml(propertyText) + '</span>' + linkageHtml + '</td>' +
       '<td>' + groupCell + '</td>' +
       '<td style="font-family:var(--font-mono)">' + currency(amountVal) + '</td>' +
       '<td>' + escapeHtml(b.date ? formatDate(b.date) : '—') + '</td>' +
