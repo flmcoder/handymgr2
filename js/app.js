@@ -3291,6 +3291,36 @@ function resolveBillGroupUuidFromRecord(record) {
   for (var i = 0; i < candidates.length; i++) {
     var v = String(candidates[i] || '').trim();
     if (v) return v;
+
+  // Resolve a human-readable group name for a mapped bill object.
+  // Checks propertyGroupId UUID → group name map, then _uuidToGroups / _nameToGroups.
+  function resolveBillGroupName(b) {
+    if (!b) return '';
+    // 1. Prefer already-resolved groupName
+    var direct = String(b.propertyGroup || '').trim();
+    if (direct) return direct;
+    // 2. Resolve from UUID
+    var gid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim();
+    if (gid) {
+      var fromUuid = resolveGroupNameFromUuid(gid);
+      if (fromUuid) return fromUuid;
+    }
+    // 3. Resolve from property UUID in _uuidToGroups
+    var pid = String(b.propertyId || '').trim();
+    if (pid) {
+      var uGroups = _uuidToGroups[pid];
+      if (uGroups && uGroups.length) return uGroups[0];
+      var iGroups = _idToGroups[pid];
+      if (iGroups && iGroups.length) return iGroups[0];
+    }
+    // 4. Resolve from property name in _nameToGroups
+    var pname = String(b.propertyName || '').trim().toLowerCase();
+    if (pname && pname !== 'multiple/unknown') {
+      var nGroups = _nameToGroups[pname];
+      if (nGroups && nGroups.length) return nGroups[0];
+    }
+    return '';
+  }
   }
   return '';
 }
@@ -6493,7 +6523,7 @@ function renderBillsSection() {
   }
 
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px">' +
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:24px">' +
       (sourceRows.length === 0 ? 'No bills loaded — click Refresh to fetch from AppFolio' : 'No bills match current filter') + '</td></tr>';
     window._currentBillsCache = [];
     if (footer) footer.style.display = 'none';
@@ -6516,10 +6546,15 @@ function renderBillsSection() {
     var woBadge = workOrderId
       ? ('<span title="Linked Work Order: ' + escapeHtml(workOrderId) + '"><i class="fas fa-wrench" style="color:var(--accent)"></i></span>')
       : '<span style="color:var(--text-muted)">—</span>';
+    var groupName = resolveBillGroupName(b);
+    var groupCell = groupName
+      ? '<span class="tag" style="font-size:10px;padding:1px 6px">' + escapeHtml(groupName) + '</span>'
+      : '<span style="color:var(--text-muted)">—</span>';
     return '<tr class="bill-row clickable-row" data-billdetail="' + escapeHtml(String(b.id || '')) + '" tabindex="0" role="button" aria-label="Open bill ' + escapeHtml(billNum) + '">' +
       '<td style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--accent)">' + escapeHtml(billNum) + '</td>' +
       '<td>' + escapeHtml(vendorText) + '</td>' +
       '<td><span style="display:inline-block;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(propertyText) + '">' + escapeHtml(propertyText) + '</span></td>' +
+      '<td>' + groupCell + '</td>' +
       '<td style="font-family:var(--font-mono)">' + currency(amountVal) + '</td>' +
       '<td>' + escapeHtml(b.date ? formatDate(b.date) : '—') + '</td>' +
       '<td><span class="status-badge status-' + escapeHtml(stKey) + ' status-' + escapeHtml(stLow.replace(/\s+/g, '-')) + '">' + escapeHtml(st) + '</span></td>' +
@@ -6745,6 +6780,77 @@ function wireBillingFilters() {
     _billingServerPage = 1;
     _billsPage = 0;
     loadBillingPage({ resetPage: true, forceRefresh: true });
+  });
+
+  // Wire filter-type pill buttons
+  var ftypeBtns = document.querySelectorAll('.billing-ftype-btn');
+  Array.prototype.forEach.call(ftypeBtns, function(btn) {
+    btn.addEventListener('click', function() {
+      Array.prototype.forEach.call(ftypeBtns, function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      var ftype = String(btn.dataset.ftype || 'bills_list');
+      if (filterType) { filterType.value = ftype; filterType.dispatchEvent(new Event('change')); }
+    });
+  });
+
+  // Wire period preset buttons (sets hidden date inputs and triggers reload)
+  var periodBtns = document.querySelectorAll('.billing-period-btn');
+  var periodFrom2 = document.getElementById('billUpdatedFrom2');
+  var periodTo2 = document.getElementById('billUpdatedTo2');
+  function applyPeriodDays(days) {
+    var toDate = new Date();
+    var fromDate = new Date(toDate);
+    fromDate.setDate(fromDate.getDate() - days);
+    var fromStr = fromDate.toISOString().slice(0, 10);
+    var toStr = toDate.toISOString().slice(0, 10);
+    // Update visible custom inputs to match preset
+    if (periodFrom2) periodFrom2.value = fromStr;
+    if (periodTo2) periodTo2.value = toStr;
+    // Update hidden inputs that fetchBills reads
+    var hidFrom = document.getElementById('billUpdatedFrom');
+    var hidTo = document.getElementById('billUpdatedTo');
+    if (hidFrom) hidFrom.value = fromStr;
+    if (hidTo) hidTo.value = toStr;
+    window._billingPageRows = [];
+    _billingServerTotal = 0;
+    _billingServerTotalPages = 1;
+    _billingServerPage = 1;
+    _billsPage = 0;
+    loadBillingPage({ resetPage: true, forceRefresh: true });
+  }
+  Array.prototype.forEach.call(periodBtns, function(btn) {
+    btn.addEventListener('click', function() {
+      Array.prototype.forEach.call(periodBtns, function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      applyPeriodDays(parseInt(String(btn.dataset.days || '30'), 10) || 30);
+    });
+  });
+  // Wire custom date inputs (billUpdatedFrom2/billUpdatedTo2) to mirror to hidden inputs
+  function onCustomDateChange() {
+    Array.prototype.forEach.call(periodBtns, function(b) { b.classList.remove('active'); });
+    var hidFrom = document.getElementById('billUpdatedFrom');
+    var hidTo = document.getElementById('billUpdatedTo');
+    if (hidFrom && periodFrom2) hidFrom.value = periodFrom2.value;
+    if (hidTo && periodTo2) hidTo.value = periodTo2.value;
+    clearTimeout(dateChangeTimer);
+    dateChangeTimer = setTimeout(function() {
+      window._billingPageRows = [];
+      _billingServerTotal = 0;
+      _billingServerTotalPages = 1;
+      _billingServerPage = 1;
+      _billsPage = 0;
+      loadBillingPage({ resetPage: true, forceRefresh: true });
+    }, 600);
+  }
+  if (periodFrom2) periodFrom2.addEventListener('change', onCustomDateChange);
+  if (periodTo2) periodTo2.addEventListener('change', onCustomDateChange);
+
+  // Seed 7d default on init
+  applyPeriodDays(BILLS_DEFAULT_LOOKBACK_DAYS || 7);
+  // Mark 7d button active
+  Array.prototype.forEach.call(periodBtns, function(b) {
+    if (parseInt(String(b.dataset.days || '0'), 10) === (BILLS_DEFAULT_LOOKBACK_DAYS || 7)) b.classList.add('active');
+    else b.classList.remove('active');
   });
 
   toggleControls();
@@ -12252,7 +12358,7 @@ function wireUpUI() {
       if (tabName === 'billing') {
         if (!window._billingPageRows || window._billingPageRows.length === 0) {
           var billBody = document.getElementById('billBody');
-          if (billBody) billBody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px">' + loadingHtml('Loading bills\u2026') + '</td></tr>';
+          if (billBody) billBody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px">' + loadingHtml('Loading bills\u2026') + '</td></tr>';
           loadBillingPage({ resetPage: true, forceHardLock: true }).catch(function(e) {
             showToast('Bills load failed: ' + (e.message || e));
           });
