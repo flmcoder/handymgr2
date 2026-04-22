@@ -1871,6 +1871,34 @@ function setApiStatus(state, text) {
   textEl.textContent = text;
 }
 
+function setSectionBusy(sectionId, busy, message) {
+  var section = document.getElementById(sectionId);
+  if (!section) return;
+
+  var overlay = section.querySelector('.section-loading-overlay');
+  if (!busy) {
+    section.classList.remove('section-busy');
+    section.removeAttribute('aria-busy');
+    if (overlay) overlay.remove();
+    return;
+  }
+
+  section.classList.add('section-busy');
+  section.setAttribute('aria-busy', 'true');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'section-loading-overlay';
+    overlay.innerHTML =
+      '<div class="section-loading-panel">' +
+        '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i>' +
+        '<span class="section-loading-text"></span>' +
+      '</div>';
+    section.appendChild(overlay);
+  }
+  var textEl = overlay.querySelector('.section-loading-text');
+  if (textEl) textEl.textContent = String(message || 'Loading…');
+}
+
 function applyProxySchemaHealth(pingData) {
   var el = $('#apiStatus');
   if (!el) return { suffix: '', hasIssue: false, detail: '' };
@@ -1926,8 +1954,17 @@ var _lastTurnAutoCloseHash = '';
 var UNIT_TURN_HISTORY = [];
 var BILLS = []; // from DB API — AP bills for WO close-assist
 window._currentBillsCache = []; // currently visible bills for fast detail-card lookup
+window._billingPageRows = [];
 var _billsFetchInFlight = false;
 var _lastBillSource = 'legacy';
+var _billingServerTotal = 0;
+var _billingServerTotalPages = 1;
+var _billingServerPage = 1;
+var _billingRouteAction = 'bills_list';
+var _billingRouteFilterValue = '';
+var _billingDueFrom = '';
+var _billingDueTo = '';
+var _billingRouteStatus = '';
 var RECENT_TASKS = [];
 var WEBHOOK_EVENTS = [];
 var _schemaHealthWarned = false;
@@ -1956,6 +1993,7 @@ var CURRENT_WO_MODAL = null;
 var PAYROLL_WEEK_OFFSET = 0;
 var currentPropertyGroup = '';
 var _propertiesLocalGroup = '';
+var _propertiesRefreshInFlight = false;
 var _propertyStatsById = {};
 window.filteredPropertyId = '';
 window.filteredPropertyName = '';
@@ -3120,14 +3158,20 @@ async function fetchBills(days, opts) {
     opts = opts || {};
     var lookback = parseInt(days || DEFAULT_BILLS_LOOKBACK_DAYS, 10) || DEFAULT_BILLS_LOOKBACK_DAYS;
     var params = { days: String(lookback), max: String(opts.max || 3000) };
+    var requestedPage = Math.max(1, parseInt(opts.page || 1, 10) || 1);
+    var requestedPerPage = Math.max(1, Math.min(200, parseInt(opts.perPage || opts.limit || 50, 10) || 50));
+    var assignGlobal = opts.assignGlobal !== false;
     if (opts.forceRefresh) params.force_refresh = 'true';
     var routeAction = String(opts.filterType || '').trim();
     var routeStatusFilter = String(opts.routeStatusFilter || opts.statusFilter || '').trim().toLowerCase();
     var filterValue = String(opts.filterValue || '').trim();
     var dueFrom = String(opts.dueFrom || '').trim();
     var dueTo = String(opts.dueTo || '').trim();
-    var routeLimit = Math.max(1, Math.min(200, parseInt(opts.limit || opts.max || 50, 10) || 50));
-    var routeOffset = Math.max(0, parseInt(opts.offset || 0, 10) || 0);
+    var routeLimit = requestedPerPage;
+    var routeOffset = Math.max(0, parseInt((opts.offset != null ? opts.offset : ((requestedPage - 1) * routeLimit)), 10) || 0);
+    var totalRows = 0;
+    var totalPages = 1;
+    var currentPage = requestedPage;
 
     var allowedRouteActions = {
       bills_list: true,
@@ -3151,6 +3195,11 @@ async function fetchBills(days, opts) {
       if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
 
       groupUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
+    }
+
+    if (!routeAction) {
+      params.page = String(requestedPage);
+      params.per_page = String(requestedPerPage);
     }
 
     if (routeAction) {
@@ -3194,6 +3243,9 @@ async function fetchBills(days, opts) {
         routeRows = routeDataByFilter && (routeDataByFilter.data || routeDataByFilter.results)
           ? (routeDataByFilter.data || routeDataByFilter.results)
           : [];
+        totalRows = Number(routeDataByFilter && routeDataByFilter.total || routeRows.length) || routeRows.length;
+        totalPages = Math.max(1, Math.ceil(totalRows / routeLimit));
+        currentPage = Math.max(1, Math.floor(routeOffset / routeLimit) + 1);
         usedRouteLayer = true;
       } catch (routeFilterErr) {
         console.log('fetchBills explicit route fallback: ' + (routeFilterErr.message || routeFilterErr));
@@ -3205,12 +3257,15 @@ async function fetchBills(days, opts) {
       try {
         var routeData = await proxyAction('bills_list', {
           group_id: groupUuid,
-          limit: String(Math.max(50, Math.min(3000, parseInt(opts.max || 3000, 10) || 3000))),
-          offset: String(opts.offset || 0)
+          limit: String(routeLimit),
+          offset: String(routeOffset)
         });
         routeRows = routeData && (routeData.data || routeData.results)
           ? (routeData.data || routeData.results)
           : [];
+        totalRows = Number(routeData && routeData.total || routeRows.length) || routeRows.length;
+        totalPages = Math.max(1, Math.ceil(totalRows / routeLimit));
+        currentPage = Math.max(1, Math.floor(routeOffset / routeLimit) + 1);
         usedRouteLayer = true;
       } catch (routeErrOuter) {
         console.log('fetchBills route-layer fallback: ' + (routeErrOuter.message || routeErrOuter));
@@ -3224,6 +3279,9 @@ async function fetchBills(days, opts) {
     } else {
       var data = await proxyAction('bills', params);
       results = data.results || data.data || [];
+      totalRows = Number(data.total || data.count || results.length) || results.length;
+      totalPages = Math.max(1, Number(data.total_pages || Math.ceil(totalRows / requestedPerPage) || 1));
+      currentPage = Math.max(1, Number(data.page || requestedPage || 1));
       if (typeof data.from_cache === 'boolean') {
         _lastBillSource = data.from_cache ? 'cached' : 'live';
       } else {
@@ -3231,7 +3289,7 @@ async function fetchBills(days, opts) {
       }
     }
 
-    BILLS = results.map(function(b) {
+    var mappedBills = results.map(function(b) {
       var raw = b.raw || b;
       var nestedProperty = (raw.property && typeof raw.property === 'object')
         ? raw.property
@@ -3286,7 +3344,7 @@ async function fetchBills(days, opts) {
     });
 
     if (routeStatusFilter) {
-      BILLS = BILLS.filter(function(b) {
+      mappedBills = mappedBills.filter(function(b) {
         return String(b.status || '').toLowerCase() === routeStatusFilter;
       });
     }
@@ -3294,19 +3352,49 @@ async function fetchBills(days, opts) {
     // Strict client-side scope guard: if a group UUID is active, never render bills from other groups.
     if (opts.scoped !== false && groupUuid) {
       var groupUuidLower = String(groupUuid || '').trim().toLowerCase();
-      BILLS = BILLS.filter(function(b) {
+      mappedBills = mappedBills.filter(function(b) {
         var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
         if (billGroupUuid) return billGroupUuid === groupUuidLower;
         return isInPropertyGroup(b.propertyId, b.propertyName, grpName);
       });
     }
 
-    _billsLoadedAt = Date.now();
+    if (assignGlobal) {
+      BILLS = mappedBills;
+      _billsLoadedAt = Date.now();
+    }
+
+    if (opts.returnPayload) {
+      return {
+        ok: true,
+        rows: mappedBills,
+        total: totalRows,
+        page: currentPage,
+        perPage: routeLimit,
+        totalPages: totalPages,
+        fromCache: _lastBillSource === 'cached',
+        source: _lastBillSource
+      };
+    }
+
     return true;
   } catch (err) {
     console.log('fetchBills error: ' + (err.message || err));
     _lastBillSource = 'legacy';
-    BILLS = [];
+    if (assignGlobal) BILLS = [];
+    if (opts && opts.returnPayload) {
+      return {
+        ok: false,
+        error: String(err && (err.message || err) || 'fetch bills failed'),
+        rows: [],
+        total: 0,
+        page: 1,
+        perPage: requestedPerPage,
+        totalPages: 1,
+        fromCache: false,
+        source: 'legacy'
+      };
+    }
     return false;
   } finally {
     _billsFetchInFlight = false;
@@ -5991,6 +6079,119 @@ function getPayrollWeek(offset) {
 var _billsPage = 0;
 var BILLS_PAGE_SIZE = 50;
 
+async function loadBillingPage(opts) {
+  opts = opts || {};
+  if (opts.resetPage) _billsPage = 0;
+
+  var hardLock = !Array.isArray(window._billingPageRows) || window._billingPageRows.length === 0;
+  if (opts.forceHardLock) hardLock = true;
+  if (hardLock) setSectionBusy('sec-billing', true, 'Refreshing billing data…');
+
+  var refreshBtn = $('#btnRefreshBills');
+  var refreshText = refreshBtn ? refreshBtn.innerHTML : '';
+  if (refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading…';
+  }
+
+  var payload = await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, {
+    scoped: true,
+    forceRefresh: !!opts.forceRefresh,
+    filterType: _billingRouteAction,
+    filterValue: _billingRouteFilterValue,
+    dueFrom: _billingDueFrom,
+    dueTo: _billingDueTo,
+    routeStatusFilter: _billingRouteStatus,
+    limit: BILLS_PAGE_SIZE,
+    perPage: BILLS_PAGE_SIZE,
+    page: _billsPage + 1,
+    offset: _billsPage * BILLS_PAGE_SIZE,
+    assignGlobal: false,
+    returnPayload: true,
+  });
+
+  if (!payload || !payload.ok) {
+    if (hardLock) setSectionBusy('sec-billing', false);
+    if (refreshBtn) {
+      refreshBtn.disabled = false;
+      refreshBtn.innerHTML = refreshText;
+    }
+    showToast('Billing refresh failed: ' + String(payload && payload.error || 'unknown error'), { kind: 'warning' });
+    return;
+  }
+
+  window._billingPageRows = Array.isArray(payload.rows) ? payload.rows : [];
+  _billingServerTotal = Number(payload.total || window._billingPageRows.length) || 0;
+  _billingServerTotalPages = Math.max(1, Number(payload.totalPages || 1) || 1);
+  _billingServerPage = Math.max(1, Number(payload.page || (_billsPage + 1)) || 1);
+  _billsPage = _billingServerPage - 1;
+  _lastBillSource = String(payload.source || (payload.fromCache ? 'cached' : 'live') || 'legacy');
+
+  renderBillsSection();
+
+  if (hardLock) setSectionBusy('sec-billing', false);
+  if (refreshBtn) {
+    refreshBtn.disabled = false;
+    refreshBtn.innerHTML = refreshText;
+  }
+}
+
+function renderBillingPaginationControls(footer, rowsCount) {
+  if (!footer) return;
+  if (_billingServerTotal <= 0) {
+    footer.style.display = 'none';
+    return;
+  }
+
+  var start = (_billingServerPage - 1) * BILLS_PAGE_SIZE + 1;
+  var end = Math.min(start + Math.max(0, rowsCount - 1), _billingServerTotal);
+  var prevDisabled = _billingServerPage <= 1 ? ' disabled' : '';
+  var nextDisabled = _billingServerPage >= _billingServerTotalPages ? ' disabled' : '';
+
+  footer.style.display = '';
+  footer.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+      '<span>Showing ' + start + '–' + end + ' of ' + _billingServerTotal + ' bills</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:8px">' +
+        '<button class="action-btn" id="billPagePrev" style="padding:3px 8px"' + prevDisabled + '>Prev</button>' +
+        '<span style="font-family:var(--font-mono);font-size:11px">Page ' + _billingServerPage + ' / ' + _billingServerTotalPages + '</span>' +
+        '<button class="action-btn" id="billPageNext" style="padding:3px 8px"' + nextDisabled + '>Next</button>' +
+        '<select id="billPageSize" style="font-family:var(--font-mono);font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">' +
+          '<option value="25"' + (BILLS_PAGE_SIZE === 25 ? ' selected' : '') + '>25</option>' +
+          '<option value="50"' + (BILLS_PAGE_SIZE === 50 ? ' selected' : '') + '>50</option>' +
+          '<option value="100"' + (BILLS_PAGE_SIZE === 100 ? ' selected' : '') + '>100</option>' +
+        '</select>' +
+      '</span>' +
+    '</div>';
+
+  var prevBtn = $('#billPagePrev');
+  var nextBtn = $('#billPageNext');
+  var sizeSel = $('#billPageSize');
+  if (prevBtn) {
+    prevBtn.addEventListener('click', function() {
+      if (_billingServerPage <= 1) return;
+      _billsPage = _billingServerPage - 2;
+      loadBillingPage();
+    });
+  }
+  if (nextBtn) {
+    nextBtn.addEventListener('click', function() {
+      if (_billingServerPage >= _billingServerTotalPages) return;
+      _billsPage = _billingServerPage;
+      loadBillingPage();
+    });
+  }
+  if (sizeSel) {
+    sizeSel.addEventListener('change', function() {
+      var next = Math.max(1, Math.min(200, parseInt(String(sizeSel.value || BILLS_PAGE_SIZE), 10) || BILLS_PAGE_SIZE));
+      if (next === BILLS_PAGE_SIZE) return;
+      BILLS_PAGE_SIZE = next;
+      _billsPage = 0;
+      loadBillingPage({ resetPage: true });
+    });
+  }
+}
+
 function renderBillsSection() {
   var tbody = $('#billBody');
   var footer = $('#billFooter');
@@ -6007,8 +6208,12 @@ function renderBillsSection() {
 
   renderBillingPropertyScopeChip(activePropertyId, String(window.filteredPropertyName || ''), activeUnitId, String(window.filteredUnitName || ''));
 
-  // Filter
-  var filtered = (BILLS || []).filter(function(b) {
+  var sourceRows = Array.isArray(window._billingPageRows) && window._billingPageRows.length
+    ? window._billingPageRows
+    : (BILLS || []);
+
+  // Local visual filters (search + property drilldown) on current server page.
+  var filtered = sourceRows.filter(function(b) {
     if (grp) {
       if (groupUuid) {
         var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
@@ -6103,7 +6308,7 @@ function renderBillsSection() {
 
   if (filtered.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px">' +
-      (BILLS.length === 0 ? 'No bills loaded — click Refresh to fetch from AppFolio' : 'No bills match current filter') + '</td></tr>';
+      (sourceRows.length === 0 ? 'No bills loaded — click Refresh to fetch from AppFolio' : 'No bills match current filter') + '</td></tr>';
     window._currentBillsCache = [];
     if (footer) footer.style.display = 'none';
     return;
@@ -6111,12 +6316,7 @@ function renderBillsSection() {
 
   window._currentBillsCache = filtered.slice();
 
-  // Pagination
-  var totalPages = Math.ceil(filtered.length / BILLS_PAGE_SIZE);
-  _billsPage = Math.max(0, Math.min(_billsPage, totalPages - 1));
-  var page = filtered.slice(_billsPage * BILLS_PAGE_SIZE, (_billsPage + 1) * BILLS_PAGE_SIZE);
-
-  var rows = page.map(function(b) {
+  var rows = filtered.map(function(b) {
     var st = String(b.statusLabel || b.status || '—');
     var stKey = String(st).trim().toLowerCase().replace(/\s+/g, '-');
     var stLow = String(b.status || '').toLowerCase();
@@ -6157,10 +6357,7 @@ function renderBillsSection() {
     });
   });
 
-  if (footer) {
-    footer.style.display = '';
-    footer.textContent = 'Showing ' + (_billsPage * BILLS_PAGE_SIZE + 1) + '–' + Math.min((_billsPage + 1) * BILLS_PAGE_SIZE, filtered.length) + ' of ' + filtered.length + ' bills';
-  }
+  renderBillingPaginationControls(footer, filtered.length);
 }
 
 function openBillKanbanCard(billId) {
@@ -6259,23 +6456,17 @@ function wireBillingFilters() {
     var from = String((document.getElementById('billing-due-from') || {}).value || '').trim();
     var to = String((document.getElementById('billing-due-to') || {}).value || '').trim();
 
+    _billingRouteAction = type || 'bills_list';
+    _billingRouteFilterValue = value;
+    _billingDueFrom = from;
+    _billingDueTo = to;
+    _billingRouteStatus = status;
+
     applyBtn.disabled = true;
     var originalText = applyBtn.innerHTML;
     applyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying…';
     try {
-      var ok = await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, {
-        scoped: true,
-        filterType: type,
-        filterValue: value,
-        dueFrom: from,
-        dueTo: to,
-        routeStatusFilter: status,
-        limit: 50,
-        offset: 0
-      });
-      _billsPage = 0;
-      renderBillsSection();
-      if (!ok && ok !== null) showToast('Billing filter request failed; showing cached data', { kind: 'warning' });
+      await loadBillingPage({ resetPage: true });
     } catch (err) {
       showToast('Billing filter failed: ' + (err.message || err), { kind: 'warning' });
     } finally {
@@ -6296,7 +6487,17 @@ function wireBillingFilters() {
     window.filteredPropertyName = '';
     window.filteredUnitId = '';
     window.filteredUnitName = '';
+    window._billingPageRows = [];
+    _billingServerTotal = 0;
+    _billingServerTotalPages = 1;
+    _billingServerPage = 1;
+    _billingRouteAction = 'bills_list';
+    _billingRouteFilterValue = '';
+    _billingDueFrom = '';
+    _billingDueTo = '';
+    _billingRouteStatus = '';
     filterType.value = 'bills_list';
+    _billsPage = 0;
     toggleControls();
     applyBillingFilter();
   }
@@ -6311,7 +6512,10 @@ function wireBillingFilters() {
   }
 
   document.addEventListener('groupFilterChanged', function() {
-    if (String(filterType.value || '') === 'bills_list') applyBillingFilter();
+    if (String(filterType.value || '') === 'bills_list') {
+      _billsPage = 0;
+      loadBillingPage({ resetPage: true });
+    }
   });
 
   toggleControls();
@@ -6540,6 +6744,8 @@ async function showBillDetailModal(billId) {
 var BILL_HISTORY_ROWS = [];
 var BILL_HISTORY_PAGE = 0;
 var BILL_HISTORY_PAGE_SIZE = 100;
+var BILL_HISTORY_TOTAL = 0;
+var BILL_HISTORY_TOTAL_PAGES = 1;
 
 function renderBillHistoryPage(dateFrom, dateTo) {
   var body = document.getElementById('billHistBody');
@@ -6552,12 +6758,12 @@ function renderBillHistoryPage(dateFrom, dateTo) {
     return;
   }
 
-  var totalRows = BILL_HISTORY_ROWS.length;
-  var totalPages = Math.max(1, Math.ceil(totalRows / BILL_HISTORY_PAGE_SIZE));
+  var totalRows = Math.max(0, Number(BILL_HISTORY_TOTAL || BILL_HISTORY_ROWS.length) || 0);
+  var totalPages = Math.max(1, Number(BILL_HISTORY_TOTAL_PAGES || 1) || 1);
   BILL_HISTORY_PAGE = Math.max(0, Math.min(BILL_HISTORY_PAGE, totalPages - 1));
   var start = BILL_HISTORY_PAGE * BILL_HISTORY_PAGE_SIZE;
-  var end = Math.min(start + BILL_HISTORY_PAGE_SIZE, totalRows);
-  var pageRows = BILL_HISTORY_ROWS.slice(start, end);
+  var end = Math.min(start + BILL_HISTORY_ROWS.length, totalRows);
+  var pageRows = BILL_HISTORY_ROWS;
 
   body.innerHTML = pageRows.map(function(r) {
     var wo = String(r.work_order_id || r.WorkOrderId || '').trim();
@@ -6622,14 +6828,14 @@ function renderBillHistoryPage(dateFrom, dateTo) {
     prevBtn.addEventListener('click', function() {
       if (BILL_HISTORY_PAGE <= 0) return;
       BILL_HISTORY_PAGE -= 1;
-      renderBillHistoryPage(dateFrom, dateTo);
+      runBillHistorySearch();
     });
   }
   if (nextBtn) {
     nextBtn.addEventListener('click', function() {
       if (BILL_HISTORY_PAGE >= (totalPages - 1)) return;
       BILL_HISTORY_PAGE += 1;
-      renderBillHistoryPage(dateFrom, dateTo);
+      runBillHistorySearch();
     });
   }
 
@@ -6699,6 +6905,9 @@ async function runBillHistorySearch() {
   try {
     var rows = [];
     var usedDueRange = false;
+    var historyTotal = 0;
+    var historyPages = 1;
+    var historyPage = BILL_HISTORY_PAGE + 1;
     var grpName = getEffectiveGroupId();
     var grpUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
 
@@ -6714,6 +6923,10 @@ async function runBillHistorySearch() {
         rows = Array.isArray(dueRangeData.data)
           ? dueRangeData.data
           : (Array.isArray(dueRangeData.results) ? dueRangeData.results : []);
+        historyTotal = Number(dueRangeData.total || rows.length) || rows.length;
+        var dueLimit = Math.max(1, Number(dueRangeData.limit || BILL_HISTORY_PAGE_SIZE) || BILL_HISTORY_PAGE_SIZE);
+        historyPage = Math.max(1, Math.floor((Number(dueRangeData.offset || 0) || 0) / dueLimit) + 1);
+        historyPages = Math.max(1, Math.ceil(historyTotal / dueLimit));
         usedDueRange = true;
         _lastBillSource = 'cached';
       } catch (dueErr) {
@@ -6731,6 +6944,8 @@ async function runBillHistorySearch() {
       var params = {
         date_from: dateFrom,
         date_to: dateTo,
+        page: String(BILL_HISTORY_PAGE + 1),
+        per_page: String(BILL_HISTORY_PAGE_SIZE),
         days: String(spanDays),
         max: '8000',
       };
@@ -6742,6 +6957,9 @@ async function runBillHistorySearch() {
 
       var data = await proxyAction('bills_history', params);
       rows = Array.isArray(data.results) ? data.results : [];
+      historyTotal = Number(data.total || rows.length) || rows.length;
+      historyPages = Math.max(1, Number(data.total_pages || Math.ceil(historyTotal / BILL_HISTORY_PAGE_SIZE) || 1));
+      historyPage = Math.max(1, Number(data.page || historyPage));
       if (typeof data.from_cache === 'boolean') {
         _lastBillSource = data.from_cache ? 'cached' : 'live';
       } else {
@@ -6758,7 +6976,9 @@ async function runBillHistorySearch() {
     }
 
     BILL_HISTORY_ROWS = rows.slice();
-    BILL_HISTORY_PAGE = 0;
+    BILL_HISTORY_TOTAL = historyTotal;
+    BILL_HISTORY_TOTAL_PAGES = historyPages;
+    BILL_HISTORY_PAGE = Math.max(0, Math.min(historyPage - 1, historyPages - 1));
     renderBillHistoryPage(dateFrom, dateTo);
   } catch (e) {
     BILL_HISTORY_ROWS = [];
@@ -8879,100 +9099,122 @@ function getPropertyStats(propId) {
   };
 }
 
-function renderPropertiesSection() {
+function renderPropertiesRowsFromCache() {
   var tbody = $('#propertiesTableBody');
   if (!tbody) return;
   var searchEl = $('#propertySearch');
   var groupSelect = $('#propertyGroupFilter');
+  var properties = (PROPERTIES || []).slice();
+
+  var groups = {};
+  properties.forEach(function(p) {
+    var g = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
+    if (g) groups[g] = true;
+  });
+
+  if (groupSelect) {
+    var existing = String(groupSelect.value || _propertiesLocalGroup || '');
+    var options = ['<option value="">All Groups</option>'];
+    Object.keys(groups).sort().forEach(function(g) {
+      options.push('<option value="' + escapeHtml(g) + '">' + escapeHtml(g) + '</option>');
+    });
+    groupSelect.innerHTML = options.join('');
+    groupSelect.value = existing;
+    _propertiesLocalGroup = String(groupSelect.value || '');
+  }
+
+  if (_propertiesLocalGroup) {
+    properties = properties.filter(function(p) {
+      var groupName = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
+      return groupName === _propertiesLocalGroup;
+    });
+  }
+
+  var search = String(searchEl ? searchEl.value : '').trim().toLowerCase();
+  if (search) {
+    properties = properties.filter(function(p) {
+      var hay = [
+        p.name,
+        p.address,
+        p.city,
+        p.state,
+        p.zip,
+        p.propertyGroup,
+        p.groupName,
+        p.portfolio,
+        p.siteManager
+      ].join(' ').toLowerCase();
+      return hay.indexOf(search) !== -1;
+    });
+  }
+
+  properties.sort(function(a, b) {
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
+
+  if (!properties.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">No properties found</td></tr>';
+    return;
+  }
+
+  var html = properties.map(function(p) {
+    var pid = String(p.id || '');
+    var stats = getPropertyStats(pid);
+    var cityState = [p.city || '', p.state || ''].filter(Boolean).join(', ');
+    if (p.zip) cityState += (cityState ? ' ' : '') + p.zip;
+    var groupName = String(p.propertyGroup || p.groupName || p.portfolio || '');
+    var units = _unitsByPropertyId[pid] || [];
+    var unitCount = units.length;
+    var unitBadge = unitCount > 1
+      ? '<span class="tag blue" title="' + unitCount + ' units">' + unitCount + ' units</span>'
+      : (unitCount === 1 ? '<span class="tag normal">1 unit</span>' : '<span style="color:var(--text-muted)">—</span>');
+    return '<tr>' +
+      '<td>' + escapeHtml(String(p.name || '—')) + '</td>' +
+      '<td>' + escapeHtml(String(p.address || '—')) + '</td>' +
+      '<td>' + escapeHtml(cityState || '—') + '</td>' +
+      '<td>' + escapeHtml(groupName || '—') + '</td>' +
+      '<td>' + escapeHtml(String(p.siteManager || '—')) + '</td>' +
+      '<td style="text-align:center">' + unitBadge + '</td>' +
+      '<td style="text-align:center"><span class="tag normal">' + String(stats.bills) + '</span></td>' +
+      '<td style="text-align:center"><span class="tag blue">' + String(stats.notes) + '</span></td>' +
+      '<td style="text-align:center"><span class="tag completed">' + String(stats.listings) + '</span></td>' +
+      '<td><button class="action-btn" data-property-id="' + escapeHtml(pid) + '" data-property-name="' + escapeHtml(String(p.name || '')) + '" onclick="showPropertyDetailModal(this)">Details</button></td>' +
+    '</tr>';
+  }).join('');
+
+  tbody.innerHTML = html;
+}
+
+function renderPropertiesSection(opts) {
+  opts = opts || {};
+  var tbody = $('#propertiesTableBody');
+  if (!tbody) return;
+
+  var hasCache = Array.isArray(PROPERTIES) && PROPERTIES.length > 0;
+  var forceRefresh = !!opts.forceRefresh;
+
+  if (hasCache && !forceRefresh) {
+    renderPropertiesRowsFromCache();
+    return;
+  }
+
+  if (_propertiesRefreshInFlight) return;
+  _propertiesRefreshInFlight = true;
 
   tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">Loading properties...</td></tr>';
+  if (!hasCache) setSectionBusy('sec-properties', true, 'Refreshing properties…');
 
   Promise.all([
     fetchProperties(),
     fetchPropertyStats(),
     fetchUnits()
   ]).then(function() {
-    var properties = (PROPERTIES || []).slice();
-
-    var groups = {};
-    properties.forEach(function(p) {
-      var g = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
-      if (g) groups[g] = true;
-    });
-
-    if (groupSelect) {
-      var existing = String(groupSelect.value || _propertiesLocalGroup || '');
-      var options = ['<option value="">All Groups</option>'];
-      Object.keys(groups).sort().forEach(function(g) {
-        options.push('<option value="' + escapeHtml(g) + '">' + escapeHtml(g) + '</option>');
-      });
-      groupSelect.innerHTML = options.join('');
-      groupSelect.value = existing;
-      _propertiesLocalGroup = String(groupSelect.value || '');
-    }
-
-    if (_propertiesLocalGroup) {
-      properties = properties.filter(function(p) {
-        var groupName = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
-        return groupName === _propertiesLocalGroup;
-      });
-    }
-
-    var search = String(searchEl ? searchEl.value : '').trim().toLowerCase();
-    if (search) {
-      properties = properties.filter(function(p) {
-        var hay = [
-          p.name,
-          p.address,
-          p.city,
-          p.state,
-          p.zip,
-          p.propertyGroup,
-          p.groupName,
-          p.portfolio,
-          p.siteManager
-        ].join(' ').toLowerCase();
-        return hay.indexOf(search) !== -1;
-      });
-    }
-
-    properties.sort(function(a, b) {
-      return String(a.name || '').localeCompare(String(b.name || ''));
-    });
-
-    if (!properties.length) {
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">No properties found</td></tr>';
-      return;
-    }
-
-    var html = properties.map(function(p) {
-      var pid = String(p.id || '');
-      var stats = getPropertyStats(pid);
-      var cityState = [p.city || '', p.state || ''].filter(Boolean).join(', ');
-      if (p.zip) cityState += (cityState ? ' ' : '') + p.zip;
-      var groupName = String(p.propertyGroup || p.groupName || p.portfolio || '');
-      var units = _unitsByPropertyId[pid] || [];
-      var unitCount = units.length;
-      var unitBadge = unitCount > 1
-        ? '<span class="tag blue" title="' + unitCount + ' units">' + unitCount + ' units</span>'
-        : (unitCount === 1 ? '<span class="tag normal">1 unit</span>' : '<span style="color:var(--text-muted)">—</span>');
-      return '<tr>' +
-        '<td>' + escapeHtml(String(p.name || '—')) + '</td>' +
-        '<td>' + escapeHtml(String(p.address || '—')) + '</td>' +
-        '<td>' + escapeHtml(cityState || '—') + '</td>' +
-        '<td>' + escapeHtml(groupName || '—') + '</td>' +
-        '<td>' + escapeHtml(String(p.siteManager || '—')) + '</td>' +
-        '<td style="text-align:center">' + unitBadge + '</td>' +
-        '<td style="text-align:center"><span class="tag normal">' + String(stats.bills) + '</span></td>' +
-        '<td style="text-align:center"><span class="tag blue">' + String(stats.notes) + '</span></td>' +
-        '<td style="text-align:center"><span class="tag completed">' + String(stats.listings) + '</span></td>' +
-        '<td><button class="action-btn" data-property-id="' + escapeHtml(pid) + '" data-property-name="' + escapeHtml(String(p.name || '')) + '" onclick="showPropertyDetailModal(this)">Details</button></td>' +
-      '</tr>';
-    }).join('');
-
-    tbody.innerHTML = html;
+    renderPropertiesRowsFromCache();
   }).catch(function(err) {
     tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--danger);">Failed to load properties: ' + escapeHtml(String(err && (err.message || err) || 'Unknown error')) + '</td></tr>';
+  }).finally(function() {
+    _propertiesRefreshInFlight = false;
+    setSectionBusy('sec-properties', false);
   });
 }
 
@@ -11568,18 +11810,12 @@ function wireUpUI() {
 
       // Lazy-load AP Bills when Billing tab is opened
       if (tabName === 'billing') {
-        if (!BILLS || BILLS.length === 0) {
+        if (!window._billingPageRows || window._billingPageRows.length === 0) {
           var billBody = document.getElementById('billBody');
           if (billBody) billBody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px">' + loadingHtml('Loading bills\u2026') + '</td></tr>';
-          fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, { scoped: true }).then(function() {
-            // Re-enrich bills with _propertyGroup after load
-            (BILLS || []).forEach(function(b) {
-              var grps = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] ||
-                         _idToGroups[String(b.propertyId || '')] || [];
-              b._propertyGroup = grps[0] || '';
-            });
-            renderBillsSection();
-          }).catch(function(e) { showToast('Bills load failed: ' + (e.message || e)); });
+          loadBillingPage({ resetPage: true, forceHardLock: true }).catch(function(e) {
+            showToast('Bills load failed: ' + (e.message || e));
+          });
         } else {
           renderBillsSection();
         }
@@ -12015,32 +12251,31 @@ function wireUpUI() {
   var billRefreshBtn = $('#btnRefreshBills');
   if (billRefreshBtn) {
     billRefreshBtn.addEventListener('click', async function() {
-      billRefreshBtn.disabled = true;
-      billRefreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading…';
       try {
-        await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, { scoped: true, forceRefresh: true });
-        // Enrich bills with property group after fresh load
-        (BILLS || []).forEach(function(b) {
-          var grps = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] ||
-                     _idToGroups[String(b.propertyId || '')] || [];
-          b._propertyGroup = grps[0] || '';
-        });
-        renderBillsSection();
-        showToast('Bills refreshed — ' + BILLS.length + ' loaded');
+        await loadBillingPage({ forceRefresh: true, forceHardLock: true });
+        showToast('Billing refreshed', { kind: 'success' });
       } catch (e) {
         showToast('Bills refresh failed: ' + (e.message || e));
-      } finally {
-        billRefreshBtn.disabled = false;
-        billRefreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
       }
     });
   }
   var billSearch = $('#billSearch');
   if (billSearch) billSearch.addEventListener('input', function() { _billsPage = 0; renderBillsSection(); });
   var billStatusFilter = $('#billStatusFilter');
-  if (billStatusFilter) billStatusFilter.addEventListener('change', function() { _billsPage = 0; renderBillsSection(); });
+  if (billStatusFilter) {
+    billStatusFilter.addEventListener('change', function() {
+      _billingRouteStatus = String(billStatusFilter.value || '').trim();
+      _billsPage = 0;
+      loadBillingPage({ resetPage: true });
+    });
+  }
   var billHistBtn = $('#btnBillHistSearch');
-  if (billHistBtn) billHistBtn.addEventListener('click', runBillHistorySearch);
+  if (billHistBtn) {
+    billHistBtn.addEventListener('click', function() {
+      BILL_HISTORY_PAGE = 0;
+      runBillHistorySearch();
+    });
+  }
   wireBillingFilters();
 
   var propertySearch = $('#propertySearch');
@@ -12059,7 +12294,7 @@ function wireUpUI() {
   var refreshPropertiesBtn = $('#refreshPropertiesBtn');
   if (refreshPropertiesBtn) {
     refreshPropertiesBtn.addEventListener('click', function() {
-      renderPropertiesSection();
+      renderPropertiesSection({ forceRefresh: true });
     });
   }
 
