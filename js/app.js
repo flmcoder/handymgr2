@@ -3291,37 +3291,37 @@ function resolveBillGroupUuidFromRecord(record) {
   for (var i = 0; i < candidates.length; i++) {
     var v = String(candidates[i] || '').trim();
     if (v) return v;
+  }
+  return '';
+}
 
-  // Resolve a human-readable group name for a mapped bill object.
-  // Checks propertyGroupId UUID → group name map, then _uuidToGroups / _nameToGroups.
-  function resolveBillGroupName(b) {
-    if (!b) return '';
-    // 1. Prefer already-resolved groupName
-    var direct = String(b.propertyGroup || '').trim();
-    if (direct) return direct;
-    // 2. Resolve from UUID
-    var gid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim();
-    if (gid) {
-      var fromUuid = resolveGroupNameFromUuid(gid);
-      if (fromUuid) return fromUuid;
-    }
-    // 3. Resolve from property UUID in _uuidToGroups
-    var pid = String(b.propertyId || '').trim();
-    if (pid) {
-      var uGroups = _uuidToGroups[pid];
-      if (uGroups && uGroups.length) return uGroups[0];
-      var iGroups = _idToGroups[pid];
-      if (iGroups && iGroups.length) return iGroups[0];
-    }
-    // 4. Resolve from property name in _nameToGroups
-    var pname = String(b.propertyName || '').trim().toLowerCase();
-    if (pname && pname !== 'multiple/unknown') {
-      var nGroups = _nameToGroups[pname];
-      if (nGroups && nGroups.length) return nGroups[0];
-    }
-    return '';
+// Resolve a human-readable group name for a mapped bill object.
+// Checks propertyGroupId UUID -> group name map, then _uuidToGroups / _nameToGroups.
+function resolveBillGroupName(b) {
+  if (!b) return '';
+  var direct = String(b.propertyGroup || '').trim();
+  if (direct) return direct;
+
+  var gid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim();
+  if (gid) {
+    var fromUuid = resolveGroupNameFromUuid(gid);
+    if (fromUuid) return fromUuid;
   }
+
+  var pid = String(b.propertyId || '').trim();
+  if (pid) {
+    var uGroups = _uuidToGroups[pid];
+    if (uGroups && uGroups.length) return uGroups[0];
+    var iGroups = _idToGroups[pid];
+    if (iGroups && iGroups.length) return iGroups[0];
   }
+
+  var pname = String(b.propertyName || '').trim().toLowerCase();
+  if (pname && pname !== 'multiple/unknown') {
+    var nGroups = _nameToGroups[pname];
+    if (nGroups && nGroups.length) return nGroups[0];
+  }
+
   return '';
 }
 
@@ -6289,8 +6289,22 @@ function getPayrollWeek(offset) {
 // ─── Billing / AP Section ──────────────────────────────────────────────────
 var _billsPage = 0;
 var BILLS_PAGE_SIZE = 50;
+var _billingLoadPromise = null;
+var _billingQueuedOpts = null;
 
 async function loadBillingPage(opts) {
+  if (_billingLoadPromise) {
+    var queued = _billingQueuedOpts || {};
+    var incoming = opts || {};
+    _billingQueuedOpts = {
+      resetPage: !!(queued.resetPage || incoming.resetPage),
+      forceRefresh: !!(queued.forceRefresh || incoming.forceRefresh),
+      forceHardLock: !!(queued.forceHardLock || incoming.forceHardLock),
+    };
+    return _billingLoadPromise;
+  }
+
+  _billingLoadPromise = (async function() {
   opts = opts || {};
   if (opts.resetPage) _billsPage = 0;
 
@@ -6355,6 +6369,19 @@ async function loadBillingPage(opts) {
   if (refreshBtn) {
     refreshBtn.disabled = false;
     refreshBtn.innerHTML = refreshText;
+  }
+  })();
+
+  try {
+    return await _billingLoadPromise;
+  } finally {
+    _billingLoadPromise = null;
+    if (_billingQueuedOpts) {
+      var nextOpts = _billingQueuedOpts;
+      _billingQueuedOpts = null;
+      // Run one queued refresh after the active request settles.
+      loadBillingPage(nextOpts);
+    }
   }
 }
 
