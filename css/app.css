@@ -1244,6 +1244,39 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .loading-overlay p { font-family: var(--font-mono); font-size: 12px; }
 
+.section.section-busy {
+  position: relative;
+}
+
+.section-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.section-loading-panel {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  box-shadow: var(--shadow);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.section-loading-panel i {
+  color: var(--accent);
+}
+
 /* CORS error banner */
 .cors-banner {
   background: var(--danger-dim);
@@ -2361,4 +2394,78 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   margin-top: 2px;
 }
 .tkc-metrics .t-danger { color: var(--danger); }
+}
+
+/* =================================================================
+   WO VIEW TOGGLE — Board / List
+   ================================================================= */
+.wo-view-toggle-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 8px;
+}
+.wo-view-btns {
+  display: inline-flex;
+  gap: 3px;
+  background: var(--bg-input);
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.wo-view-btn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.wo-view-btn:hover { background: var(--bg-card-hover); color: var(--text-secondary); }
+.wo-view-btn.active { background: var(--bg-card); color: var(--accent); border-color: var(--accent); box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+
+/* List layout overrides — applied to #kanbanBoard when in list mode */
+#kanbanBoard.layout-list {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+}
+#kanbanBoard.layout-list .kanban-col {
+  width: 100% !important;
+  min-width: 0 !important;
+  border-radius: var(--radius) !important;
+  margin-bottom: 8px !important;
+}
+#kanbanBoard.layout-list .kanban-col-body {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+  padding: 6px !important;
+}
+#kanbanBoard.layout-list .kanban-card {
+  display: grid !important;
+  grid-template-columns: max-content 1fr auto auto !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 6px 10px !important;
+  min-height: 0 !important;
+}
+
+/* =================================================================
+   VENDOR DETAIL MODAL STATUS BADGE
+   ================================================================= */
+#vdmStatusBadge {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid;
+  font-weight: 700;
+  letter-spacing: .3px;
 }
