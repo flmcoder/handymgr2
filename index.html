@@ -86,7 +86,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.2.7</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.6.8</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -588,7 +588,7 @@
     <div class="table-header">
       <div class="table-title"><i class="fas fa-list-alt" style="color:var(--accent)"></i> Bills <span id="billing-source-badge" class="source-badge legacy">⚠ Legacy</span></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="billing-filter-type" class="filter-select" style="font-size:12px;padding:4px 8px">
+        <select id="billing-filter-type" class="filter-select" style="display:none">
           <!-- hidden select keeps wireBillingFilters logic intact -->
           <option value="bills_list">Group Bills</option>
           <option value="bills_by_vendor">By Vendor</option>
