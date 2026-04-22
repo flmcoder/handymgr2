@@ -571,9 +571,96 @@ async function saveAllToCache() {
   }
 }
 
-// Export all data as a downloadable JSON file — reads from MEMORY (not IndexedDB)
-function exportCacheToJSON() {
+function _bufToBase64(buffer) {
+  var bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  var bin = '';
+  for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function _base64ToBuf(base64) {
+  var bin = atob(String(base64 || ''));
+  var out = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function _deriveCacheCryptoKey(passphrase, saltBytes) {
+  var enc = new TextEncoder();
+  var keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(String(passphrase || '')),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: saltBytes,
+      iterations: 120000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function _encryptCachePayload(plaintext, passphrase) {
+  var salt = crypto.getRandomValues(new Uint8Array(16));
+  var iv = crypto.getRandomValues(new Uint8Array(12));
+  var key = await _deriveCacheCryptoKey(passphrase, salt);
+  var enc = new TextEncoder();
+  var cipher = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv },
+    key,
+    enc.encode(String(plaintext || ''))
+  );
+  return {
+    _meta: {
+      format: 'hm-cache-encrypted-v1',
+      exported: new Date().toISOString(),
+      cipher: 'AES-GCM',
+      kdf: 'PBKDF2-SHA256',
+      iterations: 120000
+    },
+    salt: _bufToBase64(salt),
+    iv: _bufToBase64(iv),
+    ciphertext: _bufToBase64(cipher)
+  };
+}
+
+async function _decryptCachePayload(payload, passphrase) {
+  if (!payload || !payload.salt || !payload.iv || !payload.ciphertext) {
+    throw new Error('Invalid encrypted cache file');
+  }
+  var salt = _base64ToBuf(payload.salt);
+  var iv = _base64ToBuf(payload.iv);
+  var cipher = _base64ToBuf(payload.ciphertext);
+  var key = await _deriveCacheCryptoKey(passphrase, salt);
+  var plain = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: iv },
+    key,
+    cipher
+  );
+  return new TextDecoder().decode(plain);
+}
+
+function getCacheSecurityOptions() {
+  var useEncEl = document.getElementById('settingsUseEncryption');
+  var passEl = document.getElementById('settingsEncryptPass');
+  return {
+    encrypt: !!(useEncEl && useEncEl.checked),
+    passphrase: passEl ? String(passEl.value || '').trim() : ''
+  };
+}
+
+// Export all data as a downloadable cache file — reads from MEMORY (not IndexedDB)
+async function exportCacheToJSON(options) {
   try {
+    var opts = options || {};
     var counts = {
       work_orders: WORK_ORDERS.length,
       vendors: VENDORS.length,
@@ -600,33 +687,65 @@ function exportCacheToJSON() {
       inspections: INSPECTIONS
     };
     var json = JSON.stringify(exportData);
-    var blob = new Blob([json], { type: 'application/json' });
+    var useEncryption = !!opts.encrypt;
+    var payloadText = json;
+    var fileExt = 'json';
+    if (useEncryption) {
+      if (!opts.passphrase) {
+        showToast('Enter an encryption passphrase in Settings before export', { kind: 'warning' });
+        return;
+      }
+      var encryptedEnvelope = await _encryptCachePayload(json, opts.passphrase);
+      payloadText = JSON.stringify(encryptedEnvelope);
+      fileExt = 'hmc';
+    }
+    var blob = new Blob([payloadText], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
-    a.download = 'maint-cockpit-' + new Date().toISOString().split('T')[0] + '.json';
+    a.download = 'maint-cockpit-' + new Date().toISOString().split('T')[0] + '.' + fileExt;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
-    var sizeKB = Math.round(json.length / 1024);
-    showToast('Exported ' + total + ' records (' + sizeKB + ' KB) \u2014 WO:' + counts.work_orders + ' V:' + counts.vendors + ' P:' + counts.properties + ' T:' + counts.turns + ' I:' + counts.inspections);
+    var sizeKB = Math.round(payloadText.length / 1024);
+    showToast(
+      'Exported ' + total + ' records (' + sizeKB + ' KB)' + (useEncryption ? ' [encrypted]' : '') +
+      '  WO:' + counts.work_orders + ' V:' + counts.vendors + ' P:' + counts.properties + ' T:' + counts.turns + ' I:' + counts.inspections,
+      { kind: 'success' }
+    );
   } catch (e) {
     showToast('Export failed: ' + (e.message || e));
   }
 }
 
 // Import data from a JSON file — writes to MEMORY + IndexedDB
-async function importCacheFromJSON(file) {
+async function importCacheFromJSON(file, options) {
   if (!file) return;
   try {
+    var opts = options || {};
     var text = await new Promise(function(resolve, reject) {
       var reader = new FileReader();
       reader.onload = function(ev) { resolve(ev.target.result); };
       reader.onerror = function() { reject(new Error('File read error')); };
       reader.readAsText(file);
     });
-    var data = JSON.parse(text);
+    var parsed = JSON.parse(text);
+    var data = parsed;
+    var isEncrypted = !!(parsed && parsed._meta && parsed._meta.format === 'hm-cache-encrypted-v1');
+    if (isEncrypted) {
+      if (!opts.passphrase) {
+        showToast('Encrypted file detected. Enter passphrase in Settings and retry import.', { kind: 'warning' });
+        return;
+      }
+      try {
+        var decrypted = await _decryptCachePayload(parsed, opts.passphrase);
+        data = JSON.parse(decrypted);
+      } catch (decErr) {
+        showToast('Decrypt failed: invalid passphrase or file', { kind: 'danger' });
+        return;
+      }
+    }
     // Support v2 format (arrays) and v1 format ({data:[], timestamp})
     function extractArr(key) {
       var val = data[key];
@@ -645,7 +764,11 @@ async function importCacheFromJSON(file) {
     await saveAllToCache();
     updateCacheBadge('cached', Date.now(), false);
     renderAll();
-    showToast('Imported ' + total + ' records — WO:' + WORK_ORDERS.length + ' V:' + VENDORS.length + ' P:' + PROPERTIES.length + ' T:' + TURNS.length + ' I:' + INSPECTIONS.length);
+    showToast(
+      'Imported ' + total + ' records' + (isEncrypted ? ' [decrypted]' : '') +
+      '  WO:' + WORK_ORDERS.length + ' V:' + VENDORS.length + ' P:' + PROPERTIES.length + ' T:' + TURNS.length + ' I:' + INSPECTIONS.length,
+      { kind: 'success' }
+    );
   } catch (e) {
     showToast('Import failed: ' + (e.message || e));
   }
@@ -844,6 +967,7 @@ var _accessRole = 'full'; // 'full' | 'manager' | 'vendors' | 'pm_readonly'
 var _pmScopeGroupUuid = '';
 var _pmScopeEmail = '';
 var DEFAULT_BILLS_LOOKBACK_DAYS = 90;
+var BILLS_DEFAULT_LOOKBACK_DAYS = 7; // Used for the UI date filter default
 var DEFAULT_COMPLETED_WO_LOOKBACK_DAYS = 30;
 
 function normalizeAccessRole(role) {
@@ -2386,12 +2510,34 @@ function buildVendorComplianceMap() {
 // Aggregate turn completion: check ALL Unit Turn WOs for a unit
 function isClosedTurnWorkOrderStatus(status) {
   var normalized = String(status || '').trim().toLowerCase();
-  return normalized === 'completed' || normalized === 'work completed' || normalized === 'canceled' || normalized === 'cancelled';
+  return normalized === 'completed' ||
+         normalized === 'work completed' ||
+         normalized === 'work done' ||
+         normalized === 'ready to bill' ||
+         normalized === 'closed' ||
+         normalized === 'resolved' ||
+         normalized === 'canceled' ||
+         normalized === 'cancelled';
 }
 
 function isTurnWorkDoneStatus(status) {
   var normalized = String(status || '').trim().toLowerCase();
-  return normalized === 'work done' || normalized === 'ready to bill' || isClosedTurnWorkOrderStatus(normalized);
+  return normalized === 'work done' || normalized === 'ready to bill' || normalized === 'completed' || isClosedTurnWorkOrderStatus(normalized);
+}
+
+function isTurnWorkActiveStatus(status) {
+  var normalized = String(status || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (isClosedTurnWorkOrderStatus(normalized)) return false;
+  return normalized === 'new' ||
+         normalized === 'open' ||
+         normalized === 'assigned' ||
+         normalized === 'scheduled' ||
+         normalized === 'estimate requested' ||
+         normalized === 'estimated' ||
+         normalized === 'in progress' ||
+         normalized === 'waiting parts' ||
+         normalized === 'awaiting approval';
 }
 
 function isTurnFullyComplete(matchingWOs) {
@@ -2955,7 +3101,7 @@ if ($('#vdmBtnBills')) {
   $('#vdmBtnBills').addEventListener('click', function() {
     var v = VENDORS.find(function(vn) { return String(vn.id) === _currentSelectedVendorId; });
     closeModal('vendorDetailModal');
-    if (v) navigateToBillsForVendor(v.name);
+    if (v) navigateToBillsForVendor(v.id || v.name);
   });
 }
 
@@ -3336,12 +3482,26 @@ async function fetchBills(days, opts) {
         workOrderId: b.work_order_id || raw.WorkOrderId || raw.work_order_id || '',
         amount: amountNum,
           date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || b.due_date || raw.DueDate || raw.due_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
+          lastUpdatedAt: b.last_updated_at || b.lastUpdatedAt || raw.LastUpdatedAt || raw.last_updated_at || raw.UpdatedAt || raw.updated_at || '',
           status: status,
           statusLabel: b.status_label || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || (status ? status.replace(/_/g, ' ') : '—'),
           lineItems: lineItems,
           raw: raw
       };
     });
+
+    var updatedFromFilter = String(opts.updatedFrom || '').slice(0, 10);
+    var updatedToFilter = String(opts.updatedTo || '').slice(0, 10);
+    if (updatedFromFilter || updatedToFilter) {
+      mappedBills = mappedBills.filter(function(b) {
+        var raw = b.raw || {};
+        var updated = String(b.lastUpdatedAt || raw.LastUpdatedAt || raw.last_updated_at || b.date || '').slice(0, 10);
+        if (!updated) return false;
+        if (updatedFromFilter && updated < updatedFromFilter) return false;
+        if (updatedToFilter && updated > updatedToFilter) return false;
+        return true;
+      });
+    }
 
     if (routeStatusFilter) {
       mappedBills = mappedBills.filter(function(b) {
@@ -6094,13 +6254,24 @@ async function loadBillingPage(opts) {
     refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading…';
   }
 
-  var payload = await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, {
+  // Read Last Updated date range from UI (default 7 days)
+  var billUpdatedFrom = String((document.getElementById('billUpdatedFrom') || {}).value || '').trim();
+  var billUpdatedTo = String((document.getElementById('billUpdatedTo') || {}).value || '').trim();
+  var lookbackDays = DEFAULT_BILLS_LOOKBACK_DAYS;
+  if (billUpdatedFrom) {
+    var fromMs = new Date(billUpdatedFrom).getTime();
+    if (!isNaN(fromMs)) lookbackDays = Math.max(1, Math.ceil((Date.now() - fromMs) / 86400000));
+  }
+
+  var payload = await fetchBills(lookbackDays, {
     scoped: true,
     forceRefresh: !!opts.forceRefresh,
     filterType: _billingRouteAction,
     filterValue: _billingRouteFilterValue,
     dueFrom: _billingDueFrom,
     dueTo: _billingDueTo,
+    updatedFrom: billUpdatedFrom,
+    updatedTo: billUpdatedTo,
     routeStatusFilter: _billingRouteStatus,
     limit: BILLS_PAGE_SIZE,
     perPage: BILLS_PAGE_SIZE,
@@ -6367,7 +6538,7 @@ function openBillKanbanCard(billId) {
     showToast('Bill not found in current view', { kind: 'warning' });
     return;
   }
-  showBillDetailModal(bill.id || billId);
+  showBillDetailModal(bill.id || billId, bill);
 }
 
 function renderBillingPropertyScopeChip(propertyId, propertyName, unitId, unitName) {
@@ -6429,6 +6600,20 @@ function wireBillingFilters() {
   if (applyBtn.dataset.wired === '1') return;
   applyBtn.dataset.wired = '1';
 
+  // Initialize Last Updated date range to 7-day default if not already set
+  (function() {
+    var fromEl = document.getElementById('billUpdatedFrom');
+    var toEl = document.getElementById('billUpdatedTo');
+    if (fromEl && !fromEl.value) {
+      var d7 = new Date();
+      d7.setDate(d7.getDate() - BILLS_DEFAULT_LOOKBACK_DAYS);
+      fromEl.value = d7.toISOString().slice(0, 10);
+    }
+    if (toEl && !toEl.value) {
+      toEl.value = new Date().toISOString().slice(0, 10);
+    }
+  })();
+
   var PLACEHOLDERS = {
     bills_by_vendor: 'Vendor ID (UUID)…',
     bills_by_property: 'Property ID (UUID)…',
@@ -6478,6 +6663,14 @@ function wireBillingFilters() {
   function resetBillingFilter() {
     if (filterInput) filterInput.value = '';
     var dueFromEl = document.getElementById('billing-due-from');
+        var updFrom = document.getElementById('billUpdatedFrom');
+        var updTo = document.getElementById('billUpdatedTo');
+        if (updFrom) {
+          var d7r = new Date(); d7r.setDate(d7r.getDate() - BILLS_DEFAULT_LOOKBACK_DAYS);
+          updFrom.value = d7r.toISOString().slice(0, 10);
+        }
+        if (updTo) updTo.value = new Date().toISOString().slice(0, 10);
+        var dueFromEl = document.getElementById('billing-due-from');
     var dueToEl = document.getElementById('billing-due-to');
     var statusEl = document.getElementById('billing-status-filter');
     if (dueFromEl) dueFromEl.value = '';
@@ -6505,6 +6698,24 @@ function wireBillingFilters() {
   filterType.addEventListener('change', toggleControls);
   applyBtn.addEventListener('click', applyBillingFilter);
   if (resetBtn) resetBtn.addEventListener('click', resetBillingFilter);
+
+    // Wire Last Updated date range to reload on change
+    var updFromEl = document.getElementById('billUpdatedFrom');
+    var updToEl = document.getElementById('billUpdatedTo');
+    var dateChangeTimer = null;
+    function scheduleReloadOnDateChange() {
+      clearTimeout(dateChangeTimer);
+      dateChangeTimer = setTimeout(function() {
+        window._billingPageRows = [];
+        _billingServerTotal = 0;
+        _billingServerTotalPages = 1;
+        _billingServerPage = 1;
+        _billsPage = 0;
+        loadBillingPage({ resetPage: true, forceRefresh: true });
+      }, 600);
+    }
+    if (updFromEl) updFromEl.addEventListener('change', scheduleReloadOnDateChange);
+    if (updToEl) updToEl.addEventListener('change', scheduleReloadOnDateChange);
   if (filterInput) {
     filterInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') applyBillingFilter();
@@ -6646,8 +6857,20 @@ async function uploadBillAttachment(billId, fileInput, statusEl, listEl) {
 async function showBillDetailModal(billId) {
   if (!billId) return;
   try {
-    var data = await proxyAction('bill_detail', { bill_id: String(billId) });
-    var b = data.result || data.bill || null;
+    var b = arguments[1] || null; // optional pre-loaded bill object
+    if (!b) {
+      // Attempt cheap cache lookup before expensive API call
+      var cachedRows = window._currentBillsCache || window._billingPageRows || [];
+      b = cachedRows.find(function(r) { return String(r.id || '') === String(billId); }) || null;
+    }
+    var hasRichDetail = !!(b && b.raw && (b.raw.LineItems || b.raw.line_items || b.raw.Remarks || b.raw.remarks || b.raw.CheckMemo));
+    if (!b || !hasRichDetail) {
+      try {
+        var data = await proxyAction('bill_detail', { bill_id: String(billId) });
+        var detailed = data.result || data.bill || null;
+        if (detailed) b = detailed;
+      } catch (e) { /* keep cached bill fallback */ }
+    }
     if (!b) {
       showToast('Bill detail unavailable', { kind: 'warning' });
       return;
@@ -6659,6 +6882,11 @@ async function showBillDetailModal(billId) {
       ? ('https://' + API_VHOST + '.appfolio.com/bills/' + encodeURIComponent(String(b.id || billId)))
       : '';
 
+    // Resolve vendor info from local cache if missing
+    var vendorIdResolved = String(b.vendor_id || b.vendorId || b.payee_uuid || b.payeeUuid || b.vendor_uuid || b.vendorUuid || '').trim();
+    var vendorNameResolved = String(b.vendor_name || b.vendorName || '').trim() ||
+      (vendorIdResolved ? resolveVendorNameFromMaps(vendorIdResolved, vendorIdResolved) : '—') || '—';
+
     showItemDetail('Bill — ' + String(b.bill_number || b.id || billId), [
       { section: 'Core', icon: 'fa-file-invoice-dollar' },
       { label: 'Bill ID', value: String(b.id || billId) },
@@ -6669,12 +6897,17 @@ async function showBillDetailModal(billId) {
       { label: 'Due Date', value: b.due_date ? formatDate(b.due_date) : '—' },
       { label: 'Posting Date', value: b.posting_date ? formatDate(b.posting_date) : '—' },
       { section: 'Associations', icon: 'fa-link' },
-      { label: 'Vendor / Payee', value: String((b.vendor_name || '—') + ((b.payee_uuid || b.vendor_uuid || b.vendor_id) ? (' (' + (b.payee_uuid || b.vendor_uuid || b.vendor_id) + ')') : '')) },
-      { label: 'Payee UUID', value: String(b.payee_uuid || b.vendor_uuid || b.vendor_id || '—') },
-      { label: 'Property', value: String((b.property_name || '—') + (b.property_id ? (' (' + b.property_id + ')') : '')) },
-      { label: 'Property Group', value: String(b.property_group || b.propertyGroup || b._propertyGroup || '—') },
+      {
+        label: 'Vendor / Payee',
+        html: '<span>' + escapeHtml(vendorNameResolved) + (vendorIdResolved ? ' <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">(' + escapeHtml(vendorIdResolved) + ')</span>' : '') + '</span>' +
+          (vendorIdResolved
+            ? ' <button class="action-btn" id="billGoToVendor" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-external-link-alt"></i> Go to Vendor</button>'
+            : '')
+      },
+      { label: 'Property', value: String((b.property_name || b.propertyName || '—') + ((b.property_id || b.propertyId) ? (' (' + (b.property_id || b.propertyId) + ')') : '')) },
+      { label: 'Property Group', value: String(b.property_group || b.property_group_name || b.propertyGroup || b._propertyGroup || '—') },
       { label: 'Property Manager', value: String(b.pm_name || b.property_manager || raw.pm_name || raw.property_manager || raw.PropertyManager || '—') },
-      { label: 'Work Order', value: b.work_order_id ? String(b.work_order_id) : '—' },
+      { label: 'Work Order', value: b.work_order_id || b.workOrderId ? String(b.work_order_id || b.workOrderId) : '—' },
       { label: 'Reference', value: String(b.reference || '—') },
       { label: 'Remarks', value: String(b.remarks || '—') },
       { section: 'Line Items', icon: 'fa-list' },
@@ -6702,6 +6935,27 @@ async function showBillDetailModal(billId) {
       var payloadDownloadBtn = document.getElementById('btnBillPayloadDownload');
 
       if (listEl) loadBillAttachments(billId, listEl);
+        var goVendorBtn = document.getElementById('billGoToVendor');
+        if (goVendorBtn) {
+          goVendorBtn.addEventListener('click', function() {
+            closeModal('itemDetailModal');
+            // Try to open vendor modal directly if vendor is loaded
+            var vendorMatch = VENDORS && VENDORS.find(function(v) { return String(v.id || '').trim() === vendorIdResolved; });
+            if (vendorMatch) {
+              var vendTab = document.querySelector('.nav-tab[data-tab="vendors"]');
+              if (vendTab) vendTab.click();
+              setTimeout(function() { openVendorModal(vendorIdResolved); }, 300);
+            } else {
+              // Fall back to navigating to billing-for-vendor cross-filter
+              var vendTab2 = document.querySelector('.nav-tab[data-tab="vendors"]');
+              if (vendTab2) vendTab2.click();
+              setTimeout(function() {
+                var vs = $('#vendorSearch');
+                if (vs) { vs.value = vendorNameResolved || vendorIdResolved; vs.dispatchEvent(new Event('input')); }
+              }, 300);
+            }
+          });
+        }
       if (uploadBtn) {
         uploadBtn.addEventListener('click', function() {
           uploadBillAttachment(billId, fileInput, statusEl, listEl);
@@ -6767,7 +7021,9 @@ function renderBillHistoryPage(dateFrom, dateTo) {
 
   body.innerHTML = pageRows.map(function(r) {
     var wo = String(r.work_order_id || r.WorkOrderId || '').trim();
-    var billId = String(r.id || r.Id || '').trim();
+    var billId = String(
+      r.id || r.Id || r.bill_id || r.BillId || r.bill_uuid || r.BillUuid || ''
+    ).trim();
     var vendorId = String(r.vendor_id || r.VendorId || r.payee_uuid || r.PayeeUuid || '').trim();
     var vendorName = String(r.vendor_name || r.VendorName || '').trim();
     if (!vendorName) vendorName = resolveVendorNameFromMaps(vendorId, vendorId || '—') || '—';
@@ -6913,19 +7169,20 @@ async function runBillHistorySearch() {
 
     if (grpUuid) {
       try {
+        var dueOffset = BILL_HISTORY_PAGE * BILL_HISTORY_PAGE_SIZE;
         var dueRangeData = await proxyAction('bills_due_range', {
           group_id: String(grpUuid),
           due_from: dateFrom,
           due_to: dateTo,
-          limit: '500',
-          offset: '0'
+          limit: String(BILL_HISTORY_PAGE_SIZE),
+          offset: String(dueOffset)
         });
         rows = Array.isArray(dueRangeData.data)
           ? dueRangeData.data
           : (Array.isArray(dueRangeData.results) ? dueRangeData.results : []);
         historyTotal = Number(dueRangeData.total || rows.length) || rows.length;
         var dueLimit = Math.max(1, Number(dueRangeData.limit || BILL_HISTORY_PAGE_SIZE) || BILL_HISTORY_PAGE_SIZE);
-        historyPage = Math.max(1, Math.floor((Number(dueRangeData.offset || 0) || 0) / dueLimit) + 1);
+        historyPage = Math.max(1, Math.floor((Number(dueRangeData.offset || dueOffset) || 0) / dueLimit) + 1);
         historyPages = Math.max(1, Math.ceil(historyTotal / dueLimit));
         usedDueRange = true;
         _lastBillSource = 'cached';
@@ -6947,6 +7204,7 @@ async function runBillHistorySearch() {
         page: String(BILL_HISTORY_PAGE + 1),
         per_page: String(BILL_HISTORY_PAGE_SIZE),
         days: String(spanDays),
+        prefer_v2: 'true',
         max: '8000',
       };
       if (grpName) params.group_name = grpName;
@@ -7417,6 +7675,7 @@ var currentWOProperty = '';
 var currentWOAgeFilter = '';
 var currentWOSort = 'oldest';
 var currentWOView = 'board'; // 'board' | 'list'
+var currentWOSubtab = 'active'; // active | completed | closure | followup
 var currentActivityFilter = 'all';
 var expandedWOColumn = '';
 var kanbanBoardScrollState = { left: 0, top: 0 };
@@ -7431,6 +7690,31 @@ function setWOView(viewType) {
   var listBtn  = $('#btnWOViewList');
   if (boardBtn) boardBtn.classList.toggle('active', currentWOView === 'board');
   if (listBtn)  listBtn.classList.toggle('active',  currentWOView === 'list');
+}
+
+function setWOSubtab(tab) {
+  var allowed = { active: true, completed: true, closure: true, followup: true };
+  var target = allowed[tab] ? tab : 'active';
+  currentWOSubtab = target;
+
+  $$('[data-wo-subtab]').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.woSubtab === target);
+  });
+
+  $$('.wo-subpanel').forEach(function(panel) {
+    panel.classList.remove('active');
+    panel.style.display = 'none';
+  });
+  var panel = $('#wo-subpanel-' + target);
+  if (panel) {
+    panel.classList.add('active');
+    panel.style.display = '';
+  }
+
+  if (target === 'completed' && !showCompletedWOHistory) {
+    showCompletedWOHistory = true;
+    renderCompletedWOHistorySection();
+  }
 }
 var completedWOHistoryRows = [];
 var completedWOHistoryLoading = false;
@@ -8566,12 +8850,18 @@ async function syncTurnTrackerFromPipeline() {
 
 async function linkTurnWorkOrder(turnKey, woId) {
   if (!turnKey || !woId) return;
-  var wo = WORK_ORDERS.find(function(w) { return String(w.id) === String(woId); }) ||
-    TURN_WORK_ORDERS.find(function(w) { return String(w.woNumber || w.id) === String(woId); }) || null;
+  // WORK_ORDERS (Reports v2): id = WO number, uuid = UUID (work_order_id)
+  // TURN_WORK_ORDERS (DB API v0): id = UUID, woNumber = WO number
+  var woStr = String(woId);
+  var wo = WORK_ORDERS.find(function(w) { return String(w.id) === woStr; }) ||
+    TURN_WORK_ORDERS.find(function(w) { return String(w.woNumber || '') === woStr || String(w.id) === woStr; }) || null;
+  // Prefer the Reports v2 UUID (wo.uuid); for DB API records wo.id is already the UUID
+  var isDbApiMatch = !wo ? false : TURN_WORK_ORDERS.some(function(w) { return w === wo; });
+  var wo_db_uuid = wo ? (isDbApiMatch ? String(wo.id || '') : String(wo.uuid || '')) : '';
   var payload = {
     turn_key: turnKey,
-    wo_id: String(woId),
-    wo_db_uuid: wo && (wo.dbApiId || wo.id) ? String(wo.dbApiId || wo.id) : '',
+    wo_id: woStr,
+    wo_db_uuid: wo_db_uuid,
     source: 'manual',
     status: wo && wo.status ? wo.status : '',
     created_at: wo && (wo.created || wo.createdAt) ? (wo.created || wo.createdAt) : ''
@@ -8642,79 +8932,106 @@ function buildTurnPipeline() {
     return k === '--' ? null : k;
   }
 
-  // Helper: find matching WOs using strict unit_turn_id + unit_id + created_at gate.
-  // Fallback: for upcoming move-outs with no AppFolio turn record yet, matches by
-  // unit_id + vacancy window (moveOut-7d … moveOut+270d) to surface pre-vacancy WOs.
+  // Helper: find matching WOs using tolerant matching (unit/property/date + optional unit_turn_id)
+  // This avoids false negatives caused by strict unit_turn_id-only gates and allows pre-moveout planning WOs.
   function findMatchingWOs(turnKey, unit, property, propId, unitId, moveOutDate, turnData) {
     var requiredUnitTurnId = String((turnData && turnData.unitTurnId) || '').trim();
     var requiredUnitId = String(unitId || '').trim();
-    var moveOutIso = (moveOutDate && !isNaN(moveOutDate.getTime())) ? moveOutDate.toISOString() : '';
+    var requiredPropertyId = String(propId || '').trim();
+    var requiredUnitName = String(unit || '').trim().toLowerCase();
+    var requiredPropertyName = String(property || '').trim().toLowerCase();
 
-    // ---- No turn record yet: vacancy-window match by unit_id + date range ----
-    if (!requiredUnitTurnId) {
-      if (!requiredUnitId || !moveOutIso) return [];
-      var winStart = new Date(moveOutDate.getTime() - 7 * 86400000);   // 7d before MO
-      var winEnd   = new Date(moveOutDate.getTime() + 270 * 86400000); // ~9 months after MO
-      var vacWOs = [];
-      WORK_ORDERS.forEach(function(wo) {
-        if (String(wo.unitId || '').trim() !== requiredUnitId) return;
-        if (!isTurnWorkOrderCandidate(wo, moveOutDate, 'reports')) return;
-        var wc = new Date(wo.created || '');
-        if (isNaN(wc.getTime()) || wc < winStart || wc > winEnd) return;
-        vacWOs.push({ source: 'reports', id: wo.id, status: wo.status,
-          description: wo.description || '', created: wo.created,
-          vendor: wo.vendor || '', unit: wo.unit, property: wo.propertyName, priority: wo.priority });
-      });
-      (_turnWoByUnit[requiredUnitId] || []).forEach(function(wo) {
-        if (!isTurnWorkOrderCandidate(wo, moveOutDate, 'db')) return;
-        var dc = new Date(wo.createdAt || '');
-        if (isNaN(dc.getTime()) || dc < winStart || dc > winEnd) return;
-        var dupe = vacWOs.find(function(w) { return String(w.id) === String(wo.id) || String(w.id) === String(wo.woNumber); });
-        if (!dupe) {
-          vacWOs.push({ source: 'db_api', id: wo.woNumber || wo.id, dbApiId: wo.id,
-            status: wo.status, description: wo.description || '',
-            created: wo.createdAt, vendor: wo.vendorTrade || '', priority: wo.priority });
-        }
-      });
-      return vacWOs;
+    var winStart = moveOutDate ? new Date(moveOutDate.getTime() - 45 * 86400000) : null;
+    var winEnd = moveOutDate ? new Date(moveOutDate.getTime() + 365 * 86400000) : null;
+
+    function inWindow(dateLike) {
+      if (!moveOutDate) return true;
+      var d = new Date(dateLike || '');
+      if (isNaN(d.getTime())) return false;
+      return d >= winStart && d <= winEnd;
     }
 
-    // ---- Strict match: unit_turn_id + unit_id + created_at gate ----
-    if (!requiredUnitId || !moveOutIso) return [];
+    function candidateId(wo) {
+      return String(wo.id || wo.woNumber || '').trim();
+    }
+
+    function isLikelyMatch(woUnitId, woUnitTurnId, woPropertyId, woUnitName, woPropertyName, woCreated) {
+      var score = 0;
+      if (requiredUnitId && woUnitId && String(woUnitId) === requiredUnitId) score += 4;
+      if (requiredUnitTurnId && woUnitTurnId && String(woUnitTurnId) === requiredUnitTurnId) score += 5;
+      if (requiredPropertyId && woPropertyId && String(woPropertyId) === requiredPropertyId) score += 2;
+      if (requiredUnitName && woUnitName && String(woUnitName).toLowerCase() === requiredUnitName) score += 2;
+      if (requiredPropertyName && woPropertyName && String(woPropertyName).toLowerCase() === requiredPropertyName) score += 1;
+      if (inWindow(woCreated)) score += 2;
+
+      // If there is an official unit_turn_id, still allow fallback via strong unit/property/date signals.
+      if (requiredUnitTurnId) {
+        return score >= 5;
+      }
+      return score >= 4;
+    }
 
     var wos = [];
-    // From Reports API work orders — strict unit + turn + created_at gate
-    var reportsWOs = WORK_ORDERS.filter(function(wo) {
-      var woCreatedIso = '';
-      if (wo.created) {
-        var woCreatedAt = new Date(wo.created);
-        if (!isNaN(woCreatedAt.getTime())) woCreatedIso = woCreatedAt.toISOString();
-      }
-      return String(wo.unitId || '').trim() === requiredUnitId &&
-             String(wo.unitTurnId || '').trim() === requiredUnitTurnId &&
-             !!woCreatedIso && woCreatedIso >= moveOutIso;
-    });
-    reportsWOs.forEach(function(wo) {
-      if (!isTurnWorkOrderCandidate(wo, moveOutDate, 'reports')) return;
-      wos.push({ source: 'reports', id: wo.id, status: wo.status, description: wo.description || '',
-        created: wo.created, vendor: wo.vendor || '', unit: wo.unit, property: wo.propertyName, priority: wo.priority });
-    });
-
-    // From DB API turn work orders — strict filters
-    var dbCandidates = _turnWoByUnit[requiredUnitId] || [];
-    dbCandidates.forEach(function(wo) {
-      if (String(wo.unitTurnId || '').trim() !== requiredUnitTurnId) return;
-      if (!isTurnWorkOrderCandidate(wo, moveOutDate, 'db')) return;
-      var dbCreatedAt = new Date(wo.createdAt || '');
-      if (isNaN(dbCreatedAt.getTime()) || dbCreatedAt.toISOString() < moveOutIso) return;
-      var dupe = wos.find(function(w) { return String(w.id) === String(wo.id) || String(w.id) === String(wo.woNumber); });
-      if (dupe) {
-        dupe.status = wo.status;
-        dupe.dbApiId = wo.id;
+    function upsertWO(next) {
+      var idVal = String(next.id || '').trim();
+      if (!idVal) return;
+      var dupe = wos.find(function(w) {
+        return String(w.id) === idVal ||
+          (next.dbApiId && String(w.dbApiId || '') === String(next.dbApiId)) ||
+          (next.woUuid && String(w.woUuid || '') === String(next.woUuid));
+      });
+      if (!dupe) {
+        wos.push(next);
         return;
       }
-      wos.push({ source: 'db_api', id: wo.woNumber || wo.id, dbApiId: wo.id, status: wo.status,
-        description: wo.description || '', created: wo.createdAt, vendor: wo.vendorTrade || '', priority: wo.priority });
+      // Merge with DB status/source when available.
+      if (next.source === 'db_api') dupe.source = 'db_api';
+      if (next.dbApiId) dupe.dbApiId = next.dbApiId;
+      if (next.woUuid) dupe.woUuid = next.woUuid;
+      if (next.status) dupe.status = next.status;
+      if (!dupe.description && next.description) dupe.description = next.description;
+      if (!dupe.created && next.created) dupe.created = next.created;
+      if (!dupe.vendor && next.vendor) dupe.vendor = next.vendor;
+      if (!dupe.priority && next.priority) dupe.priority = next.priority;
+    }
+
+    WORK_ORDERS.forEach(function(wo) {
+      if (!isTurnWorkOrderCandidate(wo, moveOutDate, 'reports')) return;
+      var woUnitId = String(wo.unitId || '').trim();
+      var woTurnId = String(wo.unitTurnId || '').trim();
+      var woPropId = String(wo.propertyId || '').trim();
+      if (!isLikelyMatch(woUnitId, woTurnId, woPropId, wo.unit, wo.propertyName, wo.created)) return;
+      upsertWO({
+        source: 'reports',
+        id: wo.id,
+        woUuid: wo.uuid || '',
+        status: wo.status,
+        description: wo.description || '',
+        created: wo.created,
+        vendor: wo.vendorName || wo.vendor || '',
+        unit: wo.unit,
+        property: wo.propertyName,
+        priority: wo.priority
+      });
+    });
+
+    var dbCandidates = requiredUnitId ? (_turnWoByUnit[requiredUnitId] || []) : TURN_WORK_ORDERS;
+    dbCandidates.forEach(function(wo) {
+      if (!isTurnWorkOrderCandidate(wo, moveOutDate, 'db')) return;
+      var woUnitId = String(wo.unitId || '').trim();
+      var woTurnId = String(wo.unitTurnId || '').trim();
+      var woPropId = String(wo.propertyId || '').trim();
+      if (!isLikelyMatch(woUnitId, woTurnId, woPropId, wo.unit || '', wo.property || '', wo.createdAt || wo.lastUpdated)) return;
+      upsertWO({
+        source: 'db_api',
+        id: wo.woNumber || wo.id,
+        dbApiId: wo.id,
+        status: wo.status,
+        description: wo.description || '',
+        created: wo.createdAt || wo.lastUpdated || '',
+        vendor: wo.vendorTrade || '',
+        priority: wo.priority
+      });
     });
 
     var tracked = UNIT_TURN_TRACKER_BY_KEY[String(turnKey || '')];
@@ -8722,17 +9039,25 @@ function buildTurnPipeline() {
       tracked.linkedWorkOrders.forEach(function(w) {
         var idVal = String(w.id || '').trim();
         if (!idVal) return;
-        var dupe = wos.find(function(x) { return String(x.id) === idVal || (w.dbApiId && String(x.dbApiId) === String(w.dbApiId)); });
-        if (dupe) {
-          // Update status/dbApiId from the authoritative tracker record
-          if (w.status) dupe.status = w.status;
-          if (w.dbApiId) dupe.dbApiId = w.dbApiId;
-        } else {
-          // Manually-linked WO not yet in reports or DB API results — surface it
-          wos.push({ source: 'tracker', id: idVal, dbApiId: w.dbApiId || '', status: w.status || '', description: '', created: w.created || '', vendor: '', priority: '' });
-        }
+        upsertWO({
+          source: 'tracker',
+          id: idVal,
+          dbApiId: w.dbApiId || '',
+          status: w.status || '',
+          created: w.created || '',
+          description: '',
+          vendor: '',
+          priority: ''
+        });
       });
     }
+
+    wos.sort(function(a, b) {
+      var ad = new Date(a.created || 0).getTime();
+      var bd = new Date(b.created || 0).getTime();
+      return (isNaN(ad) ? 0 : ad) - (isNaN(bd) ? 0 : bd);
+    });
+
     return wos;
   }
 
@@ -8771,34 +9096,39 @@ function buildTurnPipeline() {
 
     // Stage 3-7: Derive from WO statuses
     var hasWO = matchingWOs.length > 0;
-    var woStatuses = matchingWOs.map(function(w) { return w.status; });
+    var woStatuses = matchingWOs.map(function(w) { return String(w.status || '').trim(); });
     var woCreatedDate = hasWO ? matchingWOs[0].created : null;
 
-    var hasEstReq = woStatuses.some(function(s) { return s === 'Estimate Requested'; });
-    var hasEstimated = woStatuses.some(function(s) { return s === 'Estimated'; });
-    var hasAssigned = woStatuses.some(function(s) { return s === 'Assigned' || s === 'Scheduled'; });
+    var hasEstReq = woStatuses.some(function(s) { return String(s).toLowerCase() === 'estimate requested'; });
+    var hasEstimated = woStatuses.some(function(s) { return String(s).toLowerCase() === 'estimated'; });
+    var hasAssigned = woStatuses.some(function(s) {
+      var n = String(s || '').toLowerCase();
+      return n === 'assigned' || n === 'scheduled' || n === 'vendor assigned';
+    });
+    var hasActive = woStatuses.some(function(s) { return isTurnWorkActiveStatus(s); });
     var hasAnyWorkDone = woStatuses.some(function(s) { return isTurnWorkDoneStatus(s); });
     // ALL WOs must be in terminal status for work_done to be truly "done"
     var allWorkDone = hasWO && woStatuses.every(function(s) { return isClosedTurnWorkOrderStatus(s); });
     var doneCount = woStatuses.filter(function(s) { return isClosedTurnWorkOrderStatus(s); }).length;
+    var progressPct = hasWO ? Math.round((doneCount / matchingWOs.length) * 100) : 0;
 
     // Progressive — later stages imply earlier ones
     var firstEstReq = null;
     var firstEstimated = null;
     var firstAssigned = null;
     matchingWOs.forEach(function(w) {
-      var st = String(w.status || '');
-      if (!firstEstReq && (st === 'Estimate Requested' || st === 'Estimated' || st === 'Assigned' || st === 'Scheduled' || isTurnWorkDoneStatus(st))) firstEstReq = w.created || null;
-      if (!firstEstimated && (st === 'Estimated' || st === 'Assigned' || st === 'Scheduled' || isTurnWorkDoneStatus(st))) firstEstimated = w.created || null;
-      if (!firstAssigned && (st === 'Assigned' || st === 'Scheduled' || isTurnWorkDoneStatus(st))) firstAssigned = w.created || null;
+      var st = String(w.status || '').toLowerCase();
+      if (!firstEstReq && (st === 'estimate requested' || st === 'estimated' || st === 'assigned' || st === 'scheduled' || st === 'vendor assigned' || isTurnWorkActiveStatus(st) || isTurnWorkDoneStatus(st))) firstEstReq = w.created || null;
+      if (!firstEstimated && (st === 'estimated' || st === 'assigned' || st === 'scheduled' || st === 'vendor assigned' || isTurnWorkActiveStatus(st) || isTurnWorkDoneStatus(st))) firstEstimated = w.created || null;
+      if (!firstAssigned && (st === 'assigned' || st === 'scheduled' || st === 'vendor assigned' || isTurnWorkActiveStatus(st) || isTurnWorkDoneStatus(st))) firstAssigned = w.created || null;
     });
 
     stages.wo_created = { done: hasWO, date: woCreatedDate, woIds: matchingWOs.map(function(w) { return w.id; }) };
-    stages.est_requested = { done: hasEstReq || hasEstimated || hasAssigned || hasAnyWorkDone, date: firstEstReq };
-    stages.est_received = { done: hasEstimated || hasAssigned || hasAnyWorkDone, date: firstEstimated, vendors: [] };
-    stages.assigned = { done: hasAssigned || hasAnyWorkDone, date: firstAssigned };
+    stages.est_requested = { done: hasEstReq || hasEstimated || hasAssigned || hasActive || hasAnyWorkDone, date: firstEstReq };
+    stages.est_received = { done: hasEstimated || hasAssigned || hasActive || hasAnyWorkDone, date: firstEstimated, vendors: [] };
+    stages.assigned = { done: hasAssigned || hasActive || hasAnyWorkDone, date: firstAssigned };
     // work_done requires ALL WOs complete, not just one
-    stages.work_done = { done: allWorkDone, date: null, doneCount: doneCount, totalCount: matchingWOs.length };
+    stages.work_done = { done: allWorkDone, date: null, doneCount: doneCount, totalCount: matchingWOs.length, progressPct: progressPct };
 
     return stages;
   }
@@ -9688,6 +10018,9 @@ function renderTurnPipelineUI() {
       if (ps.key === 'est_received' && stage.vendors && stage.vendors.length > 0) {
         html += '<div class="pipe-tl-note">Vendors: ' + stage.vendors.map(function(v) { return escapeHtml(v); }).join(', ') + '</div>';
       }
+      if (ps.key === 'work_done' && stage.totalCount > 0 && !stage.done) {
+        html += '<div class="pipe-tl-note">WO Progress: ' + stage.doneCount + '/' + stage.totalCount + ' (' + (stage.progressPct || 0) + '%)</div>';
+      }
       html += '</div></li>';
     });
     html += '</ul></div>';
@@ -10231,17 +10564,25 @@ function openVendorModal(vendorId) {
   openModal('vendorDetailModal');
 }
 
-function navigateToBillsForVendor(vendorName) {
+function navigateToBillsForVendor(vendorRef) {
   // Switch to billing tab
   var billingTab = document.querySelector('.nav-tab[data-tab="billing"]');
   if (billingTab) billingTab.click();
-  // Pre-fill vendor search and re-render
-  var billSearch = $('#billSearch');
-  if (billSearch) {
-    billSearch.value = vendorName;
-    _billsPage = 0;
-    renderBillsSection();
-  }
+  var ref = String(vendorRef || '').trim();
+  var byId = VENDORS.find(function(v) { return String(v.id || '').trim() === ref; });
+  var byName = byId ? byId : VENDORS.find(function(v) { return String(v.name || '').trim().toLowerCase() === ref.toLowerCase(); });
+  var vendorId = byName ? String(byName.id || '').trim() : ref;
+  // Use the vendor route filter for server-side scoping
+  var filterType = document.getElementById('billing-filter-type');
+  var filterInput = document.getElementById('billing-filter-input');
+  if (filterType) filterType.value = 'bills_by_vendor';
+  if (filterInput) filterInput.value = vendorId || '';
+  _billingRouteAction = 'bills_by_vendor';
+  _billingRouteFilterValue = vendorId || '';
+  _billsPage = 0;
+  setTimeout(function() {
+    loadBillingPage({ resetPage: true });
+  }, 150);
 }
 
 function navigateToBillsForWorkOrder(workOrderRef) {
@@ -10490,10 +10831,11 @@ function renderVendors(search) {
     }
     // Cross-section navigation
     var vNameJson = JSON.stringify(v.name || '');
+    var vIdJson = JSON.stringify(v.id || v.name || '');
     html += '<div class="vendor-crossnav">';
     html += '<button class="vendor-crossnav-btn xn-wo" onclick="event.stopPropagation();navigateToOpenWOsForVendor(' + vNameJson + ')" title="Open Work Orders for this vendor"><i class="fas fa-wrench"></i> Open WOs</button>';
     html += '<button class="vendor-crossnav-btn xn-hist" onclick="event.stopPropagation();navigateToCompletedWOsForVendor(' + vNameJson + ')" title="Completed Work Orders for this vendor"><i class="fas fa-history"></i> Completed WOs</button>';
-    html += '<button class="vendor-crossnav-btn xn-bills" onclick="event.stopPropagation();navigateToBillsForVendor(' + vNameJson + ')" title="AP Bills for this vendor"><i class="fas fa-file-invoice-dollar"></i> Bills</button>';
+    html += '<button class="vendor-crossnav-btn xn-bills" onclick="event.stopPropagation();navigateToBillsForVendor(' + vIdJson + ')" title="AP Bills for this vendor"><i class="fas fa-file-invoice-dollar"></i> Bills</button>';
     html += '</div>';
     html += '</div>';
   });
@@ -10955,12 +11297,12 @@ function buildRoutingWorkTypesEditorHtml() {
   }
 
   return '' +
-    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">' +
       '<button class="action-btn" id="btnRoutingCapModalAdd"><i class="fas fa-plus"></i> Add Work Type</button>' +
       '<button class="action-btn" id="btnRoutingCapModalRefresh"><i class="fas fa-sync-alt"></i> Refresh</button>' +
-      '<span style="font-size:11px;color:var(--text-muted)">Changes save directly to routing SQL tables.</span>' +
+      '<span id="routingCapSyncMsg" style="font-size:11px;color:var(--text-muted)">Changes save directly to routing SQL tables.</span>' +
     '</div>' +
-    '<div class="table-scroll" style="max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:10px">' +
+    '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">' +
       '<table class="data-table" style="margin:0">' +
         '<thead><tr><th>Work Type</th><th>Keywords</th><th>Enabled</th><th>Actions</th></tr></thead>' +
         '<tbody id="routingCapabilitiesModalBody">' + rows + '</tbody>' +
@@ -10995,6 +11337,7 @@ function openRoutingWorkTypesModal() {
         await proxyPost('routing_monitor', { op: 'capability_upsert', trade: trade.trim(), keywords: keywords, active: 1 });
         await loadRoutingCapabilities();
         await loadRoutingEventsAndStats();
+        showToast('Work type \u201c' + trade.trim() + '\u201d added', { kind: 'success' });
         openRoutingWorkTypesModal();
       });
     }
@@ -11021,6 +11364,7 @@ function openRoutingWorkTypesModal() {
       });
       await loadRoutingCapabilities();
       await loadRoutingEventsAndStats();
+      showToast('Work type ' + (chk.checked ? 'enabled' : 'disabled'), { kind: 'success' });
       openRoutingWorkTypesModal();
     });
 
@@ -11042,6 +11386,7 @@ function openRoutingWorkTypesModal() {
         await proxyPost('routing_monitor', { op: 'capability_upsert', id: cur.id, trade: trade.trim(), keywords: nextKws, active: Number(cur.active) === 1 ? 1 : 0 });
         await loadRoutingCapabilities();
         await loadRoutingEventsAndStats();
+        showToast('\u201c' + trade.trim() + '\u201d updated', { kind: 'success' });
         openRoutingWorkTypesModal();
         return;
       }
@@ -11053,6 +11398,7 @@ function openRoutingWorkTypesModal() {
         await proxyPost('routing_monitor', { op: 'capability_delete', id: did });
         await loadRoutingCapabilities();
         await loadRoutingEventsAndStats();
+        showToast('Work type deleted', { kind: 'success' });
         openRoutingWorkTypesModal();
       }
     });
@@ -11550,7 +11896,10 @@ function wireUpUI() {
       if (addWoBtn) {
         e.stopPropagation();
         var turnKey = addWoBtn.getAttribute('data-add-wo');
-        var input = pipeline.querySelector('input[data-add-wo-input="' + turnKey + '"]');
+        // Use closest detail panel to find the input, avoiding CSS selector issues
+        // with special characters (colons, etc.) in the turn key value.
+        var detailPanel = addWoBtn.closest('.pipe-detail');
+        var input = detailPanel ? detailPanel.querySelector('input[data-add-wo-input]') : null;
         var woId = input ? String(input.value || '').trim() : '';
         if (!woId) {
           showToast('Enter a WO number first');
@@ -11925,14 +12274,10 @@ function wireUpUI() {
   // WO sub-tabs
   $$('[data-wo-subtab]').forEach(function(btn) {
     btn.addEventListener('click', function() {
-      var tab = this.dataset.woSubtab;
-      $$('[data-wo-subtab]').forEach(function(b) { b.classList.remove('active'); });
-      this.classList.add('active');
-      $$('.wo-subpanel').forEach(function(p) { p.style.display = 'none'; });
-      var panel = $('#wo-subpanel-' + tab);
-      if (panel) panel.style.display = '';
+      setWOSubtab(this.dataset.woSubtab);
     });
   });
+  setWOSubtab('active');
 
   // Collapsible panels
   $$('.collapsible-panel').forEach(function(panel) {
@@ -12302,15 +12647,43 @@ function wireUpUI() {
   $('#themeToggle').addEventListener('click', function() { toggleTheme(); });
   updateThemeIcon(); // sync icon with initial state
 
+  // Settings modal
+  if ($('#appSettingsBtn')) {
+    $('#appSettingsBtn').addEventListener('click', function() { openModal('appSettingsModal'); });
+  }
+  if ($('#appSettingsClose')) {
+    $('#appSettingsClose').addEventListener('click', function() { closeModal('appSettingsModal'); });
+  }
+  if ($('#appSettingsCloseBtn')) {
+    $('#appSettingsCloseBtn').addEventListener('click', function() { closeModal('appSettingsModal'); });
+  }
+  if ($('#btnSettingsExportCache')) {
+    $('#btnSettingsExportCache').addEventListener('click', function() {
+      var sec = getCacheSecurityOptions();
+      exportCacheToJSON(sec);
+    });
+  }
+  if ($('#btnSettingsImportCache')) {
+    $('#btnSettingsImportCache').addEventListener('click', function() {
+      $('#cacheFileInput').click();
+    });
+  }
+
   // Cache export / import
-  $('#btnExportCache').addEventListener('click', function() { exportCacheToJSON(); });
-  $('#btnImportCache').addEventListener('click', function() { $('#cacheFileInput').click(); });
-  $('#cacheFileInput').addEventListener('change', function() {
-    if (this.files && this.files[0]) {
-      importCacheFromJSON(this.files[0]);
-      this.value = ''; // reset so same file can be re-imported
-    }
-  });
+  if ($('#btnExportCache')) {
+    $('#btnExportCache').addEventListener('click', function() { exportCacheToJSON(getCacheSecurityOptions()); });
+  }
+  if ($('#btnImportCache')) {
+    $('#btnImportCache').addEventListener('click', function() { $('#cacheFileInput').click(); });
+  }
+  if ($('#cacheFileInput')) {
+    $('#cacheFileInput').addEventListener('change', function() {
+      if (this.files && this.files[0]) {
+        importCacheFromJSON(this.files[0], getCacheSecurityOptions());
+        this.value = ''; // reset so same file can be re-imported
+      }
+    });
+  }
 
   // (Load Groups button moved to global filter bar — wired below)
 
