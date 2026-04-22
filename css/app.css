@@ -1382,8 +1382,38 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .wo-subtab { font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 7px 12px; border-radius: 8px; border: 1px solid transparent; background: none; color: var(--text-muted); cursor: pointer; transition: var(--transition); display: inline-flex; align-items: center; gap: 5px; }
 .wo-subtab:hover { background: var(--bg-card-hover); color: var(--text-secondary); border-color: var(--border); }
 .wo-subtab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+.section-subtabs { display: flex; gap: 6px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.section-subtab { font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 7px 12px; border-radius: 8px; border: 1px solid transparent; background: none; color: var(--text-muted); cursor: pointer; transition: var(--transition); display: inline-flex; align-items: center; gap: 5px; }
+.section-subtab:hover { background: var(--bg-card-hover); color: var(--text-secondary); border-color: var(--border); }
+.section-subtab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.section-subpanel { display: none; }
+.section-subpanel.active { display: block; }
 .wo-subpanel { display: none; }
 .wo-subpanel.active { display: block; }
+
+.properties-bulk-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.properties-bulk-content {
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.properties-bulk-content p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  max-width: 700px;
+}
 
 /* Collapsible panel */
 .collapsible-panel .table-header { cursor: pointer; user-select: none; }
@@ -1470,6 +1500,40 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
   .wo-table td {
     padding: 8px 10px;
     font-size: 12px;
+  }
+
+  .wo-subtabs,
+  .section-subtabs {
+    gap: 8px;
+  }
+
+  .wo-subtab,
+  .section-subtab {
+    min-height: 40px;
+    flex: 1 1 calc(50% - 8px);
+    justify-content: center;
+    text-align: center;
+  }
+
+  #propertiesFooter {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #propertiesFooter > div:last-child {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .properties-bulk-content {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .properties-bulk-content .action-btn {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
   }
 
   .kanban-board {
