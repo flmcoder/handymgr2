@@ -92,15 +92,14 @@
     <button class="mobile-nav-toggle" id="mobileNavToggle" title="Open menu" aria-label="Open navigation menu" aria-expanded="false">
       <i class="fas fa-bars"></i>
     </button>
+    <button class="theme-toggle-btn" id="appSettingsBtn" title="App settings" aria-label="App settings"><i class="fas fa-cog"></i></button>
     <button class="theme-toggle-btn" id="themeToggle" title="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
     <div class="cache-badge live" id="cacheBadge" title="Data source"><i class="fas fa-database"></i> <span id="cacheBadgeText">—</span></div>
-    <button class="cache-io-btn" id="btnExportCache" title="Export cache to file"><i class="fas fa-download"></i></button>
-    <button class="cache-io-btn" id="btnImportCache" title="Import cache from file"><i class="fas fa-upload"></i></button>
     <div class="sync-timestamp" id="syncTimestamp"></div>
     <button class="refresh-btn" id="refreshBtn" title="Refresh all data from API"><i class="fas fa-sync-alt"></i> Refresh</button>
     <div class="rate-badge" id="rateBadge">4/4 req/s</div>
     <button class="lock-btn" id="lockBtn"><i class="fas fa-lock"></i> Lock</button>
-    <input type="file" id="cacheFileInput" accept=".json" style="display:none">
+    <input type="file" id="cacheFileInput" accept=".json,.hmc" style="display:none">
   </div>
 </div>
 
@@ -277,8 +276,10 @@
     </div>
   </div>
   <div class="wo-subtabs" id="woSubtabs">
-    <button class="wo-subtab active" data-wo-subtab="active"><i class="fas fa-wrench"></i> Active Orders</button>
-    <button class="wo-subtab" data-wo-subtab="completed"><i class="fas fa-history"></i> Completed Search</button>
+    <button class="wo-subtab active" data-wo-subtab="active"><i class="fas fa-wrench"></i> Open (Active)</button>
+    <button class="wo-subtab" data-wo-subtab="completed"><i class="fas fa-history"></i> Completed</button>
+    <button class="wo-subtab" data-wo-subtab="closure"><i class="fas fa-clipboard-check"></i> WO Closure Assistant</button>
+    <button class="wo-subtab" data-wo-subtab="followup"><i class="fas fa-flag"></i> WO Follow-Up Queue</button>
   </div>
 
   <div class="wo-subpanel" id="wo-subpanel-active">
@@ -330,8 +331,8 @@
     <div id="woCompletedHistoryMount"></div>
   </div>
 
-  <!-- Close Assist - collapsible, starts collapsed -->
-  <div class="table-wrapper collapsible-panel collapsed" id="woCloseAssistPanel" style="margin-top:12px">
+  <div class="wo-subpanel" id="wo-subpanel-closure" style="display:none">
+  <div class="table-wrapper" id="woCloseAssistPanel" style="margin-top:12px">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-clipboard-check" style="color:var(--warning)"></i> WO Close Assist</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -343,9 +344,7 @@
         </select>
         <button class="sec-refresh" id="btnRefreshCloseAssist"><i class="fas fa-receipt"></i> Refresh AP</button>
       </div>
-      <span class="collapse-indicator"><i class="fas fa-chevron-down"></i></span>
     </div>
-    <div class="panel-body">
       <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woCloseAssistSummary">Loading…</div>
       <div class="table-scroll wo-close-assist-scroll" id="woCloseAssistContainer">
         <table class="data-table">
@@ -366,16 +365,14 @@
         </table>
       </div>
       <div class="wo-close-assist-pagination" id="woCloseAssistPagination"></div>
-    </div>
+  </div>
   </div>
 
-  <!-- Follow-Up Queue - collapsible, starts collapsed -->
-  <div class="table-wrapper collapsible-panel collapsed" id="woFollowupPanel" style="margin-top:12px">
+  <div class="wo-subpanel" id="wo-subpanel-followup" style="display:none">
+  <div class="table-wrapper" id="woFollowupPanel" style="margin-top:12px">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-flag" style="color:var(--warning)"></i> WO Follow-Up Queue</div>
-      <span class="collapse-indicator"><i class="fas fa-chevron-down"></i></span>
     </div>
-    <div class="panel-body">
       <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woFollowupSummary">Loading…</div>
       <div class="table-scroll">
         <table class="data-table">
@@ -395,6 +392,7 @@
         </table>
       </div>
     </div>
+  </div>
   </div>
 </section>
 
@@ -566,6 +564,13 @@
         <option value="paid">Paid</option>
         <option value="void">Void</option>
       </select>
+      <span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text-muted)">
+        <i class="fas fa-clock" style="color:var(--accent)"></i>
+        Updated
+        <input type="date" id="billUpdatedFrom" style="padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:11px">
+        &ndash;
+        <input type="date" id="billUpdatedTo" style="padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:11px">
+      </span>
       <button class="action-btn" id="btnRefreshBills"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
@@ -1338,6 +1343,50 @@
     <div class="modal-footer">
       <button class="action-btn" id="lockCancelBtn">Cancel</button>
       <button class="action-btn primary" style="background:var(--danger);border-color:var(--danger)" id="lockConfirmBtn"><i class="fas fa-lock"></i> Lock Now</button>
+    </div>
+  </div>
+</div>
+
+<!-- App Settings Modal -->
+<div class="modal-overlay" id="appSettingsModal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-head">
+      <h3><i class="fas fa-cog" style="color:var(--accent);margin-right:8px"></i> App Settings</h3>
+      <button class="modal-close" id="appSettingsClose">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="detail-section" style="margin-bottom:14px">
+        <div class="detail-section-title"><i class="fas fa-database"></i> Cache Data Files</div>
+        <p style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin:0 0 10px">
+          Cache exports contain a local snapshot of Work Orders, Vendors, Properties, Turns, and Inspections for faster restore or offline review.
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <button class="action-btn" id="btnSettingsExportCache"><i class="fas fa-download"></i> Save Cache File</button>
+          <button class="action-btn" id="btnSettingsImportCache"><i class="fas fa-upload"></i> Load Cache File</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)">
+            <input type="checkbox" id="settingsUseEncryption"> Encrypt export/import file
+          </label>
+          <input type="password" id="settingsEncryptPass" class="form-input" placeholder="Encryption passphrase" style="max-width:240px;padding:6px 10px;font-size:12px">
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);line-height:1.6">
+          Encrypted files use AES-GCM with PBKDF2 key derivation. Keep your passphrase secure. Without it, encrypted files cannot be recovered.
+        </div>
+      </div>
+
+      <div class="detail-section" style="margin-bottom:6px">
+        <div class="detail-section-title"><i class="fas fa-bug"></i> Report an Issue</div>
+        <p style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin:0 0 8px">
+          Found an issue or broken workflow? Send a quick report and include screenshots/steps if possible.
+        </p>
+        <a class="action-btn" href="mailto:aaron@flraz.com?subject=HandyManager%20Issue%20Report&body=Please%20describe%20what%20you%20were%20doing%2C%20what%20you%20expected%2C%20and%20what%20happened.">
+          <i class="fas fa-envelope"></i> Email aaron@flraz.com
+        </a>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="action-btn" id="appSettingsCloseBtn">Close</button>
     </div>
   </div>
 </div>
