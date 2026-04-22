@@ -34,7 +34,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.2.7';
+var APP_VERSION = '0.0.1';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 
@@ -2118,6 +2118,8 @@ var PAYROLL_WEEK_OFFSET = 0;
 var currentPropertyGroup = '';
 var _propertiesLocalGroup = '';
 var _propertiesRefreshInFlight = false;
+var _propertiesPage = 0;
+var _propertiesPageSize = 50;
 var _propertyStatsById = {};
 window.filteredPropertyId = '';
 window.filteredPropertyName = '';
@@ -3048,7 +3050,6 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       showToast('Vendor access \u2014 connecting to ' + vhost + '.appfolio.com via proxy');
     } else {
       showToast('Connected \u2014 ' + vhost + '.appfolio.com via proxy');
-      maybeShowWhatsNew();
     }
   } catch (err) {
     var errMsg = (err && (err.message || String(err))) || '';
@@ -7676,6 +7677,8 @@ var currentWOAgeFilter = '';
 var currentWOSort = 'oldest';
 var currentWOView = 'board'; // 'board' | 'list'
 var currentWOSubtab = 'active'; // active | completed | closure | followup
+var currentBillingSubtab = 'queue'; // queue | history
+var currentPropertiesSubtab = 'directory'; // directory | bulk
 var currentActivityFilter = 'all';
 var expandedWOColumn = '';
 var kanbanBoardScrollState = { left: 0, top: 0 };
@@ -7714,6 +7717,52 @@ function setWOSubtab(tab) {
   if (target === 'completed' && !showCompletedWOHistory) {
     showCompletedWOHistory = true;
     renderCompletedWOHistorySection();
+  }
+}
+
+function setBillingSubtab(tab) {
+  var allowed = { queue: true, history: true };
+  var target = allowed[tab] ? tab : 'queue';
+  currentBillingSubtab = target;
+
+  $$('[data-billing-subtab]').forEach(function(btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-billing-subtab') === target);
+  });
+
+  ['queue', 'history'].forEach(function(name) {
+    var panel = $('#billing-subpanel-' + name);
+    if (!panel) return;
+    var isActive = name === target;
+    panel.classList.toggle('active', isActive);
+    panel.style.display = isActive ? '' : 'none';
+  });
+}
+
+function setPropertiesSubtab(tab) {
+  var allowed = { directory: true, bulk: true };
+  var target = allowed[tab] ? tab : 'directory';
+  currentPropertiesSubtab = target;
+
+  $$('[data-properties-subtab]').forEach(function(btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-properties-subtab') === target);
+  });
+
+  ['directory', 'bulk'].forEach(function(name) {
+    var panel = $('#properties-subpanel-' + name);
+    if (!panel) return;
+    var isActive = name === target;
+    panel.classList.toggle('active', isActive);
+    panel.style.display = isActive ? '' : 'none';
+  });
+
+  if (target === 'directory') {
+    renderPropertiesSection();
+    return;
+  }
+  var scopeEl = $('#propertiesBulkScopeText');
+  if (scopeEl) {
+    var grp = String(_propertiesLocalGroup || getEffectiveGroupId() || 'All Groups');
+    scopeEl.textContent = 'Current scope: ' + grp + '. Use "Open Bulk Note Composer" to apply the same note across scoped properties.';
   }
 }
 var completedWOHistoryRows = [];
@@ -8891,29 +8940,16 @@ function buildTurnPipeline() {
   var autoClosedCandidates = [];
 
   function isTurnWorkOrderCandidate(woLike, moveOutDate, source) {
-    var type = String((woLike && (woLike.type || woLike.Type)) || '').toLowerCase();
-    var desc = String((woLike && (woLike.description || woLike.Description || woLike.JobDescription)) || '').toLowerCase();
-    var looksTurnType = type.indexOf('unit_turn') !== -1 || /(^|\b)turn(\b|$)/.test(type);
-    var looksTurnText = /(unit\s*turn|make[-\s]?ready|ready[-\s]?to[-\s]?rent|move[-\s]?out|vacan|turnover|rehab|renov)/.test(desc);
+    var createdLike = source === 'db'
+      ? (woLike && (woLike.createdAt || woLike.lastUpdated))
+      : (woLike && (woLike.created || woLike.updated));
 
-    // turn_work_orders is already narrowed server-side; keep unless obviously out-of-window
-    if (source === 'db') {
-      if (moveOutDate && woLike.createdAt) {
-        var dbDate = new Date(woLike.createdAt);
-        if (!isNaN(dbDate.getTime())) {
-          var dbDiff = (dbDate - moveOutDate) / 86400000;
-          if (dbDiff < -45 || dbDiff > 300) return false;
-        }
-      }
-      return true;
-    }
-
-    if (!(looksTurnType || looksTurnText)) return false;
-    if (moveOutDate && woLike.created) {
-      var woDate = new Date(woLike.created);
+    // Requirement: all WOs for the unit following move-out must be associated.
+    if (moveOutDate && createdLike) {
+      var woDate = new Date(createdLike);
       if (!isNaN(woDate.getTime())) {
         var diff = (woDate - moveOutDate) / 86400000;
-        if (diff < -45 || diff > 300) return false;
+        if (diff < -45) return false;
       }
     }
     return true;
@@ -8942,13 +8978,12 @@ function buildTurnPipeline() {
     var requiredPropertyName = String(property || '').trim().toLowerCase();
 
     var winStart = moveOutDate ? new Date(moveOutDate.getTime() - 45 * 86400000) : null;
-    var winEnd = moveOutDate ? new Date(moveOutDate.getTime() + 365 * 86400000) : null;
 
     function inWindow(dateLike) {
       if (!moveOutDate) return true;
       var d = new Date(dateLike || '');
       if (isNaN(d.getTime())) return false;
-      return d >= winStart && d <= winEnd;
+      return d >= winStart;
     }
 
     function candidateId(wo) {
@@ -9442,21 +9477,26 @@ function renderPropertiesRowsFromCache() {
     if (g) groups[g] = true;
   });
 
+  var effectiveGroup = String(_propertiesLocalGroup || getEffectiveGroupId() || '').trim();
+
   if (groupSelect) {
-    var existing = String(groupSelect.value || _propertiesLocalGroup || '');
+    var existing = String(groupSelect.value || effectiveGroup || '');
     var options = ['<option value="">All Groups</option>'];
     Object.keys(groups).sort().forEach(function(g) {
       options.push('<option value="' + escapeHtml(g) + '">' + escapeHtml(g) + '</option>');
     });
     groupSelect.innerHTML = options.join('');
+    if (existing && !groups[existing]) existing = '';
     groupSelect.value = existing;
     _propertiesLocalGroup = String(groupSelect.value || '');
+    effectiveGroup = _propertiesLocalGroup;
   }
 
-  if (_propertiesLocalGroup) {
+  if (effectiveGroup) {
     properties = properties.filter(function(p) {
       var groupName = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
-      return groupName === _propertiesLocalGroup;
+      if (groupName === effectiveGroup) return true;
+      return isInPropertyGroup(p.id || p.propertyId || '', p.name || '', effectiveGroup);
     });
   }
 
@@ -9482,12 +9522,43 @@ function renderPropertiesRowsFromCache() {
     return String(a.name || '').localeCompare(String(b.name || ''));
   });
 
+  var footer = $('#propertiesFooter');
+  var meta = $('#propertiesPageMeta');
+  var prevBtn = $('#propertiesPrevPage');
+  var nextBtn = $('#propertiesNextPage');
+  var pageSizeSel = $('#propertiesPageSize');
+  if (pageSizeSel && String(pageSizeSel.value || '') !== String(_propertiesPageSize)) {
+    pageSizeSel.value = String(_propertiesPageSize);
+  }
+
+  var total = properties.length;
+  var size = Math.max(1, parseInt(_propertiesPageSize, 10) || 50);
+  _propertiesPageSize = size;
+  var pages = Math.max(1, Math.ceil(total / size));
+  if (_propertiesPage >= pages) _propertiesPage = pages - 1;
+  if (_propertiesPage < 0) _propertiesPage = 0;
+
+  var start = _propertiesPage * size;
+  var end = Math.min(start + size, total);
+  var pageRows = properties.slice(start, end);
+
+  if (footer) footer.style.display = 'flex';
+  if (meta) {
+    if (total === 0) {
+      meta.textContent = 'Page 1 of 1 • 0 results';
+    } else {
+      meta.textContent = 'Page ' + (_propertiesPage + 1) + ' of ' + pages + ' • Showing ' + (start + 1) + '-' + end + ' of ' + total;
+    }
+  }
+  if (prevBtn) prevBtn.disabled = (_propertiesPage <= 0 || total === 0);
+  if (nextBtn) nextBtn.disabled = (_propertiesPage >= pages - 1 || total === 0);
+
   if (!properties.length) {
     tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">No properties found</td></tr>';
     return;
   }
 
-  var html = properties.map(function(p) {
+  var html = pageRows.map(function(p) {
     var pid = String(p.id || '');
     var stats = getPropertyStats(pid);
     var cityState = [p.city || '', p.state || ''].filter(Boolean).join(', ');
@@ -10778,36 +10849,20 @@ function renderVendors(search) {
 
     html += '<div class="vendor-card vendor-card-compact ' + cc + '" data-vendorid="' + escapeHtml(String(v.id)) + '" data-vendor-initial="' + getVendorInitial(v.name) + '" style="cursor:pointer">';
     html += '<div class="vendor-card-head">';
-    html += '<div class="vendor-name">' + escapeHtml(v.name) + (afUrl ? ' <a href="' + escapeHtml(afUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--accent);text-decoration:none" title="View in AppFolio" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i></a>' : '') + '</div>';
+    html += '<div class="vendor-name">' + escapeHtml(v.name) + '</div>';
     html += '<div class="vendor-id"><span><i class="fas fa-fingerprint"></i> ' + escapeHtml(String(v.id)) + '</span>';
     html += '<span class="vendor-category-badge ' + catBadgeCls + '">' + escapeHtml(vCat || 'Uncategorized') + '</span>';
     html += '</div>';
     html += '</div>';
     if (v.trades) html += '<div class="vendor-trades">' + escapeHtml(v.trades) + '</div>';
-    html += '<div class="vendor-row vendor-row-compact" style="align-items:center"><span class="vendor-row-label">Category</span><select class="vendor-cat-select" data-vid="' + escapeHtml(String(v.id)) + '" onclick="event.stopPropagation()">';
-    VENDOR_CATEGORIES.forEach(function(c) {
-      html += '<option value="' + escapeHtml(c) + '"' + ((vCat || 'Uncategorized') === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
-    });
-    html += '</select></div>';
+    html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Category</span><span class="vendor-row-value">' + escapeHtml(vCat || 'Uncategorized') + '</span></div>';
     var vTradeCat = getVendorTradeCategory(v);
-    html += '<div class="vendor-row vendor-row-compact" style="align-items:center"><span class="vendor-row-label">Trade Cat.</span><select class="vendor-trade-cat-select" data-vid="' + escapeHtml(String(v.id)) + '" onclick="event.stopPropagation()">';
-    VENDOR_TRADE_CATEGORIES.forEach(function(tc) {
-      html += '<option value="' + escapeHtml(tc) + '"' + (vTradeCat === tc ? ' selected' : '') + '>' + escapeHtml(tc) + '</option>';
-    });
-    html += '</select></div>';
+    html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Trade Cat.</span><span class="vendor-row-value">' + escapeHtml(vTradeCat || 'Uncategorized') + '</span></div>';
     var compLabel = cRes.compliant ? 'Compliant' : (v.compliantStatus || 'Non-Compliant');
-    var toggleCls = 'vendor-compliance-toggle' + (cRes.compliant ? ' is-compliant' : '') + (cRes.isManual ? ' is-manual' : '');
     html += '<div class="vendor-row vendor-row-compact" style="align-items:center"><span class="vendor-row-label">Compliance</span>';
-    html += '<button class="' + toggleCls + '" data-vid="' + escapeHtml(String(v.id)) + '" onclick="event.stopPropagation()" title="Click to toggle compliance manually">';
-    html += '<i class="fas ' + (cRes.compliant ? 'fa-check-circle' : 'fa-times-circle') + '"></i> ' + escapeHtml(compLabel);
-    if (cRes.isManual) html += ' <span style="font-size:9px;opacity:0.7">(manual)</span>';
-    html += '</button></div>';
+    html += '<span class="vendor-row-value" style="font-weight:600;color:' + (cRes.compliant ? 'var(--success)' : 'var(--danger)') + '"><i class="fas ' + (cRes.compliant ? 'fa-check-circle' : 'fa-times-circle') + '"></i> ' + escapeHtml(compLabel) + (cRes.isManual ? ' (manual)' : '') + '</span></div>';
     if (v.phone || v.email) {
       html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Contact</span><span class="vendor-row-value vendor-contact-compact">' + escapeHtml(v.phone || v.email || '\u2014') + (v.phone && v.email ? ' \u2022 ' + escapeHtml(v.email) : '') + '</span></div>';
-      html += '<div class="vendor-quick-actions">';
-      if (v.phone) html += '<a class="vendor-qa-btn" href="tel:' + escapeHtml(v.phone) + '" onclick="event.stopPropagation()" title="Call ' + escapeHtml(v.phone) + '"><i class="fas fa-phone"></i> Call</a>';
-      if (v.email) html += '<a class="vendor-qa-btn" href="mailto:' + escapeHtml(v.email) + '" onclick="event.stopPropagation()" title="Email ' + escapeHtml(v.email) + '"><i class="fas fa-envelope"></i> Email</a>';
-      html += '</div>';
     }
     if (v.address) {
       html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Address</span><span class="vendor-row-value" style="font-size:10px">' + escapeHtml(v.address) + '</span></div>';
@@ -10829,14 +10884,9 @@ function renderVendors(search) {
     if (v.tags) {
       html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Tags</span><span class="vendor-row-value" style="font-size:10px">' + escapeHtml(v.tags) + '</span></div>';
     }
-    // Cross-section navigation
-    var vNameJson = JSON.stringify(v.name || '');
-    var vIdJson = JSON.stringify(v.id || v.name || '');
-    html += '<div class="vendor-crossnav">';
-    html += '<button class="vendor-crossnav-btn xn-wo" onclick="event.stopPropagation();navigateToOpenWOsForVendor(' + vNameJson + ')" title="Open Work Orders for this vendor"><i class="fas fa-wrench"></i> Open WOs</button>';
-    html += '<button class="vendor-crossnav-btn xn-hist" onclick="event.stopPropagation();navigateToCompletedWOsForVendor(' + vNameJson + ')" title="Completed Work Orders for this vendor"><i class="fas fa-history"></i> Completed WOs</button>';
-    html += '<button class="vendor-crossnav-btn xn-bills" onclick="event.stopPropagation();navigateToBillsForVendor(' + vIdJson + ')" title="AP Bills for this vendor"><i class="fas fa-file-invoice-dollar"></i> Bills</button>';
-    html += '</div>';
+    if (afUrl) {
+      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">AppFolio</span><span class="vendor-row-value" style="color:var(--text-muted)">Open from vendor details modal</span></div>';
+    }
     html += '</div>';
   });
   if (filtered.length > visible.length) {
@@ -11795,22 +11845,6 @@ function renderAll() {
    ================================================================= */
 var _uiWired = false;
 
-// What's New popup — shown once per 36 hours after vault unlock
-function maybeShowWhatsNew() {
-  var WHATS_NEW_KEY = 'hnmgr_whats_new_v920';
-  if (localStorage.getItem(WHATS_NEW_KEY + '_skip') === '1') return;
-  var lastShown = parseInt(localStorage.getItem(WHATS_NEW_KEY) || '0', 10);
-  if (Date.now() - lastShown < 36 * 60 * 60 * 1000) return;
-  localStorage.setItem(WHATS_NEW_KEY, String(Date.now()));
-  setTimeout(function() { openModal('whatsNewModal'); }, 800);
-}
-function dismissWhatsNew() {
-  if ($('#whatsNewDontShow') && $('#whatsNewDontShow').checked) {
-    localStorage.setItem('hnmgr_whats_new_v920_skip', '1');
-  }
-  closeModal('whatsNewModal');
-}
-
 function wireUpUI() {
   if (_uiWired) return;
   _uiWired = true;
@@ -12279,6 +12313,22 @@ function wireUpUI() {
   });
   setWOSubtab('active');
 
+  // Billing sub-tabs
+  $$('[data-billing-subtab]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      setBillingSubtab(btn.getAttribute('data-billing-subtab'));
+    });
+  });
+  setBillingSubtab(currentBillingSubtab || 'queue');
+
+  // Properties sub-tabs
+  $$('[data-properties-subtab]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      setPropertiesSubtab(btn.getAttribute('data-properties-subtab'));
+    });
+  });
+  setPropertiesSubtab(currentPropertiesSubtab || 'directory');
+
   // Collapsible panels
   $$('.collapsible-panel').forEach(function(panel) {
     var hdr = panel.querySelector('.table-header');
@@ -12524,10 +12574,6 @@ function wireUpUI() {
     $('#bulkNoteCloseBtn').addEventListener('click', function() { closeModal('bulkNoteModal'); });
   }
 
-  // What's New modal wiring
-  if ($('#whatsNewClose')) $('#whatsNewClose').addEventListener('click', dismissWhatsNew);
-  if ($('#whatsNewDismiss')) $('#whatsNewDismiss').addEventListener('click', dismissWhatsNew);
-
   /* btnLoadBills removed — billing stripped */
   $('#vendorSearch').addEventListener('input', debounce(function() { renderVendors(this.value); }, isConstrainedDevice() ? 450 : CONFIG.DEBOUNCE_MS));
   if ($('#vendorCategoryFilter')) {
@@ -12626,6 +12672,7 @@ function wireUpUI() {
   var propertySearch = $('#propertySearch');
   if (propertySearch) {
     propertySearch.addEventListener('input', debounce(function() {
+      _propertiesPage = 0;
       renderPropertiesSection();
     }, CONFIG.DEBOUNCE_MS));
   }
@@ -12633,6 +12680,32 @@ function wireUpUI() {
   if (propertyGroupFilter) {
     propertyGroupFilter.addEventListener('change', function() {
       _propertiesLocalGroup = String(propertyGroupFilter.value || '');
+      _propertiesPage = 0;
+      renderPropertiesSection();
+    });
+  }
+  var propertiesPageSize = $('#propertiesPageSize');
+  if (propertiesPageSize) {
+    propertiesPageSize.value = String(_propertiesPageSize);
+    propertiesPageSize.addEventListener('change', function() {
+      _propertiesPageSize = Math.max(1, parseInt(propertiesPageSize.value, 10) || 50);
+      _propertiesPage = 0;
+      renderPropertiesSection();
+    });
+  }
+  var propertiesPrevPage = $('#propertiesPrevPage');
+  if (propertiesPrevPage) {
+    propertiesPrevPage.addEventListener('click', function() {
+      if (_propertiesPage > 0) {
+        _propertiesPage -= 1;
+        renderPropertiesSection();
+      }
+    });
+  }
+  var propertiesNextPage = $('#propertiesNextPage');
+  if (propertiesNextPage) {
+    propertiesNextPage.addEventListener('click', function() {
+      _propertiesPage += 1;
       renderPropertiesSection();
     });
   }
