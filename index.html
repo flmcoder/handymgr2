@@ -567,13 +567,9 @@
         <option value="paid">Paid</option>
         <option value="void">Void</option>
       </select>
-      <span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text-muted)">
-        <i class="fas fa-clock" style="color:var(--accent)"></i>
-        Updated
-        <input type="date" id="billUpdatedFrom" style="padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:11px">
-        &ndash;
-        <input type="date" id="billUpdatedTo" style="padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:11px">
-      </span>
+      <!-- date range moved to period bar below the filter row -->
+      <input type="date" id="billUpdatedFrom" style="display:none">
+      <input type="date" id="billUpdatedTo" style="display:none">
       <button class="action-btn" id="btnRefreshBills"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
@@ -593,6 +589,7 @@
       <div class="table-title"><i class="fas fa-list-alt" style="color:var(--accent)"></i> Bills <span id="billing-source-badge" class="source-badge legacy">⚠ Legacy</span></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select id="billing-filter-type" class="filter-select" style="font-size:12px;padding:4px 8px">
+          <!-- hidden select keeps wireBillingFilters logic intact -->
           <option value="bills_list">Group Bills</option>
           <option value="bills_by_vendor">By Vendor</option>
           <option value="bills_by_property">By Property</option>
@@ -601,6 +598,14 @@
           <option value="bills_by_invoice">By Invoice</option>
           <option value="bills_due_range">Due Date Range</option>
         </select>
+        <div id="billing-filter-btns" style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+          <button class="action-btn billing-ftype-btn active" data-ftype="bills_list" style="padding:3px 9px;font-size:11px">Group Bills</button>
+          <button class="action-btn billing-ftype-btn" data-ftype="bills_by_vendor" style="padding:3px 9px;font-size:11px">By Vendor</button>
+          <button class="action-btn billing-ftype-btn" data-ftype="bills_by_property" style="padding:3px 9px;font-size:11px">By Property</button>
+          <button class="action-btn billing-ftype-btn" data-ftype="bills_by_wo" style="padding:3px 9px;font-size:11px">By WO</button>
+          <button class="action-btn billing-ftype-btn" data-ftype="bills_by_invoice" style="padding:3px 9px;font-size:11px">By Invoice</button>
+          <button class="action-btn billing-ftype-btn" data-ftype="bills_due_range" style="padding:3px 9px;font-size:11px">Due Range</button>
+        </div>
         <span id="billing-input-wrapper" style="display:flex;align-items:center;gap:6px">
           <input type="text" id="billing-filter-input" class="search-box" placeholder="Vendor/Property/WO/Invoice…" style="min-width:180px">
         </span>
@@ -623,6 +628,18 @@
         <button class="action-btn" id="billing-filter-reset" style="padding:4px 8px"><i class="fas fa-undo"></i> Reset</button>
         <input type="text" id="billSearch" class="search-box" placeholder="Search vendor, property…" style="min-width:180px">
       </div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px">
+        <span style="font-size:11px;color:var(--text-muted)"><i class="fas fa-clock"></i> Period:</span>
+        <button class="action-btn billing-period-btn active" data-days="7" style="padding:2px 8px;font-size:11px">7d</button>
+        <button class="action-btn billing-period-btn" data-days="30" style="padding:2px 8px;font-size:11px">30d</button>
+        <button class="action-btn billing-period-btn" data-days="60" style="padding:2px 8px;font-size:11px">60d</button>
+        <button class="action-btn billing-period-btn" data-days="90" style="padding:2px 8px;font-size:11px">90d</button>
+        <button class="action-btn billing-period-btn" data-days="180" style="padding:2px 8px;font-size:11px">180d</button>
+        <span style="font-size:11px;color:var(--text-muted)">or custom:</span>
+        <input type="date" id="billUpdatedFrom2" style="padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:11px">
+        <span style="font-size:11px;color:var(--text-muted)">–</span>
+        <input type="date" id="billUpdatedTo2" style="padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:11px">
+      </div>
     </div>
     <div id="billingPropertyScope" style="display:none;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--bg-secondary)"></div>
     <div class="table-scroll">
@@ -632,13 +649,14 @@
             <th>Bill #</th>
             <th>Vendor</th>
             <th>Property</th>
+            <th>Group</th>
             <th>Amount</th>
             <th>Date</th>
             <th>Status</th>
             <th>Linked WO</th>
           </tr>
         </thead>
-        <tbody id="billBody"><tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">Load bills using the Refresh button above</td></tr></tbody>
+        <tbody id="billBody"><tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px">Load bills using the Refresh button above</td></tr></tbody>
       </table>
     </div>
     <div class="table-footer" id="billFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
