@@ -592,6 +592,28 @@ function cacheSet(key, data) {
   }).catch(function() { /* ignore */ });
 }
 
+function cacheDelete(key) {
+  return openCacheDB().then(function(db) {
+    return new Promise(function(resolve) {
+      var tx = db.transaction(CACHE_STORE, 'readwrite');
+      tx.objectStore(CACHE_STORE).delete(key);
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function() { resolve(); };
+    });
+  }).catch(function() { /* ignore */ });
+}
+
+async function clearSessionScopedApiCache() {
+  await Promise.all([
+    cacheDelete('work_orders'),
+    cacheDelete('vendors'),
+    cacheDelete('properties'),
+    cacheDelete('turns'),
+    cacheDelete('inspections'),
+    cacheDelete('webhooks')
+  ]);
+}
+
 function isCacheFresh(entry) {
   return entry && entry.timestamp && (Date.now() - entry.timestamp) < CACHE_TTL_MS;
 }
@@ -1258,10 +1280,16 @@ function handleProxySessionExpired(contextLabel) {
       _proxySessionWarmupFailures++;
       var inStartupGrace = now <= _proxySessionStartupGraceUntil;
       var recentlyHealthy = _proxySessionLastHealthyAt && ((now - _proxySessionLastHealthyAt) <= 120000);
+      // Never force relock during the explicit post-login grace window.
+      // Initial sync can trigger a burst of transient 401s before all
+      // backend session state settles.
+      if (inStartupGrace) {
+        markProxySessionWarmup(7000);
+        return;
+      }
       // During immediate post-login startup, tolerate a few transient 401s
       // while session rows and token propagation settle.
       if ((isProxySessionWarmupActive() && _proxySessionWarmupFailures < 6) ||
-          (inStartupGrace && _proxySessionConsecutive401 < 8) ||
           (recentlyHealthy && _proxySessionConsecutive401 < 4)) {
         markProxySessionWarmup(7000);
         return;
@@ -1534,7 +1562,7 @@ async function stabilizeProxySessionAfterLogin(timeoutMs) {
   var token = getProxyAccessToken();
   if (!token) return false;
 
-  var deadline = Date.now() + Math.max(3000, Number(timeoutMs || 10000));
+  var deadline = Date.now() + Math.max(10000, Number(timeoutMs || 30000));
   var attempt = 0;
   while (Date.now() < deadline) {
     attempt++;
@@ -2798,6 +2826,41 @@ function detailCacheClear() {
   WO_DETAIL_CACHE_KEYS = [];
 }
 
+function resetInMemoryDataForSessionTransition() {
+  WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
+  CLOSED_TURNS = new Set();
+  window._currentBillsCache = [];
+  window._billingPageRows = [];
+  window._billingListCacheRows = [];
+  _billingListCacheRows = [];
+  _nameToGroups = {}; _idToGroups = {}; _uuidToGroups = {};
+  detailCacheClear();
+}
+
+async function enforceSessionTypeTransitionReset(previousRole, nextRole) {
+  var prev = normalizeAccessRole(previousRole || 'full');
+  var next = normalizeAccessRole(nextRole || 'full');
+  if (prev === next) return false;
+
+  // Scope/session artifacts must not bleed between role types.
+  resetInMemoryDataForSessionTransition();
+  currentPropertyGroup = '';
+  forcedPropertyGroupUuid = '';
+  forcedPropertyGroupName = '';
+  _pmScopeGroupUuid = '';
+  _pmScopeEmail = '';
+  try { localStorage.removeItem('hm_scope_group_uuid'); } catch (e1) { /* */ }
+  try { localStorage.removeItem('hm_scope_email'); } catch (e2) { /* */ }
+  await clearSessionScopedApiCache();
+  updateCacheBadge('offline');
+  showToast('Access session changed. Cached data cleared for a clean reload.', {
+    kind: 'info',
+    iconClass: 'fa-arrows-rotate',
+    duration: 4000,
+  });
+  return true;
+}
+
 var APP_CONFIG_KEY = 'handymgr_config_v1'; // persisted via IndexedDB cache store
 
 function _encodeConfigPayload(payload) {
@@ -3126,15 +3189,22 @@ if ($('#btnVerifyOtp')) {
 }
 
 async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
+  var previousRole = getStoredAccessRole();
   _sessionExpiryHandled = false;
   beginProxySessionStartupGrace(60000);
   API_VHOST = vhost;
   API_PROXY = proxyUrl;
   API_CREDS = { p: existingDeviceToken };
   _accessRole = getStoredAccessRole();
-  var stabilized = await stabilizeProxySessionAfterLogin(10000);
+  var stabilized = await stabilizeProxySessionAfterLogin(30000);
   if (!stabilized) {
-    throw new Error('Proxy session did not stabilize after login. Please retry in a few seconds.');
+    // Keep login non-blocking; startup calls can still settle during grace.
+    markProxySessionWarmup(90000);
+    showToast('Session is still warming up. Data may load gradually for a few moments.', {
+      kind: 'warning',
+      iconClass: 'fa-hourglass-half',
+      duration: 5000,
+    });
   }
   try {
     var sess = await proxyAction('session_info');
@@ -3152,6 +3222,7 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
       markProxySessionHealthy();
     }
   } catch (sessErr) { /* non-fatal — use stored role */ }
+  await enforceSessionTypeTransitionReset(previousRole, _accessRole);
   persistAccessRole(_accessRole);
   try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
   if (!$('#vaultRememberConfig') || $('#vaultRememberConfig').checked) {
@@ -3193,6 +3264,7 @@ if ($('#vhostPreviewPm')) {
 setVaultPanel('main');
 
 $('#vaultUnlockBtn').addEventListener('click', async function() {
+  var previousRole = getStoredAccessRole();
   var pass = String(($('#vaultPassphrase') && $('#vaultPassphrase').value) || '').trim();
   var rawVhost = $('#vaultVhost').value;
   var vhost = sanitizeVhost(rawVhost);
@@ -3254,10 +3326,16 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
         try { localStorage.setItem('hm_proxy_token', sessionToken); } catch (eTok2) { /* */ }
       }
-      var stabilized = await stabilizeProxySessionAfterLogin(10000);
+      var stabilized = await stabilizeProxySessionAfterLogin(30000);
       if (!stabilized) {
-        throw new Error('Proxy session did not stabilize after login. Please retry in a few seconds.');
+        markProxySessionWarmup(90000);
+        showToast('Session is still warming up. Data may load gradually for a few moments.', {
+          kind: 'warning',
+          iconClass: 'fa-hourglass-half',
+          duration: 5000,
+        });
       }
+      await enforceSessionTypeTransitionReset(previousRole, _accessRole);
       persistAccessRole(_accessRole);
     } else {
       throw new Error('Enter your password to connect.');
