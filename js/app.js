@@ -6579,14 +6579,15 @@ function getBillingDateRangeKey() {
 
 function billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps) {
   if (!grp) return true;
-  if (groupUuid) {
-    var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
-    if (billGroupUuid) return billGroupUuid === String(groupUuid).trim().toLowerCase();
-    return isInPropertyGroup(b.propertyId, b.propertyName, grp);
-  }
-  var billGroup = String(b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
-  if (billGroup) return billGroup === String(grp).trim().toLowerCase();
+  var normalizedGroupUuid = String(groupUuid || '').trim().toLowerCase();
+  var normalizedGroupName = String(grp || '').trim().toLowerCase();
+  var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
+  var billGroupName = String(resolveBillGroupName(b) || b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
+
+  if (normalizedGroupUuid && billGroupUuid) return billGroupUuid === normalizedGroupUuid;
+  if (normalizedGroupName && billGroupName) return billGroupName === normalizedGroupName;
   if (hasGroupMaps) return isInPropertyGroup(b.propertyId, b.propertyName, grp);
+  // If maps are not hydrated and bill has no direct group identity, avoid false-empty filtering.
   return true;
 }
 
