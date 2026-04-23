@@ -1115,6 +1115,69 @@ function wipeCredentials() {
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
 var AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 var _sessionExpiryHandled = false;
+var _proxySessionWarmupUntil = 0;
+var _proxySessionProbeInFlight = false;
+
+function markProxySessionWarmup(ms) {
+  var windowMs = Number(ms || 0) || 10000;
+  _proxySessionWarmupUntil = Date.now() + Math.max(2000, windowMs);
+}
+
+function shouldProbeProxySessionBeforeLockout() {
+  if (Date.now() > _proxySessionWarmupUntil) return false;
+  if (_proxySessionProbeInFlight) return false;
+  if (!API_PROXY) return false;
+  return !!getProxyAccessToken();
+}
+
+async function probeProxySessionStillValid() {
+  if (!API_PROXY) return false;
+  var token = getProxyAccessToken();
+  if (!token) return false;
+  var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
+  var url = API_PROXY + sep + 'action=session_info';
+  var res = await fetchWithTimeout(url, {
+    headers: {
+      'Accept': 'application/json',
+      'Authorization': 'Bearer ' + token
+    }
+  }, 12000);
+  if (!res.ok) return false;
+  var data = {};
+  try { data = await res.json(); } catch (e) { return false; }
+  return !!(data && data.ok && data.session);
+}
+
+function forceProxySessionExpiryLockout(contextLabel) {
+  if (_sessionExpiryHandled) return;
+  _sessionExpiryHandled = true;
+
+  stopAutoSync();
+  if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
+
+  clearStoredProxySessionTokens();
+  if (API_CREDS && API_CREDS.p) {
+    API_CREDS.p = '0'.repeat(String(API_CREDS.p).length);
+  }
+  API_CREDS = null;
+  appInitialized = false;
+
+  var vault = $('#vaultScreen');
+  if (vault) vault.style.display = 'flex';
+  var shell = $('#appShell');
+  if (shell) shell.classList.remove('unlocked');
+  setVaultPanel('main');
+  setPmOtpStep('request');
+  setVaultFeedback('Proxy session expired. Sign in again to continue.', '');
+  if ($('#vaultPassphrase')) $('#vaultPassphrase').focus();
+
+  var detail = contextLabel ? (' (' + contextLabel + ')') : '';
+  showToast('Session expired. Please sign in again' + detail + '.', {
+    kind: 'warning',
+    iconClass: 'fa-triangle-exclamation',
+    duration: 5000,
+  });
+}
 
 function startAutoSync() {
   stopAutoSync(); // clear any existing
@@ -1151,37 +1214,31 @@ function clearStoredProxySessionTokens() {
 
 function handleProxySessionExpired(contextLabel) {
   if (_sessionExpiryHandled) return;
-  _sessionExpiryHandled = true;
 
-  stopAutoSync();
-  if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
-
-  clearStoredProxySessionTokens();
-  if (API_CREDS && API_CREDS.p) {
-    API_CREDS.p = '0'.repeat(String(API_CREDS.p).length);
+  if (shouldProbeProxySessionBeforeLockout()) {
+    _proxySessionProbeInFlight = true;
+    (async function() {
+      try {
+        var stillValid = await probeProxySessionStillValid();
+        if (stillValid) {
+          _proxySessionProbeInFlight = false;
+          markProxySessionWarmup(4000);
+          return;
+        }
+      } catch (e) { /* fall through to lockout */ }
+      _proxySessionProbeInFlight = false;
+      forceProxySessionExpiryLockout(contextLabel);
+    })();
+    return;
   }
-  API_CREDS = null;
-  appInitialized = false;
 
-  var vault = $('#vaultScreen');
-  if (vault) vault.style.display = 'flex';
-  var shell = $('#appShell');
-  if (shell) shell.classList.remove('unlocked');
-  setVaultPanel('main');
-  setPmOtpStep('request');
-  setVaultFeedback('Proxy session expired. Sign in again to continue.', '');
-  if ($('#vaultPassphrase')) $('#vaultPassphrase').focus();
-
-  var detail = contextLabel ? (' (' + contextLabel + ')') : '';
-  showToast('Session expired. Please sign in again' + detail + '.', {
-    kind: 'warning',
-    iconClass: 'fa-triangle-exclamation',
-    duration: 5000,
-  });
+  forceProxySessionExpiryLockout(contextLabel);
 }
 
 function lockVault() {
   wipeCredentials();
+  _proxySessionWarmupUntil = 0;
+  _proxySessionProbeInFlight = false;
   appInitialized = false;
   WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
   CLOSED_TURNS = new Set();
@@ -3003,6 +3060,7 @@ if ($('#btnVerifyOtp')) {
 
 async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   _sessionExpiryHandled = false;
+  markProxySessionWarmup(12000);
   API_VHOST = vhost;
   API_PROXY = proxyUrl;
   API_CREDS = { p: existingDeviceToken };
@@ -3118,6 +3176,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         throw new Error('Login succeeded but server did not mint a session token. Check proxy DB/write access and try again.');
       }
       _sessionExpiryHandled = false;
+      markProxySessionWarmup(12000);
       API_CREDS = { p: sessionToken };
       if (sessionToken) {
         try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
