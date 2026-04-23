@@ -134,7 +134,27 @@ function daysBetween(a, b) {
   var db = typeof b === 'string' ? new Date(b) : b;
   return Math.round(Math.abs(db - da) / 86400000);
 }
-function currency(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0 }); }
+function amountToNumber(value) {
+  if (typeof value === 'number') return isFinite(value) ? value : 0;
+  var raw = String(value == null ? '' : value).trim();
+  if (!raw) return 0;
+  var negative = false;
+  if (/^\(.*\)$/.test(raw)) {
+    negative = true;
+    raw = raw.slice(1, -1);
+  }
+  var normalized = raw.replace(/[^0-9.\-]/g, '');
+  var n = parseFloat(normalized);
+  if (!isFinite(n)) return 0;
+  return negative ? -Math.abs(n) : n;
+}
+function currency(n, digits) {
+  var d = (typeof digits === 'number' && digits >= 0) ? digits : 0;
+  return '$' + amountToNumber(n).toLocaleString('en-US', {
+    minimumFractionDigits: d,
+    maximumFractionDigits: d,
+  });
+}
 function showToast(msg, durationOrOpts) {
   var t = $('#toast');
   var iconEl = $('#toastIcon');
@@ -2312,7 +2332,7 @@ function buildReferenceMaps(vendorsArray, propertiesArray) {
 function normalizeBillApprovalStatus(value) {
   var raw = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
   if (!raw) return '';
-  if (raw === 'pending' || raw === 'awaiting_approval' || raw === 'needs_approval') return 'pending_approval';
+  if (raw === 'pending' || raw === 'pending_approval' || raw === 'awaiting_approval' || raw === 'needs_approval') return 'pending_approval';
   if (raw === 'approved_for_payment') return 'approved';
   if (raw === 'cancelled') return 'void';
   return raw;
@@ -3406,6 +3426,94 @@ function resolveBillGroupName(b) {
   return '';
 }
 
+function resolveBillWorkOrderRef(record) {
+  if (!record || typeof record !== 'object') return '';
+  var raw = (record.raw && typeof record.raw === 'object') ? record.raw : record;
+  var candidates = [
+    record.workOrderNumber,
+    record.work_order_number,
+    raw.WorkOrderNumber,
+    raw.work_order_number,
+    raw.WorkOrder,
+    raw.work_order,
+    record.workOrderId,
+    record.work_order_id,
+    raw.WorkOrderId,
+    raw.work_order_id,
+    raw.work_order_uuid,
+    raw.WorkOrderUuid,
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var v = String(candidates[i] || '').trim();
+    if (v) return v;
+  }
+  return '';
+}
+
+function resolveLineItemUuidTarget(lineItem) {
+  if (!lineItem || typeof lineItem !== 'object') return null;
+  var pick = function(list) {
+    for (var i = 0; i < list.length; i++) {
+      var val = String(lineItem[list[i]] || '').trim();
+      if (isUuidString(val)) return val;
+    }
+    return '';
+  };
+
+  var woUuid = pick(['WorkOrderId', 'work_order_id', 'work_order_uuid', 'WorkOrderUuid']);
+  if (woUuid) return { resource: 'work_orders', label: 'Work Order', uuid: woUuid };
+
+  var propertyUuid = pick(['PropertyId', 'property_id', 'property_uuid', 'PropertyUuid']);
+  if (propertyUuid) return { resource: 'properties', label: 'Property', uuid: propertyUuid };
+
+  var unitUuid = pick(['UnitId', 'unit_id', 'unit_uuid', 'UnitUUID', 'UnitUuid']);
+  if (unitUuid) return { resource: 'units', label: 'Unit', uuid: unitUuid };
+
+  var vendorUuid = pick(['VendorId', 'vendor_id', 'vendor_uuid', 'VendorUuid', 'PayeeUuid', 'payee_uuid']);
+  if (vendorUuid) return { resource: 'vendors', label: 'Vendor', uuid: vendorUuid };
+
+  return null;
+}
+
+async function showV0UuidDetailModal(target, lineItem) {
+  if (!target || !target.resource || !target.uuid) return;
+  var title = 'v0 UUID Detail — ' + target.label;
+  var path = '/api/v0/' + target.resource + '/' + encodeURIComponent(String(target.uuid));
+  showItemDetail(title, [
+    { label: 'Resource', value: target.resource },
+    { label: 'UUID', value: target.uuid },
+    { label: 'Path', value: path },
+    { section: 'Loading', icon: 'fa-spinner' },
+    { label: 'Status', value: 'Fetching details…' }
+  ], '');
+
+  try {
+    var payload = await apiFetch(path);
+    var bodyEl = document.getElementById('itemDetailBody');
+    if (!bodyEl) return;
+    var pretty = '';
+    try { pretty = JSON.stringify(payload || {}, null, 2); } catch (e) { pretty = String(payload || ''); }
+    bodyEl.innerHTML =
+      '<div class="detail-section">' +
+        '<div class="detail-section-title"><i class="fas fa-code"></i> API v0 Response</div>' +
+        '<div class="detail-grid">' +
+          '<div class="detail-row"><div class="detail-row-label">Resource</div><div class="detail-row-value">' + escapeHtml(target.resource) + '</div></div>' +
+          '<div class="detail-row"><div class="detail-row-label">UUID</div><div class="detail-row-value" style="font-family:var(--font-mono)">' + escapeHtml(target.uuid) + '</div></div>' +
+          '<div class="detail-row"><div class="detail-row-label">Path</div><div class="detail-row-value" style="font-family:var(--font-mono)">' + escapeHtml(path) + '</div></div>' +
+        '</div>' +
+      '</div>' +
+      '<pre style="max-height:360px;overflow:auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;line-height:1.45;font-family:var(--font-mono)">' + escapeHtml(pretty || '{}') + '</pre>';
+  } catch (err) {
+    showItemDetail(title, [
+      { label: 'Resource', value: target.resource },
+      { label: 'UUID', value: target.uuid },
+      { label: 'Path', value: path },
+      { section: 'Error', icon: 'fa-triangle-exclamation' },
+      { label: 'Message', value: String((err && err.message) || err || 'Failed to fetch v0 details') }
+    ], '');
+  }
+}
+
 async function fetchBills(days, opts) {
   if (_billsFetchInFlight) {
     console.log('fetchBills wait: previous request still in flight');
@@ -3574,7 +3682,12 @@ async function fetchBills(days, opts) {
         ? raw.property
         : ((b.property && typeof b.property === 'object') ? b.property : {});
       var status = normalizeBillApprovalStatus(b.status || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '');
-      var amountNum = parseFloat(String(b.amount != null ? b.amount : (b.total_amount != null ? b.total_amount : (raw.TotalAmount || raw.total_amount || raw.Amount || raw.amount || '0'))).replace(/[^0-9.\-]/g, '')) || 0;
+      var amountNum = amountToNumber(
+        b.amount != null ? b.amount :
+        (b.total_amount != null ? b.total_amount :
+          (raw.TotalAmount || raw.total_amount || raw.Amount || raw.amount || raw.Paid || raw.paid || raw.Unpaid || raw.unpaid || 0)
+        )
+      );
       var lineItems = Array.isArray(b.line_items)
         ? b.line_items
         : (Array.isArray(raw.LineItems)
@@ -3615,7 +3728,7 @@ async function fetchBills(days, opts) {
         propertyGroup: propertyMeta.groupName || b.property_group || raw.property_group || raw.PropertyGroup || '',
         propertyGroupId: propertyMeta.groupId,
         propertyManager: propertyMeta.siteManager || b.property_manager || raw.property_manager || raw.PropertyManager || '',
-        workOrderId: b.work_order_id || raw.WorkOrderId || raw.work_order_id || '',
+        workOrderId: b.work_order_number || b.workOrderNumber || b.work_order_id || raw.WorkOrderNumber || raw.work_order_number || raw.WorkOrderId || raw.work_order_id || raw.WorkOrder || raw.work_order || raw.work_order_uuid || raw.WorkOrderUuid || '',
         amount: amountNum,
           date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || b.due_date || raw.DueDate || raw.due_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
           lastUpdatedAt: b.last_updated_at || b.lastUpdatedAt || raw.LastUpdatedAt || raw.last_updated_at || raw.UpdatedAt || raw.updated_at || '',
@@ -6625,7 +6738,10 @@ function renderBillsSection() {
   });
 
   // KPIs
-  var pendingBills = filtered.filter(function(b) { return String(b.status || '') === 'pending_approval'; });
+  var pendingBills = filtered.filter(function(b) {
+    var statusKey = normalizeBillApprovalStatus(b.status || b.statusLabel || ((b.raw || {}).ApprovalStatus || (b.raw || {}).approval_status || ''));
+    return statusKey === 'pending_approval';
+  });
   var approvedBills = filtered.filter(function(b) { return String(b.status || '') === 'approved'; });
   var paidBills = filtered.filter(function(b) {
     var st = String(b.status || '');
@@ -6634,11 +6750,11 @@ function renderBillsSection() {
   });
   var uniqueVendors = new Set(filtered.map(function(b) { return b.vendorId || b.vendorName; }).filter(Boolean));
   var outstandingTotal = approvedBills.reduce(function(sum, b) {
-    var n = parseFloat(String(b.amount || '0').replace(/[^0-9.\-]/g, '')) || 0;
+    var n = amountToNumber(b.amount || 0);
     return sum + n;
   }, 0);
   var paidTotal = paidBills.reduce(function(sum, b) {
-    var n = parseFloat(String(b.amount || '0').replace(/[^0-9.\-]/g, '')) || 0;
+    var n = amountToNumber(b.amount || 0);
     return sum + n;
   }, 0);
 
@@ -6684,7 +6800,7 @@ function renderBillsSection() {
     var stKey = String(st).trim().toLowerCase().replace(/\s+/g, '-');
     var stLow = String(b.status || '').toLowerCase();
     var billNum = getNormalizedBillDisplayNumber(b);
-    var amountVal = Number(b.amount || 0);
+    var amountVal = amountToNumber(b.amount || 0);
     var vendorText = b.vendorName || b.vendorId || '—';
     var payeeText = b.payeeUuid || b.vendorUuid || b.vendorId || '';
     if (b.vendorName && payeeText) vendorText += ' (' + payeeText + ')';
@@ -6692,7 +6808,7 @@ function renderBillsSection() {
     var propertyIdText = String(b.propertyId || '').trim();
     var unitIdText = String(b.unitId || '').trim();
     var pmText = String(b.propertyManager || '').trim();
-    var workOrderId = String(b.workOrderId || '').trim();
+    var workOrderId = String(resolveBillWorkOrderRef(b) || '').trim();
     var woBadge = workOrderId
       ? ('<span title="Linked Work Order: ' + escapeHtml(workOrderId) + '"><i class="fas fa-wrench" style="color:var(--accent)"></i></span>')
       : '<span style="color:var(--text-muted)">—</span>';
@@ -6713,7 +6829,7 @@ function renderBillsSection() {
       '<td>' + escapeHtml(vendorText) + '</td>' +
       '<td><span style="display:inline-block;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(propertyText) + '">' + escapeHtml(propertyText) + '</span>' + linkageHtml + '</td>' +
       '<td>' + groupCell + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + currency(amountVal) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + currency(amountVal, 2) + '</td>' +
       '<td>' + escapeHtml(b.date ? formatDate(b.date) : '—') + '</td>' +
       '<td><span class="status-badge status-' + escapeHtml(stKey) + ' status-' + escapeHtml(stLow.replace(/\s+/g, '-')) + '">' + escapeHtml(st) + '</span></td>' +
       '<td style="text-align:center">' + woBadge + '</td>' +
@@ -7018,12 +7134,17 @@ function buildBillLineItemsHtml(lineItems) {
   if (!Array.isArray(lineItems) || lineItems.length === 0) return '<span style="color:var(--text-muted)">No line items available</span>';
   var rows = lineItems.map(function(li) {
     var desc = li.Description || li.description || '—';
-    var amt = li.Amount || li.amount || 0;
+    var amt = li.Amount || li.amount || li.TotalAmount || li.total_amount || 0;
     var gl = li.GlAccountId || li.gl_account_id || li.GLAccountId || '—';
     var unit = li.UnitId || li.unit_id || '—';
-    return '<tr>' +
+    var target = resolveLineItemUuidTarget(li);
+    var attrs = '';
+    if (target) {
+      attrs = ' class="clickable-row bill-lineitem-row" data-li-resource="' + escapeHtml(target.resource) + '" data-li-label="' + escapeHtml(target.label) + '" data-li-uuid="' + escapeHtml(target.uuid) + '" tabindex="0" role="button" aria-label="Open ' + escapeHtml(target.label) + ' UUID detail"';
+    }
+    return '<tr' + attrs + '>' +
       '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + escapeHtml(String(desc)) + '</td>' +
-      '<td style="padding:4px 6px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono)">' + currency(amt) + '</td>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono)">' + currency(amt, 2) + '</td>' +
       '<td style="padding:4px 6px;border-bottom:1px solid var(--border);font-family:var(--font-mono)">' + escapeHtml(String(gl)) + '</td>' +
       '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + escapeHtml(String(unit)) + '</td>' +
       '</tr>';
@@ -7174,7 +7295,7 @@ async function showBillDetailModal(billId) {
       { label: 'Bill ID', value: String(b.id || billId) },
       { label: 'Invoice #', value: String(b.bill_number || b.reference || '—') },
       { label: 'Status', value: String(b.status_label || b.status || '—') },
-      { label: 'Amount', value: currency(b.amount || b.total_amount || 0) },
+      { label: 'Amount', value: currency(b.amount || b.total_amount || 0, 2) },
       { label: 'Invoice Date', value: b.invoice_date ? formatDate(b.invoice_date) : '—' },
       { label: 'Due Date', value: b.due_date ? formatDate(b.due_date) : '—' },
       { label: 'Posting Date', value: b.posting_date ? formatDate(b.posting_date) : '—' },
@@ -7189,7 +7310,10 @@ async function showBillDetailModal(billId) {
       { label: 'Property', value: String((b.property_name || b.propertyName || '—') + ((b.property_id || b.propertyId) ? (' (' + (b.property_id || b.propertyId) + ')') : '')) },
       { label: 'Property Group', value: String(b.property_group || b.property_group_name || b.propertyGroup || b._propertyGroup || '—') },
       { label: 'Property Manager', value: String(b.pm_name || b.property_manager || raw.pm_name || raw.property_manager || raw.PropertyManager || '—') },
-      { label: 'Work Order', value: b.work_order_id || b.workOrderId ? String(b.work_order_id || b.workOrderId) : '—' },
+      { label: 'Work Order', value: (function() {
+          var woRef = resolveBillWorkOrderRef(b);
+          return woRef ? String(woRef) : '—';
+        })() },
       { label: 'Reference', value: String(b.reference || '—') },
       { label: 'Remarks', value: String(b.remarks || '—') },
       { section: 'Line Items', icon: 'fa-list' },
@@ -7243,6 +7367,21 @@ async function showBillDetailModal(billId) {
           uploadBillAttachment(billId, fileInput, statusEl, listEl);
         });
       }
+      Array.prototype.forEach.call(document.querySelectorAll('#itemDetailBody tr[data-li-uuid]'), function(row) {
+        var openLineItemUuid = function(evt) {
+          if (evt) evt.preventDefault();
+          var uuid = String(row.getAttribute('data-li-uuid') || '').trim();
+          var resource = String(row.getAttribute('data-li-resource') || '').trim();
+          var label = String(row.getAttribute('data-li-label') || 'Record').trim();
+          if (!uuid || !resource) return;
+          showV0UuidDetailModal({ resource: resource, uuid: uuid, label: label }, null);
+        };
+        row.addEventListener('click', openLineItemUuid);
+        row.addEventListener('keydown', function(evt) {
+          if (evt.key !== 'Enter' && evt.key !== ' ') return;
+          openLineItemUuid(evt);
+        });
+      });
       if (payloadCopyBtn && navigator && navigator.clipboard && navigator.clipboard.writeText) {
         payloadCopyBtn.addEventListener('click', async function() {
           try {
@@ -7301,8 +7440,23 @@ function renderBillHistoryPage(dateFrom, dateTo) {
   var end = Math.min(start + BILL_HISTORY_ROWS.length, totalRows);
   var pageRows = BILL_HISTORY_ROWS;
 
+  var pendingHistory = pageRows.filter(function(r) {
+    var statusKey = normalizeBillApprovalStatus(
+      r.status || r.status_label || r.ApprovalStatus || r.approval_status || r.Status || ''
+    );
+    return statusKey === 'pending_approval';
+  });
+  var kpiPendingEl = document.getElementById('billKpiPending');
+  var kpiPendingSubEl = document.getElementById('billKpiPendingSub');
+  if (kpiPendingEl) kpiPendingEl.textContent = String(pendingHistory.length);
+  if (kpiPendingSubEl) {
+    kpiPendingSubEl.textContent = pendingHistory.length > 0
+      ? (pendingHistory.length + ' pending in history result')
+      : 'No pending approvals in history result';
+  }
+
   body.innerHTML = pageRows.map(function(r) {
-    var wo = String(r.work_order_id || r.WorkOrderId || '').trim();
+    var wo = String(resolveBillWorkOrderRef(r) || '').trim();
     var billId = String(
       r.id || r.Id || r.bill_id || r.BillId || r.bill_uuid || r.BillUuid || ''
     ).trim();
@@ -7342,10 +7496,10 @@ function renderBillHistoryPage(dateFrom, dateTo) {
       '<td>' + escapeHtml(propertyName) + '</td>' +
       '<td>' + escapeHtml(grpResolved || '—') + '</td>' +
       '<td>' + escapeHtml(pmResolved || '—') + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || r.TotalAmount || 0) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || r.TotalAmount || r.Paid || r.Unpaid || 0, 2) + '</td>' +
       '<td>' + escapeHtml((r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) ? formatDate(r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) : '—') + '</td>' +
       '<td>' + escapeHtml(String(r.status_label || r.status || r.ApprovalStatus || '—')) + '</td>' +
-      '<td>' + (wo ? ('<button class="action-btn" data-wojump="' + escapeHtml(wo) + '" style="padding:2px 8px">#' + escapeHtml(wo.slice(0, 8)) + '</button>') : '<span style="color:var(--text-muted)">—</span>') + '</td>' +
+        '<td>' + (wo ? ('<button class="action-btn" data-wojump="' + escapeHtml(wo) + '" style="padding:2px 8px">#' + escapeHtml(wo) + '</button>') : '<span style="color:var(--text-muted)">—</span>') + '</td>' +
       '</tr>';
   }).join('');
 
@@ -7490,7 +7644,7 @@ async function runBillHistorySearch() {
         max: '8000',
       };
       if (grpName) params.group_name = grpName;
-      if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
+      if (grpUuid) params.group_uuid = grpUuid;
 
       var st = ($('#billStatusFilter') ? $('#billStatusFilter').value : '').trim();
       if (st) params.status = st;
@@ -7505,6 +7659,26 @@ async function runBillHistorySearch() {
       } else {
         _lastBillSource = 'legacy';
       }
+    }
+
+    if (rows.length && (grpName || grpUuid)) {
+      var grpUuidLower = String(grpUuid || '').trim().toLowerCase();
+      var grpNameLower = String(grpName || '').trim().toLowerCase();
+      var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
+      rows = rows.filter(function(r) {
+        var rowGroupUuid = String(resolveBillGroupUuidFromRecord(r) || '').trim().toLowerCase();
+        if (grpUuidLower && rowGroupUuid) return rowGroupUuid === grpUuidLower;
+
+        var rowGroupName = String(
+          r.property_group_name || r.property_group || r.PropertyGroup || resolveBillGroupName(r) || ''
+        ).trim().toLowerCase();
+        if (grpNameLower && rowGroupName) return rowGroupName === grpNameLower;
+
+        var rowPropertyId = String(r.property_id || r.PropertyId || '').trim();
+        var rowPropertyName = String(r.property_name || r.PropertyName || '').trim();
+        if (hasGroupMaps && grpName) return isInPropertyGroup(rowPropertyId, rowPropertyName, grpName);
+        return true;
+      });
     }
 
     if (!rows.length) {
@@ -8781,7 +8955,15 @@ function renderWOFollowupQueue() {
 }
 
 function showWODetail(id) {
-  var wo = WORK_ORDERS.find(function(w) { return String(w.id) === String(id); });
+  var ref = String(id || '').trim().replace(/^#/, '');
+  var refLower = ref.toLowerCase();
+  var wo = WORK_ORDERS.find(function(w) {
+    var idText = String(w.id || '').trim();
+    var uuidText = String(w.uuid || '').trim();
+    if (idText === ref || uuidText === ref) return true;
+    if (idText.toLowerCase() === refLower || uuidText.toLowerCase() === refLower) return true;
+    return false;
+  });
   if (!wo) return;
   var woDbUuid = resolveWODbUuid(wo);
   CURRENT_WO_MODAL = { woId: String(wo.id), woDbUuid: woDbUuid || '' };
