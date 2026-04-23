@@ -1118,11 +1118,25 @@ var _sessionExpiryHandled = false;
 var _proxySessionWarmupUntil = 0;
 var _proxySessionProbeInFlight = false;
 var _proxySessionWarmupFailures = 0;
+var _proxySessionConsecutive401 = 0;
+var _proxySessionLastHealthyAt = 0;
+var _proxySessionStartupGraceUntil = 0;
+
+function markProxySessionHealthy() {
+  _proxySessionLastHealthyAt = Date.now();
+  _proxySessionConsecutive401 = 0;
+  _proxySessionWarmupFailures = 0;
+}
+
+function beginProxySessionStartupGrace(ms) {
+  var graceMs = Math.max(30000, Number(ms || 0) || 60000);
+  _proxySessionStartupGraceUntil = Date.now() + graceMs;
+  markProxySessionWarmup(Math.max(20000, graceMs));
+}
 
 function markProxySessionWarmup(ms) {
   var windowMs = Number(ms || 0) || 10000;
   _proxySessionWarmupUntil = Date.now() + Math.max(2000, windowMs);
-  _proxySessionWarmupFailures = 0;
 }
 
 function isProxySessionWarmupActive() {
@@ -1130,7 +1144,11 @@ function isProxySessionWarmupActive() {
 }
 
 function shouldProbeProxySessionBeforeLockout() {
-  if (Date.now() > _proxySessionWarmupUntil) return false;
+  var now = Date.now();
+  var inWarmup = now <= _proxySessionWarmupUntil;
+  var inStartupGrace = now <= _proxySessionStartupGraceUntil;
+  var recentlyHealthy = _proxySessionLastHealthyAt && ((now - _proxySessionLastHealthyAt) <= 120000);
+  if (!inWarmup && !inStartupGrace && !recentlyHealthy) return false;
   if (_proxySessionProbeInFlight) return false;
   if (!API_PROXY) return false;
   return !!getProxyAccessToken();
@@ -1167,6 +1185,7 @@ function forceProxySessionExpiryLockout(contextLabel) {
   }
   API_CREDS = null;
   appInitialized = false;
+  _proxySessionStartupGraceUntil = 0;
 
   var vault = $('#vaultScreen');
   if (vault) vault.style.display = 'flex';
@@ -1220,6 +1239,8 @@ function clearStoredProxySessionTokens() {
 
 function handleProxySessionExpired(contextLabel) {
   if (_sessionExpiryHandled) return;
+  _proxySessionConsecutive401++;
+  var now = Date.now();
 
   if (shouldProbeProxySessionBeforeLockout()) {
     _proxySessionProbeInFlight = true;
@@ -1228,15 +1249,20 @@ function handleProxySessionExpired(contextLabel) {
         var stillValid = await probeProxySessionStillValid();
         if (stillValid) {
           _proxySessionProbeInFlight = false;
+          markProxySessionHealthy();
           markProxySessionWarmup(4000);
           return;
         }
       } catch (e) { /* fall through to lockout */ }
       _proxySessionProbeInFlight = false;
       _proxySessionWarmupFailures++;
+      var inStartupGrace = now <= _proxySessionStartupGraceUntil;
+      var recentlyHealthy = _proxySessionLastHealthyAt && ((now - _proxySessionLastHealthyAt) <= 120000);
       // During immediate post-login startup, tolerate a few transient 401s
       // while session rows and token propagation settle.
-      if (isProxySessionWarmupActive() && _proxySessionWarmupFailures < 3) {
+      if ((isProxySessionWarmupActive() && _proxySessionWarmupFailures < 6) ||
+          (inStartupGrace && _proxySessionConsecutive401 < 8) ||
+          (recentlyHealthy && _proxySessionConsecutive401 < 4)) {
         markProxySessionWarmup(7000);
         return;
       }
@@ -1253,6 +1279,9 @@ function lockVault() {
   _proxySessionWarmupUntil = 0;
   _proxySessionProbeInFlight = false;
   _proxySessionWarmupFailures = 0;
+  _proxySessionConsecutive401 = 0;
+  _proxySessionLastHealthyAt = 0;
+  _proxySessionStartupGraceUntil = 0;
   appInitialized = false;
   WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
   CLOSED_TURNS = new Set();
@@ -1685,6 +1714,7 @@ async function proxyAction(action, params) {
       logApiError(dataStatus || 502, msg, dataStatus === 404 ? 'resolved' : 'queued');
       throw new Error(msg);
     }
+    markProxySessionHealthy();
     return data;
   }
 }
@@ -1748,7 +1778,9 @@ async function proxyPost(action, bodyObj, extraHeaders) {
       }
       throw new Error('Proxy POST action=' + action + ' failed: HTTP ' + res.status + (errBody ? ' \u2014 ' + errBody.substring(0, 200) : ''));
     }
-    return res.json();
+    var postData = await res.json();
+    markProxySessionHealthy();
+    return postData;
   }
 }
 
@@ -3095,7 +3127,7 @@ if ($('#btnVerifyOtp')) {
 
 async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   _sessionExpiryHandled = false;
-  markProxySessionWarmup(20000);
+  beginProxySessionStartupGrace(60000);
   API_VHOST = vhost;
   API_PROXY = proxyUrl;
   API_CREDS = { p: existingDeviceToken };
@@ -3117,6 +3149,7 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
         _pmScopeEmail = String(sess.session.login_email);
         try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeEmailErr) { /* */ }
       }
+      markProxySessionHealthy();
     }
   } catch (sessErr) { /* non-fatal — use stored role */ }
   persistAccessRole(_accessRole);
@@ -3215,7 +3248,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         throw new Error('Login succeeded but server did not mint a session token. Check proxy DB/write access and try again.');
       }
       _sessionExpiryHandled = false;
-      markProxySessionWarmup(20000);
+      beginProxySessionStartupGrace(60000);
       API_CREDS = { p: sessionToken };
       if (sessionToken) {
         try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
