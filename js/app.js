@@ -1117,10 +1117,16 @@ var AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 var _sessionExpiryHandled = false;
 var _proxySessionWarmupUntil = 0;
 var _proxySessionProbeInFlight = false;
+var _proxySessionWarmupFailures = 0;
 
 function markProxySessionWarmup(ms) {
   var windowMs = Number(ms || 0) || 10000;
   _proxySessionWarmupUntil = Date.now() + Math.max(2000, windowMs);
+  _proxySessionWarmupFailures = 0;
+}
+
+function isProxySessionWarmupActive() {
+  return Date.now() <= _proxySessionWarmupUntil;
 }
 
 function shouldProbeProxySessionBeforeLockout() {
@@ -1227,6 +1233,13 @@ function handleProxySessionExpired(contextLabel) {
         }
       } catch (e) { /* fall through to lockout */ }
       _proxySessionProbeInFlight = false;
+      _proxySessionWarmupFailures++;
+      // During immediate post-login startup, tolerate a few transient 401s
+      // while session rows and token propagation settle.
+      if (isProxySessionWarmupActive() && _proxySessionWarmupFailures < 3) {
+        markProxySessionWarmup(7000);
+        return;
+      }
       forceProxySessionExpiryLockout(contextLabel);
     })();
     return;
@@ -1239,6 +1252,7 @@ function lockVault() {
   wipeCredentials();
   _proxySessionWarmupUntil = 0;
   _proxySessionProbeInFlight = false;
+  _proxySessionWarmupFailures = 0;
   appInitialized = false;
   WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
   CLOSED_TURNS = new Set();
@@ -1484,6 +1498,27 @@ async function verifyDeviceOtp(identifier, code, userName) {
     throw new Error(data.error || ('OTP verify failed (HTTP ' + res.status + ')'));
   }
   return data;
+}
+
+async function stabilizeProxySessionAfterLogin(timeoutMs) {
+  if (!API_PROXY) return false;
+  var token = getProxyAccessToken();
+  if (!token) return false;
+
+  var deadline = Date.now() + Math.max(3000, Number(timeoutMs || 10000));
+  var attempt = 0;
+  while (Date.now() < deadline) {
+    attempt++;
+    try {
+      var sess = await proxyAction('session_info');
+      if (sess && sess.ok && sess.authenticated && sess.session) return true;
+    } catch (e) {
+      // Keep retrying within the bounded window.
+    }
+    var waitMs = Math.min(250 + (attempt * 150), 1000);
+    await sleep(waitMs);
+  }
+  return false;
 }
 
 // ---- Resilient timeout + retry helper ----
@@ -3060,11 +3095,15 @@ if ($('#btnVerifyOtp')) {
 
 async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   _sessionExpiryHandled = false;
-  markProxySessionWarmup(12000);
+  markProxySessionWarmup(20000);
   API_VHOST = vhost;
   API_PROXY = proxyUrl;
   API_CREDS = { p: existingDeviceToken };
   _accessRole = getStoredAccessRole();
+  var stabilized = await stabilizeProxySessionAfterLogin(10000);
+  if (!stabilized) {
+    throw new Error('Proxy session did not stabilize after login. Please retry in a few seconds.');
+  }
   try {
     var sess = await proxyAction('session_info');
     if (sess && sess.ok && sess.session) {
@@ -3176,11 +3215,15 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         throw new Error('Login succeeded but server did not mint a session token. Check proxy DB/write access and try again.');
       }
       _sessionExpiryHandled = false;
-      markProxySessionWarmup(12000);
+      markProxySessionWarmup(20000);
       API_CREDS = { p: sessionToken };
       if (sessionToken) {
         try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
         try { localStorage.setItem('hm_proxy_token', sessionToken); } catch (eTok2) { /* */ }
+      }
+      var stabilized = await stabilizeProxySessionAfterLogin(10000);
+      if (!stabilized) {
+        throw new Error('Proxy session did not stabilize after login. Please retry in a few seconds.');
       }
       persistAccessRole(_accessRole);
     } else {
@@ -6583,11 +6626,42 @@ function billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps) {
   var normalizedGroupName = String(grp || '').trim().toLowerCase();
   var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
   var billGroupName = String(resolveBillGroupName(b) || b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
+  var raw = (b && b.raw && typeof b.raw === 'object') ? b.raw : b;
+  var billPropertyId = String((b && b.propertyId) || raw.property_id || raw.PropertyId || raw.property_uuid || raw.PropertyUuid || '').trim();
+  var billPropertyName = String((b && b.propertyName) || raw.property_name || raw.PropertyName || raw.property || raw.Property || '').trim();
 
   if (normalizedGroupUuid && billGroupUuid) return billGroupUuid === normalizedGroupUuid;
   if (normalizedGroupName && billGroupName) return billGroupName === normalizedGroupName;
-  if (hasGroupMaps) return isInPropertyGroup(b.propertyId, b.propertyName, grp);
+  if (hasGroupMaps) return isInPropertyGroup(billPropertyId, billPropertyName, grp);
   // If maps are not hydrated and bill has no direct group identity, avoid false-empty filtering.
+  return true;
+}
+
+function isBillingListRouteActive() {
+  return String(_billingRouteAction || 'bills_list').trim() === 'bills_list' &&
+    !_billingRouteFilterValue && !_billingDueFrom && !_billingDueTo;
+}
+
+function applyBillingListScopeFromCache(opts) {
+  opts = opts || {};
+  if (!Array.isArray(_billingListCacheRows) || _billingListCacheRows.length === 0) return false;
+
+  var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
+  var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+  var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
+  var scopedRows = _billingListCacheRows.filter(function(b) {
+    return billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps);
+  });
+
+  if (opts.resetPage) _billsPage = 0;
+  _billingServerTotal = scopedRows.length;
+  _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
+  _billingServerPage = Math.max(1, Math.min(_billingServerTotalPages, (_billsPage + 1)));
+  _billsPage = _billingServerPage - 1;
+
+  var start = _billsPage * BILLS_PAGE_SIZE;
+  window._billingPageRows = scopedRows.slice(start, start + BILLS_PAGE_SIZE);
+  renderBillsSection();
   return true;
 }
 
@@ -6632,8 +6706,7 @@ async function loadBillingPage(opts) {
     if (!isNaN(fromMs)) lookbackDays = Math.max(1, Math.ceil((Date.now() - fromMs) / 86400000));
   }
 
-  var isListRoute = String(_billingRouteAction || 'bills_list').trim() === 'bills_list' &&
-    !_billingRouteFilterValue && !_billingDueFrom && !_billingDueTo;
+  var isListRoute = isBillingListRouteActive();
 
   if (isListRoute) {
     var cacheKey = getBillingDateRangeKey();
@@ -6680,20 +6753,7 @@ async function loadBillingPage(opts) {
       _lastBillSource = String(listPayload.source || (listPayload.fromCache ? 'cached' : 'live') || 'legacy');
     }
 
-    var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
-    var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
-    var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
-    var scopedRows = listRows.filter(function(b) {
-      return billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps);
-    });
-
-    _billingServerTotal = scopedRows.length;
-    _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
-    _billingServerPage = Math.max(1, Math.min(_billingServerTotalPages, (_billsPage + 1)));
-    _billsPage = _billingServerPage - 1;
-
-    var start = _billsPage * BILLS_PAGE_SIZE;
-    window._billingPageRows = scopedRows.slice(start, start + BILLS_PAGE_SIZE);
+    applyBillingListScopeFromCache();
   } else {
     var payload = await fetchBills(lookbackDays, {
       scoped: true,
@@ -7180,6 +7240,9 @@ function wireBillingFilters() {
   document.addEventListener('groupFilterChanged', function() {
     window._currentBillsCache = [];
     _billsPage = 0;
+    if (isBillingListRouteActive() && applyBillingListScopeFromCache({ resetPage: true })) {
+      return;
+    }
     loadBillingPage({ resetPage: true });
   });
 
