@@ -8293,9 +8293,14 @@ function propertyMatchesSelectedGroup(propertyRow, groupName) {
   }
 
   var selectedLower = selected.toLowerCase();
-  return candidates.some(function(v) {
+  var directMatch = candidates.some(function(v) {
     return v.toLowerCase() === selectedLower;
   });
+  if (directMatch) return true;
+
+  // Some property rows carry portfolio/manager labels that differ from the
+  // selected group display name. Fall back to canonical UUID/name map lookup.
+  return isInPropertyGroup(row.id || row.propertyId || '', row.name || '', selected);
 }
 var completedWOHistoryRows = [];
 var completedWOHistoryLoading = false;
@@ -14411,14 +14416,64 @@ renderDashboardKPIs = function() {
 
   function renderDbTable(rows, cols) {
     if (!rows.length) { resultsBody.innerHTML = '<div class="dbadmin-msg">No rows returned</div>'; return; }
+
+    function looksLikeUuid(value) {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+    }
+
+    function shouldLinkWorkOrder(colName, value) {
+      var col = String(colName || '').toLowerCase();
+      var raw = String(value || '').trim();
+      if (!raw) return false;
+      if (col.indexOf('work_order') !== -1 || col === 'wo_id' || col === 'wo_uuid' || col === 'wo_number') return true;
+      if (/^wo[-_ ]?\d+$/i.test(raw)) return true;
+      if (/^\d{3,}$/i.test(raw) && (col === 'id' || col.indexOf('wo') !== -1)) return true;
+      return false;
+    }
+
+    function renderDbCell(colName, value) {
+      if (value === null || value === undefined) return '<td class="db-null">NULL</td>';
+      var raw = String(value);
+      var safe = escapeHtml(raw);
+      var encoded = encodeURIComponent(raw);
+
+      if (shouldLinkWorkOrder(colName, raw)) {
+        return '<td title="' + safe + '"><button class="dbadmin-cell-link" data-db-link-kind="wo" data-db-link-ref="' + encoded + '">' + safe + '</button></td>';
+      }
+
+      if (looksLikeUuid(raw)) {
+        return '<td title="' + safe + '"><button class="dbadmin-cell-link" data-db-link-kind="uuid" data-db-link-ref="' + encoded + '">' + safe + '</button></td>';
+      }
+
+      return '<td title="' + safe + '">' + safe + '</td>';
+    }
+
     var thead = '<thead><tr>' + cols.map(function(c) { return '<th>' + escapeHtml(c) + '</th>'; }).join('') + '</tr></thead>';
     var tbody = '<tbody>' + rows.map(function(row) {
       return '<tr>' + cols.map(function(c) {
         var v = typeof row === 'object' && !Array.isArray(row) ? row[c] : row[cols.indexOf(c)];
-        return (v === null || v === undefined) ? '<td class="db-null">NULL</td>' : '<td title="' + escapeHtml(String(v)) + '">' + escapeHtml(String(v)) + '</td>';
+        return renderDbCell(c, v);
       }).join('') + '</tr>';
     }).join('') + '</tbody>';
     resultsBody.innerHTML = '<table>' + thead + tbody + '</table>';
+  }
+
+  if (resultsBody) {
+    resultsBody.addEventListener('click', function(ev) {
+      var link = ev.target.closest('.dbadmin-cell-link');
+      if (!link) return;
+      var kind = String(link.getAttribute('data-db-link-kind') || '');
+      var ref = decodeURIComponent(String(link.getAttribute('data-db-link-ref') || ''));
+      if (!ref) return;
+
+      if (kind === 'wo' && typeof showWODetail === 'function') {
+        showWODetail(ref);
+        return;
+      }
+      if (kind === 'uuid' && typeof showV0UuidDetailModal === 'function') {
+        showV0UuidDetailModal(ref);
+      }
+    });
   }
 
   function checkDestructive() {
@@ -14729,7 +14784,16 @@ renderDashboardKPIs = function() {
     if (membershipCb) membershipCb.addEventListener('change', updateCheckboxLabels);
 
     function loadOtpSettings() {
-      var adminKey = (document.getElementById('dbAdminKey') && document.getElementById('dbAdminKey').value || '').trim();
+      var keyInput = document.getElementById('dbAdminKey');
+      var adminKey = (keyInput && keyInput.value || '').trim();
+      if (!adminKey) {
+        try {
+          adminKey = String(localStorage.getItem('hm_proxy_admin_key') || '').trim() || String(sessionStorage.getItem('hm_pm_admin_key') || '').trim();
+        } catch (e) { /* */ }
+      }
+      if (adminKey && keyInput && !String(keyInput.value || '').trim()) {
+        keyInput.value = adminKey;
+      }
       if (!adminKey) { if (saveStatus) { saveStatus.textContent = 'Enter Admin Key above to load settings'; saveStatus.style.color = 'var(--text-muted)'; } return; }
       proxyAction('settings_get', { key: adminKey }).then(function(data) {
         var settings = {};
