@@ -294,7 +294,13 @@ function groupsByPropertyName(propertyName) {
 }
 
 function isInPropertyGroup(propertyId, propertyName, groupName) {
-  if (!groupName) return true; // no filter = show all
+  var normalizedGroup = String(groupName || '').trim();
+  if (!normalizedGroup) return true; // no filter = show all
+  var normalizedGroupLower = normalizedGroup.toLowerCase();
+  if (normalizedGroupLower === 'all properties') return true;
+  if (normalizedGroup.charAt(0) === '*' && normalizedGroupLower.indexOf('all properties') !== -1) return true;
+
+  groupName = normalizedGroup;
 
   // 1. Fast lookup by property name (covers both Reports API and DB API names)
   if (propertyName) {
@@ -2425,13 +2431,26 @@ function enforceScopedPropertyGroup() {
   if (clearBtn) clearBtn.style.display = 'none';
 }
 
+function normalizeGroupSelectionValue(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  var lower = raw.toLowerCase();
+  if (lower === 'all properties') return '';
+  // Treat AppFolio pseudo-global group entries as unscoped.
+  if (lower.indexOf('all properties') !== -1 && (raw.charAt(0) === '*' || lower.indexOf('appfolio') !== -1)) return '';
+  return raw;
+}
+
 // Returns the active group filter name, honouring PM scope enforcement.
 // Use instead of reading currentPropertyGroup directly in scope-sensitive code.
 function getEffectiveGroupId() {
-  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
-    return resolveGroupNameFromUuid(forcedPropertyGroupUuid) || forcedPropertyGroupName || currentPropertyGroup || '';
+  function _normalizeEffectiveGroup(value) {
+    return normalizeGroupSelectionValue(value);
   }
-  return currentPropertyGroup || '';
+  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
+    return _normalizeEffectiveGroup(resolveGroupNameFromUuid(forcedPropertyGroupUuid) || forcedPropertyGroupName || currentPropertyGroup || '');
+  }
+  return _normalizeEffectiveGroup(currentPropertyGroup || '');
 }
 
 /* =================================================================
@@ -3389,8 +3408,29 @@ function resolveBillGroupName(b) {
 
 async function fetchBills(days, opts) {
   if (_billsFetchInFlight) {
-    console.log('fetchBills skip: previous request still in flight');
-    return null;
+    console.log('fetchBills wait: previous request still in flight');
+    var waitMs = 0;
+    while (_billsFetchInFlight && waitMs < 8000) {
+      await new Promise(function(resolve) { setTimeout(resolve, 100); });
+      waitMs += 100;
+    }
+    if (_billsFetchInFlight) {
+      console.log('fetchBills busy timeout after ' + waitMs + 'ms');
+      if (opts && opts.returnPayload) {
+        return {
+          ok: false,
+          error: 'billing fetch busy, try again',
+          rows: [],
+          total: 0,
+          page: 1,
+          perPage: Math.max(1, Math.min(200, parseInt((opts.perPage || opts.limit || 50), 10) || 50)),
+          totalPages: 1,
+          fromCache: false,
+          source: String(_lastBillSource || 'legacy')
+        };
+      }
+      return false;
+    }
   }
   _billsFetchInFlight = true;
   try {
@@ -3429,7 +3469,7 @@ async function fetchBills(days, opts) {
     var groupUuid = '';
 
     if (opts.scoped !== false) {
-      grpName = getEffectiveGroupId();
+      grpName = normalizeGroupSelectionValue(getEffectiveGroupId());
       groupUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
       // Only send UUID scope to server-side filters; when UUID is missing,
       // rely on client-side property-group association maps to avoid empty legacy responses.
@@ -6359,8 +6399,13 @@ var _billingQueuedOpts = null;
 
 async function loadBillingPage(opts) {
   if (_billingLoadPromise) {
-    var queued = _billingQueuedOpts || {};
     var incoming = opts || {};
+    // Ignore duplicate manual refresh taps while a request is active.
+    // We still allow queued follow-ups for state-changing requests.
+    if (incoming.forceRefresh && !incoming.resetPage && !incoming.forceHardLock) {
+      return _billingLoadPromise;
+    }
+    var queued = _billingQueuedOpts || {};
     _billingQueuedOpts = {
       resetPage: !!(queued.resetPage || incoming.resetPage),
       forceRefresh: !!(queued.forceRefresh || incoming.forceRefresh),
@@ -6511,7 +6556,7 @@ function renderBillsSection() {
   var footer = $('#billFooter');
   if (!tbody) return;
 
-  var grp = getEffectiveGroupId();
+  var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
   var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
   var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
   var activePropertyId = String(window.filteredPropertyId || '').trim();
@@ -7401,7 +7446,7 @@ async function runBillHistorySearch() {
     var historyTotal = 0;
     var historyPages = 1;
     var historyPage = BILL_HISTORY_PAGE + 1;
-    var grpName = getEffectiveGroupId();
+    var grpName = normalizeGroupSelectionValue(getEffectiveGroupId());
     var grpUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
 
     if (grpUuid) {
@@ -8037,9 +8082,46 @@ function setPropertiesSubtab(tab) {
   }
   var scopeEl = $('#propertiesBulkScopeText');
   if (scopeEl) {
-    var grp = String(_propertiesLocalGroup || getEffectiveGroupId() || 'All Groups');
+    var scope = getPropertiesScope();
+    var grp = String(scope.effectiveGroup || 'All Groups');
     scopeEl.textContent = 'Current scope: ' + grp + '. Use "Open Bulk Note Composer" to apply the same note across scoped properties.';
   }
+}
+
+function getPropertiesScope(localValue) {
+  var globalGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+  var localGroup = normalizeGroupSelectionValue(localValue != null ? localValue : _propertiesLocalGroup);
+  return {
+    globalGroup: globalGroup,
+    localGroup: localGroup,
+    effectiveGroup: localGroup || globalGroup
+  };
+}
+
+function propertyMatchesSelectedGroup(propertyRow, groupName) {
+  var selected = normalizeGroupSelectionValue(groupName);
+  if (!selected) return true;
+  var row = propertyRow || {};
+  var candidates = [
+    row.propertyGroup,
+    row.groupName,
+    row.portfolio,
+    row.property_group,
+    row.PropertyGroup,
+    row.PropertyGroupName,
+    row.portfolio_name
+  ].map(function(v) {
+    return String(v || '').trim();
+  }).filter(Boolean);
+
+  if (!candidates.length) {
+    return isInPropertyGroup(row.id || row.propertyId || '', row.name || '', selected);
+  }
+
+  var selectedLower = selected.toLowerCase();
+  return candidates.some(function(v) {
+    return v.toLowerCase() === selectedLower;
+  });
 }
 var completedWOHistoryRows = [];
 var completedWOHistoryLoading = false;
@@ -9747,16 +9829,27 @@ function renderPropertiesRowsFromCache() {
   var groupSelect = $('#propertyGroupFilter');
   var properties = (PROPERTIES || []).slice();
 
+  var scope = getPropertiesScope();
+  var globalGroup = scope.globalGroup;
+
+  // Always enforce global scope first.
+  if (globalGroup) {
+    properties = properties.filter(function(p) {
+      return propertyMatchesSelectedGroup(p, globalGroup);
+    });
+  }
+
   var groups = {};
   properties.forEach(function(p) {
     var g = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
     if (g) groups[g] = true;
   });
 
-  var effectiveGroup = String(_propertiesLocalGroup || getEffectiveGroupId() || '').trim();
+  var localGroup = scope.localGroup;
+  var effectiveGroup = localGroup || globalGroup;
 
   if (groupSelect) {
-    var existing = String(groupSelect.value || effectiveGroup || '');
+    var existing = normalizeGroupSelectionValue(groupSelect.value || localGroup || '');
     var options = ['<option value="">All Groups</option>'];
     Object.keys(groups).sort().forEach(function(g) {
       options.push('<option value="' + escapeHtml(g) + '">' + escapeHtml(g) + '</option>');
@@ -9764,15 +9857,14 @@ function renderPropertiesRowsFromCache() {
     groupSelect.innerHTML = options.join('');
     if (existing && !groups[existing]) existing = '';
     groupSelect.value = existing;
-    _propertiesLocalGroup = String(groupSelect.value || '');
-    effectiveGroup = _propertiesLocalGroup;
+    _propertiesLocalGroup = normalizeGroupSelectionValue(groupSelect.value || '');
+    localGroup = _propertiesLocalGroup;
+    effectiveGroup = localGroup || globalGroup;
   }
 
-  if (effectiveGroup) {
+  if (localGroup) {
     properties = properties.filter(function(p) {
-      var groupName = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
-      if (groupName === effectiveGroup) return true;
-      return isInPropertyGroup(p.id || p.propertyId || '', p.name || '', effectiveGroup);
+      return propertyMatchesSelectedGroup(p, localGroup);
     });
   }
 
@@ -10040,13 +10132,14 @@ function filterBillsToUnit(unitId, unitName, propertyId, propertyName) {
 
 function openBulkNoteModal() {
   var groupEl = $('#propertyGroupFilter');
-  var currentGroup = String(groupEl ? groupEl.value : (_propertiesLocalGroup || ''));
+  var currentGroup = normalizeGroupSelectionValue(groupEl ? groupEl.value : _propertiesLocalGroup);
+  var globalGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
 
   // Determine the target properties based on current group filter
   var targetProps = (PROPERTIES || []).filter(function(p) {
+    if (globalGroup && !propertyMatchesSelectedGroup(p, globalGroup)) return false;
     if (!currentGroup) return true;
-    var g = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
-    return g === currentGroup;
+    return propertyMatchesSelectedGroup(p, currentGroup);
   });
 
   var targetGroupEl = $('#bulkNoteTargetGroup');
@@ -10055,7 +10148,7 @@ function openBulkNoteModal() {
   var statusEl = $('#bulkNoteStatus');
   var submitBtn = $('#bulkNoteSubmitBtn');
 
-  if (targetGroupEl) targetGroupEl.textContent = currentGroup || 'All Groups';
+  if (targetGroupEl) targetGroupEl.textContent = currentGroup || globalGroup || 'All Groups';
   if (countEl) countEl.textContent = targetProps.length + ' propert' + (targetProps.length === 1 ? 'y' : 'ies') + ' will receive this note';
   if (textEl) textEl.value = '';
   if (statusEl) statusEl.textContent = '';
@@ -10076,11 +10169,12 @@ function executeBulkNoteUpdate() {
   }
 
   var groupEl = $('#propertyGroupFilter');
-  var currentGroup = String(groupEl ? groupEl.value : (_propertiesLocalGroup || ''));
+  var currentGroup = normalizeGroupSelectionValue(groupEl ? groupEl.value : _propertiesLocalGroup);
+  var globalGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
   var targetProps = (PROPERTIES || []).filter(function(p) {
+    if (globalGroup && !propertyMatchesSelectedGroup(p, globalGroup)) return false;
     if (!currentGroup) return true;
-    var g = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
-    return g === currentGroup;
+    return propertyMatchesSelectedGroup(p, currentGroup);
   });
 
   if (!targetProps.length) {
@@ -10088,7 +10182,7 @@ function executeBulkNoteUpdate() {
     return;
   }
 
-  var targetGroup = currentGroup || 'All Groups';
+  var targetGroup = currentGroup || globalGroup || 'All Groups';
   var count = targetProps.length;
 
   hmConfirm(
@@ -12955,7 +13049,7 @@ function wireUpUI() {
   var propertyGroupFilter = $('#propertyGroupFilter');
   if (propertyGroupFilter) {
     propertyGroupFilter.addEventListener('change', function() {
-      _propertiesLocalGroup = String(propertyGroupFilter.value || '');
+      _propertiesLocalGroup = normalizeGroupSelectionValue(propertyGroupFilter.value || '');
       _propertiesPage = 0;
       renderPropertiesSection();
     });
