@@ -883,6 +883,9 @@ body.role-vendors .cache-badge { display: none; }
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  position: sticky;
+  top: 52px;
+  z-index: 99;
 }
 .nav-tab {
   font-family: var(--font-mono);
