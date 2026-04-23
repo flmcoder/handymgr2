@@ -6509,6 +6509,27 @@ var _billsPage = 0;
 var BILLS_PAGE_SIZE = 50;
 var _billingLoadPromise = null;
 var _billingQueuedOpts = null;
+var _billingListCacheRows = [];
+var _billingListCacheKey = '';
+
+function getBillingDateRangeKey() {
+  var from = String((document.getElementById('billUpdatedFrom') || {}).value || '').trim();
+  var to = String((document.getElementById('billUpdatedTo') || {}).value || '').trim();
+  return from + '|' + to;
+}
+
+function billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps) {
+  if (!grp) return true;
+  if (groupUuid) {
+    var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
+    if (billGroupUuid) return billGroupUuid === String(groupUuid).trim().toLowerCase();
+    return isInPropertyGroup(b.propertyId, b.propertyName, grp);
+  }
+  var billGroup = String(b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
+  if (billGroup) return billGroup === String(grp).trim().toLowerCase();
+  if (hasGroupMaps) return isInPropertyGroup(b.propertyId, b.propertyName, grp);
+  return true;
+}
 
 async function loadBillingPage(opts) {
   if (_billingLoadPromise) {
@@ -6551,40 +6572,104 @@ async function loadBillingPage(opts) {
     if (!isNaN(fromMs)) lookbackDays = Math.max(1, Math.ceil((Date.now() - fromMs) / 86400000));
   }
 
-  var payload = await fetchBills(lookbackDays, {
-    scoped: true,
-    forceRefresh: !!opts.forceRefresh,
-    filterType: _billingRouteAction,
-    filterValue: _billingRouteFilterValue,
-    dueFrom: _billingDueFrom,
-    dueTo: _billingDueTo,
-    updatedFrom: billUpdatedFrom,
-    updatedTo: billUpdatedTo,
-    routeStatusFilter: _billingRouteStatus,
-    limit: BILLS_PAGE_SIZE,
-    perPage: BILLS_PAGE_SIZE,
-    page: _billsPage + 1,
-    offset: _billsPage * BILLS_PAGE_SIZE,
-    assignGlobal: false,
-    returnPayload: true,
-  });
+  var isListRoute = String(_billingRouteAction || 'bills_list').trim() === 'bills_list' &&
+    !_billingRouteFilterValue && !_billingDueFrom && !_billingDueTo;
 
-  if (!payload || !payload.ok) {
-    if (hardLock) setSectionBusy('sec-billing', false);
-    if (refreshBtn) {
-      refreshBtn.disabled = false;
-      refreshBtn.innerHTML = refreshText;
+  if (isListRoute) {
+    var cacheKey = getBillingDateRangeKey();
+    var useCachedList = !opts.forceRefresh && _billingListCacheKey === cacheKey && Array.isArray(_billingListCacheRows) && _billingListCacheRows.length > 0;
+    var listPayload = null;
+    var listRows = [];
+
+    if (useCachedList) {
+      listRows = _billingListCacheRows.slice();
+      _lastBillSource = 'cached';
+    } else {
+      listPayload = await fetchBills(lookbackDays, {
+        scoped: false,
+        forceRefresh: !!opts.forceRefresh,
+        filterType: '',
+        filterValue: '',
+        dueFrom: '',
+        dueTo: '',
+        updatedFrom: billUpdatedFrom,
+        updatedTo: billUpdatedTo,
+        routeStatusFilter: '',
+        limit: 3000,
+        perPage: 3000,
+        page: 1,
+        offset: 0,
+        max: 3000,
+        assignGlobal: false,
+        returnPayload: true,
+      });
+
+      if (!listPayload || !listPayload.ok) {
+        if (hardLock) setSectionBusy('sec-billing', false);
+        if (refreshBtn) {
+          refreshBtn.disabled = false;
+          refreshBtn.innerHTML = refreshText;
+        }
+        showToast('Billing refresh failed: ' + String(listPayload && listPayload.error || 'unknown error'), { kind: 'warning' });
+        return;
+      }
+
+      listRows = Array.isArray(listPayload.rows) ? listPayload.rows : [];
+      _billingListCacheRows = listRows.slice();
+      _billingListCacheKey = cacheKey;
+      _lastBillSource = String(listPayload.source || (listPayload.fromCache ? 'cached' : 'live') || 'legacy');
     }
-    showToast('Billing refresh failed: ' + String(payload && payload.error || 'unknown error'), { kind: 'warning' });
-    return;
-  }
 
-  window._billingPageRows = Array.isArray(payload.rows) ? payload.rows : [];
-  _billingServerTotal = Number(payload.total || window._billingPageRows.length) || 0;
-  _billingServerTotalPages = Math.max(1, Number(payload.totalPages || 1) || 1);
-  _billingServerPage = Math.max(1, Number(payload.page || (_billsPage + 1)) || 1);
-  _billsPage = _billingServerPage - 1;
-  _lastBillSource = String(payload.source || (payload.fromCache ? 'cached' : 'live') || 'legacy');
+    var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
+    var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+    var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
+    var scopedRows = listRows.filter(function(b) {
+      return billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps);
+    });
+
+    _billingServerTotal = scopedRows.length;
+    _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
+    _billingServerPage = Math.max(1, Math.min(_billingServerTotalPages, (_billsPage + 1)));
+    _billsPage = _billingServerPage - 1;
+
+    var start = _billsPage * BILLS_PAGE_SIZE;
+    window._billingPageRows = scopedRows.slice(start, start + BILLS_PAGE_SIZE);
+  } else {
+    var payload = await fetchBills(lookbackDays, {
+      scoped: true,
+      forceRefresh: !!opts.forceRefresh,
+      filterType: _billingRouteAction,
+      filterValue: _billingRouteFilterValue,
+      dueFrom: _billingDueFrom,
+      dueTo: _billingDueTo,
+      updatedFrom: billUpdatedFrom,
+      updatedTo: billUpdatedTo,
+      routeStatusFilter: _billingRouteStatus,
+      limit: BILLS_PAGE_SIZE,
+      perPage: BILLS_PAGE_SIZE,
+      page: _billsPage + 1,
+      offset: _billsPage * BILLS_PAGE_SIZE,
+      assignGlobal: false,
+      returnPayload: true,
+    });
+
+    if (!payload || !payload.ok) {
+      if (hardLock) setSectionBusy('sec-billing', false);
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        refreshBtn.innerHTML = refreshText;
+      }
+      showToast('Billing refresh failed: ' + String(payload && payload.error || 'unknown error'), { kind: 'warning' });
+      return;
+    }
+
+    window._billingPageRows = Array.isArray(payload.rows) ? payload.rows : [];
+    _billingServerTotal = Number(payload.total || window._billingPageRows.length) || 0;
+    _billingServerTotalPages = Math.max(1, Number(payload.totalPages || 1) || 1);
+    _billingServerPage = Math.max(1, Number(payload.page || (_billsPage + 1)) || 1);
+    _billsPage = _billingServerPage - 1;
+    _lastBillSource = String(payload.source || (payload.fromCache ? 'cached' : 'live') || 'legacy');
+  }
 
   renderBillsSection();
 
@@ -6687,23 +6772,7 @@ function renderBillsSection() {
 
   // Local visual filters (search + property drilldown) on current server page.
   var filtered = sourceRows.filter(function(b) {
-    if (grp) {
-      if (groupUuid) {
-        var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
-        if (billGroupUuid) {
-          if (billGroupUuid !== String(groupUuid).trim().toLowerCase()) return false;
-        } else if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) {
-          return false;
-        }
-      } else {
-        var billGroup = String(b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
-        if (billGroup) {
-          if (billGroup !== String(grp).trim().toLowerCase()) return false;
-        } else if (hasGroupMaps) {
-          if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) return false;
-        }
-      }
-    }
+    if (!billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps)) return false;
     if (statusFilter) {
       var st = String(b.status || '').toLowerCase();
       if (statusFilter === 'pending_approval' && st !== 'pending_approval') return false;
@@ -7030,6 +7099,8 @@ function wireBillingFilters() {
     function scheduleReloadOnDateChange() {
       clearTimeout(dateChangeTimer);
       dateChangeTimer = setTimeout(function() {
+        _billingListCacheRows = [];
+        _billingListCacheKey = '';
         window._billingPageRows = [];
         _billingServerTotal = 0;
         _billingServerTotalPages = 1;
@@ -7047,13 +7118,9 @@ function wireBillingFilters() {
   }
 
   document.addEventListener('groupFilterChanged', function() {
-    window._billingPageRows = [];
     window._currentBillsCache = [];
-    _billingServerTotal = 0;
-    _billingServerTotalPages = 1;
-    _billingServerPage = 1;
     _billsPage = 0;
-    loadBillingPage({ resetPage: true, forceRefresh: true });
+    loadBillingPage({ resetPage: true });
   });
 
   // Wire filter-type pill buttons
@@ -7085,6 +7152,8 @@ function wireBillingFilters() {
     var hidTo = document.getElementById('billUpdatedTo');
     if (hidFrom) hidFrom.value = fromStr;
     if (hidTo) hidTo.value = toStr;
+    _billingListCacheRows = [];
+    _billingListCacheKey = '';
     window._billingPageRows = [];
     _billingServerTotal = 0;
     _billingServerTotalPages = 1;
@@ -7108,6 +7177,8 @@ function wireBillingFilters() {
     if (hidTo && periodTo2) hidTo.value = periodTo2.value;
     clearTimeout(dateChangeTimer);
     dateChangeTimer = setTimeout(function() {
+      _billingListCacheRows = [];
+      _billingListCacheKey = '';
       window._billingPageRows = [];
       _billingServerTotal = 0;
       _billingServerTotalPages = 1;
