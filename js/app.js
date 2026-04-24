@@ -1255,6 +1255,7 @@ function stopAutoSync() {
 }
 
 function clearStoredProxySessionTokens() {
+  try { localStorage.removeItem('hm_auth_token'); } catch (e0) { /* */ }
   try { localStorage.removeItem('hm_device_token'); } catch (e1) { /* */ }
   try { localStorage.removeItem('hm_proxy_token'); } catch (e2) { /* */ }
 }
@@ -1381,6 +1382,10 @@ function getDirectBaseUrl() { return API_VHOST ? 'https://' + API_VHOST + '.appf
 function getProxyAccessToken() {
   if (API_CREDS && API_CREDS.p) return API_CREDS.p;
   try {
+    var authToken = localStorage.getItem('hm_auth_token') || '';
+    if (authToken) return authToken;
+  } catch (e) { /* */ }
+  try {
     var deviceToken = localStorage.getItem('hm_device_token') || '';
     if (deviceToken) return deviceToken;
   } catch (e) { /* */ }
@@ -1402,7 +1407,7 @@ function isProxySessionReady() {
 
 function hasStoredDeviceSession() {
   try {
-    return !!(localStorage.getItem('hm_device_token') || localStorage.getItem('hm_proxy_token') || '');
+    return !!(localStorage.getItem('hm_auth_token') || localStorage.getItem('hm_device_token') || localStorage.getItem('hm_proxy_token') || '');
   } catch (e) {
     return false;
   }
@@ -2290,6 +2295,12 @@ window._currentBillsCache = []; // currently visible bills for fast detail-card 
 window._billingPageRows = [];
 var _billsFetchInFlight = false;
 var _lastBillSource = 'legacy';
+
+// ── Billing cache for client-side filtering ──────────────────────────────────
+var __CACHED_BILLS = []; // Full unfiltered bills array (loaded once, reused for all filters)
+var __PROPERTY_TO_GROUP_MAP = {}; // property_id -> group_id lookup for instant filtering
+var __CACHED_BILLS_LOADED_AT = 0; // Timestamp of when cache was populated
+var __CACHED_BILLS_IN_FLIGHT = false; // Lock to prevent duplicate fetches
 var _billingServerTotal = 0;
 var _billingServerTotalPages = 1;
 var _billingServerPage = 1;
@@ -2484,6 +2495,17 @@ function buildReferenceMaps(vendorsArray, propertiesArray) {
   });
 
   window.AppDB = db;
+  
+  // Populate property-to-group map for instant bill filtering
+  __PROPERTY_TO_GROUP_MAP = {};
+  (Array.isArray(propertiesArray) ? propertiesArray : []).forEach(function(p) {
+    var propId = String(p.id || p.Id || p.property_id || p.PropertyId || p.propertyId || '').trim();
+    var groupId = String(p.propertyGroupId || p.PropertyGroupId || p.property_group_id || p.property_group_uuid || p.PropertyGroupUuid || '').trim();
+    if (propId && groupId) {
+      __PROPERTY_TO_GROUP_MAP[propId] = groupId;
+    }
+  });
+  
   return db;
 }
 
@@ -3162,6 +3184,7 @@ if ($('#btnVerifyOtp')) {
     try {
       var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher');
       var token = verifyData.token;
+      try { localStorage.setItem('hm_auth_token', token); } catch (eA) { /* */ }
       try { localStorage.setItem('hm_device_token', token); } catch (e) { /* */ }
       try { localStorage.setItem('hm_proxy_token', token); } catch (e2) { /* */ }
       if (verifyData.role) {
@@ -3230,6 +3253,7 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   } catch (sessErr) { /* non-fatal — use stored role */ }
   await enforceSessionTypeTransitionReset(previousRole, _accessRole);
   persistAccessRole(_accessRole);
+  try { localStorage.setItem('hm_auth_token', existingDeviceToken); } catch (eA) { /* */ }
   try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
   if (!$('#vaultRememberConfig') || $('#vaultRememberConfig').checked) {
     await saveVaultConfig(getVaultConfigFromInputs());
@@ -3268,6 +3292,81 @@ if ($('#vhostPreviewPm')) {
   $('#vhostPreviewPm').textContent = vVal || 'yourco';
 }
 setVaultPanel('main');
+
+// ── Session hydration on page load ─────────────────────────────────────────
+// If the browser has a stored token + saved proxy config, silently re-validate
+// the session against the proxy and bypass the vault screen entirely.
+(async function _tryResumeSession() {
+  var _token = '';
+  try {
+    _token = localStorage.getItem('hm_auth_token') ||
+             localStorage.getItem('hm_device_token') ||
+             localStorage.getItem('hm_proxy_token') || '';
+  } catch (e) { return; }
+  if (!_token) return;
+
+  var _proxyUrl = '';
+  try { _proxyUrl = sanitizeProxy(localStorage.getItem('hm_proxy_url') || ''); } catch (e) { /* */ }
+  var _vhost = '';
+  try {
+    var _resumeCfg = await loadVaultConfig();
+    if (_resumeCfg) {
+      if (!_proxyUrl && _resumeCfg.proxy) _proxyUrl = sanitizeProxy(_resumeCfg.proxy);
+      if (_resumeCfg.vhost) _vhost = sanitizeVhost(_resumeCfg.vhost);
+    }
+  } catch (e) { /* */ }
+  if (!_proxyUrl) return;
+
+  setVaultFeedback('Resuming session\u2026', 'info');
+  try {
+    var _sep = _proxyUrl.indexOf('?') !== -1 ? '&' : '?';
+    var _siUrl = _proxyUrl + _sep + 'action=session_info';
+    var _siRes = await fetchWithTimeout(_siUrl, {
+      headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + _token }
+    }, 15000);
+    if (!_siRes.ok) throw new Error('HTTP ' + _siRes.status);
+    var _siData = await _siRes.json();
+    if (!_siData || !_siData.ok || !_siData.authenticated || !_siData.session) {
+      throw new Error('Session invalid');
+    }
+    // Valid — restore state and unlock vault
+    var _prevRole = getStoredAccessRole();
+    _sessionExpiryHandled = false;
+    beginProxySessionStartupGrace(60000);
+    API_PROXY = _proxyUrl;
+    API_VHOST = _vhost;
+    API_CREDS = { p: _token };
+    _accessRole = normalizeAccessRole(_siData.session.role || _prevRole);
+    if (_siData.session.property_group_uuid) {
+      forcedPropertyGroupUuid = String(_siData.session.property_group_uuid);
+      try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (e) { /* */ }
+    }
+    if (_siData.session.login_email) {
+      _pmScopeEmail = String(_siData.session.login_email);
+      try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (e) { /* */ }
+    }
+    markProxySessionHealthy();
+    persistAccessRole(_accessRole);
+    await enforceSessionTypeTransitionReset(_prevRole, _accessRole);
+    setVaultFeedback('', '');
+    $('#vaultScreen').style.display = 'none';
+    $('#appShell').classList.add('unlocked');
+    applyAccessRole();
+    await initApp();
+    if (_accessRole === 'pm_readonly') {
+      try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (e) { /* */ }
+      enforceScopedPropertyGroup();
+    }
+    applyAccessRole();
+    startAutoSync();
+  } catch (err) {
+    // Token expired or invalid — clean up and show vault
+    API_CREDS = null;
+    API_PROXY = '';
+    clearStoredProxySessionTokens();
+    setVaultFeedback('', '');
+  }
+})();
 
 $('#vaultUnlockBtn').addEventListener('click', async function() {
   var previousRole = getStoredAccessRole();
@@ -3334,6 +3433,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       beginProxySessionStartupGrace(60000);
       API_CREDS = { p: sessionToken };
       if (sessionToken) {
+        try { localStorage.setItem('hm_auth_token', sessionToken); } catch (eTokA) { /* */ }
         try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
         try { localStorage.setItem('hm_proxy_token', sessionToken); } catch (eTok2) { /* */ }
       }
@@ -6736,6 +6836,87 @@ var _billingQueuedOpts = null;
 var _billingListCacheRows = [];
 var _billingListCacheKey = '';
 
+// ── Client-side bill filtering helpers ────────────────────────────────────
+async function fetchAllBillsToCache() {
+  if (__CACHED_BILLS.length > 0) return true; // Already cached
+  if (__CACHED_BILLS_IN_FLIGHT) return false; // Fetch in progress
+  
+  __CACHED_BILLS_IN_FLIGHT = true;
+  try {
+    // Fetch all bills at once with high per_page limit to minimize API calls
+    var payload = await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, {
+      scoped: false, // Bypass group scoping at fetch time (apply client-side)
+      forceRefresh: false,
+      filterType: '',
+      filterValue: '',
+      limit: 3000,
+      perPage: 3000,
+      page: 1,
+      offset: 0,
+      max: 3000,
+      assignGlobal: false,
+      returnPayload: true,
+    });
+    
+    if (payload && payload.ok && Array.isArray(payload.rows)) {
+      __CACHED_BILLS = payload.rows.slice();
+      __CACHED_BILLS_LOADED_AT = Date.now();
+      console.log('[Bill Cache] Loaded ' + __CACHED_BILLS.length + ' bills');
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.warn('[Bill Cache] Fetch failed:', err.message || err);
+    return false;
+  } finally {
+    __CACHED_BILLS_IN_FLIGHT = false;
+  }
+}
+
+function applyLocalBillFilters(filterOpts) {
+  filterOpts = filterOpts || {};
+  if (__CACHED_BILLS.length === 0) return []; // No cache yet
+  
+  var groupToFilterBy = filterOpts.groupId || '';
+  var statusToFilterBy = filterOpts.status || '';
+  var searchText = (filterOpts.search || '').toLowerCase();
+  
+  return __CACHED_BILLS.filter(function(b) {
+    // Filter by property group if specified
+    if (groupToFilterBy) {
+      var billPropId = String(b.propertyId || b.property_id || '').trim();
+      var billGroupId = __PROPERTY_TO_GROUP_MAP[billPropId];
+      if (billGroupId !== groupToFilterBy) return false;
+    }
+    
+    // Filter by status if specified
+    if (statusToFilterBy && String(b.status || '').toLowerCase() !== statusToFilterBy.toLowerCase()) {
+      return false;
+    }
+    
+    // Filter by search text if specified
+    if (searchText) {
+      var hay = [
+        b.vendorName,
+        b.vendorId,
+        b.payeeUuid,
+        b.vendorUuid,
+        b.propertyName,
+        b.propertyId,
+        b.unitId,
+        b.propertyGroup,
+        b.propertyManager,
+        b.workOrderId,
+        b.billNumber,
+        b.id,
+      ].join(' ').toLowerCase();
+      if (hay.indexOf(searchText) === -1) return false;
+    }
+    
+    return true;
+  });
+}
+
 function getBillingDateRangeKey() {
   var from = String((document.getElementById('billUpdatedFrom') || {}).value || '').trim();
   var to = String((document.getElementById('billUpdatedTo') || {}).value || '').trim();
@@ -6807,6 +6988,11 @@ async function loadBillingPage(opts) {
   _billingLoadPromise = (async function() {
   opts = opts || {};
   if (opts.resetPage) _billsPage = 0;
+  
+  // Prefetch all bills to cache on first load
+  if (__CACHED_BILLS.length === 0 && !__CACHED_BILLS_IN_FLIGHT) {
+    await fetchAllBillsToCache();
+  }
 
   var hardLock = !Array.isArray(window._billingPageRows) || window._billingPageRows.length === 0;
   if (opts.forceHardLock) hardLock = true;
@@ -6830,7 +7016,22 @@ async function loadBillingPage(opts) {
 
   var isListRoute = isBillingListRouteActive();
 
-  if (isListRoute) {
+  if (isListRoute && __CACHED_BILLS.length > 0) {
+    // Use cached bills with client-side group filtering
+    var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
+    var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+    var filteredBills = applyLocalBillFilters({ groupId: groupUuid || grp });
+    
+    _billingServerTotal = filteredBills.length;
+    _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
+    _billingServerPage = 1;
+    _billsPage = 0;
+    
+    var start = _billsPage * BILLS_PAGE_SIZE;
+    window._billingPageRows = filteredBills.slice(start, start + BILLS_PAGE_SIZE);
+    _lastBillSource = 'cached';
+    renderBillsSection(filteredBills);
+  } else if (isListRoute) {
     var cacheKey = getBillingDateRangeKey();
     var useCachedList = !opts.forceRefresh && _billingListCacheKey === cacheKey && Array.isArray(_billingListCacheRows) && _billingListCacheRows.length > 0;
     var listPayload = null;
@@ -6991,7 +7192,7 @@ function renderBillingPaginationControls(footer, rowsCount) {
   }
 }
 
-function renderBillsSection() {
+function renderBillsSection(preFilteredData) {
   var tbody = $('#billBody');
   var footer = $('#billFooter');
   if (!tbody) return;
@@ -7008,9 +7209,12 @@ function renderBillsSection() {
 
   renderBillingPropertyScopeChip(activePropertyId, String(window.filteredPropertyName || ''), activeUnitId, String(window.filteredUnitName || ''));
 
-  var sourceRows = Array.isArray(window._billingPageRows) && window._billingPageRows.length
-    ? window._billingPageRows
-    : (BILLS || []);
+  // Use pre-filtered data if provided (from cache), otherwise use current page rows
+  var sourceRows = Array.isArray(preFilteredData) && preFilteredData.length > 0
+    ? preFilteredData
+    : (Array.isArray(window._billingPageRows) && window._billingPageRows.length
+      ? window._billingPageRows
+      : (BILLS || []));
 
   // Local visual filters (search + property drilldown) on current server page.
   var filtered = sourceRows.filter(function(b) {
@@ -7362,6 +7566,21 @@ function wireBillingFilters() {
   document.addEventListener('groupFilterChanged', function() {
     window._currentBillsCache = [];
     _billsPage = 0;
+    // Apply client-side group filter to cached bills instantly
+    if (__CACHED_BILLS.length > 0) {
+      var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
+      var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+      var filteredBills = applyLocalBillFilters({ groupId: groupUuid || grp });
+      _billingServerTotal = filteredBills.length;
+      _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
+      _billingServerPage = 1;
+      _billsPage = 0;
+      var start = 0;
+      window._billingPageRows = filteredBills.slice(start, start + BILLS_PAGE_SIZE);
+      renderBillsSection(filteredBills);
+      return;
+    }
+    // Fallback to legacy behavior if cache not yet loaded
     if (isBillingListRouteActive() && applyBillingListScopeFromCache({ resetPage: true })) {
       return;
     }
