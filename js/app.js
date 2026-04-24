@@ -1771,7 +1771,13 @@ async function proxyPost(action, bodyObj, extraHeaders) {
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
-  var token = getProxyAccessToken();
+  var skipAuthActions = {
+    verify_role: true,
+    device_setup: true,
+    device_otp_request: true,
+    device_otp_verify: true
+  };
+  var token = skipAuthActions[action] ? '' : getProxyAccessToken();
   var headers = Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json' }, extraHeaders || {});
   if (token) headers['Authorization'] = 'Bearer ' + token;
   var maxRetries = 2;
@@ -3309,6 +3315,11 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     if (passAsIdentifier) {
       throw new Error('PM login uses the separate PM login field and buttons below. Do not enter email or phone in the password box.');
     } else if (pass) {
+      clearStoredProxySessionTokens();
+      _sessionExpiryHandled = false;
+      _proxySessionProbeInFlight = false;
+      _proxySessionWarmupFailures = 0;
+      _proxySessionConsecutive401 = 0;
       // Verify password against proxy env vars (GUI_ADMIN / GUI_GM / GUI_VENDORS)
       var roleResult = await proxyPost('verify_role', { password: pass });
       if (!roleResult || !roleResult.ok) {
