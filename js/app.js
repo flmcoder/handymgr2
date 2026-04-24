@@ -1883,7 +1883,10 @@ function buildProxyActionUrl(action, params) {
 // Sends { action } in the query string only; all payload (including key/secret)
 // travels as a JSON body. Attaches the same bearer token as proxyAction.
 async function proxyPost(action, bodyObj, extraHeaders) {
-  if (isReadOnlyAccessMode()) {
+  var readOnlyAllowedWrites = {
+    pm_notifications_ack: true
+  };
+  if (isReadOnlyAccessMode() && !readOnlyAllowedWrites[action]) {
     throw new Error('Read-only access mode: updates are disabled');
   }
   if (!API_PROXY) throw new Error('No proxy configured');
@@ -2051,6 +2054,219 @@ var rateLimiter = {
         item.reject(e);
         tick();
       });
+    })();
+
+    // ═══════════════════════════════════════════════════════
+    // PM INBOX DRAWER — manager posting + PM acknowledgement
+    // ═══════════════════════════════════════════════════════
+    (function initPmInboxDrawer() {
+      var drawer = document.getElementById('pm-inbox-drawer');
+      var fab = document.getElementById('pm-inbox-fab');
+      var items = document.getElementById('pm-inbox-items');
+      var status = document.getElementById('pm-inbox-status');
+      var badge = document.getElementById('pm-inbox-badge');
+      var fabBadge = document.getElementById('pm-fab-badge');
+      var composerWrap = document.getElementById('pmInboxComposerWrap');
+      var composerText = document.getElementById('pmInboxComposerText');
+      var composerScope = document.getElementById('pmInboxComposerScope');
+      var composerSend = document.getElementById('pmInboxComposerSend');
+      if (!drawer || !fab || !items || !status || !badge || !fabBadge) return;
+
+      var _rows = [];
+      var _pollTimer = null;
+      var _pollMs = 25000;
+      var _unread = 0;
+
+      function isInboxRoleAllowed() {
+        return _accessRole === 'manager' || _accessRole === 'pm_readonly' || _accessRole === 'full';
+      }
+
+      function isComposerAllowed() {
+        return _accessRole === 'manager' || _accessRole === 'full';
+      }
+
+      function isOpen() {
+        return drawer.classList.contains('open');
+      }
+
+      function setStatus(text) {
+        status.innerHTML = '<span class="feed-pulse"></span> ' + escapeHtml(text || '');
+      }
+
+      function updateBadge() {
+        var n = Math.max(0, Number(_unread || 0) || 0);
+        var txt = n > 99 ? '99+' : String(n);
+        badge.textContent = txt;
+        fabBadge.textContent = txt;
+        badge.style.display = n > 0 ? '' : 'none';
+        fabBadge.style.display = n > 0 ? '' : 'none';
+      }
+
+      function renderRows() {
+        if (!_rows.length) {
+          items.innerHTML = '<p class="feed-empty">No inbox notices yet.</p>';
+          return;
+        }
+
+        var html = '';
+        _rows.forEach(function(row) {
+          var by = String(row.created_by_user || row.created_by_role || 'Manager').trim();
+          var ts = String(row.created_at || '').trim();
+          var scope = String(row.scope_group_uuid || '').trim();
+          var canAck = !row.read_by_me;
+          html += '<div class="feed-item" style="border-left:3px solid ' + (row.read_by_me ? 'var(--success)' : 'var(--warning)') + '">';
+          html += '<div class="feed-item-header">';
+          html += '<span style="color:' + (row.read_by_me ? 'var(--success)' : 'var(--warning)') + ';font-size:.9rem;flex-shrink:0;width:16px;text-align:center"><i class="fas ' + (row.read_by_me ? 'fa-check-circle' : 'fa-bell') + '"></i></span>';
+          html += '<span class="feed-item-title">' + escapeHtml(by) + (scope ? ' · Scoped' : ' · Global') + '</span>';
+          html += '<span class="feed-item-time">' + (ts ? timeAgo(ts) : '') + '</span>';
+          html += '</div>';
+          html += '<div class="feed-item-body">' + escapeHtml(String(row.message || '').substring(0, 600)) + '</div>';
+          if (canAck) {
+            html += '<div style="margin-top:6px"><button class="action-btn" data-pm-ack="' + escapeHtml(String(row.uuid || '')) + '" style="font-size:10px;padding:2px 8px"><i class="fas fa-check" style="margin-right:4px"></i>Acknowledge</button></div>';
+          } else {
+            html += '<div style="margin-top:6px;font-size:10px;color:var(--success)"><i class="fas fa-check" style="margin-right:4px"></i>Read' + (row.read_at ? ' · ' + escapeHtml(timeAgo(row.read_at)) : '') + '</div>';
+          }
+          html += '</div>';
+        });
+        items.innerHTML = html;
+      }
+
+      function populateScopeOptions() {
+        if (!composerScope) return;
+        if (!isComposerAllowed()) return;
+        var selected = String(composerScope.value || '').trim();
+        var options = ['<option value="">All PMs (Global)</option>'];
+
+        if (_accessRole === 'manager' && forcedPropertyGroupUuid) {
+          var forcedLabel = resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'My Group';
+          options = ['<option value="' + escapeHtml(forcedPropertyGroupUuid) + '">' + escapeHtml(forcedLabel) + ' (Manager Scope)</option>'];
+          composerScope.innerHTML = options.join('');
+          composerScope.value = forcedPropertyGroupUuid;
+          composerScope.disabled = true;
+          return;
+        }
+
+        composerScope.disabled = false;
+        (PROPERTY_GROUPS || []).forEach(function(g) {
+          var id = String(g.id || g.group_id || '').trim();
+          var nm = String(g.name || g.group_name || '').trim();
+          if (!id || !nm) return;
+          options.push('<option value="' + escapeHtml(id) + '">' + escapeHtml(nm) + '</option>');
+        });
+        composerScope.innerHTML = options.join('');
+        composerScope.value = selected || '';
+      }
+
+      async function refreshInbox() {
+        if (!isInboxRoleAllowed()) return;
+        if (!isProxySessionReady()) {
+          setStatus('Awaiting sign-in…');
+          return;
+        }
+        try {
+          var data = await proxyAction('pm_notifications_inbox', { limit: '80' }, { suppressSessionExpiry: true });
+          _rows = Array.isArray(data.notifications) ? data.notifications : [];
+          _unread = Number(data.unread || 0) || 0;
+          updateBadge();
+          renderRows();
+          setStatus(isOpen() ? 'Inbox synced' : ('Inbox synced · ' + _unread + ' unread'));
+          populateScopeOptions();
+        } catch (err) {
+          setStatus('Inbox unavailable. Retrying…');
+          console.debug('pm inbox poll skipped:', err && err.message ? err.message : err);
+        }
+      }
+
+      async function submitPost() {
+        if (!isComposerAllowed() || !composerText) return;
+        var message = String(composerText.value || '').trim();
+        if (!message) {
+          showToast('Enter a message before posting', { kind: 'warning' });
+          return;
+        }
+        if (message.length > 1200) {
+          showToast('Message is too long (max 1200 chars)', { kind: 'warning' });
+          return;
+        }
+        var scopeId = String((composerScope && composerScope.value) || '').trim();
+        if (_accessRole === 'manager' && forcedPropertyGroupUuid) {
+          scopeId = forcedPropertyGroupUuid;
+        }
+        try {
+          if (composerSend) composerSend.disabled = true;
+          await proxyPost('pm_notifications_post', {
+            message: message,
+            scope_group_uuid: scopeId
+          });
+          composerText.value = '';
+          showToast('Inbox notice posted', { kind: 'success' });
+          await refreshInbox();
+        } catch (err) {
+          showToast('Post failed: ' + (err.message || err), { kind: 'warning' });
+        } finally {
+          if (composerSend) composerSend.disabled = false;
+        }
+      }
+
+      async function ackNotification(uuid) {
+        if (!uuid) return;
+        try {
+          await proxyPost('pm_notifications_ack', { notification_uuid: uuid });
+          await refreshInbox();
+        } catch (err) {
+          showToast('Acknowledge failed: ' + (err.message || err), { kind: 'warning' });
+        }
+      }
+
+      function applyVisibility() {
+        var show = isInboxRoleAllowed();
+        fab.style.display = show ? '' : 'none';
+        drawer.style.display = show ? '' : 'none';
+        if (!show) return;
+        if (composerWrap) composerWrap.style.display = isComposerAllowed() ? '' : 'none';
+      }
+
+      if (composerSend) {
+        composerSend.addEventListener('click', function() { submitPost(); });
+      }
+      if (composerText) {
+        composerText.addEventListener('keydown', function(e) {
+          if (!(e.ctrlKey || e.metaKey) || e.key !== 'Enter') return;
+          e.preventDefault();
+          submitPost();
+        });
+      }
+
+      if (items) {
+        items.addEventListener('click', function(e) {
+          var btn = e.target.closest('[data-pm-ack]');
+          if (!btn) return;
+          var id = String(btn.getAttribute('data-pm-ack') || '').trim();
+          ackNotification(id);
+        });
+      }
+
+      window.PmInbox = {
+        refresh: refreshInbox,
+        clearUnseen: function() { refreshInbox(); },
+        applyVisibility: applyVisibility,
+      };
+
+      function boot() {
+        applyVisibility();
+        refreshInbox();
+        if (_pollTimer) clearInterval(_pollTimer);
+        _pollTimer = setInterval(function() {
+          applyVisibility();
+          if (!document.hidden) refreshInbox();
+        }, _pollMs);
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+      } else {
+        boot();
+      }
     })();
   }
 };
@@ -2625,10 +2841,50 @@ function buildReferenceMaps(vendorsArray, propertiesArray) {
 function normalizeBillApprovalStatus(value) {
   var raw = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
   if (!raw) return '';
-  if (raw === 'pending' || raw === 'pending_approval' || raw === 'awaiting_approval' || raw === 'needs_approval') return 'pending_approval';
+  if (
+    raw === 'pending' ||
+    raw === 'pending_approval' ||
+    raw === 'awaiting_approval' ||
+    raw === 'needs_approval' ||
+    raw === 'pending_review' ||
+    raw === 'awaiting_review' ||
+    raw === 'needs_review' ||
+    raw === 'submitted_for_approval' ||
+    raw === 'requires_approval' ||
+    raw === 'unapproved'
+  ) return 'pending_approval';
+  if (raw === 'partially_paid' || raw === 'partial_payment' || raw === 'paid_partially') return 'paid';
   if (raw === 'approved_for_payment') return 'approved';
-  if (raw === 'cancelled') return 'void';
+  if (raw === 'canceled' || raw === 'cancelled' || raw === 'voided') return 'void';
   return raw;
+}
+
+function getBillStatusKey(recordLike) {
+  var b = (recordLike && typeof recordLike === 'object') ? recordLike : {};
+  var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
+  var candidates = [
+    b.status,
+    b.statusLabel,
+    b.approval_status,
+    b.approvalStatus,
+    b.bill_status,
+    b.billStatus,
+    raw.ApprovalStatus,
+    raw.approval_status,
+    raw.ApprovalState,
+    raw.approval_state,
+    raw.PendingApproval,
+    raw.pending_approval,
+    raw.Status,
+    raw.status,
+    raw.State,
+    raw.state,
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var normalized = normalizeBillApprovalStatus(candidates[i]);
+    if (normalized) return normalized;
+  }
+  return '';
 }
 
 function extractBillPropertyId(rawBill, normalizedLineItems) {
@@ -4167,7 +4423,7 @@ async function fetchBills(days, opts) {
       var nestedProperty = (raw.property && typeof raw.property === 'object')
         ? raw.property
         : ((b.property && typeof b.property === 'object') ? b.property : {});
-      var status = normalizeBillApprovalStatus(b.status || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '');
+      var status = getBillStatusKey({ status: b.status, raw: raw });
       var amountNum = resolveBillAmountValue({
         raw: raw,
         lineItems: b.line_items || raw.LineItems || raw.line_items || [],
@@ -7384,7 +7640,7 @@ function renderBillsSection(preFilteredData) {
   var filtered = sourceRows.filter(function(b) {
     if (!billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps)) return false;
     if (statusFilter) {
-      var st = String(b.status || '').toLowerCase();
+      var st = getBillStatusKey(b);
       if (statusFilter === 'pending_approval' && st !== 'pending_approval') return false;
       if (statusFilter === 'approved' && st !== 'approved') return false;
       if (statusFilter === 'paid' && st !== 'paid') return false;
@@ -7418,12 +7674,12 @@ function renderBillsSection(preFilteredData) {
 
   // KPIs
   var pendingBills = filtered.filter(function(b) {
-    var statusKey = normalizeBillApprovalStatus(b.status || b.statusLabel || ((b.raw || {}).ApprovalStatus || (b.raw || {}).approval_status || ''));
+    var statusKey = getBillStatusKey(b);
     return statusKey === 'pending_approval';
   });
-  var approvedBills = filtered.filter(function(b) { return String(b.status || '') === 'approved'; });
+  var approvedBills = filtered.filter(function(b) { return getBillStatusKey(b) === 'approved'; });
   var paidBills = filtered.filter(function(b) {
-    var st = String(b.status || '');
+    var st = getBillStatusKey(b);
     var d = new Date(b.date || '');
     return st === 'paid' && !isNaN(d.getTime()) && d.getTime() >= thirtyDaysAgo;
   });
@@ -8498,11 +8754,7 @@ function renderDashboardKPIs() {
   var flaggedCount = Object.keys(WO_FLAGS).length;
   var pendingBillApprovals = (BILLS || []).filter(function(b) {
     if (!isInPropertyGroup(b.propertyId, b.propertyName, currentPropertyGroup)) return false;
-    var raw = b.raw || {};
-    var statusText = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || raw.State || raw.state || '').toLowerCase();
-    var approvalText = String(raw.ApprovalState || raw.approval_state || raw.PendingApproval || raw.pending_approval || '').toLowerCase();
-    var combined = statusText + ' ' + approvalText;
-    return combined.indexOf('pending') !== -1 || combined.indexOf('awaiting approval') !== -1 || combined.indexOf('needs approval') !== -1;
+    return getBillStatusKey(b) === 'pending_approval';
   });
 
   var completedTurns = TURNS.filter(function(t) {
@@ -14973,11 +15225,7 @@ function renderAttentionPanel() {
   if (pendingBillsEl) {
     var pendingBills = (BILLS || []).filter(function(b) {
       if (!isInPropertyGroup(b.propertyId, b.propertyName, currentPropertyGroup)) return false;
-      var raw = b.raw || {};
-      var statusText = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || raw.State || raw.state || '').toLowerCase();
-      var approvalText = String(raw.ApprovalState || raw.approval_state || raw.PendingApproval || raw.pending_approval || '').toLowerCase();
-      var combined = statusText + ' ' + approvalText;
-      return combined.indexOf('pending') !== -1 || combined.indexOf('awaiting approval') !== -1 || combined.indexOf('needs approval') !== -1;
+      return getBillStatusKey(b) === 'pending_approval';
     });
 
     if (!pendingBills.length) {
