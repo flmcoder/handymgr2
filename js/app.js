@@ -50,6 +50,19 @@ function compareVersions(v1, v2) {
   return 0;
 }
 
+function syncDisplayedAppVersion() {
+  var bareVersion = String(APP_VERSION || '').replace(/^v/i, '');
+  var buildTag = $('#buildBadgeTag');
+  var vaultVersion = $('#vaultSessionVersion');
+  if (buildTag) buildTag.textContent = bareVersion;
+  if (vaultVersion) vaultVersion.textContent = 'Secured Session: ' + APP_VERSION;
+}
+
+syncDisplayedAppVersion();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', syncDisplayedAppVersion);
+}
+
 function applyBrandConfig(brand) {
   if (!brand || typeof brand !== 'object') return;
   try {
@@ -155,12 +168,25 @@ function currency(n, digits) {
     maximumFractionDigits: d,
   });
 }
-function showToast(msg, durationOrOpts) {
-  var t = $('#toast');
-  var iconEl = $('#toastIcon');
-  var msgEl = $('#toastMsg');
-  if (!t || !msgEl) return;
+function getToastStackRoot() {
+  var root = document.getElementById('toastStack');
+  if (root) return root;
+  root = document.createElement('div');
+  root.id = 'toastStack';
+  root.style.position = 'fixed';
+  root.style.right = '20px';
+  root.style.bottom = '20px';
+  root.style.zIndex = '320';
+  root.style.display = 'flex';
+  root.style.flexDirection = 'column';
+  root.style.gap = '8px';
+  root.style.maxWidth = 'min(92vw, 420px)';
+  root.style.pointerEvents = 'none';
+  document.body.appendChild(root);
+  return root;
+}
 
+function showToast(msg, durationOrOpts) {
   var opts = {};
   if (typeof durationOrOpts === 'number') {
     opts.duration = durationOrOpts;
@@ -177,21 +203,83 @@ function showToast(msg, durationOrOpts) {
   };
   var meta = kindMap[kind] || kindMap.info;
 
-  msgEl.textContent = msg;
-  t.style.borderColor = meta.border;
-  t.style.display = 'block';
+  var root = getToastStackRoot();
+  var toast = document.createElement('div');
+  toast.style.pointerEvents = 'auto';
+  toast.style.background = 'var(--bg-card)';
+  toast.style.border = '1px solid ' + meta.border;
+  toast.style.borderRadius = 'var(--radius)';
+  toast.style.padding = '10px 14px';
+  toast.style.fontSize = '13px';
+  toast.style.color = 'var(--text-primary)';
+  toast.style.boxShadow = 'var(--shadow)';
+  toast.style.display = 'flex';
+  toast.style.alignItems = 'flex-start';
+  toast.style.gap = '8px';
+  toast.style.animation = 'fadeIn 0.2s ease';
+  toast.innerHTML =
+    '<span style="margin-top:1px;color:' + meta.border + '"><i class="fas ' + (opts.iconClass || meta.icon) + '"></i></span>' +
+    '<span style="line-height:1.35;word-break:break-word">' + escapeHtml(String(msg || '')) + '</span>';
 
-  if (iconEl) {
-    var iconClass = opts.iconClass || meta.icon;
-    iconEl.innerHTML = '<i class="fas ' + iconClass + '"></i>';
-    iconEl.style.color = meta.border;
+  root.appendChild(toast);
+  if (root.children.length > 6) {
+    root.removeChild(root.children[0]);
   }
 
-  clearTimeout(t._tid);
-  t._tid = setTimeout(function() {
-    t.style.display = 'none';
+  setTimeout(function() {
+    if (toast && toast.parentNode) toast.parentNode.removeChild(toast);
   }, opts.duration || 3500);
 }
+
+function registerOfflineServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  if (!window.isSecureContext && location.hostname !== 'localhost') return;
+
+  navigator.serviceWorker.register('/sw.js')
+    .then(function(reg) {
+      if (reg && reg.waiting) {
+        showToast('Offline mode ready', { kind: 'info', duration: 1800, iconClass: 'fa-wifi' });
+      }
+    })
+    .catch(function(err) {
+      console.warn('Service worker registration failed:', err && err.message ? err.message : err);
+    });
+
+  navigator.serviceWorker.addEventListener('message', function(evt) {
+    var data = evt && evt.data ? evt.data : null;
+    if (!data || typeof data !== 'object') return;
+
+    if (data.type === 'HM_REQUEST_QUEUED') {
+      var n = Number(data.remaining || 0);
+      showToast('Offline: request queued' + (n > 0 ? ' (' + n + ' pending)' : ''), {
+        kind: 'warning',
+        duration: 2800,
+        iconClass: 'fa-cloud-arrow-up'
+      });
+      return;
+    }
+
+    if (data.type === 'HM_QUEUE_REPLAY_RESULT') {
+      var sent = Number(data.sent || 0);
+      var remaining = Number(data.remaining || 0);
+      if (sent > 0) {
+        showToast('Synced ' + sent + ' queued request' + (sent === 1 ? '' : 's') + (remaining > 0 ? '; ' + remaining + ' still pending' : ''), {
+          kind: 'success',
+          duration: 3200,
+          iconClass: 'fa-cloud-check'
+        });
+      }
+    }
+  });
+
+  window.addEventListener('online', function() {
+    if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return;
+    navigator.serviceWorker.controller.postMessage({ type: 'HM_REPLAY_QUEUE' });
+  });
+}
+
+registerOfflineServiceWorker();
+
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -945,11 +1033,33 @@ function normalizeVendorTradeCategory(value) {
 }
 
 function inferVendorTradeCategory(vendor) {
-  var trades = String((vendor && vendor.trades) || '').trim();
+  var v = vendor || {};
+  var trades = String(v.trades || '').trim();
   if (trades) {
+    var tokens = trades.split(/[\/,;|]/).map(function(t) { return String(t || '').trim(); }).filter(Boolean);
+    for (var i = 0; i < tokens.length; i++) {
+      var normalized = normalizeVendorTradeCategory(tokens[i]);
+      if (normalized && normalized !== 'Other') return normalized;
+    }
     var primary = trades.split(',')[0].split('/')[0];
     return normalizeVendorTradeCategory(primary);
   }
+
+  var corpus = [
+    v.name,
+    v.email,
+    v.tags,
+    v.category,
+    v.address,
+    v.notes,
+    v.description,
+  ].map(function(s) { return String(s || '').trim(); }).filter(Boolean).join(' ');
+
+  if (corpus) {
+    var guess = normalizeVendorTradeCategory(corpus);
+    if (guess && guess !== 'Other') return guess;
+  }
+
   return 'General';
 }
 
@@ -1647,7 +1757,8 @@ async function fetchWithTimeout(url, opts, timeoutMsOrRetries, baseBackoffMs) {
 // Makes ONE request to proxy like ?action=work_orders&days=180
 // Proxy does all pagination server-side and returns complete dataset
 // Includes 45-second timeout — never hangs forever
-async function proxyAction(action, params) {
+async function proxyAction(action, params, options) {
+  var opts = options || {};
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
@@ -1715,7 +1826,9 @@ async function proxyAction(action, params) {
           errBodyLower.indexOf('proxy session') !== -1 ||
           errBodyLower.indexOf('read-only session') !== -1;
         if (isProxySession401) {
-          handleProxySessionExpired('action=' + action);
+          if (!opts.suppressSessionExpiry) {
+            handleProxySessionExpired('action=' + action);
+          }
           var sessionMsg = 'Proxy action=' + action + ' failed: HTTP 401 — Proxy session missing or expired';
           logApiError(401, sessionMsg, 'resolved');
           throw new Error(sessionMsg);
@@ -2556,6 +2669,55 @@ function getNormalizedBillDisplayNumber(billLike) {
   if (!id) return '—';
   if (isUuidString(id)) return 'BILL-' + id.slice(0, 8).toUpperCase();
   return id;
+}
+
+function resolveBillAmountValue(billLike) {
+  var b = billLike && typeof billLike === 'object' ? billLike : {};
+  var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
+  var candidates = [
+    b.amount,
+    b.total_amount,
+    b.totalAmount,
+    b.net_amount,
+    b.netAmount,
+    b.amount_due,
+    b.amountDue,
+    raw.TotalAmount,
+    raw.total_amount,
+    raw.Amount,
+    raw.amount,
+    raw.NetAmount,
+    raw.net_amount,
+    raw.AmountDue,
+    raw.amount_due,
+    raw.Balance,
+    raw.balance,
+    raw.Unpaid,
+    raw.unpaid,
+    raw.Paid,
+    raw.paid,
+  ];
+
+  for (var i = 0; i < candidates.length; i++) {
+    var n = amountToNumber(candidates[i]);
+    if (n !== 0) return n;
+  }
+
+  var lineItems = Array.isArray(b.lineItems)
+    ? b.lineItems
+    : (Array.isArray(raw.LineItems) ? raw.LineItems : (Array.isArray(raw.line_items) ? raw.line_items : []));
+  if (lineItems.length) {
+    var sum = lineItems.reduce(function(total, li) {
+      return total + amountToNumber(
+        (li && (li.Amount != null ? li.Amount : li.amount)) ||
+        (li && (li.TotalAmount != null ? li.TotalAmount : li.total_amount)) ||
+        0
+      );
+    }, 0);
+    if (sum !== 0) return sum;
+  }
+
+  return 0;
 }
 
 function resolveVendorNameFromMaps(vendorId, fallback) {
@@ -4006,12 +4168,14 @@ async function fetchBills(days, opts) {
         ? raw.property
         : ((b.property && typeof b.property === 'object') ? b.property : {});
       var status = normalizeBillApprovalStatus(b.status || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '');
-      var amountNum = amountToNumber(
-        b.amount != null ? b.amount :
-        (b.total_amount != null ? b.total_amount :
-          (raw.TotalAmount || raw.total_amount || raw.Amount || raw.amount || raw.Paid || raw.paid || raw.Unpaid || raw.unpaid || 0)
-        )
-      );
+      var amountNum = resolveBillAmountValue({
+        raw: raw,
+        lineItems: b.line_items || raw.LineItems || raw.line_items || [],
+        amount: b.amount,
+        total_amount: b.total_amount,
+        net_amount: b.net_amount,
+        amount_due: b.amount_due,
+      });
       var lineItems = Array.isArray(b.line_items)
         ? b.line_items
         : (Array.isArray(raw.LineItems)
@@ -6329,7 +6493,7 @@ async function loadWOAttachments(woIdOrUuid) {
   if (!el || !woIdOrUuid) return;
   el.innerHTML = '<div style="color:var(--text-muted);font-size:11px"><i class="fas fa-spinner fa-spin"></i> Loading attachments…</div>';
   try {
-    var data = await proxyAction('wo_attachments', { wo_id: String(woIdOrUuid) });
+    var data = await proxyAction('wo_attachments', { wo_id: String(woIdOrUuid) }, { suppressSessionExpiry: true });
     if (!data || data.ok === false) {
       renderWOAttachmentsList([], String((data && (data.detail || data.error)) || 'No detail from proxy'));
       return;
@@ -7315,7 +7479,7 @@ function renderBillsSection(preFilteredData) {
     var stKey = String(st).trim().toLowerCase().replace(/\s+/g, '-');
     var stLow = String(b.status || '').toLowerCase();
     var billNum = getNormalizedBillDisplayNumber(b);
-    var amountVal = amountToNumber(b.amount || 0);
+    var amountVal = resolveBillAmountValue(b);
     var vendorText = b.vendorName || b.vendorId || '—';
     var payeeText = b.payeeUuid || b.vendorUuid || b.vendorId || '';
     if (b.vendorName && payeeText) vendorText += ' (' + payeeText + ')';
@@ -7340,7 +7504,10 @@ function renderBillsSection(preFilteredData) {
       ? ('<div style="margin-top:2px;font-size:10px;font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(linkBits.join(' | ')) + '">' + escapeHtml(linkBits.join(' | ')) + '</div>')
       : '';
     return '<tr class="bill-row clickable-row" data-billdetail="' + escapeHtml(String(b.id || '')) + '" tabindex="0" role="button" aria-label="Open bill ' + escapeHtml(billNum) + '">' +
-      '<td style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--accent)">' + escapeHtml(billNum) + '</td>' +
+      '<td style="font-family:var(--font-mono);font-size:11px;line-height:1.3">' +
+        '<div style="font-weight:700;color:var(--accent)">' + escapeHtml(billNum) + '</div>' +
+        '<div style="font-size:10px;color:var(--text-muted)">ID ' + escapeHtml(String(b.id || '').slice(0, 12) || '—') + '</div>' +
+      '</td>' +
       '<td>' + escapeHtml(vendorText) + '</td>' +
       '<td><span style="display:inline-block;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(propertyText) + '">' + escapeHtml(propertyText) + '</span>' + linkageHtml + '</td>' +
       '<td>' + groupCell + '</td>' +
@@ -10981,7 +11148,8 @@ function renderTurnKPIs() {
   // Separate confirmed-active turns from on-radar (unconfirmed) entries
   var confirmed = inScope.filter(function(p) { return p.isConfirmed && !p.isCompleted; });
   var onRadar   = inScope.filter(function(p) { return p.isOnRadar; });
-  var upcoming  = inScope.filter(function(p) { return p.isUpcoming; }); // subset of onRadar
+  var upcoming  = inScope.filter(function(p) { return p.isUpcoming; });
+  var radarUpcomingCount = onRadar.filter(function(p) { return p.isUpcoming; }).length;
   var active    = confirmed; // alias — same set for downstream stats
   var awaitEst  = confirmed.filter(function(p) {
     return p.stages.wo_created && p.stages.wo_created.done && p.stages.est_received && !p.stages.est_received.done;
@@ -10995,9 +11163,9 @@ function renderTurnKPIs() {
 
   var e = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
   e('kpiActiveTurns', confirmed.length);
-  e('kpiActiveTurnsSub', confirmed.length + ' confirmed' + (upcoming.length > 0 ? ', ' + upcoming.length + ' upcoming' : ''));
+  e('kpiActiveTurnsSub', confirmed.length + ' confirmed' + (upcoming.length > 0 ? ' (' + upcoming.length + ' upcoming)' : ''));
   e('kpiOnRadar', onRadar.length);
-  var radarUpcoming = onRadar.filter(function(p) { return p.isUpcoming; }).length;
+  var radarUpcoming = radarUpcomingCount;
   var radarPast     = onRadar.filter(function(p) { return !p.isUpcoming; }).length;
   e('kpiOnRadarSub', (radarUpcoming > 0 ? radarUpcoming + ' upcoming' : '') + (radarUpcoming > 0 && radarPast > 0 ? ', ' : '') + (radarPast > 0 ? radarPast + ' awaiting inspection' : '') || 'no possible turns');
   e('kpiAvgTurnDays', avgDays > 0 ? avgDays + 'd' : '\u2014');
@@ -11008,7 +11176,7 @@ function renderTurnKPIs() {
   e('kpiTurnBilledSub', 'active + on radar + completed');
 
   var tb = $('#turnBadge');
-  if (tb) tb.textContent = active.length + upcoming.length;
+  if (tb) tb.textContent = active.length + onRadar.length;
 
   // Populate property group dropdown
   var groupSel = $('#turnPipeGroup');
@@ -11658,11 +11826,10 @@ function resolveVendorCompliance(v) {
   return { compliant: v.compliant, isManual: false };
 }
 
-/* Strict "Do Not Use" evaluation: AppFolio flag OR expired insurance dates */
+/* Strict "Do Not Use" evaluation: expired insurance/workers-comp documents only */
 var _currentSelectedVendorId = null;
 
 function isVendorDoNotUse(v) {
-  if (v.doNotUse) return true;
   var today = new Date();
   if (v.insurance && new Date(v.insurance) < today) return true;
   if (v.workersComp && new Date(v.workersComp) < today) return true;
@@ -11680,7 +11847,6 @@ function openVendorModal(vendorId) {
   var wcExpired  = v.workersComp && new Date(v.workersComp) < today;
   if (insExpired) expiredDocs.push('Liability Insurance Expired');
   if (wcExpired)  expiredDocs.push('Workers Comp Expired');
-  if (v.doNotUse) expiredDocs.push('Flagged by AppFolio');
   var isDNU = expiredDocs.length > 0;
 
   var nameEl   = $('#vdmName');
@@ -11970,9 +12136,25 @@ function renderVendors(search) {
       var wced = new Date(v.workersComp); var wcexp = wced < today; var wcdue = daysBetween(today, wced);
       html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Workers Comp</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (wcexp ? 'var(--danger)' : wcdue <= 60 ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.workersComp) + (wcexp ? ' \u26a0\ufe0f EXPIRED' : wcdue <= 60 ? ' (' + wcdue + 'd)' : '') + '</span></div>';
     }
-    if (v.doNotUse) {
+    if (isVendorDoNotUse(v)) {
       html += '<div class="vendor-row vendor-row-compact" style="color:var(--danger);font-weight:700"><span class="vendor-row-label" style="color:var(--danger)">⛔ Status</span><span class="vendor-row-value">DO NOT USE</span></div>';
     }
+    html += '<div class="vendor-row vendor-row-compact" style="align-items:center;gap:6px">' +
+      '<span class="vendor-row-label">Type</span>' +
+      '<select class="vendor-cat-select" data-vid="' + escapeHtml(String(v.id)) + '">' +
+        VENDOR_CATEGORIES.map(function(cat) {
+          return '<option value="' + escapeHtml(cat) + '"' + ((vCat || 'Uncategorized') === cat ? ' selected' : '') + '>' + escapeHtml(cat) + '</option>';
+        }).join('') +
+      '</select>' +
+    '</div>';
+    html += '<div class="vendor-row vendor-row-compact" style="align-items:center;gap:6px">' +
+      '<span class="vendor-row-label">Trade</span>' +
+      '<select class="vendor-trade-cat-select" data-vid="' + escapeHtml(String(v.id)) + '">' +
+        VENDOR_TRADE_CATEGORIES.map(function(tc) {
+          return '<option value="' + escapeHtml(tc) + '"' + (vTradeCat === tc ? ' selected' : '') + '>' + escapeHtml(tc) + '</option>';
+        }).join('') +
+      '</select>' +
+    '</div>';
     if (v.tags) {
       html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Tags</span><span class="vendor-row-value" style="font-size:10px">' + escapeHtml(v.tags) + '</span></div>';
     }
@@ -12257,7 +12439,10 @@ function renderRoutingPmFilter() {
     var tradesSeen = {};
     var tradeOpts = ['<option value="all">All Work Types</option>'];
     ROUTING_EVENTS.forEach(function(e) {
-      var t = String(e.matched_trade || '').trim();
+      var t = String(e.matched_trade || e.inferred_trade || '').trim();
+      if (!t && Array.isArray(e.inferred_trades) && e.inferred_trades.length) {
+        t = String(e.inferred_trades[0] || '').trim();
+      }
       if (!t || tradesSeen[t]) return;
       tradesSeen[t] = true;
       tradeOpts.push('<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>');
@@ -12320,10 +12505,25 @@ function renderRoutingEventsTable(query) {
   if (!body) return;
   var q = String(query || '').trim().toLowerCase();
   var tradeFilter = ($('#routingTradeFilter') && $('#routingTradeFilter').value) || 'all';
+  var tradeFilterNorm = String(tradeFilter || 'all').trim().toLowerCase();
+
+  function getEventTradeLabel(r) {
+    var direct = String((r && r.matched_trade) || '').trim();
+    if (direct) return direct;
+    var inferred = String((r && r.inferred_trade) || '').trim();
+    if (inferred) return inferred;
+    var arr = (r && Array.isArray(r.inferred_trades)) ? r.inferred_trades : [];
+    if (arr.length) return String(arr[0] || '').trim();
+    return '';
+  }
+
   var rows = ROUTING_EVENTS.filter(function(r) {
-    if (tradeFilter !== 'all' && String(r.matched_trade || '').trim() !== tradeFilter) return false;
+    if (tradeFilterNorm !== 'all') {
+      var eventTradeNorm = getEventTradeLabel(r).toLowerCase();
+      if (!eventTradeNorm || eventTradeNorm !== tradeFilterNorm) return false;
+    }
     if (!q) return true;
-    var hay = [r.wo_number, r.property_name, r.property_group, r.pm_name, r.vendor_name, r.matched_trade, r.description].join(' ').toLowerCase();
+    var hay = [r.wo_number, r.property_name, r.property_group, r.pm_name, r.vendor_name, getEventTradeLabel(r), r.description].join(' ').toLowerCase();
     return hay.indexOf(q) !== -1;
   });
 
@@ -12359,7 +12559,7 @@ function renderRoutingEventsTable(query) {
     var conf = String(r.confidence || 'medium');
     var rev = String(r.review_status || 'pending');
     var flaggedAt = r.detected_at ? timeAgo(r.detected_at) : '-';
-    var matchLabel = String(r.matched_trade || '-').trim();
+    var matchLabel = String(getEventTradeLabel(r) || '-').trim();
     var riskInsight = '';
     if (rev === 'approved_external') {
       riskInsight = 'External approved; FLM bid path likely bypassed.';
