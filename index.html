@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#3578e5">
 <title>HandyManager - An AppFolio Utility</title>
+<link rel="manifest" href="manifest.webmanifest">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="stylesheet" href="css/app.css">
@@ -74,7 +76,7 @@
       <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: </span></div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.6.9</span></div>
   </div>
 </div>
 
@@ -86,7 +88,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.6.8</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.6.9</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -170,7 +172,7 @@
     <div class="kpi-grid" style="padding:12px 12px 16px">
       <div class="kpi-card red"><div class="kpi-label">Avg Turnover Completion</div><div class="kpi-value" id="kpiMgrAvgTurnCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div></div>
       <div class="kpi-card amber"><div class="kpi-label">Avg Days Since Inspection</div><div class="kpi-value" id="kpiMgrAvgInspectionAge">—</div><div class="kpi-sub" id="kpiMgrAvgInspectionAgeSub">Loading…</div></div>
-      <div class="kpi-card blue"><div class="kpi-label">Avg Days WO Open</div><div class="kpi-value" id="kpiMgrAvgWOCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgWOCompletionSub">Loading…</div></div>
+      <div class="kpi-card blue"><div class="kpi-label">Avg WO Open Days</div><div class="kpi-value" id="kpiMgrAvgWOCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgWOCompletionSub">Loading…</div></div>
       <div class="kpi-card green"><div class="kpi-label">Recent Completed Turns</div><div class="kpi-value" id="kpiMgrCompletedTurns">—</div><div class="kpi-sub" id="kpiMgrCompletedTurnsSub">Loading…</div></div>
       <div class="kpi-card purple"><div class="kpi-label">Vacancies by Group</div><div class="kpi-value" id="kpiVacancyGroups">—</div><div class="kpi-sub" id="kpiVacancyGroupsSub">Loading…</div></div>
     </div>
@@ -646,7 +648,7 @@
       <table class="data-table" id="billTable">
         <thead>
           <tr>
-            <th>Bill #</th>
+            <th>Invoice / Bill Ref</th>
             <th>Vendor</th>
             <th>Property</th>
             <th>Group</th>
@@ -1294,6 +1296,44 @@
         onclick="document.getElementById('live-feed-drawer').classList.toggle('open'); WebhookLive.clearUnseen()">
   📡
   <span class="fab-badge" id="fab-badge" style="display:none"></span>
+</button>
+
+<!-- PM Notifications Inbox Drawer -->
+<div class="live-feed-drawer" id="pm-inbox-drawer" style="right:-400px">
+
+  <div class="live-feed-header">
+    <span><i class="fas fa-inbox" style="margin-right:6px"></i>PM Inbox</span>
+    <span class="feed-badge" id="pm-inbox-badge" style="display:none"></span>
+    <button class="live-feed-toggle" onclick="document.getElementById('pm-inbox-drawer').classList.remove('open'); if (window.PmInbox && typeof window.PmInbox.clearUnseen === 'function') window.PmInbox.clearUnseen();">✕</button>
+  </div>
+
+  <div style="padding:10px 12px;border-bottom:1px solid var(--border);background:var(--bg-secondary);display:none" id="pmInboxComposerWrap">
+    <div style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:6px">Manager Broadcast</div>
+    <textarea id="pmInboxComposerText" rows="3" placeholder="Post a note for PM acknowledgement..." style="width:100%;resize:vertical;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:12px"></textarea>
+    <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+      <select id="pmInboxComposerScope" class="form-select" style="min-width:170px;max-width:220px;font-size:11px">
+        <option value="">All PMs (Global)</option>
+      </select>
+      <button class="action-btn primary" id="pmInboxComposerSend" style="font-size:11px"><i class="fas fa-paper-plane"></i> Post</button>
+    </div>
+  </div>
+
+  <div class="live-feed-status" id="pm-inbox-status">
+    <span class="feed-pulse"></span> Checking manager inbox updates…
+  </div>
+
+  <div class="live-feed-scroll" id="pm-inbox-items">
+    <p class="feed-empty">No inbox notices yet.</p>
+  </div>
+
+</div>
+
+<!-- Floating open button when PM inbox drawer is closed -->
+<button class="live-feed-fab pm-inbox-fab" id="pm-inbox-fab"
+        onclick="document.getElementById('pm-inbox-drawer').classList.toggle('open'); if (window.PmInbox && typeof window.PmInbox.clearUnseen === 'function') window.PmInbox.clearUnseen();"
+        style="display:none">
+  <i class="fas fa-inbox"></i>
+  <span class="fab-badge" id="pm-fab-badge" style="display:none"></span>
 </button>
 
 <!-- Destructive SQL Confirmation Dialog -->
