@@ -2669,6 +2669,7 @@ var _propertiesLocalGroup = '';
 var _propertiesRefreshInFlight = false;
 var _propertiesPage = 0;
 var _propertiesPageSize = 50;
+var _propertiesVacancyOnly = false;
 var _propertyStatsById = {};
 window.filteredPropertyId = '';
 window.filteredPropertyName = '';
@@ -2925,6 +2926,25 @@ function getNormalizedBillDisplayNumber(billLike) {
   if (!id) return '—';
   if (isUuidString(id)) return 'BILL-' + id.slice(0, 8).toUpperCase();
   return id;
+}
+
+function getNormalizedBillDetailId(billLike) {
+  var b = billLike && typeof billLike === 'object' ? billLike : {};
+  var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
+  var candidates = [
+    b.id,
+    b.bill_id,
+    b.BillId,
+    raw.BillId,
+    raw.bill_id,
+    raw.Id,
+    raw.id,
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var value = String(candidates[i] || '').trim();
+    if (value) return value;
+  }
+  return '';
 }
 
 function resolveBillAmountValue(billLike) {
@@ -7735,6 +7755,7 @@ function renderBillsSection(preFilteredData) {
     var stKey = String(st).trim().toLowerCase().replace(/\s+/g, '-');
     var stLow = String(b.status || '').toLowerCase();
     var billNum = getNormalizedBillDisplayNumber(b);
+    var detailId = getNormalizedBillDetailId(b);
     var amountVal = resolveBillAmountValue(b);
     var vendorText = b.vendorName || b.vendorId || '—';
     var payeeText = b.payeeUuid || b.vendorUuid || b.vendorId || '';
@@ -7759,10 +7780,10 @@ function renderBillsSection(preFilteredData) {
     var linkageHtml = linkBits.length
       ? ('<div style="margin-top:2px;font-size:10px;font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(linkBits.join(' | ')) + '">' + escapeHtml(linkBits.join(' | ')) + '</div>')
       : '';
-    return '<tr class="bill-row clickable-row" data-billdetail="' + escapeHtml(String(b.id || '')) + '" tabindex="0" role="button" aria-label="Open bill ' + escapeHtml(billNum) + '">' +
+    return '<tr class="bill-row clickable-row" data-billdetail="' + escapeHtml(detailId) + '" tabindex="0" role="button" aria-label="Open bill ' + escapeHtml(billNum) + '">' +
       '<td style="font-family:var(--font-mono);font-size:11px;line-height:1.3">' +
         '<div style="font-weight:700;color:var(--accent)">' + escapeHtml(billNum) + '</div>' +
-        '<div style="font-size:10px;color:var(--text-muted)">ID ' + escapeHtml(String(b.id || '').slice(0, 12) || '—') + '</div>' +
+        '<div style="font-size:10px;color:var(--text-muted)">ID ' + escapeHtml(String(detailId || '').slice(0, 12) || '—') + '</div>' +
       '</td>' +
       '<td>' + escapeHtml(vendorText) + '</td>' +
       '<td><span style="display:inline-block;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(propertyText) + '">' + escapeHtml(propertyText) + '</span>' + linkageHtml + '</td>' +
@@ -7795,12 +7816,20 @@ function renderBillsSection(preFilteredData) {
 
 function openBillKanbanCard(billId) {
   var cache = Array.isArray(window._currentBillsCache) ? window._currentBillsCache : [];
-  var bill = cache.find(function(entry) { return String(entry.id || '') === String(billId || ''); });
+  var target = String(billId || '').trim();
+  var bill = cache.find(function(entry) {
+    return getNormalizedBillDetailId(entry) === target;
+  });
+  if (!bill) {
+    bill = cache.find(function(entry) {
+      return String(getNormalizedBillDisplayNumber(entry) || '').trim() === target;
+    });
+  }
   if (!bill) {
     showToast('Bill not found in current view', { kind: 'warning' });
     return;
   }
-  showBillDetailModal(bill.id || billId, bill);
+  showBillDetailModal(getNormalizedBillDetailId(bill) || billId, bill);
 }
 
 function renderBillingPropertyScopeChip(propertyId, propertyName, unitId, unitName) {
@@ -7989,6 +8018,11 @@ function wireBillingFilters() {
   document.addEventListener('groupFilterChanged', function() {
     window._currentBillsCache = [];
     _billsPage = 0;
+    if (currentBillingSubtab === 'history') {
+      BILL_HISTORY_PAGE = 0;
+      runBillHistorySearch();
+      return;
+    }
     // Apply client-side group filter to cached bills instantly
     if (__CACHED_BILLS.length > 0) {
       var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
@@ -8219,10 +8253,11 @@ async function showBillDetailModal(billId) {
   if (!billId) return;
   try {
     var b = arguments[1] || null; // optional pre-loaded bill object
+    var detailFetchFailed = false;
     if (!b) {
       // Attempt cheap cache lookup before expensive API call
       var cachedRows = window._currentBillsCache || window._billingPageRows || [];
-      b = cachedRows.find(function(r) { return String(r.id || '') === String(billId); }) || null;
+      b = cachedRows.find(function(r) { return getNormalizedBillDetailId(r) === String(billId || '').trim(); }) || null;
     }
     var hasRichDetail = !!(b && b.raw && (b.raw.LineItems || b.raw.line_items || b.raw.Remarks || b.raw.remarks || b.raw.CheckMemo));
     if (!b || !hasRichDetail) {
@@ -8230,11 +8265,16 @@ async function showBillDetailModal(billId) {
         var data = await proxyAction('bill_detail', { bill_id: String(billId) });
         var detailed = data.result || data.bill || null;
         if (detailed) b = detailed;
-      } catch (e) { /* keep cached bill fallback */ }
+      } catch (e) {
+        detailFetchFailed = true;
+      }
     }
     if (!b) {
       showToast('Bill detail unavailable', { kind: 'warning' });
       return;
+    }
+    if (detailFetchFailed) {
+      showToast('Loaded cached bill details only (live detail fetch failed)', { kind: 'warning' });
     }
 
     var raw = b.raw || {};
@@ -8415,9 +8455,7 @@ function renderBillHistoryPage(dateFrom, dateTo) {
 
   body.innerHTML = pageRows.map(function(r) {
     var wo = String(resolveBillWorkOrderRef(r) || '').trim();
-    var billId = String(
-      r.id || r.Id || r.bill_id || r.BillId || r.bill_uuid || r.BillUuid || ''
-    ).trim();
+    var billId = getNormalizedBillDetailId(r);
     var vendorId = String(r.vendor_id || r.VendorId || r.payee_uuid || r.PayeeUuid || '').trim();
     var vendorName = String(r.vendor_name || r.VendorName || '').trim();
     if (!vendorName) vendorName = resolveVendorNameFromMaps(vendorId, vendorId || '—') || '—';
@@ -8917,6 +8955,28 @@ function renderDashboardKPIs() {
     vacancySub.textContent = vacancyTotal > 0
       ? (topVacancyGroup + ': ' + vacancyByGroup[topVacancyGroup] + ' vacant')
       : 'No vacancies detected in scope';
+  }
+  var vacancyCard = document.getElementById('kpiVacancyCard') || (vacancyKpi ? vacancyKpi.closest('.kpi-card') : null);
+  if (vacancyCard) {
+    vacancyCard.classList.add('clickable-row');
+    vacancyCard.setAttribute('role', 'button');
+    vacancyCard.setAttribute('tabindex', '0');
+    vacancyCard.setAttribute('aria-label', 'Open vacant properties');
+    var openVacancies = function(evt) {
+      if (evt && evt.type === 'keydown' && evt.key !== 'Enter' && evt.key !== ' ') return;
+      if (evt && evt.type === 'keydown') evt.preventDefault();
+      _propertiesVacancyOnly = true;
+        _propertiesLocalGroup = '';
+        if ($('#propertyGroupFilter')) $('#propertyGroupFilter').value = '';
+        if ($('#propertySearch')) $('#propertySearch').value = '';
+      _propertiesPage = 0;
+      forceActiveTab('properties');
+      setPropertiesSubtab('directory');
+      renderPropertiesSection();
+      showToast('Properties filtered to vacancies', { kind: 'info' });
+    };
+    vacancyCard.onclick = openVacancies;
+    vacancyCard.onkeydown = openVacancies;
   }
 
   $('#woBadge').textContent = openWOs.length || '0';
@@ -11010,6 +11070,16 @@ function renderPropertiesRowsFromCache() {
   }
 
   var search = String(searchEl ? searchEl.value : '').trim().toLowerCase();
+  function propertyIsVacantForFilter(p) {
+    var statusText = String(p.status || p.occupancyStatus || p.unit_status || p.Status || '').toLowerCase();
+    if (p.isVacant === true || p.IsVacant === true || p.vacant === true) return true;
+    return statusText.indexOf('vacant') !== -1 || statusText.indexOf('available') !== -1;
+  }
+
+  if (_propertiesVacancyOnly) {
+    properties = properties.filter(propertyIsVacantForFilter);
+  }
+
   if (search) {
     properties = properties.filter(function(p) {
       var hay = [
@@ -11054,16 +11124,18 @@ function renderPropertiesRowsFromCache() {
   if (footer) footer.style.display = 'flex';
   if (meta) {
     if (total === 0) {
-      meta.textContent = 'Page 1 of 1 • 0 results';
+      meta.textContent = 'Page 1 of 1 • 0 results' + (_propertiesVacancyOnly ? ' • vacancy-only' : '');
     } else {
-      meta.textContent = 'Page ' + (_propertiesPage + 1) + ' of ' + pages + ' • Showing ' + (start + 1) + '-' + end + ' of ' + total;
+      meta.textContent = 'Page ' + (_propertiesPage + 1) + ' of ' + pages + ' • Showing ' + (start + 1) + '-' + end + ' of ' + total + (_propertiesVacancyOnly ? ' • vacancy-only' : '');
     }
   }
   if (prevBtn) prevBtn.disabled = (_propertiesPage <= 0 || total === 0);
   if (nextBtn) nextBtn.disabled = (_propertiesPage >= pages - 1 || total === 0);
 
   if (!properties.length) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">No properties found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">' +
+      (_propertiesVacancyOnly ? 'No vacant properties found for current scope' : 'No properties found') +
+      '</td></tr>';
     return;
   }
 
@@ -12252,23 +12324,9 @@ function renderVendors(search) {
     tradeFilter = currentTradeFilter;
   }
 
-  // Note: Vendors don't have a direct property association for group filtering,
-  // but we can filter by checking which vendors have WOs in the group
-  var vendorsInGroup = null;
-  if (currentPropertyGroup) {
-    vendorsInGroup = {};
-    WORK_ORDERS.forEach(function(wo) {
-      if (isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup) && wo.vendorName) {
-        vendorsInGroup[wo.vendorName.toLowerCase()] = true;
-      }
-    });
-  }
-
   var searchText = (search || '').trim();
   var searchLower = searchText.toLowerCase();
   var baseFiltered = VENDORS.filter(function(v) {
-    if (vendorsInGroup && !vendorsInGroup[(v.name || '').toLowerCase()]) return false;
-
     // Category filter
     if (catFilter) {
       var vCat = getVendorCategory(v.id) || 'Uncategorized';
@@ -14216,6 +14274,7 @@ function wireUpUI() {
   var propertySearch = $('#propertySearch');
   if (propertySearch) {
     propertySearch.addEventListener('input', debounce(function() {
+      _propertiesVacancyOnly = false;
       _propertiesPage = 0;
       renderPropertiesSection();
     }, CONFIG.DEBOUNCE_MS));
@@ -14223,6 +14282,7 @@ function wireUpUI() {
   var propertyGroupFilter = $('#propertyGroupFilter');
   if (propertyGroupFilter) {
     propertyGroupFilter.addEventListener('change', function() {
+      _propertiesVacancyOnly = false;
       _propertiesLocalGroup = normalizeGroupSelectionValue(propertyGroupFilter.value || '');
       _propertiesPage = 0;
       renderPropertiesSection();
@@ -16924,7 +16984,7 @@ var DispatchComms = {
     }
     if (!adminKey) {
       if (resultEl) resultEl.textContent = 'Set PROXY_ADMIN_KEY in the Database tab before sending test links.';
-      v9Toast('Admin key required', 'Set PROXY_ADMIN_KEY in Database tab first', 'warning');
+      v9Toast('Admin key required', 'Set PROXY_ADMIN_KEY in Database tab first. Generate Link does not require this key.', 'warning');
       return;
     }
 
@@ -16936,7 +16996,7 @@ var DispatchComms = {
     if (resultEl) resultEl.textContent = 'Sending test magic-link SMS to ' + phone + '…';
 
     try {
-      var response = await dispatchPost('send_magic_link_test_sms', {
+      var response = await proxyPost('send_magic_link_test_sms', {
         key: adminKey,
         phone: phone,
         tech_name: 'Dispatch Test',
@@ -16957,8 +17017,12 @@ var DispatchComms = {
       v9Toast('Test link sent', phone, 'success');
       DispatchControl.refresh();
     } catch (e) {
-      if (resultEl) resultEl.textContent = 'Send failed: ' + (e.message || e);
-      v9Toast('Test link failed', e.message || String(e), 'danger');
+      var message = e && e.message ? e.message : String(e || 'Unknown error');
+      if (/failed to fetch/i.test(message)) {
+        message = 'Request could not reach the proxy. Check Proxy URL/session in Vault, then retry.';
+      }
+      if (resultEl) resultEl.textContent = 'Send failed: ' + message;
+      v9Toast('Test link failed', message, 'danger');
     } finally {
       if (btn) {
         btn.disabled = false;
