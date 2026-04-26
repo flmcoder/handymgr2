@@ -3289,6 +3289,15 @@ function getEffectiveGroupId() {
   return _normalizeEffectiveGroup(currentPropertyGroup || '');
 }
 
+function getEffectiveGroupUuid(groupName) {
+  var normalizedName = normalizeGroupSelectionValue(groupName || getEffectiveGroupId());
+  if (!normalizedName) return '';
+  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
+    return String(forcedPropertyGroupUuid).trim();
+  }
+  return resolveGroupUuidFromName(normalizedName);
+}
+
 /* =================================================================
    CONFIG — Consolidated thresholds (edit here, not scattered in code)
    ================================================================= */
@@ -4560,7 +4569,7 @@ async function fetchBills(days, opts) {
 
     if (opts.scoped !== false) {
       grpName = normalizeGroupSelectionValue(getEffectiveGroupId());
-      groupUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
+      groupUuid = getEffectiveGroupUuid(grpName);
       // Only send UUID scope to server-side filters; when UUID is missing,
       // rely on client-side property-group association maps to avoid empty legacy responses.
       if (groupUuid) params.group_uuid = groupUuid;
@@ -7614,7 +7623,7 @@ function applyBillingListScopeFromCache(opts) {
   if (!Array.isArray(_billingListCacheRows) || _billingListCacheRows.length === 0) return false;
 
   var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
-  var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+  var groupUuid = getEffectiveGroupUuid(grp);
   var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
   var scopedRows = _billingListCacheRows.filter(function(b) {
     return billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps);
@@ -7683,7 +7692,7 @@ async function loadBillingPage(opts) {
   if (isListRoute && __CACHED_BILLS.length > 0) {
     // Use cached bills with client-side group filtering
     var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
-    var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+    var groupUuid = getEffectiveGroupUuid(grp);
     var filteredBills = applyLocalBillFilters({ groupId: groupUuid, groupName: grp });
     
     _billingServerTotal = filteredBills.length;
@@ -8250,7 +8259,7 @@ function wireBillingFilters() {
     // Apply client-side group filter to cached bills instantly
     if (__CACHED_BILLS.length > 0) {
       var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
-      var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+      var groupUuid = getEffectiveGroupUuid(grp);
       var filteredBills = applyLocalBillFilters({ groupId: groupUuid, groupName: grp });
       _billingServerTotal = filteredBills.length;
       _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
@@ -8829,7 +8838,7 @@ async function runBillHistorySearch() {
     var historyPages = 1;
     var historyPage = BILL_HISTORY_PAGE + 1;
     var grpName = normalizeGroupSelectionValue(getEffectiveGroupId());
-    var grpUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
+    var grpUuid = getEffectiveGroupUuid(grpName);
 
     if (grpUuid) {
       try {
