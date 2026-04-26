@@ -169,14 +169,14 @@ function currency(n, digits) {
   });
 }
 function getToastStackRoot() {
-  var root = document.getElementById('toastStack');
+  var root = $('#toastStack');
   if (root) return root;
   root = document.createElement('div');
   root.id = 'toastStack';
   root.style.position = 'fixed';
   root.style.right = '20px';
   root.style.bottom = '20px';
-  root.style.zIndex = '320';
+  root.style.zIndex = 'var(--z-layer-toast)';
   root.style.display = 'flex';
   root.style.flexDirection = 'column';
   root.style.gap = '8px';
@@ -294,7 +294,7 @@ function hmConfirm(msg, opts) {
   return new Promise(function(resolve) {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay show';
-    overlay.style.zIndex = '9999';
+    overlay.style.zIndex = 'var(--z-layer-modal-critical)';
     overlay.innerHTML =
       '<div class="modal" style="max-width:420px">' +
         '<div class="modal-head"><h3>' + escapeHtml(o.title || 'Confirm') + '</h3></div>' +
@@ -318,7 +318,7 @@ function hmPrompt(msg, defaultVal, opts) {
   return new Promise(function(resolve) {
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay show';
-    overlay.style.zIndex = '9999';
+    overlay.style.zIndex = 'var(--z-layer-modal-critical)';
     overlay.innerHTML =
       '<div class="modal" style="max-width:420px">' +
         '<div class="modal-head"><h3>' + escapeHtml(o.title || 'Input') + '</h3></div>' +
@@ -602,6 +602,12 @@ function skeletonRows(n) {
     h += '</div>';
   }
   return h;
+}
+
+function setDashboardKpiSkeleton(active) {
+  $$('#sec-dashboard .kpi-card').forEach(function(card) {
+    card.classList.toggle('kpi-skeleton', !!active);
+  });
 }
 function parseWebhookTs(dateStr) {
   var s = String(dateStr || '').trim();
@@ -2591,6 +2597,12 @@ function applyProxySchemaHealth(pingData) {
    API Error Log
    ================================================================= */
 var API_ERRORS = [];
+var SYSTEM_HEALTH_STATE = {
+  running: false,
+  data: null,
+  lastError: '',
+};
+var _systemHealthAutoRunDone = false;
 
 function logApiError(code, msg, action) {
   var now = new Date();
@@ -2598,6 +2610,179 @@ function logApiError(code, msg, action) {
   API_ERRORS.unshift({ code: code, ts: ts, msg: msg, action: action });
   if (API_ERRORS.length > 100) API_ERRORS.length = 100;
   renderErrorLog();
+}
+
+function canRunSystemHealthChecker() {
+  return _accessRole === 'full' || _accessRole === 'manager';
+}
+
+function getSystemHealthStatusLabel(status) {
+  var value = String(status || '').toLowerCase();
+  if (value === 'green') return 'Verified Working';
+  if (value === 'yellow') return 'Possible Issues';
+  if (value === 'red') return 'Issue Confirmed';
+  return 'Idle';
+}
+
+function getSystemHealthSummaryText() {
+  if (SYSTEM_HEALTH_STATE.running) return 'Running checks...';
+  if (SYSTEM_HEALTH_STATE.lastError) return 'Checker failed: ' + SYSTEM_HEALTH_STATE.lastError;
+  if (!SYSTEM_HEALTH_STATE.data) return 'No checks run yet';
+  var summary = SYSTEM_HEALTH_STATE.data.summary || {};
+  var stamp = SYSTEM_HEALTH_STATE.data.generated_at
+    ? (' @ ' + String(SYSTEM_HEALTH_STATE.data.generated_at).replace('T', ' ').replace('Z', ' UTC'))
+    : '';
+  return getSystemHealthStatusLabel(SYSTEM_HEALTH_STATE.data.status) +
+    ' - red: ' + Number(summary.red_count || 0) +
+    ', yellow: ' + Number(summary.yellow_count || 0) +
+    ', green: ' + Number(summary.green_count || 0) + stamp;
+}
+
+function renderSystemHealthPanel() {
+  var panel = $('#systemsHealthPanel');
+  if (!panel) return;
+
+  if (!canRunSystemHealthChecker()) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = '';
+
+  var summaryEl = $('#systemHealthSummary');
+  var gridEl = $('#systemHealthGrid');
+  var sendBtn = $('#btnSendSystemHealthDebug');
+
+  if (summaryEl) {
+    var status = SYSTEM_HEALTH_STATE.running
+      ? 'idle'
+      : String((SYSTEM_HEALTH_STATE.data && SYSTEM_HEALTH_STATE.data.status) || '').toLowerCase();
+    if (status !== 'green' && status !== 'yellow' && status !== 'red') status = 'idle';
+    summaryEl.innerHTML =
+      '<span class="systems-health-dot ' + status + '"></span>' +
+      '<span>' + escapeHtml(getSystemHealthSummaryText()) + '</span>';
+  }
+
+  if (sendBtn) {
+    sendBtn.style.display = SYSTEM_HEALTH_STATE.data ? '' : 'none';
+  }
+
+  if (!gridEl) return;
+  if (!SYSTEM_HEALTH_STATE.data || !Array.isArray(SYSTEM_HEALTH_STATE.data.checks) || !SYSTEM_HEALTH_STATE.data.checks.length) {
+    gridEl.innerHTML = '';
+    return;
+  }
+
+  var html = '';
+  SYSTEM_HEALTH_STATE.data.checks.forEach(function(check) {
+    var status = String(check.status || 'yellow').toLowerCase();
+    if (status !== 'green' && status !== 'yellow' && status !== 'red') status = 'yellow';
+    html += '<div class="systems-health-card ' + status + '">';
+    html += '<div class="systems-health-card-head">';
+    html += '<div class="systems-health-card-title">' + escapeHtml(String(check.label || check.key || 'Check')) + '</div>';
+    html += '<span class="systems-health-badge ' + status + '">' + escapeHtml(status) + '</span>';
+    html += '</div>';
+    html += '<div class="systems-health-card-detail">' + escapeHtml(String(check.detail || '')) + '</div>';
+    html += '</div>';
+  });
+  gridEl.innerHTML = html;
+}
+
+async function runSystemHealthCheck() {
+  if (!canRunSystemHealthChecker()) {
+    showToast('System checker is restricted to manager/admin', {
+      kind: 'warning',
+      iconClass: 'fa-lock',
+      duration: 2600
+    });
+    return;
+  }
+  if (SYSTEM_HEALTH_STATE.running) return;
+
+  SYSTEM_HEALTH_STATE.running = true;
+  SYSTEM_HEALTH_STATE.lastError = '';
+  renderSystemHealthPanel();
+
+  try {
+    var data = await proxyAction('system_health');
+    if (!data || !data.ok) {
+      throw new Error((data && data.error) || 'system_health failed');
+    }
+    SYSTEM_HEALTH_STATE.data = data;
+    var status = String(data.status || '').toLowerCase();
+    if (status === 'green') {
+      showToast('Systems checker: Verified Working', { kind: 'success', iconClass: 'fa-circle-check', duration: 2600 });
+    } else if (status === 'yellow') {
+      showToast('Systems checker: possible issues detected - please wait', { kind: 'warning', iconClass: 'fa-triangle-exclamation', duration: 3600 });
+    } else {
+      showToast('Systems checker: issue confirmed. Use Send Debug.', { kind: 'danger', iconClass: 'fa-circle-exclamation', duration: 4400 });
+    }
+  } catch (err) {
+    SYSTEM_HEALTH_STATE.lastError = String((err && err.message) || err || 'unknown error');
+    showToast('Systems checker failed: ' + SYSTEM_HEALTH_STATE.lastError, {
+      kind: 'danger',
+      iconClass: 'fa-circle-exclamation',
+      duration: 4200
+    });
+  } finally {
+    SYSTEM_HEALTH_STATE.running = false;
+    renderSystemHealthPanel();
+  }
+}
+
+function sendSystemHealthDebugEmail() {
+  var report = SYSTEM_HEALTH_STATE.data;
+  if (!report) {
+    showToast('Run checker first to send debug payload', {
+      kind: 'warning',
+      iconClass: 'fa-envelope-open',
+      duration: 2500
+    });
+    return;
+  }
+
+  var status = String(report.status || 'unknown').toUpperCase();
+  var subject = '[HandyManager] System Health Debug - ' + status;
+  var payload = report && report.debug && report.debug.payload
+    ? report.debug.payload
+    : report;
+  var payloadText = '';
+  try {
+    payloadText = JSON.stringify(payload, null, 2);
+  } catch (e) {
+    payloadText = String(payload || 'payload_unavailable');
+  }
+  if (payloadText.length > 14000) {
+    payloadText = payloadText.slice(0, 14000) + '\n... [truncated]';
+  }
+
+  var body = [
+    'Aaron,',
+    '',
+    'Auto-generated HandyManager system health debug package.',
+    '',
+    'Overall status: ' + status,
+    'Generated at: ' + String(report.generated_at || ''),
+    '',
+    'Suggested debug SQL:',
+    Array.isArray(report && report.debug && report.debug.debug_query)
+      ? report.debug.debug_query.join('\n')
+      : 'n/a',
+    '',
+    'Payload:',
+    payloadText,
+  ].join('\n');
+
+  var mailto = 'mailto:aaron@flraz.com?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  window.location.href = mailto;
+}
+
+function maybeAutoRunSystemHealthCheck() {
+  if (_systemHealthAutoRunDone) return;
+  if (!canRunSystemHealthChecker()) return;
+  _systemHealthAutoRunDone = true;
+  setTimeout(function() {
+    runSystemHealthCheck().catch(function() {});
+  }, 300);
 }
 
 /* =================================================================
@@ -2634,6 +2819,17 @@ var _billingServerTotal = 0;
 var _billingServerTotalPages = 1;
 var _billingServerPage = 1;
 var _billingRouteAction = 'bills_list';
+var BILL_ROUTE_COLUMNS = [
+  'id',
+  'bill_number',
+  'status',
+  'status_label',
+  'vendor_name',
+  'property_name',
+  'invoice_date',
+  'due_date',
+  'bill_total_amount'
+].join(',');
 var _billingRouteFilterValue = '';
 var _billingDueFrom = '';
 var _billingDueTo = '';
@@ -2692,6 +2888,8 @@ var ROUTING_PM_STATS = [];
 var ROUTING_CAPABILITIES = [];
 var ROUTING_PM_MAP = {};
 var _routingInitDone = false;
+var _routingFiltersDelegated = false;
+var _routingSearchDebounceTimer = 0;
 var _routingLastScanAt = '';
 var ROUTING_PAGE = 1;
 var ROUTING_SETTINGS = {
@@ -3256,6 +3454,21 @@ function isTurnWorkActiveStatus(status) {
          normalized === 'awaiting approval';
 }
 
+function isTerminalTurnStatus(status) {
+  var normalized = String(status || '').trim().toLowerCase();
+  return normalized === 'complete' || normalized === 'completed' ||
+    normalized === 'closed' || normalized === 'canceled' || normalized === 'cancelled';
+}
+
+function isTurnActionLocked(turnKey) {
+  var key = String(turnKey || '').trim();
+  if (!key) return false;
+  var pipelineTurn = (TURN_PIPE_DATA || []).find(function(p) { return String(p.id || '') === key; });
+  if (!pipelineTurn) return false;
+  if (pipelineTurn.isClosed || pipelineTurn.isCompleted) return true;
+  return isTerminalTurnStatus(pipelineTurn.unitTurnStatus || (pipelineTurn.turn && pipelineTurn.turn.status) || '');
+}
+
 function isTurnFullyComplete(matchingWOs) {
   if (!matchingWOs || matchingWOs.length === 0) return false;
   return matchingWOs.every(function(wo) {
@@ -3701,6 +3914,7 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   $('#appShell').classList.add('unlocked');
   applyAccessRole();
   await initApp();
+  maybeAutoRunSystemHealthCheck();
   if (_accessRole === 'pm_readonly') {
     try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (eScope) { /* */ }
     enforceScopedPropertyGroup();
@@ -3791,6 +4005,7 @@ setVaultPanel('main');
     $('#appShell').classList.add('unlocked');
     applyAccessRole();
     await initApp();
+    maybeAutoRunSystemHealthCheck();
     if (_accessRole === 'pm_readonly') {
       try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (e) { /* */ }
       enforceScopedPropertyGroup();
@@ -3898,6 +4113,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     $('#appShell').classList.add('unlocked');
     applyAccessRole();
     await initApp();
+    maybeAutoRunSystemHealthCheck();
     if (_accessRole === 'pm_readonly') {
       try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (eScope) { /* */ }
       enforceScopedPropertyGroup();
@@ -4306,7 +4522,11 @@ async function fetchBills(days, opts) {
   try {
     opts = opts || {};
     var lookback = parseInt(days || DEFAULT_BILLS_LOOKBACK_DAYS, 10) || DEFAULT_BILLS_LOOKBACK_DAYS;
-    var params = { days: String(lookback), max: String(opts.max || 3000) };
+    var params = {
+      days: String(lookback),
+      max: String(opts.max || 3000),
+      columns: BILL_ROUTE_COLUMNS
+    };
     var requestedPage = Math.max(1, parseInt(opts.page || 1, 10) || 1);
     var requestedPerPage = Math.max(1, Math.min(200, parseInt(opts.perPage || opts.limit || 50, 10) || 50));
     var assignGlobal = opts.assignGlobal !== false;
@@ -4360,7 +4580,8 @@ async function fetchBills(days, opts) {
 
         var routeParams = {
           limit: String(routeLimit),
-          offset: String(routeOffset)
+          offset: String(routeOffset),
+          columns: BILL_ROUTE_COLUMNS
         };
 
         if (routeAction === 'bills_list') {
@@ -4407,7 +4628,8 @@ async function fetchBills(days, opts) {
         var routeData = await proxyAction('bills_list', {
           group_id: groupUuid,
           limit: String(routeLimit),
-          offset: String(routeOffset)
+          offset: String(routeOffset),
+          columns: BILL_ROUTE_COLUMNS
         });
         routeRows = routeData && (routeData.data || routeData.results)
           ? (routeData.data || routeData.results)
@@ -4600,6 +4822,7 @@ async function fetchVendors() {
         insurance: v.liability_ins_expires || '',
         autoInsurance: v.auto_ins_expires || '',
         workersComp: v.workers_comp_expires || '',
+        licenseExpires: v.license_expires || v.contractor_license_expires || v.business_license_expires || '',
         phone: v.phone_numbers || '',
         email: v.email || '',
         address: ((v.street || '') + ' ' + (v.city || '') + ' ' + (v.state || '') + ' ' + (v.zip || '')).trim(),
@@ -8616,7 +8839,8 @@ async function runBillHistorySearch() {
           due_from: dateFrom,
           due_to: dateTo,
           limit: String(BILL_HISTORY_PAGE_SIZE),
-          offset: String(dueOffset)
+          offset: String(dueOffset),
+          columns: BILL_ROUTE_COLUMNS
         });
         rows = Array.isArray(dueRangeData.data)
           ? dueRangeData.data
@@ -8647,6 +8871,7 @@ async function runBillHistorySearch() {
         days: String(spanDays),
         prefer_v2: 'true',
         max: '8000',
+        columns: BILL_ROUTE_COLUMNS,
       };
       if (grpName) params.group_name = grpName;
       if (grpUuid) params.group_uuid = grpUuid;
@@ -8776,6 +9001,7 @@ function renderPayroll() {
 }
 
 function renderDashboardKPIs() {
+  setDashboardKpiSkeleton(false);
   // Sync global group filter dropdown
   var gfSel = $('#globalGroupFilter');
   if (gfSel && gfSel.value !== currentPropertyGroup) gfSel.value = currentPropertyGroup;
@@ -10468,6 +10694,9 @@ async function syncTurnTrackerFromPipeline() {
 
 async function linkTurnWorkOrder(turnKey, woId) {
   if (!turnKey || !woId) return;
+  if (isTurnActionLocked(turnKey)) {
+    throw new Error('Turn is terminal/closed; link actions are locked');
+  }
   // WORK_ORDERS (Reports v2): id = WO number, uuid = UUID (work_order_id)
   // TURN_WORK_ORDERS (DB API v0): id = UUID, woNumber = WO number
   var woStr = String(woId).replace(/^\s*#/, '').trim();
@@ -10491,6 +10720,9 @@ async function linkTurnWorkOrder(turnKey, woId) {
 
 async function unlinkTurnWorkOrder(turnKey, woId) {
   if (!turnKey || !woId) return;
+  if (isTurnActionLocked(turnKey)) {
+    throw new Error('Turn is terminal/closed; unlink actions are locked');
+  }
   var woStr = String(woId).replace(/^\s*#/, '').trim();
   var wo = WORK_ORDERS.find(function(w) { return String(w.id) === woStr; }) ||
     TURN_WORK_ORDERS.find(function(w) { return String(w.woNumber || '') === woStr || String(w.id) === woStr; }) || null;
@@ -11706,6 +11938,7 @@ function renderTurnPipelineUI() {
     if (p.isOnRadar) {
       html += '<div style="font-size:11px;color:var(--accent);padding:5px 8px;background:var(--accent-dim);border-radius:4px;margin-bottom:6px"><i class="fas fa-info-circle" style="margin-right:4px"></i>Once a move-out inspection is recorded, this turn is confirmed and these WOs will be formally linked.</div>';
     }
+    var turnLocked = !!(p.isClosed || p.isCompleted || isTerminalTurnStatus(p.unitTurnStatus || (p.turn && p.turn.status) || ''));
     if (p.matchingWOs.length > 0) {
       html += '<div class="pipe-wo-list">';
       p.matchingWOs.forEach(function(wo) {
@@ -11714,7 +11947,7 @@ function renderTurnPipelineUI() {
         var woLink = (dbWo && dbWo.link) ? dbWo.link : appfolioUrl('work_order', wo.id);
         html += '<div class="pipe-wo-item"><div><span class="pipe-wo-id">#' + wo.id + '</span> <span class="tag ' + String(wo.status || 'Linked').toLowerCase().replace(/\s+/g, '-') + '">' + escapeHtml(wo.status || 'Linked') + '</span>';
         if (woLink) html += ' <a href="' + escapeHtml(woLink) + '" target="_blank" rel="noopener noreferrer" style="font-size:9px;color:var(--accent);text-decoration:none" title="View WO in AppFolio" onclick="event.stopPropagation()"><i class="fas fa-external-link-alt"></i></a>';
-        html += ' <button class="action-btn" data-unlink-wo="' + escapeHtml(p.id) + '" data-woid="' + escapeHtml(String(wo.id)) + '" style="padding:1px 6px;font-size:10px" onclick="event.stopPropagation()"><i class="fas fa-unlink"></i></button>';
+        html += ' <button class="action-btn" data-unlink-wo="' + escapeHtml(p.id) + '" data-woid="' + escapeHtml(String(wo.id)) + '" style="padding:1px 6px;font-size:10px" onclick="event.stopPropagation()"' + (turnLocked ? ' disabled title="Turn is terminal/closed"' : '') + '><i class="fas fa-unlink"></i></button>';
         html += '</div>';
         html += '<div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml((wo.description || '').substring(0, 60)) + '</div></div>';
       });
@@ -11723,9 +11956,12 @@ function renderTurnPipelineUI() {
       html += '<div style="font-size:12px;color:var(--text-muted);padding:8px 0">No linked work orders found</div>';
     }
     html += '<div style="display:flex;gap:6px;margin-top:8px">';
-    html += '<input class="form-input" data-add-wo-input="' + escapeHtml(p.id) + '" placeholder="Add WO # (manual)" style="font-size:11px;max-width:170px" onclick="event.stopPropagation()">';
-    html += '<button class="action-btn" data-add-wo="' + escapeHtml(p.id) + '" style="font-size:11px;padding:4px 8px" onclick="event.stopPropagation()"><i class="fas fa-link"></i> Add WO</button>';
+    html += '<input class="form-input" data-add-wo-input="' + escapeHtml(p.id) + '" placeholder="Add WO # (manual)" style="font-size:11px;max-width:170px" onclick="event.stopPropagation()"' + (turnLocked ? ' disabled title="Turn is terminal/closed"' : '') + '>';
+    html += '<button class="action-btn" data-add-wo="' + escapeHtml(p.id) + '" style="font-size:11px;padding:4px 8px" onclick="event.stopPropagation()"' + (turnLocked ? ' disabled title="Turn is terminal/closed"' : '') + '><i class="fas fa-link"></i> Add WO</button>';
     html += '</div>';
+    if (turnLocked) {
+      html += '<div style="font-size:11px;color:var(--warning);margin-top:6px"><i class="fas fa-lock"></i> Turn is terminal/closed; work-order link actions are disabled to preserve audit trail.</div>';
+    }
 
     // Turn details
     html += '<div class="detail-section-title" style="margin-top:12px"><i class="fas fa-info-circle"></i> Turn Details</div>';
@@ -12165,14 +12401,42 @@ function resolveVendorCompliance(v) {
   return { compliant: v.compliant, isManual: false };
 }
 
-/* Strict "Do Not Use" evaluation: expired insurance/workers-comp documents only */
+function normalizeVendorDate(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return null;
+  var d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function summarizeVendorGovernance(v) {
+  var now = new Date();
+  var expiredDocs = [];
+
+  var insuranceExp = normalizeVendorDate(v.insurance);
+  if (insuranceExp && insuranceExp < now) expiredDocs.push('Liability Insurance');
+
+  var autoInsuranceExp = normalizeVendorDate(v.autoInsurance);
+  if (autoInsuranceExp && autoInsuranceExp < now) expiredDocs.push('Auto Insurance');
+
+  var workersCompExp = normalizeVendorDate(v.workersComp);
+  if (workersCompExp && workersCompExp < now) expiredDocs.push('Workers Comp');
+
+  var licenseExp = normalizeVendorDate(v.licenseExpires || v.license || v.contractorLicenseExpires);
+  if (licenseExp && licenseExp < now) expiredDocs.push('License');
+
+  var manualDoNotUse = v.doNotUse === true || String(v.doNotUse || '').toLowerCase() === 'true';
+  return {
+    expiredDocs: expiredDocs,
+    expired: expiredDocs.length > 0,
+    doNotUse: manualDoNotUse || expiredDocs.length > 0,
+  };
+}
+
+/* Vendor governance combines explicit do-not-use flags with expired compliance docs. */
 var _currentSelectedVendorId = null;
 
 function isVendorDoNotUse(v) {
-  var today = new Date();
-  if (v.insurance && new Date(v.insurance) < today) return true;
-  if (v.workersComp && new Date(v.workersComp) < today) return true;
-  return false;
+  return summarizeVendorGovernance(v).doNotUse;
 }
 
 function openVendorModal(vendorId) {
@@ -12181,12 +12445,12 @@ function openVendorModal(vendorId) {
   if (!v) return;
 
   var today = new Date();
-  var expiredDocs = [];
-  var insExpired = v.insurance && new Date(v.insurance) < today;
-  var wcExpired  = v.workersComp && new Date(v.workersComp) < today;
-  if (insExpired) expiredDocs.push('Liability Insurance Expired');
-  if (wcExpired)  expiredDocs.push('Workers Comp Expired');
-  var isDNU = expiredDocs.length > 0;
+  var governance = summarizeVendorGovernance(v);
+  var insDate = normalizeVendorDate(v.insurance);
+  var wcDate = normalizeVendorDate(v.workersComp);
+  var insExpired = !!(insDate && insDate < today);
+  var wcExpired  = !!(wcDate && wcDate < today);
+  var isDNU = governance.doNotUse;
 
   var nameEl   = $('#vdmName');
   var tradeEl  = $('#vdmTrade');
@@ -12221,7 +12485,9 @@ function openVendorModal(vendorId) {
   }
 
   if (warnEl)  warnEl.style.display = isDNU ? '' : 'none';
-  if (docsEl)  docsEl.textContent   = expiredDocs.join(' & ');
+  if (docsEl)  docsEl.textContent = governance.expired
+    ? governance.expiredDocs.join(' & ') + ' expired'
+    : 'Flagged as Do Not Use';
 
   var afUrl = appfolioUrl('vendor', v.id);
   if (afLink) {
@@ -12417,14 +12683,15 @@ function renderVendors(search) {
   html += '<div class="vendor-cards">';
   var today = new Date();
   visible.forEach(function(v) {
-    var ed = v.insurance ? new Date(v.insurance) : null;
+    var ed = normalizeVendorDate(v.insurance);
     var exp = ed ? ed < today : false;
     var due = ed ? daysBetween(today, ed) : 999;
     var wrn = !exp && due <= 60;
     var cRes = resolveVendorCompliance(v);
+    var governance = summarizeVendorGovernance(v);
     var cc = '';
     if (cRes.compliant && cRes.isManual) { cc = 'manual-compliant'; }
-    else if (exp) { cc = 'expired'; }
+    else if (governance.expired) { cc = 'expired'; }
     else if (wrn) { cc = 'warn'; }
     var vCat = getVendorCategory(v.id);
     var catBadgeCls = vendorCatClass(vCat);
@@ -12433,6 +12700,14 @@ function renderVendors(search) {
     html += '<div class="vendor-card vendor-card-compact ' + cc + '" data-vendorid="' + escapeHtml(String(v.id)) + '" data-vendor-initial="' + getVendorInitial(v.name) + '" style="cursor:pointer">';
     html += '<div class="vendor-card-head">';
     html += '<div class="vendor-name">' + escapeHtml(v.name) + '</div>';
+    html += '<div class="vendor-governance-badges">';
+    if (governance.expired) {
+      html += '<span class="vendor-governance-badge expired">Expired</span>';
+    }
+    if (governance.doNotUse) {
+      html += '<span class="vendor-governance-badge blocked">Do not use</span>';
+    }
+    html += '</div>';
     html += '<div class="vendor-id"><span><i class="fas fa-fingerprint"></i> ' + escapeHtml(String(v.id)) + '</span>';
     html += '<span class="vendor-category-badge ' + catBadgeCls + '">' + escapeHtml(vCat || 'Uncategorized') + '</span>';
     html += '</div>';
@@ -12461,7 +12736,7 @@ function renderVendors(search) {
       var wced = new Date(v.workersComp); var wcexp = wced < today; var wcdue = daysBetween(today, wced);
       html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Workers Comp</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (wcexp ? 'var(--danger)' : wcdue <= 60 ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.workersComp) + (wcexp ? ' \u26a0\ufe0f EXPIRED' : wcdue <= 60 ? ' (' + wcdue + 'd)' : '') + '</span></div>';
     }
-    if (isVendorDoNotUse(v)) {
+    if (governance.doNotUse) {
       html += '<div class="vendor-row vendor-row-compact" style="color:var(--danger);font-weight:700"><span class="vendor-row-label" style="color:var(--danger)">⛔ Status</span><span class="vendor-row-value">DO NOT USE</span></div>';
     }
     html += '<div class="vendor-row vendor-row-compact" style="align-items:center;gap:6px">' +
@@ -12524,13 +12799,20 @@ function renderNewWOVendorOptions(filterText) {
   var visible = matches.slice(0, limit);
   var opts = ['<option value="">— Select Vendor —</option>'];
   visible.forEach(function(v) {
-    opts.push('<option value="' + escapeHtml(String(v.id)) + '">' + escapeHtml(v.name) + '</option>');
+    var governance = summarizeVendorGovernance(v);
+    var disabledAttr = governance.doNotUse ? ' disabled' : '';
+    var statusSuffix = governance.doNotUse
+      ? ' — Do not use'
+      : (governance.expired ? ' — Expired' : '');
+    opts.push('<option value="' + escapeHtml(String(v.id)) + '"' + disabledAttr + '>' + escapeHtml(v.name + statusSuffix) + '</option>');
   });
 
   if (selectedId && !visible.some(function(v) { return String(v.id) === selectedId; })) {
     var selectedVendor = VENDORS.find(function(v) { return String(v.id) === selectedId; });
     if (selectedVendor) {
-      opts.splice(1, 0, '<option value="' + escapeHtml(String(selectedVendor.id)) + '">' + escapeHtml(selectedVendor.name) + ' (selected)</option>');
+      var selectedGovernance = summarizeVendorGovernance(selectedVendor);
+      var selectedDisabled = selectedGovernance.doNotUse ? ' disabled' : '';
+      opts.splice(1, 0, '<option value="' + escapeHtml(String(selectedVendor.id)) + '"' + selectedDisabled + '>' + escapeHtml(selectedVendor.name) + ' (selected)</option>');
     }
   }
 
@@ -13241,45 +13523,77 @@ async function runRoutingScan() {
   }
 }
 
+function ensureRoutingFilterDelegation() {
+  if (_routingFiltersDelegated) return;
+  var section = $('#sec-routing');
+  if (!section) return;
+
+  section.addEventListener('change', function(e) {
+    var t = e.target;
+    if (!t || !t.id) return;
+
+    if (t.id === 'routingStatusFilter' || t.id === 'routingPmFilter' || t.id === 'routingDaysFilter') {
+      ROUTING_PAGE = 1;
+      loadRoutingEventsAndStats();
+      return;
+    }
+
+    if (t.id === 'routingTradeFilter') {
+      ROUTING_PAGE = 1;
+      renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+      return;
+    }
+
+    if (t.id === 'routingPageSize') {
+      var nextSize = Number(t.value || '25');
+      ROUTING_SETTINGS.pageSize = (nextSize === 50 || nextSize === 100) ? nextSize : 25;
+      ROUTING_PAGE = 1;
+      saveRoutingSettings();
+      renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+      return;
+    }
+  });
+
+  section.addEventListener('input', function(e) {
+    var t = e.target;
+    if (!t || t.id !== 'routingSearch') return;
+    if (_routingSearchDebounceTimer) clearTimeout(_routingSearchDebounceTimer);
+    _routingSearchDebounceTimer = setTimeout(function() {
+      ROUTING_PAGE = 1;
+      renderRoutingEventsTable(t.value || '');
+    }, CONFIG.DEBOUNCE_MS);
+  });
+
+  section.addEventListener('click', function(e) {
+    var prevBtn = e.target.closest('#btnRoutingPrevPage');
+    if (prevBtn) {
+      if (ROUTING_PAGE <= 1) return;
+      ROUTING_PAGE -= 1;
+      renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+      return;
+    }
+
+    var nextBtn = e.target.closest('#btnRoutingNextPage');
+    if (nextBtn) {
+      ROUTING_PAGE += 1;
+      renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
+    }
+  });
+
+  _routingFiltersDelegated = true;
+}
+
 async function initRoutingMonitor() {
   if (!_routingInitDone) {
     _routingInitDone = true;
+
+    ensureRoutingFilterDelegation();
 
     if ($('#btnRoutingRefresh')) {
       $('#btnRoutingRefresh').addEventListener('click', function() { loadRoutingEventsAndStats(); });
     }
     if ($('#btnRoutingScan')) {
       $('#btnRoutingScan').addEventListener('click', function() { runRoutingScan(); });
-    }
-    if ($('#routingSearch')) {
-      $('#routingSearch').addEventListener('input', debounce(function() {
-        ROUTING_PAGE = 1;
-        renderRoutingEventsTable(this.value);
-      }, CONFIG.DEBOUNCE_MS));
-    }
-    if ($('#routingStatusFilter')) {
-      $('#routingStatusFilter').addEventListener('change', function() {
-        ROUTING_PAGE = 1;
-        loadRoutingEventsAndStats();
-      });
-    }
-    if ($('#routingPmFilter')) {
-      $('#routingPmFilter').addEventListener('change', function() {
-        ROUTING_PAGE = 1;
-        loadRoutingEventsAndStats();
-      });
-    }
-    if ($('#routingDaysFilter')) {
-      $('#routingDaysFilter').addEventListener('change', function() {
-        ROUTING_PAGE = 1;
-        loadRoutingEventsAndStats();
-      });
-    }
-    if ($('#routingTradeFilter')) {
-      $('#routingTradeFilter').addEventListener('change', function() {
-        ROUTING_PAGE = 1;
-        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
-      });
     }
     if ($('#btnRoutingCapToggle')) {
       $('#btnRoutingCapToggle').addEventListener('click', function() {
@@ -13314,29 +13628,7 @@ async function initRoutingMonitor() {
         saveRoutingSettings();
       });
     }
-    if ($('#routingPageSize')) {
-      $('#routingPageSize').value = String(ROUTING_SETTINGS.pageSize || 25);
-      $('#routingPageSize').addEventListener('change', function() {
-        var nextSize = Number(this.value || '25');
-        ROUTING_SETTINGS.pageSize = (nextSize === 50 || nextSize === 100) ? nextSize : 25;
-        ROUTING_PAGE = 1;
-        saveRoutingSettings();
-        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
-      });
-    }
-    if ($('#btnRoutingPrevPage')) {
-      $('#btnRoutingPrevPage').addEventListener('click', function() {
-        if (ROUTING_PAGE <= 1) return;
-        ROUTING_PAGE -= 1;
-        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
-      });
-    }
-    if ($('#btnRoutingNextPage')) {
-      $('#btnRoutingNextPage').addEventListener('click', function() {
-        ROUTING_PAGE += 1;
-        renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
-      });
-    }
+    if ($('#routingPageSize')) $('#routingPageSize').value = String(ROUTING_SETTINGS.pageSize || 25);
     if ($('#btnRoutingCapAdd')) {
       $('#btnRoutingCapAdd').addEventListener('click', async function() {
         var trade = await hmPrompt('Work type name (example: Locksmith):', '', { title: 'Add Work Type' });
@@ -13440,6 +13732,7 @@ function renderTemplates() {
 
 function renderErrorLog() {
   var container = $('#errorLog');
+  renderSystemHealthPanel();
   if (API_ERRORS.length === 0) {
     container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:12px"><i class="fas fa-check-circle" style="color:var(--success);margin-right:6px"></i> No API errors recorded this session</div>';
     return;
@@ -13455,6 +13748,7 @@ function renderErrorLog() {
 }
 
 function populateDropdowns() {
+  renderSystemHealthPanel();
   // Properties dropdown for New WO modal (build string first, assign once)
   var propSelect = $('#nwoProperty');
   if (propSelect) {
@@ -13596,6 +13890,10 @@ function wireUpUI() {
       if (addWoBtn) {
         e.stopPropagation();
         var turnKey = addWoBtn.getAttribute('data-add-wo');
+        if (isTurnActionLocked(turnKey)) {
+          showToast('Turn is terminal/closed; link actions are locked', { kind: 'warning' });
+          return;
+        }
         // Use closest detail panel to find the input, avoiding CSS selector issues
         // with special characters (colons, etc.) in the turn key value.
         var detailPanel = addWoBtn.closest('.pipe-detail');
@@ -13614,6 +13912,10 @@ function wireUpUI() {
       if (unlinkBtn) {
         e.stopPropagation();
         var tk = unlinkBtn.getAttribute('data-unlink-wo');
+        if (isTurnActionLocked(tk)) {
+          showToast('Turn is terminal/closed; unlink actions are locked', { kind: 'warning' });
+          return;
+        }
         var woid = unlinkBtn.getAttribute('data-woid');
         unlinkTurnWorkOrder(tk, woid)
           .then(function() { showToast('WO #' + woid + ' removed from turn'); })
@@ -14288,6 +14590,16 @@ function wireUpUI() {
     renderErrorLog();
     showToast('Cleared resolved errors');
   });
+  if ($('#btnRunSystemHealth')) {
+    $('#btnRunSystemHealth').addEventListener('click', function() {
+      runSystemHealthCheck();
+    });
+  }
+  if ($('#btnSendSystemHealthDebug')) {
+    $('#btnSendSystemHealthDebug').addEventListener('click', function() {
+      sendSystemHealthDebugEmail();
+    });
+  }
 
   // Refresh button — force full reload from API
   $('#refreshBtn').addEventListener('click', function() { refreshData(); });
@@ -14865,6 +15177,7 @@ async function initApp() {
   loadWOAgeThresholds();
 
   // Show skeleton loading states
+  setDashboardKpiSkeleton(true);
   if ($('#kanbanBoard')) $('#kanbanBoard').innerHTML = loadingHtml('Checking cache\u2026');
   if ($('#vendorGrid')) $('#vendorGrid').innerHTML = loadingHtml('Checking cache\u2026');
   if ($('#turnPipeline')) $('#turnPipeline').innerHTML = loadingHtml('Checking cache\u2026');
