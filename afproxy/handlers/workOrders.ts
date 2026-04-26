@@ -110,7 +110,7 @@ async function resolveWoUuidFromReference(
       ) || items[0];
       const candidate = String(match?.Id || match?.id || "").trim();
       if (isUuid(candidate)) {
-        // Cache in work_order_map for future lookups.
+        // Cache in work_order_map for future lookups (best-effort).
         const woNum = String(match?.WorkOrderNumber || match?.work_order_number || ref);
         sqlite.execute({
           sql: `INSERT OR IGNORE INTO work_order_map
