@@ -1079,6 +1079,23 @@
     <div><div class="section-title"><i class="fas fa-exclamation-triangle" style="color:var(--accent)"></i> API Error Log &amp; Retry Queue</div><div class="section-subtitle">Exponential backoff for 533 &bull; Retry-After for 429 &bull; Semantic validation for 422</div></div>
     <button class="action-btn" id="btnClearErrors"><i class="fas fa-trash"></i> Clear Resolved</button>
   </div>
+  <div class="systems-health-panel" id="systemsHealthPanel" style="display:none">
+    <div class="systems-health-head">
+      <div>
+        <div class="systems-health-title"><i class="fas fa-heart-pulse"></i> Systems Active Checker</div>
+        <div class="systems-health-subtitle">Manager/Admin only &bull; SQL, middleware, API v0/v2, magic links, reassignment, routing, PM users</div>
+      </div>
+      <div class="systems-health-actions">
+        <button class="action-btn" id="btnRunSystemHealth"><i class="fas fa-stethoscope"></i> Run Checker</button>
+        <button class="action-btn" id="btnSendSystemHealthDebug"><i class="fas fa-paper-plane"></i> Send Debug</button>
+      </div>
+    </div>
+    <div class="systems-health-summary" id="systemHealthSummary">
+      <span class="systems-health-dot idle"></span>
+      <span>No checks run yet</span>
+    </div>
+    <div class="systems-health-grid" id="systemHealthGrid"></div>
+  </div>
   <div class="error-log stagger" id="errorLog"></div>
 </section>
 
@@ -1625,6 +1642,6 @@
 
 <script src="js/app.js"></script>
 
-<script src="login-effects.js"></script>
+<script src="js/login-effects.js"></script>
 </body>
 </html>
