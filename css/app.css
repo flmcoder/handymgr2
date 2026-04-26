@@ -2423,6 +2423,151 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 @media (max-width: 900px){
   #sec-turnboard .pipe-card{box-shadow:none}
   #sec-turnboard .pipe-card:hover{transform:none}
+
+/* ── Turn Pipeline: List / Kanban view toggle ─────────────────────────────── */
+.pipe-view-toggle {
+  display: inline-flex;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px;
+  gap: 2px;
+}
+.pipe-view-btn {
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-muted);
+  transition: var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pipe-view-btn.active { background: var(--bg-card); color: var(--accent); box-shadow: var(--shadow-sm); }
+
+/* ── Turn Kanban Cards ────────────────────────────────────────────────────── */
+.turn-kcard {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+  border-left: 3px solid var(--accent);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.turn-kcard:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: var(--accent); }
+.turn-kcard.t-stalled { border-left-color: var(--danger); }
+.turn-kcard.t-radar   { border-left-color: var(--warning); }
+.turn-kcard.t-upcoming { border-left-color: var(--info); }
+.turn-kcard.t-done    { border-left-color: var(--success); }
+.tkc-unit  { font-weight: 700; font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tkc-prop  { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tkc-metrics {
+  display: flex;
+  justify-content: space-between;
+  background: var(--bg-input);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.tkc-metrics .t-danger { color: var(--danger); }
+}
+
+/* =================================================================
+   WO VIEW TOGGLE — Board / List
+   ================================================================= */
+.wo-view-toggle-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 8px;
+}
+.wo-view-btns {
+  display: inline-flex;
+  gap: 3px;
+  background: var(--bg-input);
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.wo-view-btn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.wo-view-btn:hover { background: var(--bg-card-hover); color: var(--text-secondary); }
+.wo-view-btn.active { background: var(--bg-card); color: var(--accent); border-color: var(--accent); box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+
+/* List layout overrides — applied to #kanbanBoard when in list mode */
+/* List view mode — cleaner cascade without !important overrides */
+#kanbanBoard.layout-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+#kanbanBoard.layout-list .kanban-col {
+  width: 100%;
+  min-width: 0;
+  border-radius: var(--radius);
+  margin-bottom: var(--space-sm);
+}
+#kanbanBoard.layout-list .kanban-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+}
+#kanbanBoard.layout-list .kanban-card {
+  display: grid;
+  /* Use minmax() for responsive columns that don't crush on small screens */
+  grid-template-columns: max-content minmax(200px, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-xs) var(--space-sm);
+  min-height: 0;
+}
+
+/* Mobile fallback for list mode — stack gracefully */
+@media (max-width: 600px) {
+  #kanbanBoard.layout-list .kanban-card {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: var(--space-xs);
+  }
+}
+
+/* =================================================================
+   VENDOR DETAIL MODAL STATUS BADGE
+   ================================================================= */
+#vdmStatusBadge {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid;
+  font-weight: 700;
+  letter-spacing: .3px;
 }
 
 .pm-inbox-fab{

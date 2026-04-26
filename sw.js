@@ -4,7 +4,7 @@ const HM_STATIC_ASSETS = [
   "/index.html",
   "/css/app.css",
   "/js/app.js",
-  "/js/login-effects.js",
+  "/login-effects.js",
   "/assets/logo.png",
 ];
 
