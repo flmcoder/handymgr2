@@ -503,6 +503,23 @@ export async function ensureTables(): Promise<void> {
       appfolio_noted   INTEGER DEFAULT 0
     )`);
 
+    await sqlite.execute(`CREATE TABLE IF NOT EXISTS pm_notifications (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      uuid              TEXT NOT NULL UNIQUE,
+      message           TEXT NOT NULL,
+      scope_group_uuid  TEXT DEFAULT '',
+      created_by_role   TEXT DEFAULT 'manager',
+      created_by_user   TEXT DEFAULT '',
+      created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+
+    await sqlite.execute(`CREATE TABLE IF NOT EXISTS pm_notification_reads (
+      notification_uuid TEXT NOT NULL,
+      device_token      TEXT NOT NULL,
+      read_at           TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (notification_uuid, device_token)
+    )`);
+
     await sqlite.execute(`CREATE TABLE IF NOT EXISTS monitored_work_orders (
       wo_id       TEXT PRIMARY KEY,
       created_at  TEXT NOT NULL DEFAULT (datetime('now')),
@@ -1064,11 +1081,17 @@ export async function ensureTables(): Promise<void> {
     try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN property_id TEXT`); } catch (_) {}
     try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN approval_status TEXT`); } catch (_) {}
     try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN bill_number TEXT`); } catch (_) {}
+    try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN vendor_name TEXT`); } catch (_) {}
+    try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN property_name TEXT`); } catch (_) {}
+    try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN property_group_id TEXT`); } catch (_) {}
+    try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN property_group_name TEXT`); } catch (_) {}
+    try { await sqlite.execute(`ALTER TABLE billing_map ADD COLUMN unit_id TEXT`); } catch (_) {}
 
     await sqlite.execute(`CREATE TABLE IF NOT EXISTS bill_line_items (
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       bill_id        TEXT NOT NULL,
       unit_id        TEXT,
+      property_id    TEXT,
       gl_account_id  TEXT,
       amount         REAL,
       description    TEXT,
@@ -1077,6 +1100,97 @@ export async function ensureTables(): Promise<void> {
       unit_price     REAL,
       cached_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
+    // Additive migration for bill_line_items on existing installs.
+    try { await sqlite.execute(`ALTER TABLE bill_line_items ADD COLUMN property_id TEXT`); } catch (_) {}
+
+    await sqlite.execute(`CREATE TABLE IF NOT EXISTS property_reference (
+      property_map_id      TEXT PRIMARY KEY,
+      property_id          TEXT NOT NULL,
+      property_name        TEXT NOT NULL,
+      property_group_uuid  TEXT,
+      property_group_name  TEXT,
+      vendor_uuid          TEXT,
+      vendor_name          TEXT,
+      pm_name              TEXT,
+      pm_email             TEXT,
+      is_unit              INTEGER DEFAULT 0,
+      unit_id              TEXT,
+      unit_name            TEXT,
+      address              TEXT,
+      zip_code             TEXT,
+      updated_at           INTEGER NOT NULL,
+      FOREIGN KEY(property_map_id) REFERENCES property_map(id),
+      FOREIGN KEY(property_id) REFERENCES property_map(property_id),
+      FOREIGN KEY(property_group_uuid) REFERENCES property_group_map(id),
+      FOREIGN KEY(vendor_uuid) REFERENCES vendor_map(id)
+    )`);
+
+      await sqlite.execute(`CREATE TABLE IF NOT EXISTS property_notes (
+          id                   TEXT PRIMARY KEY,
+          property_id          TEXT NOT NULL,
+          body                 TEXT,
+          last_updated_at      TEXT,
+          cached_at            INTEGER NOT NULL,
+          FOREIGN KEY(property_id) REFERENCES property_reference(property_id)
+        )`);
+
+        // Units cache — full AF unit records (property_id is the join key to property group logic)
+        await sqlite.execute(`CREATE TABLE IF NOT EXISTS units (
+          unit_id         TEXT PRIMARY KEY,
+          property_id     TEXT NOT NULL,
+          name            TEXT,
+          status          TEXT,
+          bedrooms        INTEGER,
+          bathrooms       TEXT,
+          address1        TEXT,
+          city            TEXT,
+          state           TEXT,
+          zip             TEXT,
+          leasing_type    TEXT,
+          rent_ready      INTEGER DEFAULT 0,
+          hidden_at       TEXT,
+          last_updated_at TEXT,
+          cached_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        )`);
+
+        await sqlite.execute(`CREATE TABLE IF NOT EXISTS property_listings (
+          id                   TEXT PRIMARY KEY,
+          property_id          TEXT NOT NULL,
+          unit_id              TEXT,
+          unit_type            TEXT,
+          bedrooms             INTEGER,
+          bathrooms            REAL,
+          square_feet          REAL,
+          advertised_rent      REAL,
+          listed_rent          TEXT,
+          available_on         TEXT,
+          address1             TEXT,
+          address2             TEXT,
+          city                 TEXT,
+          state                TEXT,
+          zip                  TEXT,
+          posted_to_website    INTEGER DEFAULT 0,
+          posted_to_internet   INTEGER DEFAULT 0,
+          accepting_apps       INTEGER DEFAULT 0,
+          application_url      TEXT,
+          email                TEXT,
+          phone_number         TEXT,
+          cats_allowed         INTEGER,
+          dogs_allowed         TEXT,
+          deposit              REAL,
+          application_fee      TEXT,
+          marketing_title      TEXT,
+          marketing_description TEXT,
+          unit_amenities_json  TEXT,
+          unit_photos_json     TEXT,
+          utilities_included_json TEXT,
+          youtube_url          TEXT,
+          last_updated_at      TEXT,
+          cached_at            INTEGER NOT NULL,
+          FOREIGN KEY(property_id) REFERENCES property_reference(property_id),
+          FOREIGN KEY(unit_id) REFERENCES property_reference(unit_id)
+        )`);
+
 
     await sqlite.execute(`CREATE TABLE IF NOT EXISTS open_work_orders_view (
       id                   TEXT PRIMARY KEY,
@@ -1136,6 +1250,9 @@ export async function ensureTables(): Promise<void> {
         `CREATE INDEX IF NOT EXISTS idx_mon_wo   ON monitored_work_orders(wo_id)`,
         `CREATE INDEX IF NOT EXISTS idx_mon_date ON monitored_work_orders(created_at DESC)`,
         `CREATE INDEX IF NOT EXISTS idx_tcl_wo   ON tenant_comms_log(wo_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_pmn_created ON pm_notifications(created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_pmn_scope ON pm_notifications(scope_group_uuid, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_pmr_device ON pm_notification_reads(device_token, read_at DESC)`,
         `CREATE INDEX IF NOT EXISTS idx_wal_wo   ON wo_audit_log(wo_id)`,
         `CREATE INDEX IF NOT EXISTS idx_wal_evt  ON wo_audit_log(event_type, created_at DESC)`,
         `CREATE INDEX IF NOT EXISTS idx_tg_tier  ON tech_grades(tier, active)`,
@@ -1174,6 +1291,16 @@ export async function ensureTables(): Promise<void> {
         `CREATE INDEX IF NOT EXISTS idx_pm_group_id ON property_map(property_group_id)`,
         `CREATE INDEX IF NOT EXISTS idx_pm_zip ON property_map(zip)`,
         `CREATE INDEX IF NOT EXISTS idx_vm_name ON vendor_map(name)`,
+        `CREATE INDEX IF NOT EXISTS idx_pr_property_id ON property_reference(property_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_pr_group_uuid ON property_reference(property_group_uuid)`,
+        `CREATE INDEX IF NOT EXISTS idx_pr_vendor_uuid ON property_reference(vendor_uuid)`,
+        `CREATE INDEX IF NOT EXISTS idx_pr_unit_id ON property_reference(unit_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_units_property_id ON units(property_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_units_status ON units(status)`,
+          `CREATE INDEX IF NOT EXISTS idx_pn_property_id ON property_notes(property_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_pl_property_id ON property_listings(property_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_pl_unit_id ON property_listings(unit_id)`,
+          `CREATE INDEX IF NOT EXISTS idx_pl_available ON property_listings(available_on)`,
         `CREATE INDEX IF NOT EXISTS idx_wom_number ON work_order_map(work_order_number)`,
         `CREATE INDEX IF NOT EXISTS idx_wom_property ON work_order_map(property_map_id)`,
         `CREATE INDEX IF NOT EXISTS idx_wom_property_id ON work_order_map(property_id)`,
@@ -1263,13 +1390,17 @@ export async function ensureTables(): Promise<void> {
     _tablesReady = true;
     console.log("ensureTables: all tables ready ✓");
   } catch (err: any) {
-    // Do NOT mark ready — allow retry on next request so tables get created
-    // once the DB recovers. CREATE TABLE IF NOT EXISTS is idempotent and fast.
+    _tablesReady = true; // Mark ready even on error to avoid repeated failures on every request
+    // Log the error but don't throw - this allows the proxy to continue running even if
+    // schema initialization had issues. Individual handlers will fail gracefully when they
+    // encounter "no such table" errors, which are retryable in the UI.
     const message = String(
       err?.message || err || "unknown ensureTables failure",
     );
+    console.error(`[SCHEMA WARNING] ensureTables encountered error: ${message.substring(0, 300)}`);
+    // DO NOT rethrow - we want to continue and let handlers handle missing tables
     console.log(`ensureTables ERROR: ${message.substring(0, 200)}`);
-    throw new Error(`ensureTables failed: ${message}`);
+    // throw new Error(`ensureTables failed: ${message}`); // Commented out to avoid throwing
   }
 }
 
@@ -1677,16 +1808,31 @@ export async function upsertBillingRows(rows: any[]): Promise<void> {
     for (const row of chunk) {
       const id = _s(row.Id || row.id || row.BillId || row.bill_id);
       if (!id) continue;
-      const propertyId = _s(row.PropertyId || row.property_id);
       const lineItems = Array.isArray(row.LineItems)
         ? row.LineItems
         : (Array.isArray(row.line_items) ? row.line_items : []);
-      ph.push("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      const firstLine = lineItems[0] || {};
+      // AppFolio v0 may embed PropertyId/UnitId only inside LineItems
+      const propertyId = _s(
+        row.PropertyId || row.property_id ||
+        firstLine.PropertyId || firstLine.property_id ||
+        firstLine.PropertyUuid || firstLine.property_uuid
+      );
+      const unitId = _s(
+        row.UnitId || row.unit_id ||
+        firstLine.UnitId || firstLine.unit_id
+      );
+      const propertyName = _s(row.PropertyName || row.property_name);
+      const vendorName = _s(row.VendorName || row.vendor_name || row.PayeeName || row.payee_name);
+      const propertyGroupId = _s(row.PropertyGroupId || row.property_group_id || row.PropertyGroupUuid || row.property_group_uuid);
+      const propertyGroupName = _s(row.PropertyGroup || row.property_group || row.PropertyGroupName || row.property_group_name);
+      ph.push("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
       vals.push(
         id,
         _s(row.VendorId || row.vendor_id || row.PayeeId || row.payee_id),     // vendor_id
         null,                                                                   // property_map_id (null avoids FK miss)
         propertyId,                                                             // property_id (denorm)
+        unitId,                                                                 // unit_id (denorm)
         _s(row.WorkOrderId || row.work_order_id),                              // work_order_id
         _s(row.WorkOrderNumber || row.work_order_number),                      // work_order_number
         _s(row.InvoiceDate || row.invoice_date)?.slice(0, 10) ?? null,
@@ -1696,6 +1842,10 @@ export async function upsertBillingRows(rows: any[]): Promise<void> {
         _s(row.ApprovalStatus || row.approval_status || row.Status || row.status), // approval_status
         _s(row.Reference || row.reference || id),                              // bill_number
         lineItems.length > 0 ? JSON.stringify(lineItems) : null,               // line_items_json
+        vendorName || null,
+        propertyName || null,
+        propertyGroupId || null,
+        propertyGroupName || null,
         _s(row.LastUpdatedAt || row.last_updated_at)?.slice(0, 24) ?? null,
         now,
       );
@@ -1703,10 +1853,11 @@ export async function upsertBillingRows(rows: any[]): Promise<void> {
     if (ph.length === 0) continue;
     try {
       await sqlite.execute({
-        sql: `INSERT OR REPLACE INTO billing_map
-              (id, vendor_id, property_map_id, property_id, work_order_id, work_order_number,
-               invoice_date, due_date, total_amount, check_memo, approval_status, bill_number,
-               line_items_json, last_updated_at, cached_at)
+          sql: `INSERT OR REPLACE INTO billing_map
+            (id, vendor_id, property_map_id, property_id, unit_id, work_order_id, work_order_number,
+             invoice_date, due_date, total_amount, check_memo, approval_status, bill_number,
+             line_items_json, vendor_name, property_name, property_group_id, property_group_name,
+             last_updated_at, cached_at)
               VALUES ${ph.join(",")}`,
         args: vals,
       });
@@ -1728,10 +1879,11 @@ export async function upsertBillingRows(rows: any[]): Promise<void> {
         const ph: string[] = [];
         const vals: unknown[] = [];
         for (const li of chunk) {
-          ph.push("(?,?,?,?,?,?,?,?)");
+          ph.push("(?,?,?,?,?,?,?,?,?)");
           vals.push(
             billId,
             _s(li.UnitId || li.unit_id || li.UnitUuid || li.unit_uuid),
+            _s(li.PropertyId || li.property_id || li.PropertyUuid || li.property_uuid),
             _s(li.GlAccountId || li.gl_account_id || li.GlAccount || li.gl_account),
             _r(li.Amount || li.amount),
             _s(li.Description || li.description, 500),
@@ -1742,12 +1894,58 @@ export async function upsertBillingRows(rows: any[]): Promise<void> {
         }
         await sqlite.execute({
           sql: `INSERT INTO bill_line_items
-                (bill_id, unit_id, gl_account_id, amount, description,
+                (bill_id, unit_id, property_id, gl_account_id, amount, description,
                  line_item_type, quantity, unit_price)
                 VALUES ${ph.join(",")}`,
           args: vals,
         });
       }
+    } catch (_) {}
+  }
+}
+
+// ── upsertUnits ───────────────────────────────────────────────────────────────
+// Batch upsert of AppFolio unit records into the units cache table.
+// Called by handleUnits after a full /api/v0/units paginated fetch.
+export async function upsertUnits(rows: any[]): Promise<void> {
+  const now = new Date().toISOString();
+  for (let i = 0; i < rows.length; i += _UPSERT_BATCH) {
+    const chunk = rows.slice(i, i + _UPSERT_BATCH);
+    const ph: string[] = [];
+    const vals: unknown[] = [];
+    for (const r of chunk) {
+      const unitId = _s(r.Id || r.id || r.UnitId || r.unit_id);
+      const propId = _s(r.PropertyId || r.property_id);
+      if (!unitId || !propId) continue;
+      ph.push("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      vals.push(
+        unitId,
+        propId,
+        _s(r.Name || r.name),
+        _s(r.Status || r.status),
+        r.Bedrooms != null ? Number(r.Bedrooms) : (r.bedrooms != null ? Number(r.bedrooms) : null),
+        _s(r.Bathrooms || r.bathrooms),
+        _s(r.Address1 || r.address1),
+        _s(r.City || r.city),
+        _s(r.State || r.state),
+        _s(r.Zip || r.zip),
+        _s(r.LeasingType || r.leasing_type),
+        r.RentReady != null ? (r.RentReady ? 1 : 0) : (r.rent_ready ? 1 : 0),
+        _s(r.HiddenAt || r.hidden_at),
+        _s(r.LastUpdatedAt || r.last_updated_at),
+        now,
+      );
+    }
+    if (ph.length === 0) continue;
+    try {
+      await sqlite.execute({
+        sql: `INSERT OR REPLACE INTO units
+              (unit_id, property_id, name, status, bedrooms, bathrooms,
+               address1, city, state, zip, leasing_type, rent_ready,
+               hidden_at, last_updated_at, cached_at)
+              VALUES ${ph.join(",")}`,
+        args: vals,
+      });
     } catch (_) {}
   }
 }

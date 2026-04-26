@@ -287,10 +287,11 @@ export async function createMagicLinkSession(
         JSON.stringify(extraPayload || {}),
       ],
     });
-  } catch (err) {
+  } catch (err: unknown) {
     // CRITICAL: if DB write fails, the single-use enforcement is broken.
     // Fail loudly so the caller knows the token is unsafe to return.
-    console.error(`createMagicLinkSession DB write FAILED for WO ${woId}:`, String(err?.message || err).substring(0, 220));
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`createMagicLinkSession DB write FAILED for WO ${woId}:`, errMsg.substring(0, 220));
     throw new Error(`Failed to persist magic link token — DB write error.`);
   }
 

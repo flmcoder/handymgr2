@@ -235,6 +235,34 @@ function buildPortalHtml(ctx: {
         </div>
 
         <div class="acc-item">
+          <button class="acc-trigger" data-target="acc-status" aria-expanded="false" type="button">
+            <span class="acc-ico">🛠️</span>
+            <span class="acc-lbl" id="accStatusLabel">Update Work Order</span>
+            <span class="acc-chev">›</span>
+          </button>
+          <div class="acc-body" id="acc-status" hidden>
+            <div class="acc-body-inner">
+              <div class="acc-fld">
+                <label for="status-select" id="statusLabel">Status</label>
+                <select id="status-select" class="select">
+                  <option value="">Select…</option>
+                  <option value="Waiting">Waiting</option>
+                  <option value="Work Completed">Work Completed</option>
+                </select>
+              </div>
+              <div class="acc-fld">
+                <label for="status-note" id="statusNoteLabel">Completion / Exception Note</label>
+                <textarea id="status-note" class="textarea" maxlength="1200" placeholder="Summarize what was completed, what is blocked, or what dispatch should know."></textarea>
+              </div>
+              <div class="acc-actions">
+                <button class="btn primary portal-action-btn" id="btn-status" type="button">Save Status Update</button>
+                <p class="acc-hint" id="statusHint">Writes an AppFolio status update and a work-order note.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="acc-item">
           <button class="acc-trigger" data-target="acc-note" aria-expanded="false" type="button">
             <span class="acc-ico">📝</span>
             <span class="acc-lbl" id="accNoteLabel">Leave a Note</span>
@@ -272,6 +300,11 @@ function buildPortalHtml(ctx: {
                 <div class="acc-contact-name" id="ct-pm-name">Fort Lowell Realty</div>
                 <a class="acc-contact-link" id="ct-pm-phone" href="#">Not available</a>
               </div>
+              <div class="acc-contact">
+                <div class="acc-contact-role" id="contactTechRole">Technician</div>
+                <div class="acc-contact-name" id="ct-tech-name">Assigned technician</div>
+                <a class="acc-contact-link" id="ct-tech-phone" href="#">Not available</a>
+              </div>
             </div>
           </div>
         </div>
@@ -285,16 +318,17 @@ function buildPortalHtml(ctx: {
           <div class="acc-body" id="acc-photo" hidden>
             <div class="acc-body-inner">
               <div class="acc-fld">
-                <label for="photo-file" id="photoLabel">Photo</label>
-                <input type="file" id="photo-file" accept="image/jpeg,image/png,image/webp" class="input" />
+                <label for="photo-before-file" id="photoBeforeLabel">Before Photo</label>
+                <input type="file" id="photo-before-file" accept="image/jpeg,image/png,image/webp" class="input" />
               </div>
               <div class="acc-fld">
-                <label for="photo-caption" id="photoCaptionLabel">Caption (optional)</label>
-                <input type="text" id="photo-caption" class="input" maxlength="200" placeholder="e.g. Damaged pipe under sink" />
+                <label for="photo-after-file" id="photoAfterLabel">After Photo</label>
+                <input type="file" id="photo-after-file" accept="image/jpeg,image/png,image/webp" class="input" />
               </div>
               <div class="acc-actions">
-                <button class="btn primary portal-action-btn" id="btn-photo" type="button">Upload Photo</button>
-                <p class="acc-hint" id="uploadCaveat">JPEG/PNG/WebP. Max 10MB. Upload endpoint is not enabled in this build yet.</p>
+                <button class="btn primary portal-action-btn" id="btn-photo-before" type="button">Upload Before Photo</button>
+                <button class="btn secondary portal-action-btn" id="btn-photo-after" type="button">Upload After Photo</button>
+                <p class="acc-hint" id="uploadCaveat">JPEG/PNG/WebP multipart uploads are supported here. If AppFolio rejects a file, the exact error will display above.</p>
               </div>
             </div>
           </div>
@@ -363,17 +397,19 @@ function buildPortalHtml(ctx: {
 </div>
 <script>
 const TOKEN = ${escapeJsonForScript(ctx.token)};
-const PROXY = ${
+const CONFIGURED_PROXY = ${
     escapeJsonForScript(String(ctx.proxyBaseUrl || "").replace(/\/+$/, ""))
   };
+const RUNTIME_PROXY = String(window.location.origin || '') + String(window.location.pathname || '');
+const PROXY = (CONFIGURED_PROXY || RUNTIME_PROXY).replace(/\/+$/, '');
 const INITIAL_CONTEXT = ${escapeJsonForScript(ctx.initialContext)};
 const BRAND = ${escapeJsonForScript(ctx.branding)};
 const I18N = {
   en: {
-    sub: 'Tech Dispatch Portal', overview: 'Overview', workOrder: 'Work Order', tech: 'Technician', address: 'Address', tenant: 'Resident', description: 'Description', access: 'Access', vendor: 'Vendor Notes', messages: 'Resident Messages', messagesHint: 'Tenant SMS templates', enroute: 'I\'m On My Way', scheduleText: 'Let\'s Schedule a Visit', today: 'Arriving Today', messageFooter: 'Sending one marks tenant messaging complete. Schedule/notes/reassign actions remain available.', scheduleTitle: 'Schedule Work', scheduleHint: 'Updates the portal record and writes an AppFolio note', date: 'Date', window: 'Arrival Window', scheduleBtn: 'Schedule', rescheduleBtn: 'Reschedule', updateTitle: 'Update Work Order', updateHint: 'Notes and exception reporting', addNote: 'Add Note', saveNote: 'Save Note', attempts: 'No-Contact Attempts', reassignReason: 'Reassignment Reason', details: 'Details', noContact: 'Resident Not Communicating', reassign: 'Request Reassignment', uploadCaveat: 'Photo uploads are not enabled in this portal build yet. Use notes for now and we can add multipart upload next.', contacts: 'Contacts', contactsHint: 'Tap to call or email', footer: 'This mobile view uses your existing HandyManager token flow and additive portal APIs.', scheduledFor: 'Scheduled', noData: '—', pmPhone: 'Property Manager Phone', pmEmail: 'Property Manager Email', residentPhone: 'Resident Phone', residentEmail: 'Resident Email', techPhone: 'Technician Phone', open: 'Open', invalid: 'This portal link is invalid or expired.', success: 'Saved successfully.', network: 'Network error — please try again.'
+    sub: 'Tech Dispatch Portal', overview: 'Overview', workOrder: 'Work Order', tech: 'Technician', address: 'Address', tenant: 'Resident', description: 'Description', access: 'Access', vendor: 'Vendor Notes', messages: 'Resident Messages', messagesHint: 'Tenant SMS templates', enroute: 'I\'m On My Way', scheduleText: 'Let\'s Schedule a Visit', today: 'Arriving Today', messageFooter: 'Sending one marks tenant messaging complete. Schedule, status, notes, uploads, and reassignment remain available.', scheduleTitle: 'Schedule Work', scheduleHint: 'Updates the portal record and writes an AppFolio note', date: 'Date', window: 'Arrival Window', scheduleBtn: 'Schedule', rescheduleBtn: 'Reschedule', updateTitle: 'Update Work Order', updateHint: 'Status updates, completion notes, and exception reporting', statusLabel: 'Status', statusNoteLabel: 'Completion / Exception Note', statusSave: 'Save Status Update', statusHint: 'Writes an AppFolio status update and a work-order note.', addNote: 'Add Note', saveNote: 'Save Note', attempts: 'No-Contact Attempts', reassignReason: 'Reassignment Reason', details: 'Details', noContact: 'Resident Not Communicating', reassign: 'Request Reassignment', uploadCaveat: 'JPEG/PNG/WebP multipart uploads are supported here. If AppFolio rejects a file, the exact error will display above.', photoBefore: 'Before Photo', photoAfter: 'After Photo', uploadBefore: 'Upload Before Photo', uploadAfter: 'Upload After Photo', contacts: 'Contacts', contactsHint: 'Tap to call or text', footer: 'This mobile view uses your existing HandyManager token flow and additive portal APIs.', scheduledFor: 'Scheduled', noData: '—', pmPhone: 'Property Manager Phone', pmEmail: 'Property Manager Email', residentPhone: 'Resident Phone', residentEmail: 'Resident Email', techPhone: 'Technician Phone', open: 'Open', invalid: 'This portal link is invalid or expired.', success: 'Saved successfully.', network: 'Network error — please try again.'
   },
   es: {
-    sub: 'Portal tecnico de despacho', overview: 'Resumen', workOrder: 'Orden de trabajo', tech: 'Tecnico', address: 'Direccion', tenant: 'Residente', description: 'Descripcion', access: 'Acceso', vendor: 'Notas del proveedor', messages: 'Mensajes al residente', messagesHint: 'Plantillas SMS al residente', enroute: 'Voy en camino', scheduleText: 'Programar visita', today: 'Llego hoy', messageFooter: 'Enviar uno marca los mensajes al residente como completados. Programar/notas/reasignar siguen disponibles.', scheduleTitle: 'Programar trabajo', scheduleHint: 'Actualiza el portal y escribe una nota en AppFolio', date: 'Fecha', window: 'Ventana de llegada', scheduleBtn: 'Programar', rescheduleBtn: 'Reprogramar', updateTitle: 'Actualizar orden', updateHint: 'Notas y reportes de excepcion', addNote: 'Agregar nota', saveNote: 'Guardar nota', attempts: 'Intentos sin contacto', reassignReason: 'Motivo de reasignacion', details: 'Detalles', noContact: 'Residente no responde', reassign: 'Solicitar reasignacion', uploadCaveat: 'La carga de fotos aun no esta habilitada en este portal. Use notas por ahora y la agregamos despues.', contacts: 'Contactos', contactsHint: 'Toque para llamar o enviar correo', footer: 'Esta vista movil usa el flujo existente de tokens de HandyManager y las APIs aditivas del portal.', scheduledFor: 'Programado', noData: '—', pmPhone: 'Telefono del administrador', pmEmail: 'Correo del administrador', residentPhone: 'Telefono del residente', residentEmail: 'Correo del residente', techPhone: 'Telefono del tecnico', open: 'Abrir', invalid: 'Este enlace del portal no es valido o ya vencio.', success: 'Guardado correctamente.', network: 'Error de red — vuelva a intentar.'
+    sub: 'Portal tecnico de despacho', overview: 'Resumen', workOrder: 'Orden de trabajo', tech: 'Tecnico', address: 'Direccion', tenant: 'Residente', description: 'Descripcion', access: 'Acceso', vendor: 'Notas del proveedor', messages: 'Mensajes al residente', messagesHint: 'Plantillas SMS al residente', enroute: 'Voy en camino', scheduleText: 'Programar visita', today: 'Llego hoy', messageFooter: 'Enviar uno marca los mensajes al residente como completados. Programar, estado, notas, fotos y reasignar siguen disponibles.', scheduleTitle: 'Programar trabajo', scheduleHint: 'Actualiza el portal y escribe una nota en AppFolio', date: 'Fecha', window: 'Ventana de llegada', scheduleBtn: 'Programar', rescheduleBtn: 'Reprogramar', updateTitle: 'Actualizar orden', updateHint: 'Cambios de estado, notas de finalizacion y excepciones', statusLabel: 'Estado', statusNoteLabel: 'Nota de finalizacion / excepcion', statusSave: 'Guardar estado', statusHint: 'Escribe un cambio de estado y una nota en la orden.', addNote: 'Agregar nota', saveNote: 'Guardar nota', attempts: 'Intentos sin contacto', reassignReason: 'Motivo de reasignacion', details: 'Detalles', noContact: 'Residente no responde', reassign: 'Solicitar reasignacion', uploadCaveat: 'Se admiten cargas multipart JPEG/PNG/WebP. Si AppFolio rechaza un archivo, el error exacto aparecera arriba.', photoBefore: 'Foto antes', photoAfter: 'Foto despues', uploadBefore: 'Subir foto antes', uploadAfter: 'Subir foto despues', contacts: 'Contactos', contactsHint: 'Toque para llamar o enviar texto', footer: 'Esta vista movil usa el flujo existente de tokens de HandyManager y las APIs aditivas del portal.', scheduledFor: 'Programado', noData: '—', pmPhone: 'Telefono del administrador', pmEmail: 'Correo del administrador', residentPhone: 'Telefono del residente', residentEmail: 'Correo del residente', techPhone: 'Telefono del tecnico', open: 'Abrir', invalid: 'Este enlace del portal no es valido o ya vencio.', success: 'Guardado correctamente.', network: 'Error de red — vuelva a intentar.'
   }
 };
 const state = { portal: Object.assign({}, INITIAL_CONTEXT || {}), lang: 'en', busy: false, autoOpenedSchedule: false };
@@ -382,6 +418,7 @@ function byId(id){ return document.getElementById(id); }
 function setText(id, value){ var el = byId(id); if(el) el.textContent = String(value || ''); }
 function setStatus(type, text){ var el=byId('heroStatus'); if(!el) return; if(!text){ el.className='status'; el.textContent=''; return; } el.className='status show '+type; el.textContent=text; }
 function safe(v){ return String(v || '').trim(); }
+function buildPortalActionUrl(action){ return PROXY + '?action=' + encodeURIComponent(action); }
 function setBusy(next){ state.busy=!!next; Array.prototype.forEach.call(document.querySelectorAll('.portal-action-btn, .portal-message-btn'), function(btn){ btn.disabled=!!next; }); if(state.portal.used){ Array.prototype.forEach.call(document.querySelectorAll('.portal-message-btn'), function(btn){ btn.disabled = true; }); } }
 function applyLangButtons(){ byId('langEn').classList.toggle('active', state.lang==='en'); byId('langEs').classList.toggle('active', state.lang==='es'); }
 function openAccordion(targetId, doScroll){
@@ -460,13 +497,23 @@ function render(){
   setText('btnScheduleText', t('scheduleText'));
   setText('btnToday', t('today'));
   setText('messageFooter', t('messageFooter'));
+  setText('accStatusLabel', t('updateTitle'));
+  setText('statusLabel', t('statusLabel'));
+  setText('statusNoteLabel', t('statusNoteLabel'));
+  setText('btn-status', t('statusSave'));
+  setText('statusHint', t('statusHint'));
   setText('scheduledDateLabel', t('date'));
   setText('scheduledWindowLabel', t('window'));
   setText('portalNoteLabel', t('addNote'));
+  setText('btn-note', t('saveNote'));
   setText('noContactAttemptsLabel', t('attempts'));
   setText('reassignReasonLabel', t('reassignReason'));
   setText('portalDetailsLabel', t('details'));
   setText('uploadCaveat', t('uploadCaveat'));
+  setText('photoBeforeLabel', t('photoBefore'));
+  setText('photoAfterLabel', t('photoAfter'));
+  setText('btn-photo-before', t('uploadBefore'));
+  setText('btn-photo-after', t('uploadAfter'));
   setText('portalFooter', t('footer'));
   setText('woValue', safe(p.wo_number) || safe(p.wo_id) || t('noData'));
   setText('techValue', safe(p.tech_name) || t('noData'));
@@ -494,6 +541,13 @@ function render(){
     pmPhone.textContent = pm || 'Not available';
     pmPhone.href = pm ? ('tel:' + pm) : '#';
   }
+  setText('ct-tech-name', safe(p.tech_name) || 'Assigned technician');
+  var techPhone = byId('ct-tech-phone');
+  if(techPhone){
+    var tech = safe(p.tech_phone);
+    techPhone.textContent = tech || 'Not available';
+    techPhone.href = tech ? ('tel:' + tech) : '#';
+  }
   if (p.scheduled_date && !state.autoOpenedSchedule) {
     openAccordion('acc-schedule', false);
     state.autoOpenedSchedule = true;
@@ -502,7 +556,7 @@ function render(){
   Array.prototype.forEach.call(document.querySelectorAll('.portal-message-btn'), function(btn){ btn.disabled = !!p.used || state.busy; });
 }
 async function api(action, body){
-  var resp = await fetch(PROXY + '?action=' + encodeURIComponent(action), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(Object.assign({ token:TOKEN, lang_pref: state.lang }, body || {})) });
+  var resp = await fetch(buildPortalActionUrl(action), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(Object.assign({ token:TOKEN, lang_pref: state.lang }, body || {})) });
   var data = await resp.json().catch(function(){ return { ok:false, error:t('network') }; });
   if(!data.ok) throw new Error(data.error || t('network'));
   return data;
@@ -520,16 +574,33 @@ async function runAction(kind, fn){
   catch(e){ setStatus('err', e.message || t('network')); }
   finally{ setBusy(false); render(); }
 }
+async function uploadPortalPhoto(phase, inputId){
+  var input = byId(inputId);
+  var file = input && input.files && input.files[0] ? input.files[0] : null;
+  if(!file) throw new Error('Select a photo before uploading.');
+  if(file.size > 10 * 1024 * 1024) throw new Error('Photo exceeds 10MB limit.');
+  var resp = await fetch(buildPortalActionUrl('portal_photo_upload') + '&token=' + encodeURIComponent(TOKEN) + '&phase=' + encodeURIComponent(phase), {
+    method:'POST',
+    headers:{ 'Content-Type': file.type || 'application/octet-stream' },
+    body: file
+  });
+  var data = await resp.json().catch(function(){ return { ok:false, error:t('network') }; });
+  if(!data.ok) throw new Error(data.error || t('network'));
+  if(input) input.value='';
+  return data;
+}
 function bindClick(id, handler){ var el = byId(id); if(el) el.addEventListener('click', handler); }
 bindClick('langEn', function(){ state.lang='en'; try{localStorage.setItem('hm_portal_lang','en');}catch(_){ } render(); });
 bindClick('langEs', function(){ state.lang='es'; try{localStorage.setItem('hm_portal_lang','es');}catch(_){ } render(); });
 Array.prototype.forEach.call(document.querySelectorAll('.portal-message-btn'), function(btn){ btn.addEventListener('click', function(){ var template = btn.getAttribute('data-template') || ''; runAction('Sending…', async function(){ var data = await api('send_tenant_sms', { template: template }); if(data && data.message) setStatus('ok', data.message); if(data && data.already_sent){ state.portal.used = true; state.portal.used_template = data.template || state.portal.used_template || template; return; } state.portal.used = true; state.portal.used_template = data.template || template; }); }); });
 bindClick('btn-schedule', function(){ runAction('Saving schedule…', async function(){ await api('portal_schedule', { scheduled_date: byId('sched-date').value, scheduled_window: byId('sched-window').value }); }); });
 bindClick('btn-reschedule', function(){ runAction('Saving reschedule…', async function(){ await api('portal_reschedule', { scheduled_date: byId('sched-date').value, scheduled_window: byId('sched-window').value }); }); });
+bindClick('btn-status', function(){ runAction('Saving status…', async function(){ await api('portal_status', { status: byId('status-select').value, note_text: byId('status-note').value }); if(byId('status-note')) byId('status-note').value=''; if(byId('status-select')) byId('status-select').value=''; }); });
 bindClick('btn-note', function(){ runAction('Saving note…', async function(){ await api('portal_note', { note_text: byId('note-text').value }); byId('note-text').value=''; var c = byId('note-chars'); if(c) c.textContent='0'; }); });
 bindClick('btn-nocontact', function(){ runAction('Sending no-contact report…', async function(){ await api('portal_no_contact', { attempts: byId('nocontact-attempts').value, details: '' }); }); });
 bindClick('btn-reassign', function(){ runAction('Submitting reassignment request…', async function(){ await api('portal_reassign_request', { reason: byId('reassign-reason').value, details: byId('reassign-details').value }); }); });
-bindClick('btn-photo', function(){ setStatus('info', 'Photo upload endpoint is not enabled in this portal build yet.'); });
+bindClick('btn-photo-before', function(){ runAction('Uploading before photo…', async function(){ await uploadPortalPhoto('before', 'photo-before-file'); }); });
+bindClick('btn-photo-after', function(){ runAction('Uploading after photo…', async function(){ await uploadPortalPhoto('after', 'photo-after-file'); }); });
 (function init(){
   try{ var saved = localStorage.getItem('hm_portal_lang'); if(saved==='es'||saved==='en') state.lang=saved; }catch(_){ }
   initAccordion();

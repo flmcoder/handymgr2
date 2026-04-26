@@ -1,3 +1,5 @@
 {
-    "deno.enable": true
+    "deno.enable": true,
+    "chat.agent.maxRequests": 100,
+    "chat.checkpoints.showFileChanges": true
 }

@@ -34,7 +34,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.2.4';
+var APP_VERSION = 'v9.6.9';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 
@@ -48,6 +48,19 @@ function compareVersions(v1, v2) {
     if (n1 < n2) return -1;
   }
   return 0;
+}
+
+function syncDisplayedAppVersion() {
+  var bareVersion = String(APP_VERSION || '').replace(/^v/i, '');
+  var buildTag = $('#buildBadgeTag');
+  var vaultVersion = $('#vaultSessionVersion');
+  if (buildTag) buildTag.textContent = bareVersion;
+  if (vaultVersion) vaultVersion.textContent = 'Secured Session: ' + APP_VERSION;
+}
+
+syncDisplayedAppVersion();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', syncDisplayedAppVersion);
 }
 
 function applyBrandConfig(brand) {
@@ -134,13 +147,46 @@ function daysBetween(a, b) {
   var db = typeof b === 'string' ? new Date(b) : b;
   return Math.round(Math.abs(db - da) / 86400000);
 }
-function currency(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0 }); }
-function showToast(msg, durationOrOpts) {
-  var t = $('#toast');
-  var iconEl = $('#toastIcon');
-  var msgEl = $('#toastMsg');
-  if (!t || !msgEl) return;
+function amountToNumber(value) {
+  if (typeof value === 'number') return isFinite(value) ? value : 0;
+  var raw = String(value == null ? '' : value).trim();
+  if (!raw) return 0;
+  var negative = false;
+  if (/^\(.*\)$/.test(raw)) {
+    negative = true;
+    raw = raw.slice(1, -1);
+  }
+  var normalized = raw.replace(/[^0-9.\-]/g, '');
+  var n = parseFloat(normalized);
+  if (!isFinite(n)) return 0;
+  return negative ? -Math.abs(n) : n;
+}
+function currency(n, digits) {
+  var d = (typeof digits === 'number' && digits >= 0) ? digits : 0;
+  return '$' + amountToNumber(n).toLocaleString('en-US', {
+    minimumFractionDigits: d,
+    maximumFractionDigits: d,
+  });
+}
+function getToastStackRoot() {
+  var root = document.getElementById('toastStack');
+  if (root) return root;
+  root = document.createElement('div');
+  root.id = 'toastStack';
+  root.style.position = 'fixed';
+  root.style.right = '20px';
+  root.style.bottom = '20px';
+  root.style.zIndex = '320';
+  root.style.display = 'flex';
+  root.style.flexDirection = 'column';
+  root.style.gap = '8px';
+  root.style.maxWidth = 'min(92vw, 420px)';
+  root.style.pointerEvents = 'none';
+  document.body.appendChild(root);
+  return root;
+}
 
+function showToast(msg, durationOrOpts) {
   var opts = {};
   if (typeof durationOrOpts === 'number') {
     opts.duration = durationOrOpts;
@@ -157,21 +203,83 @@ function showToast(msg, durationOrOpts) {
   };
   var meta = kindMap[kind] || kindMap.info;
 
-  msgEl.textContent = msg;
-  t.style.borderColor = meta.border;
-  t.style.display = 'block';
+  var root = getToastStackRoot();
+  var toast = document.createElement('div');
+  toast.style.pointerEvents = 'auto';
+  toast.style.background = 'var(--bg-card)';
+  toast.style.border = '1px solid ' + meta.border;
+  toast.style.borderRadius = 'var(--radius)';
+  toast.style.padding = '10px 14px';
+  toast.style.fontSize = '13px';
+  toast.style.color = 'var(--text-primary)';
+  toast.style.boxShadow = 'var(--shadow)';
+  toast.style.display = 'flex';
+  toast.style.alignItems = 'flex-start';
+  toast.style.gap = '8px';
+  toast.style.animation = 'fadeIn 0.2s ease';
+  toast.innerHTML =
+    '<span style="margin-top:1px;color:' + meta.border + '"><i class="fas ' + (opts.iconClass || meta.icon) + '"></i></span>' +
+    '<span style="line-height:1.35;word-break:break-word">' + escapeHtml(String(msg || '')) + '</span>';
 
-  if (iconEl) {
-    var iconClass = opts.iconClass || meta.icon;
-    iconEl.innerHTML = '<i class="fas ' + iconClass + '"></i>';
-    iconEl.style.color = meta.border;
+  root.appendChild(toast);
+  if (root.children.length > 6) {
+    root.removeChild(root.children[0]);
   }
 
-  clearTimeout(t._tid);
-  t._tid = setTimeout(function() {
-    t.style.display = 'none';
+  setTimeout(function() {
+    if (toast && toast.parentNode) toast.parentNode.removeChild(toast);
   }, opts.duration || 3500);
 }
+
+function registerOfflineServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  if (!window.isSecureContext && location.hostname !== 'localhost') return;
+
+  navigator.serviceWorker.register('/sw.js')
+    .then(function(reg) {
+      if (reg && reg.waiting) {
+        showToast('Offline mode ready', { kind: 'info', duration: 1800, iconClass: 'fa-wifi' });
+      }
+    })
+    .catch(function(err) {
+      console.warn('Service worker registration failed:', err && err.message ? err.message : err);
+    });
+
+  navigator.serviceWorker.addEventListener('message', function(evt) {
+    var data = evt && evt.data ? evt.data : null;
+    if (!data || typeof data !== 'object') return;
+
+    if (data.type === 'HM_REQUEST_QUEUED') {
+      var n = Number(data.remaining || 0);
+      showToast('Offline: request queued' + (n > 0 ? ' (' + n + ' pending)' : ''), {
+        kind: 'warning',
+        duration: 2800,
+        iconClass: 'fa-cloud-arrow-up'
+      });
+      return;
+    }
+
+    if (data.type === 'HM_QUEUE_REPLAY_RESULT') {
+      var sent = Number(data.sent || 0);
+      var remaining = Number(data.remaining || 0);
+      if (sent > 0) {
+        showToast('Synced ' + sent + ' queued request' + (sent === 1 ? '' : 's') + (remaining > 0 ? '; ' + remaining + ' still pending' : ''), {
+          kind: 'success',
+          duration: 3200,
+          iconClass: 'fa-cloud-check'
+        });
+      }
+    }
+  });
+
+  window.addEventListener('online', function() {
+    if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return;
+    navigator.serviceWorker.controller.postMessage({ type: 'HM_REPLAY_QUEUE' });
+  });
+}
+
+registerOfflineServiceWorker();
+
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -278,12 +386,33 @@ function appfolioUrl(type, id) {
 // Uses pre-computed UUID-based lookup maps built by resolvePropertyGroupNames.
 // Maps are: _nameToGroups (name→groups), _idToGroups (id→groups), _uuidToGroups (uuid→groups).
 var _isInGroupMissLogCount = 0; // throttle miss logs
+
+function normalizePropertyLookupKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function groupsByPropertyName(propertyName) {
+  var lower = String(propertyName || '').trim().toLowerCase();
+  if (!lower) return [];
+  var byExact = _nameToGroups[lower] || [];
+  if (byExact.length) return byExact;
+  var normalized = normalizePropertyLookupKey(lower);
+  if (!normalized) return [];
+  return _nameToGroups[normalized] || [];
+}
+
 function isInPropertyGroup(propertyId, propertyName, groupName) {
-  if (!groupName) return true; // no filter = show all
+  var normalizedGroup = String(groupName || '').trim();
+  if (!normalizedGroup) return true; // no filter = show all
+  var normalizedGroupLower = normalizedGroup.toLowerCase();
+  if (normalizedGroupLower === 'all properties') return true;
+  if (normalizedGroup.charAt(0) === '*' && normalizedGroupLower.indexOf('all properties') !== -1) return true;
+
+  groupName = normalizedGroup;
 
   // 1. Fast lookup by property name (covers both Reports API and DB API names)
   if (propertyName) {
-    var groups = _nameToGroups[String(propertyName).trim().toLowerCase()];
+    var groups = groupsByPropertyName(propertyName);
     if (groups && groups.indexOf(groupName) !== -1) return true;
   }
 
@@ -326,6 +455,16 @@ function _addToGroupMap(map, key, groupName) {
   var k = String(key);
   if (!map[k]) map[k] = [];
   if (map[k].indexOf(groupName) === -1) map[k].push(groupName);
+}
+
+function _addNameToGroupMap(name, groupName) {
+  var lower = String(name || '').trim().toLowerCase();
+  if (!lower) return;
+  _addToGroupMap(_nameToGroups, lower, groupName);
+  var normalized = normalizePropertyLookupKey(lower);
+  if (normalized && normalized !== lower) {
+    _addToGroupMap(_nameToGroups, normalized, groupName);
+  }
 }
 
 // Populates the GLOBAL group filter dropdown (replaces per-tab dropdowns)
@@ -539,6 +678,28 @@ function cacheSet(key, data) {
       tx.onerror = function() { resolve(); };
     });
   }).catch(function() { /* ignore */ });
+}
+
+function cacheDelete(key) {
+  return openCacheDB().then(function(db) {
+    return new Promise(function(resolve) {
+      var tx = db.transaction(CACHE_STORE, 'readwrite');
+      tx.objectStore(CACHE_STORE).delete(key);
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function() { resolve(); };
+    });
+  }).catch(function() { /* ignore */ });
+}
+
+async function clearSessionScopedApiCache() {
+  await Promise.all([
+    cacheDelete('work_orders'),
+    cacheDelete('vendors'),
+    cacheDelete('properties'),
+    cacheDelete('turns'),
+    cacheDelete('inspections'),
+    cacheDelete('webhooks')
+  ]);
 }
 
 function isCacheFresh(entry) {
@@ -872,11 +1033,33 @@ function normalizeVendorTradeCategory(value) {
 }
 
 function inferVendorTradeCategory(vendor) {
-  var trades = String((vendor && vendor.trades) || '').trim();
+  var v = vendor || {};
+  var trades = String(v.trades || '').trim();
   if (trades) {
+    var tokens = trades.split(/[\/,;|]/).map(function(t) { return String(t || '').trim(); }).filter(Boolean);
+    for (var i = 0; i < tokens.length; i++) {
+      var normalized = normalizeVendorTradeCategory(tokens[i]);
+      if (normalized && normalized !== 'Other') return normalized;
+    }
     var primary = trades.split(',')[0].split('/')[0];
     return normalizeVendorTradeCategory(primary);
   }
+
+  var corpus = [
+    v.name,
+    v.email,
+    v.tags,
+    v.category,
+    v.address,
+    v.notes,
+    v.description,
+  ].map(function(s) { return String(s || '').trim(); }).filter(Boolean).join(' ');
+
+  if (corpus) {
+    var guess = normalizeVendorTradeCategory(corpus);
+    if (guess && guess !== 'Other') return guess;
+  }
+
   return 'General';
 }
 
@@ -1064,6 +1247,94 @@ function wipeCredentials() {
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
 var AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 var _sessionExpiryHandled = false;
+var _proxySessionWarmupUntil = 0;
+var _proxySessionProbeInFlight = false;
+var _proxySessionWarmupFailures = 0;
+var _proxySessionConsecutive401 = 0;
+var _proxySessionLastHealthyAt = 0;
+var _proxySessionStartupGraceUntil = 0;
+
+function markProxySessionHealthy() {
+  _proxySessionLastHealthyAt = Date.now();
+  _proxySessionConsecutive401 = 0;
+  _proxySessionWarmupFailures = 0;
+}
+
+function beginProxySessionStartupGrace(ms) {
+  var graceMs = Math.max(30000, Number(ms || 0) || 60000);
+  _proxySessionStartupGraceUntil = Date.now() + graceMs;
+  markProxySessionWarmup(Math.max(20000, graceMs));
+}
+
+function markProxySessionWarmup(ms) {
+  var windowMs = Number(ms || 0) || 10000;
+  _proxySessionWarmupUntil = Date.now() + Math.max(2000, windowMs);
+}
+
+function isProxySessionWarmupActive() {
+  return Date.now() <= _proxySessionWarmupUntil;
+}
+
+function shouldProbeProxySessionBeforeLockout() {
+  var now = Date.now();
+  var inWarmup = now <= _proxySessionWarmupUntil;
+  var inStartupGrace = now <= _proxySessionStartupGraceUntil;
+  var recentlyHealthy = _proxySessionLastHealthyAt && ((now - _proxySessionLastHealthyAt) <= 120000);
+  if (!inWarmup && !inStartupGrace && !recentlyHealthy) return false;
+  if (_proxySessionProbeInFlight) return false;
+  if (!API_PROXY) return false;
+  return !!getProxyAccessToken();
+}
+
+async function probeProxySessionStillValid() {
+  if (!API_PROXY) return false;
+  var token = getProxyAccessToken();
+  if (!token) return false;
+  var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
+  var url = API_PROXY + sep + 'action=session_info';
+  var res = await fetchWithTimeout(url, {
+    headers: {
+      'Accept': 'application/json',
+      'Authorization': 'Bearer ' + token
+    }
+  }, 12000);
+  if (!res.ok) return false;
+  var data = {};
+  try { data = await res.json(); } catch (e) { return false; }
+  return !!(data && data.ok && data.session);
+}
+
+function forceProxySessionExpiryLockout(contextLabel) {
+  if (_sessionExpiryHandled) return;
+  _sessionExpiryHandled = true;
+
+  stopAutoSync();
+  if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
+
+  clearStoredProxySessionTokens();
+  if (API_CREDS && API_CREDS.p) {
+    API_CREDS.p = '0'.repeat(String(API_CREDS.p).length);
+  }
+  API_CREDS = null;
+  appInitialized = false;
+  _proxySessionStartupGraceUntil = 0;
+
+  var vault = $('#vaultScreen');
+  if (vault) vault.style.display = 'flex';
+  var shell = $('#appShell');
+  if (shell) shell.classList.remove('unlocked');
+  setVaultPanel('main');
+  setPmOtpStep('request');
+  setVaultFeedback('Proxy session expired. Sign in again to continue.', '');
+  if ($('#vaultPassphrase')) $('#vaultPassphrase').focus();
+
+  var detail = contextLabel ? (' (' + contextLabel + ')') : '';
+  showToast('Session expired. Please sign in again' + detail + '.', {
+    kind: 'warning',
+    iconClass: 'fa-triangle-exclamation',
+    duration: 5000,
+  });
+}
 
 function startAutoSync() {
   stopAutoSync(); // clear any existing
@@ -1094,43 +1365,62 @@ function stopAutoSync() {
 }
 
 function clearStoredProxySessionTokens() {
+  try { localStorage.removeItem('hm_auth_token'); } catch (e0) { /* */ }
   try { localStorage.removeItem('hm_device_token'); } catch (e1) { /* */ }
   try { localStorage.removeItem('hm_proxy_token'); } catch (e2) { /* */ }
 }
 
 function handleProxySessionExpired(contextLabel) {
   if (_sessionExpiryHandled) return;
-  _sessionExpiryHandled = true;
+  _proxySessionConsecutive401++;
+  var now = Date.now();
 
-  stopAutoSync();
-  if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
-
-  clearStoredProxySessionTokens();
-  if (API_CREDS && API_CREDS.p) {
-    API_CREDS.p = '0'.repeat(String(API_CREDS.p).length);
+  if (shouldProbeProxySessionBeforeLockout()) {
+    _proxySessionProbeInFlight = true;
+    (async function() {
+      try {
+        var stillValid = await probeProxySessionStillValid();
+        if (stillValid) {
+          _proxySessionProbeInFlight = false;
+          markProxySessionHealthy();
+          markProxySessionWarmup(4000);
+          return;
+        }
+      } catch (e) { /* fall through to lockout */ }
+      _proxySessionProbeInFlight = false;
+      _proxySessionWarmupFailures++;
+      var inStartupGrace = now <= _proxySessionStartupGraceUntil;
+      var recentlyHealthy = _proxySessionLastHealthyAt && ((now - _proxySessionLastHealthyAt) <= 120000);
+      // Never force relock during the explicit post-login grace window.
+      // Initial sync can trigger a burst of transient 401s before all
+      // backend session state settles.
+      if (inStartupGrace) {
+        markProxySessionWarmup(7000);
+        return;
+      }
+      // During immediate post-login startup, tolerate a few transient 401s
+      // while session rows and token propagation settle.
+      if ((isProxySessionWarmupActive() && _proxySessionWarmupFailures < 6) ||
+          (recentlyHealthy && _proxySessionConsecutive401 < 4)) {
+        markProxySessionWarmup(7000);
+        return;
+      }
+      forceProxySessionExpiryLockout(contextLabel);
+    })();
+    return;
   }
-  API_CREDS = null;
-  appInitialized = false;
 
-  var vault = $('#vaultScreen');
-  if (vault) vault.style.display = 'flex';
-  var shell = $('#appShell');
-  if (shell) shell.classList.remove('unlocked');
-  setVaultPanel('main');
-  setPmOtpStep('request');
-  setVaultFeedback('Proxy session expired. Sign in again to continue.', '');
-  if ($('#vaultPassphrase')) $('#vaultPassphrase').focus();
-
-  var detail = contextLabel ? (' (' + contextLabel + ')') : '';
-  showToast('Session expired. Please sign in again' + detail + '.', {
-    kind: 'warning',
-    iconClass: 'fa-triangle-exclamation',
-    duration: 5000,
-  });
+  forceProxySessionExpiryLockout(contextLabel);
 }
 
 function lockVault() {
   wipeCredentials();
+  _proxySessionWarmupUntil = 0;
+  _proxySessionProbeInFlight = false;
+  _proxySessionWarmupFailures = 0;
+  _proxySessionConsecutive401 = 0;
+  _proxySessionLastHealthyAt = 0;
+  _proxySessionStartupGraceUntil = 0;
   appInitialized = false;
   WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
   CLOSED_TURNS = new Set();
@@ -1202,6 +1492,10 @@ function getDirectBaseUrl() { return API_VHOST ? 'https://' + API_VHOST + '.appf
 function getProxyAccessToken() {
   if (API_CREDS && API_CREDS.p) return API_CREDS.p;
   try {
+    var authToken = localStorage.getItem('hm_auth_token') || '';
+    if (authToken) return authToken;
+  } catch (e) { /* */ }
+  try {
     var deviceToken = localStorage.getItem('hm_device_token') || '';
     if (deviceToken) return deviceToken;
   } catch (e) { /* */ }
@@ -1223,7 +1517,7 @@ function isProxySessionReady() {
 
 function hasStoredDeviceSession() {
   try {
-    return !!(localStorage.getItem('hm_device_token') || localStorage.getItem('hm_proxy_token') || '');
+    return !!(localStorage.getItem('hm_auth_token') || localStorage.getItem('hm_device_token') || localStorage.getItem('hm_proxy_token') || '');
   } catch (e) {
     return false;
   }
@@ -1378,6 +1672,27 @@ async function verifyDeviceOtp(identifier, code, userName) {
   return data;
 }
 
+async function stabilizeProxySessionAfterLogin(timeoutMs) {
+  if (!API_PROXY) return false;
+  var token = getProxyAccessToken();
+  if (!token) return false;
+
+  var deadline = Date.now() + Math.max(10000, Number(timeoutMs || 30000));
+  var attempt = 0;
+  while (Date.now() < deadline) {
+    attempt++;
+    try {
+      var sess = await proxyAction('session_info');
+      if (sess && sess.ok && sess.authenticated && sess.session) return true;
+    } catch (e) {
+      // Keep retrying within the bounded window.
+    }
+    var waitMs = Math.min(250 + (attempt * 150), 1000);
+    await sleep(waitMs);
+  }
+  return false;
+}
+
 // ---- Resilient timeout + retry helper ----
 // Backward compatible with existing callers that pass a numeric timeout as arg #3.
 async function fetchWithTimeout(url, opts, timeoutMsOrRetries, baseBackoffMs) {
@@ -1442,7 +1757,8 @@ async function fetchWithTimeout(url, opts, timeoutMsOrRetries, baseBackoffMs) {
 // Makes ONE request to proxy like ?action=work_orders&days=180
 // Proxy does all pagination server-side and returns complete dataset
 // Includes 45-second timeout — never hangs forever
-async function proxyAction(action, params) {
+async function proxyAction(action, params, options) {
+  var opts = options || {};
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
@@ -1510,7 +1826,9 @@ async function proxyAction(action, params) {
           errBodyLower.indexOf('proxy session') !== -1 ||
           errBodyLower.indexOf('read-only session') !== -1;
         if (isProxySession401) {
-          handleProxySessionExpired('action=' + action);
+          if (!opts.suppressSessionExpiry) {
+            handleProxySessionExpired('action=' + action);
+          }
           var sessionMsg = 'Proxy action=' + action + ' failed: HTTP 401 — Proxy session missing or expired';
           logApiError(401, sessionMsg, 'resolved');
           throw new Error(sessionMsg);
@@ -1542,6 +1860,7 @@ async function proxyAction(action, params) {
       logApiError(dataStatus || 502, msg, dataStatus === 404 ? 'resolved' : 'queued');
       throw new Error(msg);
     }
+    markProxySessionHealthy();
     return data;
   }
 }
@@ -1564,13 +1883,22 @@ function buildProxyActionUrl(action, params) {
 // Sends { action } in the query string only; all payload (including key/secret)
 // travels as a JSON body. Attaches the same bearer token as proxyAction.
 async function proxyPost(action, bodyObj, extraHeaders) {
-  if (isReadOnlyAccessMode()) {
+  var readOnlyAllowedWrites = {
+    pm_notifications_ack: true
+  };
+  if (isReadOnlyAccessMode() && !readOnlyAllowedWrites[action]) {
     throw new Error('Read-only access mode: updates are disabled');
   }
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
-  var token = getProxyAccessToken();
+  var skipAuthActions = {
+    verify_role: true,
+    device_setup: true,
+    device_otp_request: true,
+    device_otp_verify: true
+  };
+  var token = skipAuthActions[action] ? '' : getProxyAccessToken();
   var headers = Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json' }, extraHeaders || {});
   if (token) headers['Authorization'] = 'Bearer ' + token;
   var maxRetries = 2;
@@ -1605,7 +1933,9 @@ async function proxyPost(action, bodyObj, extraHeaders) {
       }
       throw new Error('Proxy POST action=' + action + ' failed: HTTP ' + res.status + (errBody ? ' \u2014 ' + errBody.substring(0, 200) : ''));
     }
-    return res.json();
+    var postData = await res.json();
+    markProxySessionHealthy();
+    return postData;
   }
 }
 
@@ -1724,6 +2054,219 @@ var rateLimiter = {
         item.reject(e);
         tick();
       });
+    })();
+
+    // ═══════════════════════════════════════════════════════
+    // PM INBOX DRAWER — manager posting + PM acknowledgement
+    // ═══════════════════════════════════════════════════════
+    (function initPmInboxDrawer() {
+      var drawer = document.getElementById('pm-inbox-drawer');
+      var fab = document.getElementById('pm-inbox-fab');
+      var items = document.getElementById('pm-inbox-items');
+      var status = document.getElementById('pm-inbox-status');
+      var badge = document.getElementById('pm-inbox-badge');
+      var fabBadge = document.getElementById('pm-fab-badge');
+      var composerWrap = document.getElementById('pmInboxComposerWrap');
+      var composerText = document.getElementById('pmInboxComposerText');
+      var composerScope = document.getElementById('pmInboxComposerScope');
+      var composerSend = document.getElementById('pmInboxComposerSend');
+      if (!drawer || !fab || !items || !status || !badge || !fabBadge) return;
+
+      var _rows = [];
+      var _pollTimer = null;
+      var _pollMs = 25000;
+      var _unread = 0;
+
+      function isInboxRoleAllowed() {
+        return _accessRole === 'manager' || _accessRole === 'pm_readonly' || _accessRole === 'full';
+      }
+
+      function isComposerAllowed() {
+        return _accessRole === 'manager' || _accessRole === 'full';
+      }
+
+      function isOpen() {
+        return drawer.classList.contains('open');
+      }
+
+      function setStatus(text) {
+        status.innerHTML = '<span class="feed-pulse"></span> ' + escapeHtml(text || '');
+      }
+
+      function updateBadge() {
+        var n = Math.max(0, Number(_unread || 0) || 0);
+        var txt = n > 99 ? '99+' : String(n);
+        badge.textContent = txt;
+        fabBadge.textContent = txt;
+        badge.style.display = n > 0 ? '' : 'none';
+        fabBadge.style.display = n > 0 ? '' : 'none';
+      }
+
+      function renderRows() {
+        if (!_rows.length) {
+          items.innerHTML = '<p class="feed-empty">No inbox notices yet.</p>';
+          return;
+        }
+
+        var html = '';
+        _rows.forEach(function(row) {
+          var by = String(row.created_by_user || row.created_by_role || 'Manager').trim();
+          var ts = String(row.created_at || '').trim();
+          var scope = String(row.scope_group_uuid || '').trim();
+          var canAck = !row.read_by_me;
+          html += '<div class="feed-item" style="border-left:3px solid ' + (row.read_by_me ? 'var(--success)' : 'var(--warning)') + '">';
+          html += '<div class="feed-item-header">';
+          html += '<span style="color:' + (row.read_by_me ? 'var(--success)' : 'var(--warning)') + ';font-size:.9rem;flex-shrink:0;width:16px;text-align:center"><i class="fas ' + (row.read_by_me ? 'fa-check-circle' : 'fa-bell') + '"></i></span>';
+          html += '<span class="feed-item-title">' + escapeHtml(by) + (scope ? ' · Scoped' : ' · Global') + '</span>';
+          html += '<span class="feed-item-time">' + (ts ? timeAgo(ts) : '') + '</span>';
+          html += '</div>';
+          html += '<div class="feed-item-body">' + escapeHtml(String(row.message || '').substring(0, 600)) + '</div>';
+          if (canAck) {
+            html += '<div style="margin-top:6px"><button class="action-btn" data-pm-ack="' + escapeHtml(String(row.uuid || '')) + '" style="font-size:10px;padding:2px 8px"><i class="fas fa-check" style="margin-right:4px"></i>Acknowledge</button></div>';
+          } else {
+            html += '<div style="margin-top:6px;font-size:10px;color:var(--success)"><i class="fas fa-check" style="margin-right:4px"></i>Read' + (row.read_at ? ' · ' + escapeHtml(timeAgo(row.read_at)) : '') + '</div>';
+          }
+          html += '</div>';
+        });
+        items.innerHTML = html;
+      }
+
+      function populateScopeOptions() {
+        if (!composerScope) return;
+        if (!isComposerAllowed()) return;
+        var selected = String(composerScope.value || '').trim();
+        var options = ['<option value="">All PMs (Global)</option>'];
+
+        if (_accessRole === 'manager' && forcedPropertyGroupUuid) {
+          var forcedLabel = resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'My Group';
+          options = ['<option value="' + escapeHtml(forcedPropertyGroupUuid) + '">' + escapeHtml(forcedLabel) + ' (Manager Scope)</option>'];
+          composerScope.innerHTML = options.join('');
+          composerScope.value = forcedPropertyGroupUuid;
+          composerScope.disabled = true;
+          return;
+        }
+
+        composerScope.disabled = false;
+        (PROPERTY_GROUPS || []).forEach(function(g) {
+          var id = String(g.id || g.group_id || '').trim();
+          var nm = String(g.name || g.group_name || '').trim();
+          if (!id || !nm) return;
+          options.push('<option value="' + escapeHtml(id) + '">' + escapeHtml(nm) + '</option>');
+        });
+        composerScope.innerHTML = options.join('');
+        composerScope.value = selected || '';
+      }
+
+      async function refreshInbox() {
+        if (!isInboxRoleAllowed()) return;
+        if (!isProxySessionReady()) {
+          setStatus('Awaiting sign-in…');
+          return;
+        }
+        try {
+          var data = await proxyAction('pm_notifications_inbox', { limit: '80' }, { suppressSessionExpiry: true });
+          _rows = Array.isArray(data.notifications) ? data.notifications : [];
+          _unread = Number(data.unread || 0) || 0;
+          updateBadge();
+          renderRows();
+          setStatus(isOpen() ? 'Inbox synced' : ('Inbox synced · ' + _unread + ' unread'));
+          populateScopeOptions();
+        } catch (err) {
+          setStatus('Inbox unavailable. Retrying…');
+          console.debug('pm inbox poll skipped:', err && err.message ? err.message : err);
+        }
+      }
+
+      async function submitPost() {
+        if (!isComposerAllowed() || !composerText) return;
+        var message = String(composerText.value || '').trim();
+        if (!message) {
+          showToast('Enter a message before posting', { kind: 'warning' });
+          return;
+        }
+        if (message.length > 1200) {
+          showToast('Message is too long (max 1200 chars)', { kind: 'warning' });
+          return;
+        }
+        var scopeId = String((composerScope && composerScope.value) || '').trim();
+        if (_accessRole === 'manager' && forcedPropertyGroupUuid) {
+          scopeId = forcedPropertyGroupUuid;
+        }
+        try {
+          if (composerSend) composerSend.disabled = true;
+          await proxyPost('pm_notifications_post', {
+            message: message,
+            scope_group_uuid: scopeId
+          });
+          composerText.value = '';
+          showToast('Inbox notice posted', { kind: 'success' });
+          await refreshInbox();
+        } catch (err) {
+          showToast('Post failed: ' + (err.message || err), { kind: 'warning' });
+        } finally {
+          if (composerSend) composerSend.disabled = false;
+        }
+      }
+
+      async function ackNotification(uuid) {
+        if (!uuid) return;
+        try {
+          await proxyPost('pm_notifications_ack', { notification_uuid: uuid });
+          await refreshInbox();
+        } catch (err) {
+          showToast('Acknowledge failed: ' + (err.message || err), { kind: 'warning' });
+        }
+      }
+
+      function applyVisibility() {
+        var show = isInboxRoleAllowed();
+        fab.style.display = show ? '' : 'none';
+        drawer.style.display = show ? '' : 'none';
+        if (!show) return;
+        if (composerWrap) composerWrap.style.display = isComposerAllowed() ? '' : 'none';
+      }
+
+      if (composerSend) {
+        composerSend.addEventListener('click', function() { submitPost(); });
+      }
+      if (composerText) {
+        composerText.addEventListener('keydown', function(e) {
+          if (!(e.ctrlKey || e.metaKey) || e.key !== 'Enter') return;
+          e.preventDefault();
+          submitPost();
+        });
+      }
+
+      if (items) {
+        items.addEventListener('click', function(e) {
+          var btn = e.target.closest('[data-pm-ack]');
+          if (!btn) return;
+          var id = String(btn.getAttribute('data-pm-ack') || '').trim();
+          ackNotification(id);
+        });
+      }
+
+      window.PmInbox = {
+        refresh: refreshInbox,
+        clearUnseen: function() { refreshInbox(); },
+        applyVisibility: applyVisibility,
+      };
+
+      function boot() {
+        applyVisibility();
+        refreshInbox();
+        if (_pollTimer) clearInterval(_pollTimer);
+        _pollTimer = setInterval(function() {
+          applyVisibility();
+          if (!document.hidden) refreshInbox();
+        }, _pollMs);
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+      } else {
+        boot();
+      }
     })();
   }
 };
@@ -2081,6 +2624,12 @@ window._currentBillsCache = []; // currently visible bills for fast detail-card 
 window._billingPageRows = [];
 var _billsFetchInFlight = false;
 var _lastBillSource = 'legacy';
+
+// ── Billing cache for client-side filtering ──────────────────────────────────
+var __CACHED_BILLS = []; // Full unfiltered bills array (loaded once, reused for all filters)
+var __PROPERTY_TO_GROUP_MAP = {}; // property_id -> group_id lookup for instant filtering
+var __CACHED_BILLS_LOADED_AT = 0; // Timestamp of when cache was populated
+var __CACHED_BILLS_IN_FLIGHT = false; // Lock to prevent duplicate fetches
 var _billingServerTotal = 0;
 var _billingServerTotalPages = 1;
 var _billingServerPage = 1;
@@ -2120,6 +2669,7 @@ var _propertiesLocalGroup = '';
 var _propertiesRefreshInFlight = false;
 var _propertiesPage = 0;
 var _propertiesPageSize = 50;
+var _propertiesVacancyOnly = false;
 var _propertyStatsById = {};
 window.filteredPropertyId = '';
 window.filteredPropertyName = '';
@@ -2275,16 +2825,67 @@ function buildReferenceMaps(vendorsArray, propertiesArray) {
   });
 
   window.AppDB = db;
+  
+  // Populate property-to-group map for instant bill filtering
+  __PROPERTY_TO_GROUP_MAP = {};
+  (Array.isArray(propertiesArray) ? propertiesArray : []).forEach(function(p) {
+    var propId = String(p.id || p.Id || p.property_id || p.PropertyId || p.propertyId || '').trim();
+    var groupId = String(p.propertyGroupId || p.PropertyGroupId || p.property_group_id || p.property_group_uuid || p.PropertyGroupUuid || '').trim();
+    if (propId && groupId) {
+      __PROPERTY_TO_GROUP_MAP[propId] = groupId;
+    }
+  });
+  
   return db;
 }
 
 function normalizeBillApprovalStatus(value) {
   var raw = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
   if (!raw) return '';
-  if (raw === 'pending' || raw === 'awaiting_approval' || raw === 'needs_approval') return 'pending_approval';
+  if (
+    raw === 'pending' ||
+    raw === 'pending_approval' ||
+    raw === 'awaiting_approval' ||
+    raw === 'needs_approval' ||
+    raw === 'pending_review' ||
+    raw === 'awaiting_review' ||
+    raw === 'needs_review' ||
+    raw === 'submitted_for_approval' ||
+    raw === 'requires_approval' ||
+    raw === 'unapproved'
+  ) return 'pending_approval';
+  if (raw === 'partially_paid' || raw === 'partial_payment' || raw === 'paid_partially') return 'paid';
   if (raw === 'approved_for_payment') return 'approved';
-  if (raw === 'cancelled') return 'void';
+  if (raw === 'canceled' || raw === 'cancelled' || raw === 'voided') return 'void';
   return raw;
+}
+
+function getBillStatusKey(recordLike) {
+  var b = (recordLike && typeof recordLike === 'object') ? recordLike : {};
+  var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
+  var candidates = [
+    b.status,
+    b.statusLabel,
+    b.approval_status,
+    b.approvalStatus,
+    b.bill_status,
+    b.billStatus,
+    raw.ApprovalStatus,
+    raw.approval_status,
+    raw.ApprovalState,
+    raw.approval_state,
+    raw.PendingApproval,
+    raw.pending_approval,
+    raw.Status,
+    raw.status,
+    raw.State,
+    raw.state,
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var normalized = normalizeBillApprovalStatus(candidates[i]);
+    if (normalized) return normalized;
+  }
+  return '';
 }
 
 function extractBillPropertyId(rawBill, normalizedLineItems) {
@@ -2293,6 +2894,15 @@ function extractBillPropertyId(rawBill, normalizedLineItems) {
   return String(
     rawBill.property_id || rawBill.PropertyId || rawBill.propertyId || rawBill.property_uuid || rawBill.PropertyUuid ||
     first.PropertyId || first.property_id || first.propertyId || first.PropertyUuid || first.property_uuid || ''
+  ).trim();
+}
+
+function extractBillUnitId(rawBill, normalizedLineItems) {
+  var lineItems = Array.isArray(normalizedLineItems) ? normalizedLineItems : [];
+  var first = lineItems[0] || {};
+  return String(
+    rawBill.unit_id || rawBill.UnitId || rawBill.unitId || rawBill.UnitUUID || rawBill.unit_uuid ||
+    first.UnitId || first.unit_id || first.unitId || first.UnitUUID || first.unit_uuid || ''
   ).trim();
 }
 
@@ -2318,6 +2928,74 @@ function getNormalizedBillDisplayNumber(billLike) {
   return id;
 }
 
+function getNormalizedBillDetailId(billLike) {
+  var b = billLike && typeof billLike === 'object' ? billLike : {};
+  var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
+  var candidates = [
+    b.id,
+    b.bill_id,
+    b.BillId,
+    raw.BillId,
+    raw.bill_id,
+    raw.Id,
+    raw.id,
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var value = String(candidates[i] || '').trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+function resolveBillAmountValue(billLike) {
+  var b = billLike && typeof billLike === 'object' ? billLike : {};
+  var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
+  var candidates = [
+    b.amount,
+    b.total_amount,
+    b.totalAmount,
+    b.net_amount,
+    b.netAmount,
+    b.amount_due,
+    b.amountDue,
+    raw.TotalAmount,
+    raw.total_amount,
+    raw.Amount,
+    raw.amount,
+    raw.NetAmount,
+    raw.net_amount,
+    raw.AmountDue,
+    raw.amount_due,
+    raw.Balance,
+    raw.balance,
+    raw.Unpaid,
+    raw.unpaid,
+    raw.Paid,
+    raw.paid,
+  ];
+
+  for (var i = 0; i < candidates.length; i++) {
+    var n = amountToNumber(candidates[i]);
+    if (n !== 0) return n;
+  }
+
+  var lineItems = Array.isArray(b.lineItems)
+    ? b.lineItems
+    : (Array.isArray(raw.LineItems) ? raw.LineItems : (Array.isArray(raw.line_items) ? raw.line_items : []));
+  if (lineItems.length) {
+    var sum = lineItems.reduce(function(total, li) {
+      return total + amountToNumber(
+        (li && (li.Amount != null ? li.Amount : li.amount)) ||
+        (li && (li.TotalAmount != null ? li.TotalAmount : li.total_amount)) ||
+        0
+      );
+    }, 0);
+    if (sum !== 0) return sum;
+  }
+
+  return 0;
+}
+
 function resolveVendorNameFromMaps(vendorId, fallback) {
   var key = String(vendorId || '').trim();
   if (!key || !window.AppDB || !window.AppDB.vendors) return String(fallback || '').trim();
@@ -2333,18 +3011,41 @@ function resolveVendorNameFromMaps(vendorId, fallback) {
 function resolvePropertyMetaFromMaps(propertyId, fallbackName, fallbackGroupId) {
   var key = String(propertyId || '').trim();
   var fallback = {
+    id: key,
     name: String(fallbackName || '').trim(),
     groupId: String(fallbackGroupId || '').trim(),
     groupName: '',
+    siteManager: '',
   };
-  if (!key || !window.AppDB || !window.AppDB.properties) return fallback;
-  var prop = window.AppDB.properties.get(key);
+  var prop = null;
+  if (key && window.AppDB && window.AppDB.properties) {
+    prop = window.AppDB.properties.get(key) || null;
+  }
+
+  // Fallback lookup by property name (handles cases where bills provide name but not id).
+  if (!prop && fallback.name) {
+    var fbLower = String(fallback.name || '').trim().toLowerCase();
+    var fbNorm = normalizePropertyLookupKey(fallback.name || '');
+    prop = (PROPERTIES || []).find(function(p) {
+      var pName = String((p && p.name) || '').trim().toLowerCase();
+      if (!pName) return false;
+      if (pName === fbLower) return true;
+      return normalizePropertyLookupKey(pName) === fbNorm;
+    }) || null;
+  }
+
   if (!prop) return fallback;
-  var groupId = String(prop.propertyGroupId || prop.PropertyGroupId || prop.property_group_id || fallback.groupId || '').trim();
+
+  var groupId = String(prop.propertyGroupId || prop.PropertyGroupId || prop.property_group_id || (Array.isArray(prop._groupIds) ? prop._groupIds[0] : '') || fallback.groupId || '').trim();
+  var groupName = String(prop.propertyGroup || prop.groupName || prop.property_group || prop.portfolio || prop._propertyGroup || '').trim();
+  var siteManager = String(prop.siteManager || prop.site_manager || prop.property_manager || prop.PropertyManager || '').trim();
+
   return {
+    id: String(prop.id || prop.Id || prop.property_id || prop.PropertyId || key || '').trim(),
     name: String(prop.name || prop.Name || prop.property_name || prop.PropertyName || fallback.name || '').trim(),
     groupId: groupId,
-    groupName: String(prop.propertyGroup || prop.groupName || prop.property_group || '').trim(),
+    groupName: groupName,
+    siteManager: siteManager,
   };
 }
 
@@ -2368,13 +3069,26 @@ function enforceScopedPropertyGroup() {
   if (clearBtn) clearBtn.style.display = 'none';
 }
 
+function normalizeGroupSelectionValue(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  var lower = raw.toLowerCase();
+  if (lower === 'all properties') return '';
+  // Treat AppFolio pseudo-global group entries as unscoped.
+  if (lower.indexOf('all properties') !== -1 && (raw.charAt(0) === '*' || lower.indexOf('appfolio') !== -1)) return '';
+  return raw;
+}
+
 // Returns the active group filter name, honouring PM scope enforcement.
 // Use instead of reading currentPropertyGroup directly in scope-sensitive code.
 function getEffectiveGroupId() {
-  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
-    return resolveGroupNameFromUuid(forcedPropertyGroupUuid) || forcedPropertyGroupName || currentPropertyGroup || '';
+  function _normalizeEffectiveGroup(value) {
+    return normalizeGroupSelectionValue(value);
   }
-  return currentPropertyGroup || '';
+  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
+    return _normalizeEffectiveGroup(resolveGroupNameFromUuid(forcedPropertyGroupUuid) || forcedPropertyGroupName || currentPropertyGroup || '');
+  }
+  return _normalizeEffectiveGroup(currentPropertyGroup || '');
 }
 
 /* =================================================================
@@ -2576,6 +3290,41 @@ function detailCacheSet(key, value) {
 function detailCacheClear() {
   WO_DETAIL_CACHE = {};
   WO_DETAIL_CACHE_KEYS = [];
+}
+
+function resetInMemoryDataForSessionTransition() {
+  WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
+  CLOSED_TURNS = new Set();
+  window._currentBillsCache = [];
+  window._billingPageRows = [];
+  window._billingListCacheRows = [];
+  _billingListCacheRows = [];
+  _nameToGroups = {}; _idToGroups = {}; _uuidToGroups = {};
+  detailCacheClear();
+}
+
+async function enforceSessionTypeTransitionReset(previousRole, nextRole) {
+  var prev = normalizeAccessRole(previousRole || 'full');
+  var next = normalizeAccessRole(nextRole || 'full');
+  if (prev === next) return false;
+
+  // Scope/session artifacts must not bleed between role types.
+  resetInMemoryDataForSessionTransition();
+  currentPropertyGroup = '';
+  forcedPropertyGroupUuid = '';
+  forcedPropertyGroupName = '';
+  _pmScopeGroupUuid = '';
+  _pmScopeEmail = '';
+  try { localStorage.removeItem('hm_scope_group_uuid'); } catch (e1) { /* */ }
+  try { localStorage.removeItem('hm_scope_email'); } catch (e2) { /* */ }
+  await clearSessionScopedApiCache();
+  updateCacheBadge('offline');
+  showToast('Access session changed. Cached data cleared for a clean reload.', {
+    kind: 'info',
+    iconClass: 'fa-arrows-rotate',
+    duration: 4000,
+  });
+  return true;
 }
 
 var APP_CONFIG_KEY = 'handymgr_config_v1'; // persisted via IndexedDB cache store
@@ -2873,6 +3622,7 @@ if ($('#btnVerifyOtp')) {
     try {
       var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher');
       var token = verifyData.token;
+      try { localStorage.setItem('hm_auth_token', token); } catch (eA) { /* */ }
       try { localStorage.setItem('hm_device_token', token); } catch (e) { /* */ }
       try { localStorage.setItem('hm_proxy_token', token); } catch (e2) { /* */ }
       if (verifyData.role) {
@@ -2906,11 +3656,23 @@ if ($('#btnVerifyOtp')) {
 }
 
 async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
+  var previousRole = getStoredAccessRole();
   _sessionExpiryHandled = false;
+  beginProxySessionStartupGrace(60000);
   API_VHOST = vhost;
   API_PROXY = proxyUrl;
   API_CREDS = { p: existingDeviceToken };
   _accessRole = getStoredAccessRole();
+  var stabilized = await stabilizeProxySessionAfterLogin(30000);
+  if (!stabilized) {
+    // Keep login non-blocking; startup calls can still settle during grace.
+    markProxySessionWarmup(90000);
+    showToast('Session is still warming up. Data may load gradually for a few moments.', {
+      kind: 'warning',
+      iconClass: 'fa-hourglass-half',
+      duration: 5000,
+    });
+  }
   try {
     var sess = await proxyAction('session_info');
     if (sess && sess.ok && sess.session) {
@@ -2924,9 +3686,12 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
         _pmScopeEmail = String(sess.session.login_email);
         try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeEmailErr) { /* */ }
       }
+      markProxySessionHealthy();
     }
   } catch (sessErr) { /* non-fatal — use stored role */ }
+  await enforceSessionTypeTransitionReset(previousRole, _accessRole);
   persistAccessRole(_accessRole);
+  try { localStorage.setItem('hm_auth_token', existingDeviceToken); } catch (eA) { /* */ }
   try { localStorage.setItem('hm_proxy_token', existingDeviceToken); } catch (e) { /* */ }
   if (!$('#vaultRememberConfig') || $('#vaultRememberConfig').checked) {
     await saveVaultConfig(getVaultConfigFromInputs());
@@ -2966,7 +3731,83 @@ if ($('#vhostPreviewPm')) {
 }
 setVaultPanel('main');
 
+// ── Session hydration on page load ─────────────────────────────────────────
+// If the browser has a stored token + saved proxy config, silently re-validate
+// the session against the proxy and bypass the vault screen entirely.
+(async function _tryResumeSession() {
+  var _token = '';
+  try {
+    _token = localStorage.getItem('hm_auth_token') ||
+             localStorage.getItem('hm_device_token') ||
+             localStorage.getItem('hm_proxy_token') || '';
+  } catch (e) { return; }
+  if (!_token) return;
+
+  var _proxyUrl = '';
+  try { _proxyUrl = sanitizeProxy(localStorage.getItem('hm_proxy_url') || ''); } catch (e) { /* */ }
+  var _vhost = '';
+  try {
+    var _resumeCfg = await loadVaultConfig();
+    if (_resumeCfg) {
+      if (!_proxyUrl && _resumeCfg.proxy) _proxyUrl = sanitizeProxy(_resumeCfg.proxy);
+      if (_resumeCfg.vhost) _vhost = sanitizeVhost(_resumeCfg.vhost);
+    }
+  } catch (e) { /* */ }
+  if (!_proxyUrl) return;
+
+  setVaultFeedback('Resuming session\u2026', 'info');
+  try {
+    var _sep = _proxyUrl.indexOf('?') !== -1 ? '&' : '?';
+    var _siUrl = _proxyUrl + _sep + 'action=session_info';
+    var _siRes = await fetchWithTimeout(_siUrl, {
+      headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + _token }
+    }, 15000);
+    if (!_siRes.ok) throw new Error('HTTP ' + _siRes.status);
+    var _siData = await _siRes.json();
+    if (!_siData || !_siData.ok || !_siData.authenticated || !_siData.session) {
+      throw new Error('Session invalid');
+    }
+    // Valid — restore state and unlock vault
+    var _prevRole = getStoredAccessRole();
+    _sessionExpiryHandled = false;
+    beginProxySessionStartupGrace(60000);
+    API_PROXY = _proxyUrl;
+    API_VHOST = _vhost;
+    API_CREDS = { p: _token };
+    _accessRole = normalizeAccessRole(_siData.session.role || _prevRole);
+    if (_siData.session.property_group_uuid) {
+      forcedPropertyGroupUuid = String(_siData.session.property_group_uuid);
+      try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (e) { /* */ }
+    }
+    if (_siData.session.login_email) {
+      _pmScopeEmail = String(_siData.session.login_email);
+      try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (e) { /* */ }
+    }
+    markProxySessionHealthy();
+    persistAccessRole(_accessRole);
+    await enforceSessionTypeTransitionReset(_prevRole, _accessRole);
+    setVaultFeedback('', '');
+    $('#vaultScreen').style.display = 'none';
+    $('#appShell').classList.add('unlocked');
+    applyAccessRole();
+    await initApp();
+    if (_accessRole === 'pm_readonly') {
+      try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (e) { /* */ }
+      enforceScopedPropertyGroup();
+    }
+    applyAccessRole();
+    startAutoSync();
+  } catch (err) {
+    // Token expired or invalid — clean up and show vault
+    API_CREDS = null;
+    API_PROXY = '';
+    clearStoredProxySessionTokens();
+    setVaultFeedback('', '');
+  }
+})();
+
 $('#vaultUnlockBtn').addEventListener('click', async function() {
+  var previousRole = getStoredAccessRole();
   var pass = String(($('#vaultPassphrase') && $('#vaultPassphrase').value) || '').trim();
   var rawVhost = $('#vaultVhost').value;
   var vhost = sanitizeVhost(rawVhost);
@@ -3011,6 +3852,11 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     if (passAsIdentifier) {
       throw new Error('PM login uses the separate PM login field and buttons below. Do not enter email or phone in the password box.');
     } else if (pass) {
+      clearStoredProxySessionTokens();
+      _sessionExpiryHandled = false;
+      _proxySessionProbeInFlight = false;
+      _proxySessionWarmupFailures = 0;
+      _proxySessionConsecutive401 = 0;
       // Verify password against proxy env vars (GUI_ADMIN / GUI_GM / GUI_VENDORS)
       var roleResult = await proxyPost('verify_role', { password: pass });
       if (!roleResult || !roleResult.ok) {
@@ -3022,11 +3868,23 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         throw new Error('Login succeeded but server did not mint a session token. Check proxy DB/write access and try again.');
       }
       _sessionExpiryHandled = false;
+      beginProxySessionStartupGrace(60000);
       API_CREDS = { p: sessionToken };
       if (sessionToken) {
+        try { localStorage.setItem('hm_auth_token', sessionToken); } catch (eTokA) { /* */ }
         try { localStorage.setItem('hm_device_token', sessionToken); } catch (eTok) { /* */ }
         try { localStorage.setItem('hm_proxy_token', sessionToken); } catch (eTok2) { /* */ }
       }
+      var stabilized = await stabilizeProxySessionAfterLogin(30000);
+      if (!stabilized) {
+        markProxySessionWarmup(90000);
+        showToast('Session is still warming up. Data may load gradually for a few moments.', {
+          kind: 'warning',
+          iconClass: 'fa-hourglass-half',
+          duration: 5000,
+        });
+      }
+      await enforceSessionTypeTransitionReset(previousRole, _accessRole);
       persistAccessRole(_accessRole);
     } else {
       throw new Error('Enter your password to connect.');
@@ -3295,10 +4153,154 @@ function resolveBillGroupUuidFromRecord(record) {
   return '';
 }
 
+// Resolve a human-readable group name for a mapped bill object.
+// Checks propertyGroupId UUID -> group name map, then _uuidToGroups / _nameToGroups.
+function resolveBillGroupName(b) {
+  if (!b) return '';
+  var direct = String(b.propertyGroup || '').trim();
+  if (direct) return direct;
+
+  var gid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim();
+  if (gid) {
+    var fromUuid = resolveGroupNameFromUuid(gid);
+    if (fromUuid) return fromUuid;
+  }
+
+  var pid = String(b.propertyId || '').trim();
+  if (pid) {
+    var uGroups = _uuidToGroups[pid];
+    if (uGroups && uGroups.length) return uGroups[0];
+    var iGroups = _idToGroups[pid];
+    if (iGroups && iGroups.length) return iGroups[0];
+  }
+
+  var pname = String(b.propertyName || '').trim().toLowerCase();
+  if (pname && pname !== 'multiple/unknown') {
+    var nGroups = _nameToGroups[pname];
+    if (nGroups && nGroups.length) return nGroups[0];
+    var normalizedName = normalizePropertyLookupKey(pname);
+    if (normalizedName) {
+      var nGroupsNormalized = _nameToGroups[normalizedName];
+      if (nGroupsNormalized && nGroupsNormalized.length) return nGroupsNormalized[0];
+    }
+  }
+
+  return '';
+}
+
+function resolveBillWorkOrderRef(record) {
+  if (!record || typeof record !== 'object') return '';
+  var raw = (record.raw && typeof record.raw === 'object') ? record.raw : record;
+  var candidates = [
+    record.workOrderNumber,
+    record.work_order_number,
+    raw.WorkOrderNumber,
+    raw.work_order_number,
+    raw.WorkOrder,
+    raw.work_order,
+    record.workOrderId,
+    record.work_order_id,
+    raw.WorkOrderId,
+    raw.work_order_id,
+    raw.work_order_uuid,
+    raw.WorkOrderUuid,
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var v = String(candidates[i] || '').trim();
+    if (v) return v;
+  }
+  return '';
+}
+
+function resolveLineItemUuidTarget(lineItem) {
+  if (!lineItem || typeof lineItem !== 'object') return null;
+  var pick = function(list) {
+    for (var i = 0; i < list.length; i++) {
+      var val = String(lineItem[list[i]] || '').trim();
+      if (isUuidString(val)) return val;
+    }
+    return '';
+  };
+
+  var woUuid = pick(['WorkOrderId', 'work_order_id', 'work_order_uuid', 'WorkOrderUuid']);
+  if (woUuid) return { resource: 'work_orders', label: 'Work Order', uuid: woUuid };
+
+  var propertyUuid = pick(['PropertyId', 'property_id', 'property_uuid', 'PropertyUuid']);
+  if (propertyUuid) return { resource: 'properties', label: 'Property', uuid: propertyUuid };
+
+  var unitUuid = pick(['UnitId', 'unit_id', 'unit_uuid', 'UnitUUID', 'UnitUuid']);
+  if (unitUuid) return { resource: 'units', label: 'Unit', uuid: unitUuid };
+
+  var vendorUuid = pick(['VendorId', 'vendor_id', 'vendor_uuid', 'VendorUuid', 'PayeeUuid', 'payee_uuid']);
+  if (vendorUuid) return { resource: 'vendors', label: 'Vendor', uuid: vendorUuid };
+
+  return null;
+}
+
+async function showV0UuidDetailModal(target, lineItem) {
+  if (!target || !target.resource || !target.uuid) return;
+  var title = 'v0 UUID Detail — ' + target.label;
+  var path = '/api/v0/' + target.resource + '/' + encodeURIComponent(String(target.uuid));
+  showItemDetail(title, [
+    { label: 'Resource', value: target.resource },
+    { label: 'UUID', value: target.uuid },
+    { label: 'Path', value: path },
+    { section: 'Loading', icon: 'fa-spinner' },
+    { label: 'Status', value: 'Fetching details…' }
+  ], '');
+
+  try {
+    var payload = await apiFetch(path);
+    var bodyEl = document.getElementById('itemDetailBody');
+    if (!bodyEl) return;
+    var pretty = '';
+    try { pretty = JSON.stringify(payload || {}, null, 2); } catch (e) { pretty = String(payload || ''); }
+    bodyEl.innerHTML =
+      '<div class="detail-section">' +
+        '<div class="detail-section-title"><i class="fas fa-code"></i> API v0 Response</div>' +
+        '<div class="detail-grid">' +
+          '<div class="detail-row"><div class="detail-row-label">Resource</div><div class="detail-row-value">' + escapeHtml(target.resource) + '</div></div>' +
+          '<div class="detail-row"><div class="detail-row-label">UUID</div><div class="detail-row-value" style="font-family:var(--font-mono)">' + escapeHtml(target.uuid) + '</div></div>' +
+          '<div class="detail-row"><div class="detail-row-label">Path</div><div class="detail-row-value" style="font-family:var(--font-mono)">' + escapeHtml(path) + '</div></div>' +
+        '</div>' +
+      '</div>' +
+      '<pre style="max-height:360px;overflow:auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;line-height:1.45;font-family:var(--font-mono)">' + escapeHtml(pretty || '{}') + '</pre>';
+  } catch (err) {
+    showItemDetail(title, [
+      { label: 'Resource', value: target.resource },
+      { label: 'UUID', value: target.uuid },
+      { label: 'Path', value: path },
+      { section: 'Error', icon: 'fa-triangle-exclamation' },
+      { label: 'Message', value: String((err && err.message) || err || 'Failed to fetch v0 details') }
+    ], '');
+  }
+}
+
 async function fetchBills(days, opts) {
   if (_billsFetchInFlight) {
-    console.log('fetchBills skip: previous request still in flight');
-    return null;
+    console.log('fetchBills wait: previous request still in flight');
+    var waitMs = 0;
+    while (_billsFetchInFlight && waitMs < 8000) {
+      await new Promise(function(resolve) { setTimeout(resolve, 100); });
+      waitMs += 100;
+    }
+    if (_billsFetchInFlight) {
+      console.log('fetchBills busy timeout after ' + waitMs + 'ms');
+      if (opts && opts.returnPayload) {
+        return {
+          ok: false,
+          error: 'billing fetch busy, try again',
+          rows: [],
+          total: 0,
+          page: 1,
+          perPage: Math.max(1, Math.min(200, parseInt((opts.perPage || opts.limit || 50), 10) || 50)),
+          totalPages: 1,
+          fromCache: false,
+          source: String(_lastBillSource || 'legacy')
+        };
+      }
+      return false;
+    }
   }
   _billsFetchInFlight = true;
   try {
@@ -3337,11 +4339,11 @@ async function fetchBills(days, opts) {
     var groupUuid = '';
 
     if (opts.scoped !== false) {
-      grpName = getEffectiveGroupId();
-      if (grpName) params.group_name = grpName;
-      if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
-
+      grpName = normalizeGroupSelectionValue(getEffectiveGroupId());
       groupUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
+      // Only send UUID scope to server-side filters; when UUID is missing,
+      // rely on client-side property-group association maps to avoid empty legacy responses.
+      if (groupUuid) params.group_uuid = groupUuid;
     }
 
     if (!routeAction) {
@@ -3441,8 +4443,15 @@ async function fetchBills(days, opts) {
       var nestedProperty = (raw.property && typeof raw.property === 'object')
         ? raw.property
         : ((b.property && typeof b.property === 'object') ? b.property : {});
-      var status = normalizeBillApprovalStatus(b.status || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || '');
-      var amountNum = parseFloat(String(b.amount != null ? b.amount : (b.total_amount != null ? b.total_amount : (raw.TotalAmount || raw.total_amount || raw.Amount || raw.amount || '0'))).replace(/[^0-9.\-]/g, '')) || 0;
+      var status = getBillStatusKey({ status: b.status, raw: raw });
+      var amountNum = resolveBillAmountValue({
+        raw: raw,
+        lineItems: b.line_items || raw.LineItems || raw.line_items || [],
+        amount: b.amount,
+        total_amount: b.total_amount,
+        net_amount: b.net_amount,
+        amount_due: b.amount_due,
+      });
       var lineItems = Array.isArray(b.line_items)
         ? b.line_items
         : (Array.isArray(raw.LineItems)
@@ -3459,6 +4468,7 @@ async function fetchBills(days, opts) {
               }
             })()));
       var propertyId = extractBillPropertyId(raw, lineItems);
+      var unitId = extractBillUnitId(raw, lineItems);
       var propertyMeta = resolvePropertyMetaFromMaps(
         propertyId,
         b.property_name || raw.PropertyName || raw.property_name || raw.Property || raw.property || '',
@@ -3476,11 +4486,13 @@ async function fetchBills(days, opts) {
         vendorUuid: b.vendor_uuid || raw.VendorUuid || raw.vendor_uuid || raw.VendorId || raw.vendor_id || raw.PayeeUuid || raw.payee_uuid || '',
         payeeUuid: b.payee_uuid || raw.PayeeUuid || raw.payee_uuid || raw.PayeeId || raw.payee_id || raw.VendorId || raw.vendor_id || '',
         vendorName: vendorName,
-        propertyId: propertyId,
+        propertyId: propertyMeta.id || propertyId,
+        unitId: unitId,
         propertyName: propertyMeta.name || 'Multiple/Unknown',
         propertyGroup: propertyMeta.groupName || b.property_group || raw.property_group || raw.PropertyGroup || '',
         propertyGroupId: propertyMeta.groupId,
-        workOrderId: b.work_order_id || raw.WorkOrderId || raw.work_order_id || '',
+        propertyManager: propertyMeta.siteManager || b.property_manager || raw.property_manager || raw.PropertyManager || '',
+        workOrderId: b.work_order_number || b.workOrderNumber || b.work_order_id || raw.WorkOrderNumber || raw.work_order_number || raw.WorkOrderId || raw.work_order_id || raw.WorkOrder || raw.work_order || raw.work_order_uuid || raw.WorkOrderUuid || '',
         amount: amountNum,
           date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || b.due_date || raw.DueDate || raw.due_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
           lastUpdatedAt: b.last_updated_at || b.lastUpdatedAt || raw.LastUpdatedAt || raw.last_updated_at || raw.UpdatedAt || raw.updated_at || '',
@@ -3510,13 +4522,19 @@ async function fetchBills(days, opts) {
       });
     }
 
-    // Strict client-side scope guard: if a group UUID is active, never render bills from other groups.
-    if (opts.scoped !== false && groupUuid) {
+    // Strict client-side scope guard.
+    if (opts.scoped !== false && (groupUuid || grpName)) {
       var groupUuidLower = String(groupUuid || '').trim().toLowerCase();
+      var groupNameLower = String(grpName || '').trim().toLowerCase();
+      var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
       mappedBills = mappedBills.filter(function(b) {
         var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
-        if (billGroupUuid) return billGroupUuid === groupUuidLower;
-        return isInPropertyGroup(b.propertyId, b.propertyName, grpName);
+        if (groupUuidLower && billGroupUuid) return billGroupUuid === groupUuidLower;
+        var billGroupName = String(resolveBillGroupName(b) || b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
+        if (groupNameLower && billGroupName) return billGroupName === groupNameLower;
+        if (hasGroupMaps) return isInPropertyGroup(b.propertyId, b.propertyName, grpName);
+        // If maps are not ready yet and no explicit group fields are present, avoid false-empty results.
+        return true;
       });
     }
 
@@ -4038,7 +5056,7 @@ async function resolvePropertyGroupNames() {
           diag.uuidHits++;
           if (resolvedNames.indexOf(mName) === -1) resolvedNames.push(mName);
           // Index by DB API name (lowercase, trimmed)
-          _addToGroupMap(_nameToGroups, mName.toLowerCase(), g.name);
+          _addNameToGroupMap(mName, g.name);
         } else {
           diag.uuidMisses++;
         }
@@ -4102,7 +5120,7 @@ async function resolvePropertyGroupNames() {
               uGroups.forEach(function(gn) {
                 _addToGroupMap(_idToGroups, String(p.id), gn);
                 // Also ensure the Reports API name is indexed
-                _addToGroupMap(_nameToGroups, pNameLower, gn);
+                _addNameToGroupMap(pNameLower, gn);
               });
             }
           });
@@ -4134,7 +5152,7 @@ async function resolvePropertyGroupNames() {
           });
           if (prop && prop.id) {
             _addToGroupMap(_idToGroups, String(prop.id), g.name);
-            _addToGroupMap(_nameToGroups, (prop.name || '').trim().toLowerCase(), g.name);
+            _addNameToGroupMap(prop.name || '', g.name);
           }
         });
       }
@@ -4146,7 +5164,7 @@ async function resolvePropertyGroupNames() {
           var gName = g.name.trim();
           if (portfolio && (portfolio === gName || portfolio.toLowerCase() === gName.toLowerCase())) {
             diag.portfolioMatches++;
-            _addToGroupMap(_nameToGroups, (p.name || '').trim().toLowerCase(), g.name);
+            _addNameToGroupMap(p.name || '', g.name);
             _addToGroupMap(_idToGroups, String(p.id), g.name);
           }
         });
@@ -4166,20 +5184,20 @@ async function resolvePropertyGroupNames() {
   // Runs after maps are built so each item carries its group for display and PM scope checks.
   try {
     WORK_ORDERS.forEach(function(wo) {
-      var byName = _nameToGroups[(wo.propertyName || '').trim().toLowerCase()] || [];
+      var byName = groupsByPropertyName(wo.propertyName || '');
       var byId   = _idToGroups[String(wo.propertyId || '')] || [];
       var grps = byName.length ? byName : byId;
       wo._propertyGroup = grps[0] || '';
     });
     TURNS.forEach(function(t) {
-      var byName = _nameToGroups[(t.property || '').trim().toLowerCase()] || [];
+      var byName = groupsByPropertyName(t.property || '');
       var byId   = _idToGroups[String(t.propertyId || '')] || [];
       var grps = byName.length ? byName : byId;
       t._propertyGroup = grps[0] || '';
     });
     // Enrich BILLS with _propertyGroup if already loaded
     (BILLS || []).forEach(function(b) {
-      var byName = _nameToGroups[(b.propertyName || '').trim().toLowerCase()] || [];
+      var byName = groupsByPropertyName(b.propertyName || '');
       var byId   = _idToGroups[String(b.propertyId || '')] || [];
       var grps = byName.length ? byName : byId;
       b._propertyGroup = grps[0] || '';
@@ -4597,7 +5615,12 @@ function resolveWebhookResourceName(resourceType, resourceId) {
     if (prop) return prop.name || '';
   }
   if (rtype === 'vendor') {
-    var vendor = VENDORS.find(function(v) { return String(v.id) === rid; });
+    var vendor = VENDORS.find(function(v) {
+      return String(v.id || '') === rid ||
+        String(v.uuid || '') === rid ||
+        String(v.vendor_uuid || '') === rid ||
+        String(v.VendorUuid || '') === rid;
+    });
     if (vendor) return vendor.name || '';
   }
   if (rtype === 'unit_turn') {
@@ -4612,12 +5635,20 @@ function resolveWebhookResourceName(resourceType, resourceId) {
   }
   if (rtype === 'bill') {
     var bill = (typeof BILLS !== 'undefined' ? BILLS : []).find(function(b) {
-      return String(b.id || '') === rid;
+      return String(b.id || '') === rid ||
+        String(b.billId || '') === rid ||
+        String((b.raw && (b.raw.Id || b.raw.id || b.raw.bill_id)) || '') === rid;
     });
     if (bill) return 'Bill' + (bill.billNumber ? ' #' + bill.billNumber : '') + (bill.vendorName ? ' - ' + bill.vendorName : '');
   }
   if (rtype === 'property_group') {
-    var grp = PROPERTY_GROUPS.find(function(g) { return String(g.id) === rid; });
+    var grp = PROPERTY_GROUPS.find(function(g) {
+      return String(g.id || '') === rid ||
+        String(g.uuid || '') === rid ||
+        String(g.property_group_uuid || '') === rid ||
+        String(g.GroupUuid || '') === rid ||
+        String(g.Id || '') === rid;
+    });
     if (grp) return grp.name || '';
   }
   // No local match and not yet resolved — caller should queue enrichment.
@@ -4670,6 +5701,7 @@ function extractWebhookMeta(e) {
   var resourceType = normalizeWebhookResourceType(e.resource_type || payload.resource_type || '', topic);
   var resourceId = String(e.resource_id || payload.resource_id || '').trim();
   var resourceName = String(e.resource_name || payload.resource_name || '').trim();
+  if (isUuidString(resourceName)) resourceName = '';
   if (!resourceName && resourceId) resourceName = resolveWebhookResourceName(resourceType, resourceId);
   return {
     payload: payload,
@@ -5202,7 +6234,7 @@ function renderWebhookDataTable(events) {
       html += escapeHtml((resolved.summary.title || 'Resolved') + (resolved.summary.reference ? ' #' + resolved.summary.reference : ''));
       if (resolved.summary.status) html += ' <span style="color:var(--text-muted)">(' + escapeHtml(resolved.summary.status) + ')</span>';
     } else if ((meta.resourceType || e.resource_type) && (meta.resourceId || e.resource_id)) {
-      html += escapeHtml(String(meta.resourceType || e.resource_type)) + ' / ' + escapeHtml(String(meta.resourceId || e.resource_id));
+      html += escapeHtml(String(meta.resourceType || e.resource_type)) + ' / ⟳ resolving';
     } else {
       html += '(unknown)';
     }
@@ -5737,7 +6769,7 @@ async function loadWOAttachments(woIdOrUuid) {
   if (!el || !woIdOrUuid) return;
   el.innerHTML = '<div style="color:var(--text-muted);font-size:11px"><i class="fas fa-spinner fa-spin"></i> Loading attachments…</div>';
   try {
-    var data = await proxyAction('wo_attachments', { wo_id: String(woIdOrUuid) });
+    var data = await proxyAction('wo_attachments', { wo_id: String(woIdOrUuid) }, { suppressSessionExpiry: true });
     if (!data || data.ok === false) {
       renderWOAttachmentsList([], String((data && (data.detail || data.error)) || 'No detail from proxy'));
       return;
@@ -6239,10 +7271,168 @@ function getPayrollWeek(offset) {
 // ─── Billing / AP Section ──────────────────────────────────────────────────
 var _billsPage = 0;
 var BILLS_PAGE_SIZE = 50;
+var _billingLoadPromise = null;
+var _billingQueuedOpts = null;
+var _billingListCacheRows = [];
+var _billingListCacheKey = '';
+
+// ── Client-side bill filtering helpers ────────────────────────────────────
+async function fetchAllBillsToCache() {
+  if (__CACHED_BILLS.length > 0) return true; // Already cached
+  if (__CACHED_BILLS_IN_FLIGHT) return false; // Fetch in progress
+  
+  __CACHED_BILLS_IN_FLIGHT = true;
+  try {
+    // Fetch all bills at once with high per_page limit to minimize API calls
+    var payload = await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS, {
+      scoped: false, // Bypass group scoping at fetch time (apply client-side)
+      forceRefresh: false,
+      filterType: '',
+      filterValue: '',
+      limit: 3000,
+      perPage: 3000,
+      page: 1,
+      offset: 0,
+      max: 3000,
+      assignGlobal: false,
+      returnPayload: true,
+    });
+    
+    if (payload && payload.ok && Array.isArray(payload.rows)) {
+      __CACHED_BILLS = payload.rows.slice();
+      __CACHED_BILLS_LOADED_AT = Date.now();
+      console.log('[Bill Cache] Loaded ' + __CACHED_BILLS.length + ' bills');
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.warn('[Bill Cache] Fetch failed:', err.message || err);
+    return false;
+  } finally {
+    __CACHED_BILLS_IN_FLIGHT = false;
+  }
+}
+
+function applyLocalBillFilters(filterOpts) {
+  filterOpts = filterOpts || {};
+  if (__CACHED_BILLS.length === 0) return []; // No cache yet
+  
+  var groupToFilterBy = filterOpts.groupId || '';
+  var statusToFilterBy = filterOpts.status || '';
+  var searchText = (filterOpts.search || '').toLowerCase();
+  
+  return __CACHED_BILLS.filter(function(b) {
+    // Filter by property group if specified
+    if (groupToFilterBy) {
+      var billPropId = String(b.propertyId || b.property_id || '').trim();
+      var billGroupId = __PROPERTY_TO_GROUP_MAP[billPropId];
+      if (billGroupId !== groupToFilterBy) return false;
+    }
+    
+    // Filter by status if specified
+    if (statusToFilterBy && String(b.status || '').toLowerCase() !== statusToFilterBy.toLowerCase()) {
+      return false;
+    }
+    
+    // Filter by search text if specified
+    if (searchText) {
+      var hay = [
+        b.vendorName,
+        b.vendorId,
+        b.payeeUuid,
+        b.vendorUuid,
+        b.propertyName,
+        b.propertyId,
+        b.unitId,
+        b.propertyGroup,
+        b.propertyManager,
+        b.workOrderId,
+        b.billNumber,
+        b.id,
+      ].join(' ').toLowerCase();
+      if (hay.indexOf(searchText) === -1) return false;
+    }
+    
+    return true;
+  });
+}
+
+function getBillingDateRangeKey() {
+  var from = String((document.getElementById('billUpdatedFrom') || {}).value || '').trim();
+  var to = String((document.getElementById('billUpdatedTo') || {}).value || '').trim();
+  return from + '|' + to;
+}
+
+function billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps) {
+  if (!grp) return true;
+  var normalizedGroupUuid = String(groupUuid || '').trim().toLowerCase();
+  var normalizedGroupName = String(grp || '').trim().toLowerCase();
+  var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
+  var billGroupName = String(resolveBillGroupName(b) || b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
+  var raw = (b && b.raw && typeof b.raw === 'object') ? b.raw : b;
+  var billPropertyId = String((b && b.propertyId) || raw.property_id || raw.PropertyId || raw.property_uuid || raw.PropertyUuid || '').trim();
+  var billPropertyName = String((b && b.propertyName) || raw.property_name || raw.PropertyName || raw.property || raw.Property || '').trim();
+
+  if (normalizedGroupUuid && billGroupUuid) return billGroupUuid === normalizedGroupUuid;
+  if (normalizedGroupName && billGroupName) return billGroupName === normalizedGroupName;
+  if (hasGroupMaps) return isInPropertyGroup(billPropertyId, billPropertyName, grp);
+  // Strict scope: if a group filter is active and we cannot prove membership, exclude.
+  return false;
+}
+
+function isBillingListRouteActive() {
+  return String(_billingRouteAction || 'bills_list').trim() === 'bills_list' &&
+    !_billingRouteFilterValue && !_billingDueFrom && !_billingDueTo;
+}
+
+function applyBillingListScopeFromCache(opts) {
+  opts = opts || {};
+  if (!Array.isArray(_billingListCacheRows) || _billingListCacheRows.length === 0) return false;
+
+  var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
+  var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+  var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
+  var scopedRows = _billingListCacheRows.filter(function(b) {
+    return billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps);
+  });
+
+  if (opts.resetPage) _billsPage = 0;
+  _billingServerTotal = scopedRows.length;
+  _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
+  _billingServerPage = Math.max(1, Math.min(_billingServerTotalPages, (_billsPage + 1)));
+  _billsPage = _billingServerPage - 1;
+
+  var start = _billsPage * BILLS_PAGE_SIZE;
+  window._billingPageRows = scopedRows.slice(start, start + BILLS_PAGE_SIZE);
+  renderBillsSection();
+  return true;
+}
 
 async function loadBillingPage(opts) {
+  if (_billingLoadPromise) {
+    var incoming = opts || {};
+    // Ignore duplicate manual refresh taps while a request is active.
+    // We still allow queued follow-ups for state-changing requests.
+    if (incoming.forceRefresh && !incoming.resetPage && !incoming.forceHardLock) {
+      return _billingLoadPromise;
+    }
+    var queued = _billingQueuedOpts || {};
+    _billingQueuedOpts = {
+      resetPage: !!(queued.resetPage || incoming.resetPage),
+      forceRefresh: !!(queued.forceRefresh || incoming.forceRefresh),
+      forceHardLock: !!(queued.forceHardLock || incoming.forceHardLock),
+    };
+    return _billingLoadPromise;
+  }
+
+  _billingLoadPromise = (async function() {
   opts = opts || {};
   if (opts.resetPage) _billsPage = 0;
+  
+  // Prefetch all bills to cache on first load
+  if (__CACHED_BILLS.length === 0 && !__CACHED_BILLS_IN_FLIGHT) {
+    await fetchAllBillsToCache();
+  }
 
   var hardLock = !Array.isArray(window._billingPageRows) || window._billingPageRows.length === 0;
   if (opts.forceHardLock) hardLock = true;
@@ -6264,40 +7454,105 @@ async function loadBillingPage(opts) {
     if (!isNaN(fromMs)) lookbackDays = Math.max(1, Math.ceil((Date.now() - fromMs) / 86400000));
   }
 
-  var payload = await fetchBills(lookbackDays, {
-    scoped: true,
-    forceRefresh: !!opts.forceRefresh,
-    filterType: _billingRouteAction,
-    filterValue: _billingRouteFilterValue,
-    dueFrom: _billingDueFrom,
-    dueTo: _billingDueTo,
-    updatedFrom: billUpdatedFrom,
-    updatedTo: billUpdatedTo,
-    routeStatusFilter: _billingRouteStatus,
-    limit: BILLS_PAGE_SIZE,
-    perPage: BILLS_PAGE_SIZE,
-    page: _billsPage + 1,
-    offset: _billsPage * BILLS_PAGE_SIZE,
-    assignGlobal: false,
-    returnPayload: true,
-  });
+  var isListRoute = isBillingListRouteActive();
 
-  if (!payload || !payload.ok) {
-    if (hardLock) setSectionBusy('sec-billing', false);
-    if (refreshBtn) {
-      refreshBtn.disabled = false;
-      refreshBtn.innerHTML = refreshText;
+  if (isListRoute && __CACHED_BILLS.length > 0) {
+    // Use cached bills with client-side group filtering
+    var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
+    var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+    var filteredBills = applyLocalBillFilters({ groupId: groupUuid || grp });
+    
+    _billingServerTotal = filteredBills.length;
+    _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
+    _billingServerPage = 1;
+    _billsPage = 0;
+    
+    var start = _billsPage * BILLS_PAGE_SIZE;
+    window._billingPageRows = filteredBills.slice(start, start + BILLS_PAGE_SIZE);
+    _lastBillSource = 'cached';
+    renderBillsSection(filteredBills);
+  } else if (isListRoute) {
+    var cacheKey = getBillingDateRangeKey();
+    var useCachedList = !opts.forceRefresh && _billingListCacheKey === cacheKey && Array.isArray(_billingListCacheRows) && _billingListCacheRows.length > 0;
+    var listPayload = null;
+    var listRows = [];
+
+    if (useCachedList) {
+      listRows = _billingListCacheRows.slice();
+      _lastBillSource = 'cached';
+    } else {
+      listPayload = await fetchBills(lookbackDays, {
+        scoped: false,
+        forceRefresh: !!opts.forceRefresh,
+        filterType: '',
+        filterValue: '',
+        dueFrom: '',
+        dueTo: '',
+        updatedFrom: billUpdatedFrom,
+        updatedTo: billUpdatedTo,
+        routeStatusFilter: '',
+        limit: 3000,
+        perPage: 3000,
+        page: 1,
+        offset: 0,
+        max: 3000,
+        assignGlobal: false,
+        returnPayload: true,
+      });
+
+      if (!listPayload || !listPayload.ok) {
+        if (hardLock) setSectionBusy('sec-billing', false);
+        if (refreshBtn) {
+          refreshBtn.disabled = false;
+          refreshBtn.innerHTML = refreshText;
+        }
+        showToast('Billing refresh failed: ' + String(listPayload && listPayload.error || 'unknown error'), { kind: 'warning' });
+        return;
+      }
+
+      listRows = Array.isArray(listPayload.rows) ? listPayload.rows : [];
+      _billingListCacheRows = listRows.slice();
+      _billingListCacheKey = cacheKey;
+      _lastBillSource = String(listPayload.source || (listPayload.fromCache ? 'cached' : 'live') || 'legacy');
     }
-    showToast('Billing refresh failed: ' + String(payload && payload.error || 'unknown error'), { kind: 'warning' });
-    return;
-  }
 
-  window._billingPageRows = Array.isArray(payload.rows) ? payload.rows : [];
-  _billingServerTotal = Number(payload.total || window._billingPageRows.length) || 0;
-  _billingServerTotalPages = Math.max(1, Number(payload.totalPages || 1) || 1);
-  _billingServerPage = Math.max(1, Number(payload.page || (_billsPage + 1)) || 1);
-  _billsPage = _billingServerPage - 1;
-  _lastBillSource = String(payload.source || (payload.fromCache ? 'cached' : 'live') || 'legacy');
+    applyBillingListScopeFromCache();
+  } else {
+    var payload = await fetchBills(lookbackDays, {
+      scoped: true,
+      forceRefresh: !!opts.forceRefresh,
+      filterType: _billingRouteAction,
+      filterValue: _billingRouteFilterValue,
+      dueFrom: _billingDueFrom,
+      dueTo: _billingDueTo,
+      updatedFrom: billUpdatedFrom,
+      updatedTo: billUpdatedTo,
+      routeStatusFilter: _billingRouteStatus,
+      limit: BILLS_PAGE_SIZE,
+      perPage: BILLS_PAGE_SIZE,
+      page: _billsPage + 1,
+      offset: _billsPage * BILLS_PAGE_SIZE,
+      assignGlobal: false,
+      returnPayload: true,
+    });
+
+    if (!payload || !payload.ok) {
+      if (hardLock) setSectionBusy('sec-billing', false);
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        refreshBtn.innerHTML = refreshText;
+      }
+      showToast('Billing refresh failed: ' + String(payload && payload.error || 'unknown error'), { kind: 'warning' });
+      return;
+    }
+
+    window._billingPageRows = Array.isArray(payload.rows) ? payload.rows : [];
+    _billingServerTotal = Number(payload.total || window._billingPageRows.length) || 0;
+    _billingServerTotalPages = Math.max(1, Number(payload.totalPages || 1) || 1);
+    _billingServerPage = Math.max(1, Number(payload.page || (_billsPage + 1)) || 1);
+    _billsPage = _billingServerPage - 1;
+    _lastBillSource = String(payload.source || (payload.fromCache ? 'cached' : 'live') || 'legacy');
+  }
 
   renderBillsSection();
 
@@ -6305,6 +7560,19 @@ async function loadBillingPage(opts) {
   if (refreshBtn) {
     refreshBtn.disabled = false;
     refreshBtn.innerHTML = refreshText;
+  }
+  })();
+
+  try {
+    return await _billingLoadPromise;
+  } finally {
+    _billingLoadPromise = null;
+    if (_billingQueuedOpts) {
+      var nextOpts = _billingQueuedOpts;
+      _billingQueuedOpts = null;
+      // Run one queued refresh after the active request settles.
+      loadBillingPage(nextOpts);
+    }
   }
 }
 
@@ -6364,13 +7632,14 @@ function renderBillingPaginationControls(footer, rowsCount) {
   }
 }
 
-function renderBillsSection() {
+function renderBillsSection(preFilteredData) {
   var tbody = $('#billBody');
   var footer = $('#billFooter');
   if (!tbody) return;
 
-  var grp = getEffectiveGroupId();
+  var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
   var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+  var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
   var activePropertyId = String(window.filteredPropertyId || '').trim();
   var activeUnitId = String(window.filteredUnitId || '').trim();
   var statusFilter = ($('#billStatusFilter') ? $('#billStatusFilter').value : '').toLowerCase();
@@ -6380,31 +7649,18 @@ function renderBillsSection() {
 
   renderBillingPropertyScopeChip(activePropertyId, String(window.filteredPropertyName || ''), activeUnitId, String(window.filteredUnitName || ''));
 
-  var sourceRows = Array.isArray(window._billingPageRows) && window._billingPageRows.length
-    ? window._billingPageRows
-    : (BILLS || []);
+  // Use pre-filtered data if provided (from cache), otherwise use current page rows
+  var sourceRows = Array.isArray(preFilteredData) && preFilteredData.length > 0
+    ? preFilteredData
+    : (Array.isArray(window._billingPageRows) && window._billingPageRows.length
+      ? window._billingPageRows
+      : (BILLS || []));
 
   // Local visual filters (search + property drilldown) on current server page.
   var filtered = sourceRows.filter(function(b) {
-    if (grp) {
-      if (groupUuid) {
-        var billGroupUuid = String(b.propertyGroupId || resolveBillGroupUuidFromRecord(b.raw || b) || '').trim().toLowerCase();
-        if (billGroupUuid) {
-          if (billGroupUuid !== String(groupUuid).trim().toLowerCase()) return false;
-        } else if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) {
-          return false;
-        }
-      } else {
-        var billGroup = String(b.propertyGroup || b._propertyGroup || '').trim().toLowerCase();
-        if (billGroup) {
-          if (billGroup !== String(grp).trim().toLowerCase()) return false;
-        } else if (!isInPropertyGroup(b.propertyId, b.propertyName, grp)) {
-          return false;
-        }
-      }
-    }
+    if (!billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps)) return false;
     if (statusFilter) {
-      var st = String(b.status || '').toLowerCase();
+      var st = getBillStatusKey(b);
       if (statusFilter === 'pending_approval' && st !== 'pending_approval') return false;
       if (statusFilter === 'approved' && st !== 'approved') return false;
       if (statusFilter === 'paid' && st !== 'paid') return false;
@@ -6417,7 +7673,10 @@ function renderBillsSection() {
         b.payeeUuid,
         b.vendorUuid,
         b.propertyName,
+        b.propertyId,
+        b.unitId,
         b.propertyGroup,
+        b.propertyManager,
         b.workOrderId,
         b.billNumber,
         b.id,
@@ -6428,26 +7687,29 @@ function renderBillsSection() {
       if (String(b.propertyId || '').trim() !== activePropertyId) return false;
     }
     if (activeUnitId) {
-      if (String(b.unit_id || b.unitId || '').trim() !== activeUnitId) return false;
+      if (String(b.unitId || b.unit_id || '').trim() !== activeUnitId) return false;
     }
     return true;
   });
 
   // KPIs
-  var pendingBills = filtered.filter(function(b) { return String(b.status || '') === 'pending_approval'; });
-  var approvedBills = filtered.filter(function(b) { return String(b.status || '') === 'approved'; });
+  var pendingBills = filtered.filter(function(b) {
+    var statusKey = getBillStatusKey(b);
+    return statusKey === 'pending_approval';
+  });
+  var approvedBills = filtered.filter(function(b) { return getBillStatusKey(b) === 'approved'; });
   var paidBills = filtered.filter(function(b) {
-    var st = String(b.status || '');
+    var st = getBillStatusKey(b);
     var d = new Date(b.date || '');
     return st === 'paid' && !isNaN(d.getTime()) && d.getTime() >= thirtyDaysAgo;
   });
   var uniqueVendors = new Set(filtered.map(function(b) { return b.vendorId || b.vendorName; }).filter(Boolean));
   var outstandingTotal = approvedBills.reduce(function(sum, b) {
-    var n = parseFloat(String(b.amount || '0').replace(/[^0-9.\-]/g, '')) || 0;
+    var n = amountToNumber(b.amount || 0);
     return sum + n;
   }, 0);
   var paidTotal = paidBills.reduce(function(sum, b) {
-    var n = parseFloat(String(b.amount || '0').replace(/[^0-9.\-]/g, '')) || 0;
+    var n = amountToNumber(b.amount || 0);
     return sum + n;
   }, 0);
 
@@ -6479,7 +7741,7 @@ function renderBillsSection() {
   }
 
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px">' +
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:24px">' +
       (sourceRows.length === 0 ? 'No bills loaded — click Refresh to fetch from AppFolio' : 'No bills match current filter') + '</td></tr>';
     window._currentBillsCache = [];
     if (footer) footer.style.display = 'none';
@@ -6493,20 +7755,40 @@ function renderBillsSection() {
     var stKey = String(st).trim().toLowerCase().replace(/\s+/g, '-');
     var stLow = String(b.status || '').toLowerCase();
     var billNum = getNormalizedBillDisplayNumber(b);
-    var amountVal = Number(b.amount || 0);
+    var detailId = getNormalizedBillDetailId(b);
+    var amountVal = resolveBillAmountValue(b);
     var vendorText = b.vendorName || b.vendorId || '—';
     var payeeText = b.payeeUuid || b.vendorUuid || b.vendorId || '';
     if (b.vendorName && payeeText) vendorText += ' (' + payeeText + ')';
     var propertyText = String(b.propertyName || '—');
-    var workOrderId = String(b.workOrderId || '').trim();
+    var propertyIdText = String(b.propertyId || '').trim();
+    var unitIdText = String(b.unitId || '').trim();
+    var pmText = String(b.propertyManager || '').trim();
+    var workOrderId = String(resolveBillWorkOrderRef(b) || '').trim();
     var woBadge = workOrderId
       ? ('<span title="Linked Work Order: ' + escapeHtml(workOrderId) + '"><i class="fas fa-wrench" style="color:var(--accent)"></i></span>')
       : '<span style="color:var(--text-muted)">—</span>';
-    return '<tr class="bill-row clickable-row" data-billdetail="' + escapeHtml(String(b.id || '')) + '" tabindex="0" role="button" aria-label="Open bill ' + escapeHtml(billNum) + '">' +
-      '<td style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--accent)">' + escapeHtml(billNum) + '</td>' +
+    var groupName = resolveBillGroupName(b);
+    var groupCell = groupName
+      ? '<span class="tag" style="font-size:10px;padding:1px 6px">' + escapeHtml(groupName) + '</span>'
+      : '<span style="color:var(--text-muted)">—</span>';
+    var linkBits = [];
+    if (propertyIdText) linkBits.push('PID ' + propertyIdText);
+    if (unitIdText) linkBits.push('UNIT ' + unitIdText);
+    if (groupName) linkBits.push('GROUP ' + groupName);
+    if (pmText) linkBits.push('PM ' + pmText);
+    var linkageHtml = linkBits.length
+      ? ('<div style="margin-top:2px;font-size:10px;font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(linkBits.join(' | ')) + '">' + escapeHtml(linkBits.join(' | ')) + '</div>')
+      : '';
+    return '<tr class="bill-row clickable-row" data-billdetail="' + escapeHtml(detailId) + '" tabindex="0" role="button" aria-label="Open bill ' + escapeHtml(billNum) + '">' +
+      '<td style="font-family:var(--font-mono);font-size:11px;line-height:1.3">' +
+        '<div style="font-weight:700;color:var(--accent)">' + escapeHtml(billNum) + '</div>' +
+        '<div style="font-size:10px;color:var(--text-muted)">ID ' + escapeHtml(String(detailId || '').slice(0, 12) || '—') + '</div>' +
+      '</td>' +
       '<td>' + escapeHtml(vendorText) + '</td>' +
-      '<td><span style="display:inline-block;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(propertyText) + '">' + escapeHtml(propertyText) + '</span></td>' +
-      '<td style="font-family:var(--font-mono)">' + currency(amountVal) + '</td>' +
+      '<td><span style="display:inline-block;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(propertyText) + '">' + escapeHtml(propertyText) + '</span>' + linkageHtml + '</td>' +
+      '<td>' + groupCell + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + currency(amountVal, 2) + '</td>' +
       '<td>' + escapeHtml(b.date ? formatDate(b.date) : '—') + '</td>' +
       '<td><span class="status-badge status-' + escapeHtml(stKey) + ' status-' + escapeHtml(stLow.replace(/\s+/g, '-')) + '">' + escapeHtml(st) + '</span></td>' +
       '<td style="text-align:center">' + woBadge + '</td>' +
@@ -6534,12 +7816,20 @@ function renderBillsSection() {
 
 function openBillKanbanCard(billId) {
   var cache = Array.isArray(window._currentBillsCache) ? window._currentBillsCache : [];
-  var bill = cache.find(function(entry) { return String(entry.id || '') === String(billId || ''); });
+  var target = String(billId || '').trim();
+  var bill = cache.find(function(entry) {
+    return getNormalizedBillDetailId(entry) === target;
+  });
+  if (!bill) {
+    bill = cache.find(function(entry) {
+      return String(getNormalizedBillDisplayNumber(entry) || '').trim() === target;
+    });
+  }
   if (!bill) {
     showToast('Bill not found in current view', { kind: 'warning' });
     return;
   }
-  showBillDetailModal(bill.id || billId, bill);
+  showBillDetailModal(getNormalizedBillDetailId(bill) || billId, bill);
 }
 
 function renderBillingPropertyScopeChip(propertyId, propertyName, unitId, unitName) {
@@ -6707,6 +7997,8 @@ function wireBillingFilters() {
     function scheduleReloadOnDateChange() {
       clearTimeout(dateChangeTimer);
       dateChangeTimer = setTimeout(function() {
+        _billingListCacheRows = [];
+        _billingListCacheKey = '';
         window._billingPageRows = [];
         _billingServerTotal = 0;
         _billingServerTotalPages = 1;
@@ -6724,10 +8016,107 @@ function wireBillingFilters() {
   }
 
   document.addEventListener('groupFilterChanged', function() {
-    if (String(filterType.value || '') === 'bills_list') {
-      _billsPage = 0;
-      loadBillingPage({ resetPage: true });
+    window._currentBillsCache = [];
+    _billsPage = 0;
+    if (currentBillingSubtab === 'history') {
+      BILL_HISTORY_PAGE = 0;
+      runBillHistorySearch();
+      return;
     }
+    // Apply client-side group filter to cached bills instantly
+    if (__CACHED_BILLS.length > 0) {
+      var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
+      var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
+      var filteredBills = applyLocalBillFilters({ groupId: groupUuid || grp });
+      _billingServerTotal = filteredBills.length;
+      _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
+      _billingServerPage = 1;
+      _billsPage = 0;
+      var start = 0;
+      window._billingPageRows = filteredBills.slice(start, start + BILLS_PAGE_SIZE);
+      renderBillsSection(filteredBills);
+      return;
+    }
+    // Fallback to legacy behavior if cache not yet loaded
+    if (isBillingListRouteActive() && applyBillingListScopeFromCache({ resetPage: true })) {
+      return;
+    }
+    loadBillingPage({ resetPage: true });
+  });
+
+  // Wire filter-type pill buttons
+  var ftypeBtns = document.querySelectorAll('.billing-ftype-btn');
+  Array.prototype.forEach.call(ftypeBtns, function(btn) {
+    btn.addEventListener('click', function() {
+      Array.prototype.forEach.call(ftypeBtns, function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      var ftype = String(btn.dataset.ftype || 'bills_list');
+      if (filterType) { filterType.value = ftype; filterType.dispatchEvent(new Event('change')); }
+    });
+  });
+
+  // Wire period preset buttons (sets hidden date inputs and triggers reload)
+  var periodBtns = document.querySelectorAll('.billing-period-btn');
+  var periodFrom2 = document.getElementById('billUpdatedFrom2');
+  var periodTo2 = document.getElementById('billUpdatedTo2');
+  function applyPeriodDays(days) {
+    var toDate = new Date();
+    var fromDate = new Date(toDate);
+    fromDate.setDate(fromDate.getDate() - days);
+    var fromStr = fromDate.toISOString().slice(0, 10);
+    var toStr = toDate.toISOString().slice(0, 10);
+    // Update visible custom inputs to match preset
+    if (periodFrom2) periodFrom2.value = fromStr;
+    if (periodTo2) periodTo2.value = toStr;
+    // Update hidden inputs that fetchBills reads
+    var hidFrom = document.getElementById('billUpdatedFrom');
+    var hidTo = document.getElementById('billUpdatedTo');
+    if (hidFrom) hidFrom.value = fromStr;
+    if (hidTo) hidTo.value = toStr;
+    _billingListCacheRows = [];
+    _billingListCacheKey = '';
+    window._billingPageRows = [];
+    _billingServerTotal = 0;
+    _billingServerTotalPages = 1;
+    _billingServerPage = 1;
+    _billsPage = 0;
+    loadBillingPage({ resetPage: true, forceRefresh: true });
+  }
+  Array.prototype.forEach.call(periodBtns, function(btn) {
+    btn.addEventListener('click', function() {
+      Array.prototype.forEach.call(periodBtns, function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      applyPeriodDays(parseInt(String(btn.dataset.days || '30'), 10) || 30);
+    });
+  });
+  // Wire custom date inputs (billUpdatedFrom2/billUpdatedTo2) to mirror to hidden inputs
+  function onCustomDateChange() {
+    Array.prototype.forEach.call(periodBtns, function(b) { b.classList.remove('active'); });
+    var hidFrom = document.getElementById('billUpdatedFrom');
+    var hidTo = document.getElementById('billUpdatedTo');
+    if (hidFrom && periodFrom2) hidFrom.value = periodFrom2.value;
+    if (hidTo && periodTo2) hidTo.value = periodTo2.value;
+    clearTimeout(dateChangeTimer);
+    dateChangeTimer = setTimeout(function() {
+      _billingListCacheRows = [];
+      _billingListCacheKey = '';
+      window._billingPageRows = [];
+      _billingServerTotal = 0;
+      _billingServerTotalPages = 1;
+      _billingServerPage = 1;
+      _billsPage = 0;
+      loadBillingPage({ resetPage: true, forceRefresh: true });
+    }, 600);
+  }
+  if (periodFrom2) periodFrom2.addEventListener('change', onCustomDateChange);
+  if (periodTo2) periodTo2.addEventListener('change', onCustomDateChange);
+
+  // Seed 7d default on init
+  applyPeriodDays(BILLS_DEFAULT_LOOKBACK_DAYS || 7);
+  // Mark 7d button active
+  Array.prototype.forEach.call(periodBtns, function(b) {
+    if (parseInt(String(b.dataset.days || '0'), 10) === (BILLS_DEFAULT_LOOKBACK_DAYS || 7)) b.classList.add('active');
+    else b.classList.remove('active');
   });
 
   toggleControls();
@@ -6737,12 +8126,17 @@ function buildBillLineItemsHtml(lineItems) {
   if (!Array.isArray(lineItems) || lineItems.length === 0) return '<span style="color:var(--text-muted)">No line items available</span>';
   var rows = lineItems.map(function(li) {
     var desc = li.Description || li.description || '—';
-    var amt = li.Amount || li.amount || 0;
+    var amt = li.Amount || li.amount || li.TotalAmount || li.total_amount || 0;
     var gl = li.GlAccountId || li.gl_account_id || li.GLAccountId || '—';
     var unit = li.UnitId || li.unit_id || '—';
-    return '<tr>' +
+    var target = resolveLineItemUuidTarget(li);
+    var attrs = '';
+    if (target) {
+      attrs = ' class="clickable-row bill-lineitem-row" data-li-resource="' + escapeHtml(target.resource) + '" data-li-label="' + escapeHtml(target.label) + '" data-li-uuid="' + escapeHtml(target.uuid) + '" tabindex="0" role="button" aria-label="Open ' + escapeHtml(target.label) + ' UUID detail"';
+    }
+    return '<tr' + attrs + '>' +
       '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + escapeHtml(String(desc)) + '</td>' +
-      '<td style="padding:4px 6px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono)">' + currency(amt) + '</td>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono)">' + currency(amt, 2) + '</td>' +
       '<td style="padding:4px 6px;border-bottom:1px solid var(--border);font-family:var(--font-mono)">' + escapeHtml(String(gl)) + '</td>' +
       '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + escapeHtml(String(unit)) + '</td>' +
       '</tr>';
@@ -6859,10 +8253,11 @@ async function showBillDetailModal(billId) {
   if (!billId) return;
   try {
     var b = arguments[1] || null; // optional pre-loaded bill object
+    var detailFetchFailed = false;
     if (!b) {
       // Attempt cheap cache lookup before expensive API call
       var cachedRows = window._currentBillsCache || window._billingPageRows || [];
-      b = cachedRows.find(function(r) { return String(r.id || '') === String(billId); }) || null;
+      b = cachedRows.find(function(r) { return getNormalizedBillDetailId(r) === String(billId || '').trim(); }) || null;
     }
     var hasRichDetail = !!(b && b.raw && (b.raw.LineItems || b.raw.line_items || b.raw.Remarks || b.raw.remarks || b.raw.CheckMemo));
     if (!b || !hasRichDetail) {
@@ -6870,11 +8265,16 @@ async function showBillDetailModal(billId) {
         var data = await proxyAction('bill_detail', { bill_id: String(billId) });
         var detailed = data.result || data.bill || null;
         if (detailed) b = detailed;
-      } catch (e) { /* keep cached bill fallback */ }
+      } catch (e) {
+        detailFetchFailed = true;
+      }
     }
     if (!b) {
       showToast('Bill detail unavailable', { kind: 'warning' });
       return;
+    }
+    if (detailFetchFailed) {
+      showToast('Loaded cached bill details only (live detail fetch failed)', { kind: 'warning' });
     }
 
     var raw = b.raw || {};
@@ -6893,7 +8293,7 @@ async function showBillDetailModal(billId) {
       { label: 'Bill ID', value: String(b.id || billId) },
       { label: 'Invoice #', value: String(b.bill_number || b.reference || '—') },
       { label: 'Status', value: String(b.status_label || b.status || '—') },
-      { label: 'Amount', value: currency(b.amount || b.total_amount || 0) },
+      { label: 'Amount', value: currency(b.amount || b.total_amount || 0, 2) },
       { label: 'Invoice Date', value: b.invoice_date ? formatDate(b.invoice_date) : '—' },
       { label: 'Due Date', value: b.due_date ? formatDate(b.due_date) : '—' },
       { label: 'Posting Date', value: b.posting_date ? formatDate(b.posting_date) : '—' },
@@ -6908,7 +8308,10 @@ async function showBillDetailModal(billId) {
       { label: 'Property', value: String((b.property_name || b.propertyName || '—') + ((b.property_id || b.propertyId) ? (' (' + (b.property_id || b.propertyId) + ')') : '')) },
       { label: 'Property Group', value: String(b.property_group || b.property_group_name || b.propertyGroup || b._propertyGroup || '—') },
       { label: 'Property Manager', value: String(b.pm_name || b.property_manager || raw.pm_name || raw.property_manager || raw.PropertyManager || '—') },
-      { label: 'Work Order', value: b.work_order_id || b.workOrderId ? String(b.work_order_id || b.workOrderId) : '—' },
+      { label: 'Work Order', value: (function() {
+          var woRef = resolveBillWorkOrderRef(b);
+          return woRef ? String(woRef) : '—';
+        })() },
       { label: 'Reference', value: String(b.reference || '—') },
       { label: 'Remarks', value: String(b.remarks || '—') },
       { section: 'Line Items', icon: 'fa-list' },
@@ -6962,6 +8365,21 @@ async function showBillDetailModal(billId) {
           uploadBillAttachment(billId, fileInput, statusEl, listEl);
         });
       }
+      Array.prototype.forEach.call(document.querySelectorAll('#itemDetailBody tr[data-li-uuid]'), function(row) {
+        var openLineItemUuid = function(evt) {
+          if (evt) evt.preventDefault();
+          var uuid = String(row.getAttribute('data-li-uuid') || '').trim();
+          var resource = String(row.getAttribute('data-li-resource') || '').trim();
+          var label = String(row.getAttribute('data-li-label') || 'Record').trim();
+          if (!uuid || !resource) return;
+          showV0UuidDetailModal({ resource: resource, uuid: uuid, label: label }, null);
+        };
+        row.addEventListener('click', openLineItemUuid);
+        row.addEventListener('keydown', function(evt) {
+          if (evt.key !== 'Enter' && evt.key !== ' ') return;
+          openLineItemUuid(evt);
+        });
+      });
       if (payloadCopyBtn && navigator && navigator.clipboard && navigator.clipboard.writeText) {
         payloadCopyBtn.addEventListener('click', async function() {
           try {
@@ -7020,11 +8438,24 @@ function renderBillHistoryPage(dateFrom, dateTo) {
   var end = Math.min(start + BILL_HISTORY_ROWS.length, totalRows);
   var pageRows = BILL_HISTORY_ROWS;
 
+  var pendingHistory = pageRows.filter(function(r) {
+    var statusKey = normalizeBillApprovalStatus(
+      r.status || r.status_label || r.ApprovalStatus || r.approval_status || r.Status || ''
+    );
+    return statusKey === 'pending_approval';
+  });
+  var kpiPendingEl = document.getElementById('billKpiPending');
+  var kpiPendingSubEl = document.getElementById('billKpiPendingSub');
+  if (kpiPendingEl) kpiPendingEl.textContent = String(pendingHistory.length);
+  if (kpiPendingSubEl) {
+    kpiPendingSubEl.textContent = pendingHistory.length > 0
+      ? (pendingHistory.length + ' pending in history result')
+      : 'No pending approvals in history result';
+  }
+
   body.innerHTML = pageRows.map(function(r) {
-    var wo = String(r.work_order_id || r.WorkOrderId || '').trim();
-    var billId = String(
-      r.id || r.Id || r.bill_id || r.BillId || r.bill_uuid || r.BillUuid || ''
-    ).trim();
+    var wo = String(resolveBillWorkOrderRef(r) || '').trim();
+    var billId = getNormalizedBillDetailId(r);
     var vendorId = String(r.vendor_id || r.VendorId || r.payee_uuid || r.PayeeUuid || '').trim();
     var vendorName = String(r.vendor_name || r.VendorName || '').trim();
     if (!vendorName) vendorName = resolveVendorNameFromMaps(vendorId, vendorId || '—') || '—';
@@ -7051,8 +8482,9 @@ function renderBillHistoryPage(dateFrom, dateTo) {
     }
 
     var rowAttrs = '';
+    var rowIndex = BILL_HISTORY_ROWS.indexOf(r);
     if (billId) {
-      rowAttrs = ' class="clickable-row" data-billdetail="' + escapeHtml(billId) + '" tabindex="0" role="button" aria-label="Open bill detail"';
+      rowAttrs = ' class="clickable-row" data-billdetail="' + escapeHtml(billId) + '" data-billindex="' + escapeHtml(String(rowIndex)) + '" tabindex="0" role="button" aria-label="Open bill detail"';
     }
 
     return '<tr' + rowAttrs + '>' +
@@ -7061,10 +8493,10 @@ function renderBillHistoryPage(dateFrom, dateTo) {
       '<td>' + escapeHtml(propertyName) + '</td>' +
       '<td>' + escapeHtml(grpResolved || '—') + '</td>' +
       '<td>' + escapeHtml(pmResolved || '—') + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || r.TotalAmount || 0) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || r.TotalAmount || r.Paid || r.Unpaid || 0, 2) + '</td>' +
       '<td>' + escapeHtml((r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) ? formatDate(r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) : '—') + '</td>' +
       '<td>' + escapeHtml(String(r.status_label || r.status || r.ApprovalStatus || '—')) + '</td>' +
-      '<td>' + (wo ? ('<button class="action-btn" data-wojump="' + escapeHtml(wo) + '" style="padding:2px 8px">#' + escapeHtml(wo.slice(0, 8)) + '</button>') : '<span style="color:var(--text-muted)">—</span>') + '</td>' +
+        '<td>' + (wo ? ('<button class="action-btn" data-wojump="' + escapeHtml(wo) + '" style="padding:2px 8px">#' + escapeHtml(wo) + '</button>') : '<span style="color:var(--text-muted)">—</span>') + '</td>' +
       '</tr>';
   }).join('');
 
@@ -7110,7 +8542,10 @@ function renderBillHistoryPage(dateFrom, dateTo) {
       evt.stopPropagation();
       var billId = btn.getAttribute('data-billdetail');
       if (!billId) return;
-      showBillDetailModal(billId);
+      var row = btn.closest('tr');
+      var idx = Number(row && row.getAttribute('data-billindex'));
+      var rowObj = (Number.isFinite(idx) && idx >= 0) ? BILL_HISTORY_ROWS[idx] : null;
+      showBillDetailModal(billId, rowObj || null);
     });
   });
 
@@ -7118,14 +8553,18 @@ function renderBillHistoryPage(dateFrom, dateTo) {
     row.addEventListener('click', function() {
       var billId = row.getAttribute('data-billdetail');
       if (!billId) return;
-      showBillDetailModal(billId);
+      var idx = Number(row.getAttribute('data-billindex'));
+      var rowObj = (Number.isFinite(idx) && idx >= 0) ? BILL_HISTORY_ROWS[idx] : null;
+      showBillDetailModal(billId, rowObj || null);
     });
     row.addEventListener('keydown', function(evt) {
       if (evt.key !== 'Enter' && evt.key !== ' ') return;
       evt.preventDefault();
       var billId = row.getAttribute('data-billdetail');
       if (!billId) return;
-      showBillDetailModal(billId);
+      var idx = Number(row.getAttribute('data-billindex'));
+      var rowObj = (Number.isFinite(idx) && idx >= 0) ? BILL_HISTORY_ROWS[idx] : null;
+      showBillDetailModal(billId, rowObj || null);
     });
   });
 }
@@ -7165,7 +8604,7 @@ async function runBillHistorySearch() {
     var historyTotal = 0;
     var historyPages = 1;
     var historyPage = BILL_HISTORY_PAGE + 1;
-    var grpName = getEffectiveGroupId();
+    var grpName = normalizeGroupSelectionValue(getEffectiveGroupId());
     var grpUuid = forcedPropertyGroupUuid || resolveGroupUuidFromName(grpName);
 
     if (grpUuid) {
@@ -7209,7 +8648,7 @@ async function runBillHistorySearch() {
         max: '8000',
       };
       if (grpName) params.group_name = grpName;
-      if (forcedPropertyGroupUuid) params.group_uuid = forcedPropertyGroupUuid;
+      if (grpUuid) params.group_uuid = grpUuid;
 
       var st = ($('#billStatusFilter') ? $('#billStatusFilter').value : '').trim();
       if (st) params.status = st;
@@ -7224,6 +8663,26 @@ async function runBillHistorySearch() {
       } else {
         _lastBillSource = 'legacy';
       }
+    }
+
+    if (rows.length && (grpName || grpUuid)) {
+      var grpUuidLower = String(grpUuid || '').trim().toLowerCase();
+      var grpNameLower = String(grpName || '').trim().toLowerCase();
+      var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
+      rows = rows.filter(function(r) {
+        var rowGroupUuid = String(resolveBillGroupUuidFromRecord(r) || '').trim().toLowerCase();
+        if (grpUuidLower && rowGroupUuid) return rowGroupUuid === grpUuidLower;
+
+        var rowGroupName = String(
+          r.property_group_name || r.property_group || r.PropertyGroup || resolveBillGroupName(r) || ''
+        ).trim().toLowerCase();
+        if (grpNameLower && rowGroupName) return rowGroupName === grpNameLower;
+
+        var rowPropertyId = String(r.property_id || r.PropertyId || '').trim();
+        var rowPropertyName = String(r.property_name || r.PropertyName || '').trim();
+        if (hasGroupMaps && grpName) return isInPropertyGroup(rowPropertyId, rowPropertyName, grpName);
+        return false;
+      });
     }
 
     if (!rows.length) {
@@ -7341,11 +8800,7 @@ function renderDashboardKPIs() {
   var flaggedCount = Object.keys(WO_FLAGS).length;
   var pendingBillApprovals = (BILLS || []).filter(function(b) {
     if (!isInPropertyGroup(b.propertyId, b.propertyName, currentPropertyGroup)) return false;
-    var raw = b.raw || {};
-    var statusText = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || raw.State || raw.state || '').toLowerCase();
-    var approvalText = String(raw.ApprovalState || raw.approval_state || raw.PendingApproval || raw.pending_approval || '').toLowerCase();
-    var combined = statusText + ' ' + approvalText;
-    return combined.indexOf('pending') !== -1 || combined.indexOf('awaiting approval') !== -1 || combined.indexOf('needs approval') !== -1;
+    return getBillStatusKey(b) === 'pending_approval';
   });
 
   var completedTurns = TURNS.filter(function(t) {
@@ -7411,6 +8866,37 @@ function renderDashboardKPIs() {
   var avgInspectionAge = averageDays(inspectionAges);
   var avgWOCompletion = averageDays(woCompletionDurations);
 
+  var vacancyByGroup = {};
+  function isVacantProperty(p) {
+    var statusText = String(
+      p.status || p.Status || p.occupancyStatus || p.OccupancyStatus ||
+      p.rentalStatus || p.RentalStatus || p.unitStatus || p.UnitStatus || ''
+    ).toLowerCase();
+    if (p.isVacant === true || p.IsVacant === true || p.vacant === true) return true;
+    return statusText.indexOf('vacant') !== -1 || statusText.indexOf('available') !== -1;
+  }
+  function propertyGroupName(p) {
+    var direct = String(p.propertyGroup || p.PropertyGroup || p.group_name || '').trim();
+    if (direct) return direct;
+    var gid = String(p.propertyGroupId || p.PropertyGroupId || p.property_group_id || p.property_group_uuid || '').trim();
+    if (!gid) return 'Unassigned';
+    var grp = PROPERTY_GROUPS.find(function(g) {
+      return String(g.id || g.Id || g.uuid || g.property_group_uuid || '').trim() === gid;
+    });
+    return String((grp && (grp.name || grp.Name)) || 'Unassigned').trim();
+  }
+  PROPERTIES.forEach(function(p) {
+    if (!isInPropertyGroup(p.id, p.name, currentPropertyGroup)) return;
+    if (!isVacantProperty(p)) return;
+    var g = propertyGroupName(p) || 'Unassigned';
+    vacancyByGroup[g] = (vacancyByGroup[g] || 0) + 1;
+  });
+  var vacancyGroups = Object.keys(vacancyByGroup);
+  var vacancyTotal = vacancyGroups.reduce(function(sum, g) { return sum + vacancyByGroup[g]; }, 0);
+  var topVacancyGroup = vacancyGroups.sort(function(a, b) {
+    return (vacancyByGroup[b] || 0) - (vacancyByGroup[a] || 0);
+  })[0] || '';
+
   // WO aging buckets
   var agingCounts = CONFIG.WO_AGING_BUCKETS.map(function() { return 0; });
   var today = new Date();
@@ -7469,6 +8955,37 @@ function renderDashboardKPIs() {
   var mgrCompSub = $('#kpiMgrCompletedTurnsSub');
   if (mgrComp) mgrComp.textContent = completedTurns.length;
   if (mgrCompSub) mgrCompSub.textContent = completedTurns.length > 0 ? 'completed turnover records in scope' : 'No completed turnover records in scope';
+
+  var vacancyKpi = $('#kpiVacancyGroups');
+  var vacancySub = $('#kpiVacancyGroupsSub');
+  if (vacancyKpi) vacancyKpi.textContent = String(vacancyTotal);
+  if (vacancySub) {
+    vacancySub.textContent = vacancyTotal > 0
+      ? (topVacancyGroup + ': ' + vacancyByGroup[topVacancyGroup] + ' vacant')
+      : 'No vacancies detected in scope';
+  }
+  var vacancyCard = document.getElementById('kpiVacancyCard') || (vacancyKpi ? vacancyKpi.closest('.kpi-card') : null);
+  if (vacancyCard) {
+    vacancyCard.classList.add('clickable-row');
+    vacancyCard.setAttribute('role', 'button');
+    vacancyCard.setAttribute('tabindex', '0');
+    vacancyCard.setAttribute('aria-label', 'Open vacant properties');
+    var openVacancies = function(evt) {
+      if (evt && evt.type === 'keydown' && evt.key !== 'Enter' && evt.key !== ' ') return;
+      if (evt && evt.type === 'keydown') evt.preventDefault();
+      _propertiesVacancyOnly = true;
+        _propertiesLocalGroup = '';
+        if ($('#propertyGroupFilter')) $('#propertyGroupFilter').value = '';
+        if ($('#propertySearch')) $('#propertySearch').value = '';
+      _propertiesPage = 0;
+      forceActiveTab('properties');
+      setPropertiesSubtab('directory');
+      renderPropertiesSection();
+      showToast('Properties filtered to vacancies', { kind: 'info' });
+    };
+    vacancyCard.onclick = openVacancies;
+    vacancyCard.onkeydown = openVacancies;
+  }
 
   $('#woBadge').textContent = openWOs.length || '0';
   $('#turnBadge').textContent = activeTurns.length || '0';
@@ -7761,9 +9278,51 @@ function setPropertiesSubtab(tab) {
   }
   var scopeEl = $('#propertiesBulkScopeText');
   if (scopeEl) {
-    var grp = String(_propertiesLocalGroup || getEffectiveGroupId() || 'All Groups');
+    var scope = getPropertiesScope();
+    var grp = String(scope.effectiveGroup || 'All Groups');
     scopeEl.textContent = 'Current scope: ' + grp + '. Use "Open Bulk Note Composer" to apply the same note across scoped properties.';
   }
+}
+
+function getPropertiesScope(localValue) {
+  var globalGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+  var localGroup = normalizeGroupSelectionValue(localValue != null ? localValue : _propertiesLocalGroup);
+  return {
+    globalGroup: globalGroup,
+    localGroup: localGroup,
+    effectiveGroup: localGroup || globalGroup
+  };
+}
+
+function propertyMatchesSelectedGroup(propertyRow, groupName) {
+  var selected = normalizeGroupSelectionValue(groupName);
+  if (!selected) return true;
+  var row = propertyRow || {};
+  var candidates = [
+    row.propertyGroup,
+    row.groupName,
+    row.portfolio,
+    row.property_group,
+    row.PropertyGroup,
+    row.PropertyGroupName,
+    row.portfolio_name
+  ].map(function(v) {
+    return String(v || '').trim();
+  }).filter(Boolean);
+
+  if (!candidates.length) {
+    return isInPropertyGroup(row.id || row.propertyId || '', row.name || '', selected);
+  }
+
+  var selectedLower = selected.toLowerCase();
+  var directMatch = candidates.some(function(v) {
+    return v.toLowerCase() === selectedLower;
+  });
+  if (directMatch) return true;
+
+  // Some property rows carry portfolio/manager labels that differ from the
+  // selected group display name. Fall back to canonical UUID/name map lookup.
+  return isInPropertyGroup(row.id || row.propertyId || '', row.name || '', selected);
 }
 var completedWOHistoryRows = [];
 var completedWOHistoryLoading = false;
@@ -8423,10 +9982,19 @@ function renderWOFollowupQueue() {
 }
 
 function showWODetail(id) {
-  var wo = WORK_ORDERS.find(function(w) { return String(w.id) === String(id); });
+  var ref = String(id || '').trim().replace(/^#/, '');
+  var refLower = ref.toLowerCase();
+  var wo = WORK_ORDERS.find(function(w) {
+    var idText = String(w.id || '').trim();
+    var uuidText = String(w.uuid || '').trim();
+    if (idText === ref || uuidText === ref) return true;
+    if (idText.toLowerCase() === refLower || uuidText.toLowerCase() === refLower) return true;
+    return false;
+  });
   if (!wo) return;
   var woDbUuid = resolveWODbUuid(wo);
-  CURRENT_WO_MODAL = { woId: String(wo.id), woDbUuid: woDbUuid || '' };
+  var woRefForApi = woDbUuid || (isUuidString(wo.uuid || '') ? String(wo.uuid) : '') || String(wo.id || '');
+  CURRENT_WO_MODAL = { woId: String(wo.id), woDbUuid: isUuidString(woRefForApi) ? woRefForApi : '' };
   var woAfUrl = appfolioUrl('work_order', wo.id || wo.uuid);
   $('#woModalTitle').innerHTML = '#' + escapeHtml(String(wo.id)) + ' \u2014 ' + escapeHtml(wo.propertyName) + ' ' + escapeHtml(wo.unit) + (woAfUrl ? ' <a href="' + escapeHtml(woAfUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:var(--accent);margin-left:8px;text-decoration:none" title="View in AppFolio"><i class="fas fa-external-link-alt"></i></a>' : '');
 
@@ -8546,19 +10114,19 @@ function showWODetail(id) {
   }
 
   // Async: fetch notes (use resolved DB API UUID for /api/v0/ endpoint)
-  if (woDbUuid) delete WO_DETAIL_CACHE['notes_' + woDbUuid];
-  fetchWONotes(woDbUuid || wo.id, wo).then(function(notes) {
+  if (isUuidString(woRefForApi)) delete WO_DETAIL_CACHE['notes_' + woRefForApi];
+  fetchWONotes(woRefForApi, wo).then(function(notes) {
     renderWONotesList(notes);
   });
-  loadWOAttachments(woDbUuid || wo.id);
-  loadWODetailExtras(wo, woDbUuid);
+  loadWOAttachments(woRefForApi);
+  loadWODetailExtras(wo, isUuidString(woRefForApi) ? woRefForApi : woDbUuid);
 
   var vendorWOBtn = document.getElementById('detailOpenVendorWOs');
   if (vendorWOBtn) vendorWOBtn.onclick = function() { navigateToOpenWOsForVendor(wo.vendorName || ''); closeModal('woModal'); };
   var vendorBillsBtn = document.getElementById('detailOpenVendorBills');
   if (vendorBillsBtn) vendorBillsBtn.onclick = function() { navigateToBillsForVendor(wo.vendorId || wo.vendorName || ''); closeModal('woModal'); };
   var woBillsBtn = document.getElementById('detailOpenWorkOrderBills');
-  if (woBillsBtn) woBillsBtn.onclick = function() { navigateToBillsForWorkOrder(woDbUuid || wo.id || ''); closeModal('woModal'); };
+  if (woBillsBtn) woBillsBtn.onclick = function() { navigateToBillsForWorkOrder(woRefForApi || wo.id || ''); closeModal('woModal'); };
 
   if (isTerminalWOStatus(wo.status)) {
     fetchWOBilledAmount(wo.id).then(function(data) {
@@ -8901,7 +10469,7 @@ async function linkTurnWorkOrder(turnKey, woId) {
   if (!turnKey || !woId) return;
   // WORK_ORDERS (Reports v2): id = WO number, uuid = UUID (work_order_id)
   // TURN_WORK_ORDERS (DB API v0): id = UUID, woNumber = WO number
-  var woStr = String(woId);
+  var woStr = String(woId).replace(/^\s*#/, '').trim();
   var wo = WORK_ORDERS.find(function(w) { return String(w.id) === woStr; }) ||
     TURN_WORK_ORDERS.find(function(w) { return String(w.woNumber || '') === woStr || String(w.id) === woStr; }) || null;
   // Prefer the Reports v2 UUID (wo.uuid); for DB API records wo.id is already the UUID
@@ -8922,7 +10490,12 @@ async function linkTurnWorkOrder(turnKey, woId) {
 
 async function unlinkTurnWorkOrder(turnKey, woId) {
   if (!turnKey || !woId) return;
-  await proxyPost('unit_turn_wo_unlink', { turn_key: turnKey, wo_id: String(woId) });
+  var woStr = String(woId).replace(/^\s*#/, '').trim();
+  var wo = WORK_ORDERS.find(function(w) { return String(w.id) === woStr; }) ||
+    TURN_WORK_ORDERS.find(function(w) { return String(w.woNumber || '') === woStr || String(w.id) === woStr; }) || null;
+  var isDbApiMatch = !wo ? false : TURN_WORK_ORDERS.some(function(w) { return w === wo; });
+  var woDbUuid = wo ? (isDbApiMatch ? String(wo.id || '') : String(wo.uuid || '')) : '';
+  await proxyPost('unit_turn_wo_unlink', { turn_key: turnKey, wo_id: woStr, wo_db_uuid: woDbUuid });
   await fetchUnitTurnsDB();
   renderTurnBoard();
 }
@@ -9471,16 +11044,27 @@ function renderPropertiesRowsFromCache() {
   var groupSelect = $('#propertyGroupFilter');
   var properties = (PROPERTIES || []).slice();
 
+  var scope = getPropertiesScope();
+  var globalGroup = scope.globalGroup;
+
+  // Always enforce global scope first.
+  if (globalGroup) {
+    properties = properties.filter(function(p) {
+      return propertyMatchesSelectedGroup(p, globalGroup);
+    });
+  }
+
   var groups = {};
   properties.forEach(function(p) {
     var g = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
     if (g) groups[g] = true;
   });
 
-  var effectiveGroup = String(_propertiesLocalGroup || getEffectiveGroupId() || '').trim();
+  var localGroup = scope.localGroup;
+  var effectiveGroup = localGroup || globalGroup;
 
   if (groupSelect) {
-    var existing = String(groupSelect.value || effectiveGroup || '');
+    var existing = normalizeGroupSelectionValue(groupSelect.value || localGroup || '');
     var options = ['<option value="">All Groups</option>'];
     Object.keys(groups).sort().forEach(function(g) {
       options.push('<option value="' + escapeHtml(g) + '">' + escapeHtml(g) + '</option>');
@@ -9488,19 +11072,28 @@ function renderPropertiesRowsFromCache() {
     groupSelect.innerHTML = options.join('');
     if (existing && !groups[existing]) existing = '';
     groupSelect.value = existing;
-    _propertiesLocalGroup = String(groupSelect.value || '');
-    effectiveGroup = _propertiesLocalGroup;
+    _propertiesLocalGroup = normalizeGroupSelectionValue(groupSelect.value || '');
+    localGroup = _propertiesLocalGroup;
+    effectiveGroup = localGroup || globalGroup;
   }
 
-  if (effectiveGroup) {
+  if (localGroup) {
     properties = properties.filter(function(p) {
-      var groupName = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
-      if (groupName === effectiveGroup) return true;
-      return isInPropertyGroup(p.id || p.propertyId || '', p.name || '', effectiveGroup);
+      return propertyMatchesSelectedGroup(p, localGroup);
     });
   }
 
   var search = String(searchEl ? searchEl.value : '').trim().toLowerCase();
+  function propertyIsVacantForFilter(p) {
+    var statusText = String(p.status || p.occupancyStatus || p.unit_status || p.Status || '').toLowerCase();
+    if (p.isVacant === true || p.IsVacant === true || p.vacant === true) return true;
+    return statusText.indexOf('vacant') !== -1 || statusText.indexOf('available') !== -1;
+  }
+
+  if (_propertiesVacancyOnly) {
+    properties = properties.filter(propertyIsVacantForFilter);
+  }
+
   if (search) {
     properties = properties.filter(function(p) {
       var hay = [
@@ -9545,16 +11138,18 @@ function renderPropertiesRowsFromCache() {
   if (footer) footer.style.display = 'flex';
   if (meta) {
     if (total === 0) {
-      meta.textContent = 'Page 1 of 1 • 0 results';
+      meta.textContent = 'Page 1 of 1 • 0 results' + (_propertiesVacancyOnly ? ' • vacancy-only' : '');
     } else {
-      meta.textContent = 'Page ' + (_propertiesPage + 1) + ' of ' + pages + ' • Showing ' + (start + 1) + '-' + end + ' of ' + total;
+      meta.textContent = 'Page ' + (_propertiesPage + 1) + ' of ' + pages + ' • Showing ' + (start + 1) + '-' + end + ' of ' + total + (_propertiesVacancyOnly ? ' • vacancy-only' : '');
     }
   }
   if (prevBtn) prevBtn.disabled = (_propertiesPage <= 0 || total === 0);
   if (nextBtn) nextBtn.disabled = (_propertiesPage >= pages - 1 || total === 0);
 
   if (!properties.length) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">No properties found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">' +
+      (_propertiesVacancyOnly ? 'No vacant properties found for current scope' : 'No properties found') +
+      '</td></tr>';
     return;
   }
 
@@ -9764,13 +11359,14 @@ function filterBillsToUnit(unitId, unitName, propertyId, propertyName) {
 
 function openBulkNoteModal() {
   var groupEl = $('#propertyGroupFilter');
-  var currentGroup = String(groupEl ? groupEl.value : (_propertiesLocalGroup || ''));
+  var currentGroup = normalizeGroupSelectionValue(groupEl ? groupEl.value : _propertiesLocalGroup);
+  var globalGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
 
   // Determine the target properties based on current group filter
   var targetProps = (PROPERTIES || []).filter(function(p) {
+    if (globalGroup && !propertyMatchesSelectedGroup(p, globalGroup)) return false;
     if (!currentGroup) return true;
-    var g = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
-    return g === currentGroup;
+    return propertyMatchesSelectedGroup(p, currentGroup);
   });
 
   var targetGroupEl = $('#bulkNoteTargetGroup');
@@ -9779,7 +11375,7 @@ function openBulkNoteModal() {
   var statusEl = $('#bulkNoteStatus');
   var submitBtn = $('#bulkNoteSubmitBtn');
 
-  if (targetGroupEl) targetGroupEl.textContent = currentGroup || 'All Groups';
+  if (targetGroupEl) targetGroupEl.textContent = currentGroup || globalGroup || 'All Groups';
   if (countEl) countEl.textContent = targetProps.length + ' propert' + (targetProps.length === 1 ? 'y' : 'ies') + ' will receive this note';
   if (textEl) textEl.value = '';
   if (statusEl) statusEl.textContent = '';
@@ -9800,11 +11396,12 @@ function executeBulkNoteUpdate() {
   }
 
   var groupEl = $('#propertyGroupFilter');
-  var currentGroup = String(groupEl ? groupEl.value : (_propertiesLocalGroup || ''));
+  var currentGroup = normalizeGroupSelectionValue(groupEl ? groupEl.value : _propertiesLocalGroup);
+  var globalGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
   var targetProps = (PROPERTIES || []).filter(function(p) {
+    if (globalGroup && !propertyMatchesSelectedGroup(p, globalGroup)) return false;
     if (!currentGroup) return true;
-    var g = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
-    return g === currentGroup;
+    return propertyMatchesSelectedGroup(p, currentGroup);
   });
 
   if (!targetProps.length) {
@@ -9812,7 +11409,7 @@ function executeBulkNoteUpdate() {
     return;
   }
 
-  var targetGroup = currentGroup || 'All Groups';
+  var targetGroup = currentGroup || globalGroup || 'All Groups';
   var count = targetProps.length;
 
   hmConfirm(
@@ -9889,7 +11486,8 @@ function renderTurnKPIs() {
   // Separate confirmed-active turns from on-radar (unconfirmed) entries
   var confirmed = inScope.filter(function(p) { return p.isConfirmed && !p.isCompleted; });
   var onRadar   = inScope.filter(function(p) { return p.isOnRadar; });
-  var upcoming  = inScope.filter(function(p) { return p.isUpcoming; }); // subset of onRadar
+  var upcoming  = inScope.filter(function(p) { return p.isUpcoming; });
+  var radarUpcomingCount = onRadar.filter(function(p) { return p.isUpcoming; }).length;
   var active    = confirmed; // alias — same set for downstream stats
   var awaitEst  = confirmed.filter(function(p) {
     return p.stages.wo_created && p.stages.wo_created.done && p.stages.est_received && !p.stages.est_received.done;
@@ -9903,9 +11501,9 @@ function renderTurnKPIs() {
 
   var e = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
   e('kpiActiveTurns', confirmed.length);
-  e('kpiActiveTurnsSub', confirmed.length + ' confirmed' + (upcoming.length > 0 ? ', ' + upcoming.length + ' upcoming' : ''));
+  e('kpiActiveTurnsSub', confirmed.length + ' confirmed' + (upcoming.length > 0 ? ' (' + upcoming.length + ' upcoming)' : ''));
   e('kpiOnRadar', onRadar.length);
-  var radarUpcoming = onRadar.filter(function(p) { return p.isUpcoming; }).length;
+  var radarUpcoming = radarUpcomingCount;
   var radarPast     = onRadar.filter(function(p) { return !p.isUpcoming; }).length;
   e('kpiOnRadarSub', (radarUpcoming > 0 ? radarUpcoming + ' upcoming' : '') + (radarUpcoming > 0 && radarPast > 0 ? ', ' : '') + (radarPast > 0 ? radarPast + ' awaiting inspection' : '') || 'no possible turns');
   e('kpiAvgTurnDays', avgDays > 0 ? avgDays + 'd' : '\u2014');
@@ -9916,7 +11514,7 @@ function renderTurnKPIs() {
   e('kpiTurnBilledSub', 'active + on radar + completed');
 
   var tb = $('#turnBadge');
-  if (tb) tb.textContent = active.length + upcoming.length;
+  if (tb) tb.textContent = active.length + onRadar.length;
 
   // Populate property group dropdown
   var groupSel = $('#turnPipeGroup');
@@ -10566,11 +12164,10 @@ function resolveVendorCompliance(v) {
   return { compliant: v.compliant, isManual: false };
 }
 
-/* Strict "Do Not Use" evaluation: AppFolio flag OR expired insurance dates */
+/* Strict "Do Not Use" evaluation: expired insurance/workers-comp documents only */
 var _currentSelectedVendorId = null;
 
 function isVendorDoNotUse(v) {
-  if (v.doNotUse) return true;
   var today = new Date();
   if (v.insurance && new Date(v.insurance) < today) return true;
   if (v.workersComp && new Date(v.workersComp) < today) return true;
@@ -10588,7 +12185,6 @@ function openVendorModal(vendorId) {
   var wcExpired  = v.workersComp && new Date(v.workersComp) < today;
   if (insExpired) expiredDocs.push('Liability Insurance Expired');
   if (wcExpired)  expiredDocs.push('Workers Comp Expired');
-  if (v.doNotUse) expiredDocs.push('Flagged by AppFolio');
   var isDNU = expiredDocs.length > 0;
 
   var nameEl   = $('#vdmName');
@@ -10742,23 +12338,9 @@ function renderVendors(search) {
     tradeFilter = currentTradeFilter;
   }
 
-  // Note: Vendors don't have a direct property association for group filtering,
-  // but we can filter by checking which vendors have WOs in the group
-  var vendorsInGroup = null;
-  if (currentPropertyGroup) {
-    vendorsInGroup = {};
-    WORK_ORDERS.forEach(function(wo) {
-      if (isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup) && wo.vendorName) {
-        vendorsInGroup[wo.vendorName.toLowerCase()] = true;
-      }
-    });
-  }
-
   var searchText = (search || '').trim();
   var searchLower = searchText.toLowerCase();
   var baseFiltered = VENDORS.filter(function(v) {
-    if (vendorsInGroup && !vendorsInGroup[(v.name || '').toLowerCase()]) return false;
-
     // Category filter
     if (catFilter) {
       var vCat = getVendorCategory(v.id) || 'Uncategorized';
@@ -10878,9 +12460,25 @@ function renderVendors(search) {
       var wced = new Date(v.workersComp); var wcexp = wced < today; var wcdue = daysBetween(today, wced);
       html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Workers Comp</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (wcexp ? 'var(--danger)' : wcdue <= 60 ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.workersComp) + (wcexp ? ' \u26a0\ufe0f EXPIRED' : wcdue <= 60 ? ' (' + wcdue + 'd)' : '') + '</span></div>';
     }
-    if (v.doNotUse) {
+    if (isVendorDoNotUse(v)) {
       html += '<div class="vendor-row vendor-row-compact" style="color:var(--danger);font-weight:700"><span class="vendor-row-label" style="color:var(--danger)">⛔ Status</span><span class="vendor-row-value">DO NOT USE</span></div>';
     }
+    html += '<div class="vendor-row vendor-row-compact" style="align-items:center;gap:6px">' +
+      '<span class="vendor-row-label">Type</span>' +
+      '<select class="vendor-cat-select" data-vid="' + escapeHtml(String(v.id)) + '">' +
+        VENDOR_CATEGORIES.map(function(cat) {
+          return '<option value="' + escapeHtml(cat) + '"' + ((vCat || 'Uncategorized') === cat ? ' selected' : '') + '>' + escapeHtml(cat) + '</option>';
+        }).join('') +
+      '</select>' +
+    '</div>';
+    html += '<div class="vendor-row vendor-row-compact" style="align-items:center;gap:6px">' +
+      '<span class="vendor-row-label">Trade</span>' +
+      '<select class="vendor-trade-cat-select" data-vid="' + escapeHtml(String(v.id)) + '">' +
+        VENDOR_TRADE_CATEGORIES.map(function(tc) {
+          return '<option value="' + escapeHtml(tc) + '"' + (vTradeCat === tc ? ' selected' : '') + '>' + escapeHtml(tc) + '</option>';
+        }).join('') +
+      '</select>' +
+    '</div>';
     if (v.tags) {
       html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Tags</span><span class="vendor-row-value" style="font-size:10px">' + escapeHtml(v.tags) + '</span></div>';
     }
@@ -11143,6 +12741,30 @@ async function loadRoutingEventsAndStats() {
   renderRoutingKpis();
 }
 
+function getRoutingTradeFilterNormalized() {
+  var tradeFilter = ($('#routingTradeFilter') && $('#routingTradeFilter').value) || 'all';
+  return String(tradeFilter || 'all').trim().toLowerCase();
+}
+
+function getRoutingEventTradeLabel(r) {
+  var direct = String((r && r.matched_trade) || '').trim();
+  if (direct) return direct;
+  var inferred = String((r && r.inferred_trade) || '').trim();
+  if (inferred) return inferred;
+  var arr = (r && Array.isArray(r.inferred_trades)) ? r.inferred_trades : [];
+  if (arr.length) return String(arr[0] || '').trim();
+  return '';
+}
+
+function getFilteredRoutingEvents() {
+  var tradeFilterNorm = getRoutingTradeFilterNormalized();
+  return (ROUTING_EVENTS || []).filter(function(r) {
+    if (tradeFilterNorm === 'all') return true;
+    var eventTradeNorm = getRoutingEventTradeLabel(r).toLowerCase();
+    return !!eventTradeNorm && eventTradeNorm === tradeFilterNorm;
+  });
+}
+
 function renderRoutingPmFilter() {
   var sel = $('#routingPmFilter');
   if (!sel) return;
@@ -11165,7 +12787,10 @@ function renderRoutingPmFilter() {
     var tradesSeen = {};
     var tradeOpts = ['<option value="all">All Work Types</option>'];
     ROUTING_EVENTS.forEach(function(e) {
-      var t = String(e.matched_trade || '').trim();
+      var t = String(e.matched_trade || e.inferred_trade || '').trim();
+      if (!t && Array.isArray(e.inferred_trades) && e.inferred_trades.length) {
+        t = String(e.inferred_trades[0] || '').trim();
+      }
       if (!t || tradesSeen[t]) return;
       tradesSeen[t] = true;
       tradeOpts.push('<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>');
@@ -11176,10 +12801,11 @@ function renderRoutingPmFilter() {
 }
 
 function renderRoutingKpis() {
-  var total = ROUTING_EVENTS.length;
-  var pending = ROUTING_EVENTS.filter(function(e) { return String(e.review_status || 'pending') === 'pending'; }).length;
-  var high = ROUTING_EVENTS.filter(function(e) { return String(e.confidence || '') === 'high'; }).length;
-  var reviewed = ROUTING_EVENTS.filter(function(e) { return String(e.review_status || 'pending') !== 'pending'; }).length;
+  var scopedEvents = getFilteredRoutingEvents();
+  var total = scopedEvents.length;
+  var pending = scopedEvents.filter(function(e) { return String(e.review_status || 'pending') === 'pending'; }).length;
+  var high = scopedEvents.filter(function(e) { return String(e.confidence || '') === 'high'; }).length;
+  var reviewed = scopedEvents.filter(function(e) { return String(e.review_status || 'pending') !== 'pending'; }).length;
 
   if ($('#routingKpiFlagged')) $('#routingKpiFlagged').textContent = String(total);
   if ($('#routingKpiPending')) $('#routingKpiPending').textContent = String(pending);
@@ -11197,12 +12823,47 @@ function renderRoutingKpis() {
 function renderRoutingScorecard() {
   var body = $('#routingPmBody');
   if (!body) return;
-  if (!ROUTING_PM_STATS.length) {
-    body.innerHTML = '<tr><td colspan="7" style="color:var(--text-muted)">No PM routing data yet. Run scan.</td></tr>';
+  var scopedEvents = getFilteredRoutingEvents();
+  if (!scopedEvents.length) {
+    body.innerHTML = '<tr><td colspan="7" style="color:var(--text-muted)">No PM routing data yet for current filters.</td></tr>';
     return;
   }
+
+  var byPm = {};
+  scopedEvents.forEach(function(e) {
+    var pmName = String(e.pm_name || 'Unmapped PM').trim() || 'Unmapped PM';
+    if (!byPm[pmName]) {
+      byPm[pmName] = {
+        pm_name: pmName,
+        total_flagged: 0,
+        high_confidence: 0,
+        pending: 0,
+        approved_external: 0,
+        reassigned: 0,
+        last_flagged: ''
+      };
+    }
+    var row = byPm[pmName];
+    row.total_flagged += 1;
+    if (String(e.confidence || '') === 'high') row.high_confidence += 1;
+    var review = String(e.review_status || 'pending');
+    if (review === 'pending') row.pending += 1;
+    if (review === 'approved_external') row.approved_external += 1;
+    if (review === 'reassign_inhouse') row.reassigned += 1;
+    var detected = String(e.detected_at || '').trim();
+    if (detected && (!row.last_flagged || detected > row.last_flagged)) row.last_flagged = detected;
+  });
+
+  var scoreRows = Object.keys(byPm).map(function(k) { return byPm[k]; });
+  scoreRows.sort(function(a, b) {
+    if (Number(b.total_flagged || 0) !== Number(a.total_flagged || 0)) {
+      return Number(b.total_flagged || 0) - Number(a.total_flagged || 0);
+    }
+    return String(a.pm_name || '').localeCompare(String(b.pm_name || ''));
+  });
+
   var html = '';
-  ROUTING_PM_STATS.forEach(function(r) {
+  scoreRows.forEach(function(r) {
     var last = r.last_flagged ? formatDate(r.last_flagged) : '-';
     var total = Number(r.total_flagged || 0);
     var potentialBypass = Number(r.pending || 0) + Number(r.approved_external || 0);
@@ -11227,11 +12888,15 @@ function renderRoutingEventsTable(query) {
   var body = $('#routingEventsBody');
   if (!body) return;
   var q = String(query || '').trim().toLowerCase();
-  var tradeFilter = ($('#routingTradeFilter') && $('#routingTradeFilter').value) || 'all';
+  var tradeFilterNorm = getRoutingTradeFilterNormalized();
+
   var rows = ROUTING_EVENTS.filter(function(r) {
-    if (tradeFilter !== 'all' && String(r.matched_trade || '').trim() !== tradeFilter) return false;
+    if (tradeFilterNorm !== 'all') {
+      var eventTradeNorm = getRoutingEventTradeLabel(r).toLowerCase();
+      if (!eventTradeNorm || eventTradeNorm !== tradeFilterNorm) return false;
+    }
     if (!q) return true;
-    var hay = [r.wo_number, r.property_name, r.property_group, r.pm_name, r.vendor_name, r.matched_trade, r.description].join(' ').toLowerCase();
+    var hay = [r.wo_number, r.property_name, r.property_group, r.pm_name, r.vendor_name, getRoutingEventTradeLabel(r), r.description].join(' ').toLowerCase();
     return hay.indexOf(q) !== -1;
   });
 
@@ -11267,7 +12932,7 @@ function renderRoutingEventsTable(query) {
     var conf = String(r.confidence || 'medium');
     var rev = String(r.review_status || 'pending');
     var flaggedAt = r.detected_at ? timeAgo(r.detected_at) : '-';
-    var matchLabel = String(r.matched_trade || '-').trim();
+    var matchLabel = String(getRoutingEventTradeLabel(r) || '-').trim();
     var riskInsight = '';
     if (rev === 'approved_external') {
       riskInsight = 'External approved; FLM bid path likely bypassed.';
@@ -12195,7 +13860,7 @@ function wireUpUI() {
       if (tabName === 'billing') {
         if (!window._billingPageRows || window._billingPageRows.length === 0) {
           var billBody = document.getElementById('billBody');
-          if (billBody) billBody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px">' + loadingHtml('Loading bills\u2026') + '</td></tr>';
+          if (billBody) billBody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px">' + loadingHtml('Loading bills\u2026') + '</td></tr>';
           loadBillingPage({ resetPage: true, forceHardLock: true }).catch(function(e) {
             showToast('Bills load failed: ' + (e.message || e));
           });
@@ -12672,6 +14337,7 @@ function wireUpUI() {
   var propertySearch = $('#propertySearch');
   if (propertySearch) {
     propertySearch.addEventListener('input', debounce(function() {
+      _propertiesVacancyOnly = false;
       _propertiesPage = 0;
       renderPropertiesSection();
     }, CONFIG.DEBOUNCE_MS));
@@ -12679,7 +14345,8 @@ function wireUpUI() {
   var propertyGroupFilter = $('#propertyGroupFilter');
   if (propertyGroupFilter) {
     propertyGroupFilter.addEventListener('change', function() {
-      _propertiesLocalGroup = String(propertyGroupFilter.value || '');
+      _propertiesVacancyOnly = false;
+      _propertiesLocalGroup = normalizeGroupSelectionValue(propertyGroupFilter.value || '');
       _propertiesPage = 0;
       renderPropertiesSection();
     });
@@ -13681,11 +15348,7 @@ function renderAttentionPanel() {
   if (pendingBillsEl) {
     var pendingBills = (BILLS || []).filter(function(b) {
       if (!isInPropertyGroup(b.propertyId, b.propertyName, currentPropertyGroup)) return false;
-      var raw = b.raw || {};
-      var statusText = String(raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || raw.State || raw.state || '').toLowerCase();
-      var approvalText = String(raw.ApprovalState || raw.approval_state || raw.PendingApproval || raw.pending_approval || '').toLowerCase();
-      var combined = statusText + ' ' + approvalText;
-      return combined.indexOf('pending') !== -1 || combined.indexOf('awaiting approval') !== -1 || combined.indexOf('needs approval') !== -1;
+      return getBillStatusKey(b) === 'pending_approval';
     });
 
     if (!pendingBills.length) {
@@ -13859,14 +15522,64 @@ renderDashboardKPIs = function() {
 
   function renderDbTable(rows, cols) {
     if (!rows.length) { resultsBody.innerHTML = '<div class="dbadmin-msg">No rows returned</div>'; return; }
+
+    function looksLikeUuid(value) {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+    }
+
+    function shouldLinkWorkOrder(colName, value) {
+      var col = String(colName || '').toLowerCase();
+      var raw = String(value || '').trim();
+      if (!raw) return false;
+      if (col.indexOf('work_order') !== -1 || col === 'wo_id' || col === 'wo_uuid' || col === 'wo_number') return true;
+      if (/^wo[-_ ]?\d+$/i.test(raw)) return true;
+      if (/^\d{3,}$/i.test(raw) && (col === 'id' || col.indexOf('wo') !== -1)) return true;
+      return false;
+    }
+
+    function renderDbCell(colName, value) {
+      if (value === null || value === undefined) return '<td class="db-null">NULL</td>';
+      var raw = String(value);
+      var safe = escapeHtml(raw);
+      var encoded = encodeURIComponent(raw);
+
+      if (shouldLinkWorkOrder(colName, raw)) {
+        return '<td title="' + safe + '"><button class="dbadmin-cell-link" data-db-link-kind="wo" data-db-link-ref="' + encoded + '">' + safe + '</button></td>';
+      }
+
+      if (looksLikeUuid(raw)) {
+        return '<td title="' + safe + '"><button class="dbadmin-cell-link" data-db-link-kind="uuid" data-db-link-ref="' + encoded + '">' + safe + '</button></td>';
+      }
+
+      return '<td title="' + safe + '">' + safe + '</td>';
+    }
+
     var thead = '<thead><tr>' + cols.map(function(c) { return '<th>' + escapeHtml(c) + '</th>'; }).join('') + '</tr></thead>';
     var tbody = '<tbody>' + rows.map(function(row) {
       return '<tr>' + cols.map(function(c) {
         var v = typeof row === 'object' && !Array.isArray(row) ? row[c] : row[cols.indexOf(c)];
-        return (v === null || v === undefined) ? '<td class="db-null">NULL</td>' : '<td title="' + escapeHtml(String(v)) + '">' + escapeHtml(String(v)) + '</td>';
+        return renderDbCell(c, v);
       }).join('') + '</tr>';
     }).join('') + '</tbody>';
     resultsBody.innerHTML = '<table>' + thead + tbody + '</table>';
+  }
+
+  if (resultsBody) {
+    resultsBody.addEventListener('click', function(ev) {
+      var link = ev.target.closest('.dbadmin-cell-link');
+      if (!link) return;
+      var kind = String(link.getAttribute('data-db-link-kind') || '');
+      var ref = decodeURIComponent(String(link.getAttribute('data-db-link-ref') || ''));
+      if (!ref) return;
+
+      if (kind === 'wo' && typeof showWODetail === 'function') {
+        showWODetail(ref);
+        return;
+      }
+      if (kind === 'uuid' && typeof showV0UuidDetailModal === 'function') {
+        showV0UuidDetailModal(ref);
+      }
+    });
   }
 
   function checkDestructive() {
@@ -14177,7 +15890,16 @@ renderDashboardKPIs = function() {
     if (membershipCb) membershipCb.addEventListener('change', updateCheckboxLabels);
 
     function loadOtpSettings() {
-      var adminKey = (document.getElementById('dbAdminKey') && document.getElementById('dbAdminKey').value || '').trim();
+      var keyInput = document.getElementById('dbAdminKey');
+      var adminKey = (keyInput && keyInput.value || '').trim();
+      if (!adminKey) {
+        try {
+          adminKey = String(localStorage.getItem('hm_proxy_admin_key') || '').trim() || String(sessionStorage.getItem('hm_pm_admin_key') || '').trim();
+        } catch (e) { /* */ }
+      }
+      if (adminKey && keyInput && !String(keyInput.value || '').trim()) {
+        keyInput.value = adminKey;
+      }
       if (!adminKey) { if (saveStatus) { saveStatus.textContent = 'Enter Admin Key above to load settings'; saveStatus.style.color = 'var(--text-muted)'; } return; }
       proxyAction('settings_get', { key: adminKey }).then(function(data) {
         var settings = {};
@@ -15325,7 +17047,7 @@ var DispatchComms = {
     }
     if (!adminKey) {
       if (resultEl) resultEl.textContent = 'Set PROXY_ADMIN_KEY in the Database tab before sending test links.';
-      v9Toast('Admin key required', 'Set PROXY_ADMIN_KEY in Database tab first', 'warning');
+      v9Toast('Admin key required', 'Set PROXY_ADMIN_KEY in Database tab first. Generate Link does not require this key.', 'warning');
       return;
     }
 
@@ -15337,7 +17059,7 @@ var DispatchComms = {
     if (resultEl) resultEl.textContent = 'Sending test magic-link SMS to ' + phone + '…';
 
     try {
-      var response = await dispatchPost('send_magic_link_test_sms', {
+      var response = await proxyPost('send_magic_link_test_sms', {
         key: adminKey,
         phone: phone,
         tech_name: 'Dispatch Test',
@@ -15358,8 +17080,12 @@ var DispatchComms = {
       v9Toast('Test link sent', phone, 'success');
       DispatchControl.refresh();
     } catch (e) {
-      if (resultEl) resultEl.textContent = 'Send failed: ' + (e.message || e);
-      v9Toast('Test link failed', e.message || String(e), 'danger');
+      var message = e && e.message ? e.message : String(e || 'Unknown error');
+      if (/failed to fetch/i.test(message)) {
+        message = 'Request could not reach the proxy. Check Proxy URL/session in Vault, then retry.';
+      }
+      if (resultEl) resultEl.textContent = 'Send failed: ' + message;
+      v9Toast('Test link failed', message, 'danger');
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -16099,7 +17825,7 @@ function decodeWebhookEventV9(evt) {
       if(keyArr.length){
         window.dispatchEvent(new CustomEvent('handymgr:webhook-invalidate',{detail:{keys:keyArr,eventCount:decoded.length,at:new Date().toISOString()}}));
         requestAnimationFrame(function(){
-          var SECMAP={'sec-workorders':['work_orders','turn_work_orders','recent_tasks'],'sec-turnboard':['turns','turn_work_orders'],'sec-dashboard':['work_orders','turns','upcoming_moveouts'],'sec-inspections':['inspections'],'sec-vendors':['vendors']};
+          var SECMAP={'sec-workorders':['work_orders','turn_work_orders','recent_tasks'],'sec-turnboard':['turns','turn_work_orders'],'sec-dashboard':['work_orders','turns','upcoming_moveouts','bills'],'sec-billing':['bills'],'sec-inspections':['inspections'],'sec-vendors':['vendors']};
           Object.keys(SECMAP).forEach(function(secId){
             var sec=document.getElementById(secId);
             if(!sec||!sec.classList.contains('active'))return;
@@ -16107,6 +17833,7 @@ function decodeWebhookEventV9(evt) {
             if(secId==='sec-workorders'){try{renderWorkOrders();}catch(e){}}
             else if(secId==='sec-turnboard'){try{renderTurnBoard();}catch(e){}}
             else if(secId==='sec-dashboard'){try{renderDashboardKPIs();}catch(e){} try{renderTurnDashboardStrip();}catch(e){} try{renderActivityFeed();}catch(e){}}
+            else if(secId==='sec-billing'){try{renderBillsSection();}catch(e){}}
             else if(secId==='sec-inspections'){try{renderInspections('');}catch(e){}}
             else if(secId==='sec-vendors'){try{renderVendors('');}catch(e){}}
           });
@@ -16243,9 +17970,10 @@ function decodeWebhookEventV9(evt) {
     window.addEventListener('handymgr:webhook-invalidate',function(e){
       requestAnimationFrame(function(){
         try{renderActivityFeed();}catch(err){}
-        var woKeys=['work_orders','turn_work_orders','turns','upcoming_moveouts'];
+        var woKeys=['work_orders','turn_work_orders','turns','upcoming_moveouts','bills'];
         var detail=(e&&e.detail&&e.detail.keys)?e.detail.keys:[];
         if(detail.some(function(k){return woKeys.indexOf(k)!==-1;})){try{renderDashboardKPIs();}catch(err){}}
+        if(detail.some(function(k){return k==='bills';})){try{renderBillsSection();}catch(err){}}
       });
     });
     document.addEventListener('visibilitychange',function(){if(!document.hidden&&_pollTimer)_poll();});

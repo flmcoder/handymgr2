@@ -120,6 +120,31 @@ function normalizeTurnStatusFilter(value: string): string {
   return String(value || "").trim();
 }
 
+async function ensureUnitTurnSyncSchema(): Promise<void> {
+  // Additive-only, best-effort schema hardening for older deployments.
+  // Avoids hard failures when incremental columns are missing in legacy DBs.
+  const alters = [
+    `ALTER TABLE unit_turn_tracker ADD COLUMN tracking_code TEXT`,
+    `ALTER TABLE unit_turn_tracker ADD COLUMN estimate_requested_date TEXT`,
+    `ALTER TABLE unit_turn_tracker ADD COLUMN estimate_received_date TEXT`,
+    `ALTER TABLE unit_turn_tracker ADD COLUMN confidence_score INTEGER DEFAULT 0`,
+    `ALTER TABLE unit_turn_tracker ADD COLUMN confidence_label TEXT DEFAULT 'low'`,
+    `ALTER TABLE unit_turn_tracker ADD COLUMN site_manager TEXT`,
+    `ALTER TABLE unit_turn_tracker ADD COLUMN source_flags TEXT`,
+    `ALTER TABLE unit_turn_tracker ADD COLUMN metadata TEXT`,
+    `ALTER TABLE unit_turn_tracker ADD COLUMN closed_at TEXT`,
+    `ALTER TABLE unit_turn_work_orders ADD COLUMN wo_db_uuid TEXT`,
+  ];
+
+  for (const stmt of alters) {
+    try {
+      await sqlite.execute(stmt);
+    } catch {
+      // ignore (already exists / older sqlite compatibility)
+    }
+  }
+}
+
 async function loadTrackerBundle(days: number): Promise<any[]> {
   const rows = rowsAsObjects(
     await sqlite.execute({
@@ -278,11 +303,6 @@ export async function handleTurnsIncremental(
     const rows = await fetchDbApi(path, limit);
 
     const results = rows
-      .filter((t: Record<string, any>) => {
-        const unitId = String(t.UnitId || t.unit_id || t.unit_uuid || "")
-          .trim();
-        return !unitId || isValidUUID(unitId);
-      })
       .map((t: Record<string, any>) => ({
         unit_turn_id: t.Id || t.id || t.UnitTurnId || t.unit_turn_id || "",
         unit_turn_uuid: t.Id || t.id || t.unit_turn_uuid || "",
@@ -396,196 +416,207 @@ export async function handleUnitTurns(
 
 // Batch upsert inferred + confirmed turn tracker records from frontend pipeline.
 export async function handleUnitTurnsSync(req: Request): Promise<any> {
-  let body: any = {};
   try {
-    body = await req.json();
-  } catch {
-    return { ok: false, error: "Invalid JSON body" };
-  }
+    await ensureUnitTurnSyncSchema();
 
-  const records = Array.isArray(body.records) ? body.records : [];
-  if (records.length === 0) return { ok: true, upserted: 0 };
+    let body: any = {};
+    try {
+      body = await req.json();
+    } catch {
+      return { ok: false, status: 400, error: "Invalid JSON body" };
+    }
 
-  let upserted = 0;
-  for (const rec of records) {
-    const turnKey = String(rec.turn_key || rec.turnKey || "").trim();
-    if (!turnKey) continue;
+    const records = Array.isArray(body.records) ? body.records : [];
+    if (records.length === 0) return { ok: true, upserted: 0 };
 
-    const existing = rowsAsObjects(
-      await sqlite.execute({
-        sql:
-          `SELECT tracking_uuid, tracking_code FROM unit_turn_tracker WHERE turn_key = ? LIMIT 1`,
-        args: [turnKey],
-      }),
-    );
+    let upserted = 0;
+    for (const rec of records) {
+      const turnKey = String(rec.turn_key || rec.turnKey || "").trim();
+      if (!turnKey) continue;
 
-    const trackingUuid =
-      (existing[0] && String(existing[0].tracking_uuid || "")) ||
-      String(rec.tracking_uuid || rec.trackingUuid || crypto.randomUUID());
-
-    const rowForCode = {
-      tracking_uuid: trackingUuid,
-      move_out_date: rec.move_out_date || rec.moveOutDate || "",
-      property_id: rec.property_id || rec.propertyId || "",
-      unit_id: rec.unit_id || rec.unitId || "",
-    };
-    const trackingCode =
-      (existing[0] && String(existing[0].tracking_code || "")) ||
-      String(
-        rec.tracking_code || rec.trackingCode ||
-          trackingCodeFromRow(rowForCode),
+      const existing = rowsAsObjects(
+        await sqlite.execute({
+          sql:
+            `SELECT tracking_uuid, tracking_code FROM unit_turn_tracker WHERE turn_key = ? LIMIT 1`,
+          args: [turnKey],
+        }),
       );
 
-    const status = String(rec.status || "on_radar");
-    const closedAtInput = rec.closed_at || rec.closedAt || null;
-    const normalizedClosedAt = (status === "closed" || status === "completed")
-      ? (closedAtInput || new Date().toISOString())
-      : null;
+      const trackingUuid =
+        (existing[0] && String(existing[0].tracking_uuid || "")) ||
+        String(rec.tracking_uuid || rec.trackingUuid || crypto.randomUUID());
 
-    await sqlite.execute({
-      sql: `INSERT INTO unit_turn_tracker (
-              tracking_uuid, tracking_code, turn_key, unit_turn_id,
-              unit_id, property_id, unit_name, property_name,
-              move_out_date, move_in_date, inspection_date, first_wo_date,
-              estimate_requested_date, estimate_received_date,
-              status, confidence_score, confidence_label,
-              site_manager, source_flags, metadata, closed_at, updated_at
-            ) VALUES (
-              ?, ?, ?, ?,
-              ?, ?, ?, ?,
-              ?, ?, ?, ?,
-              ?, ?,
-              ?, ?, ?,
-              ?, ?, ?, ?, datetime('now')
-            )
-            ON CONFLICT(turn_key) DO UPDATE SET
-              unit_turn_id            = excluded.unit_turn_id,
-              unit_id                 = excluded.unit_id,
-              property_id             = excluded.property_id,
-              unit_name               = excluded.unit_name,
-              property_name           = excluded.property_name,
-              move_out_date           = excluded.move_out_date,
-              move_in_date            = excluded.move_in_date,
-              inspection_date         = excluded.inspection_date,
-              first_wo_date           = excluded.first_wo_date,
-              estimate_requested_date = excluded.estimate_requested_date,
-              estimate_received_date  = excluded.estimate_received_date,
-              status                  = excluded.status,
-              confidence_score        = excluded.confidence_score,
-              confidence_label        = excluded.confidence_label,
-              site_manager            = excluded.site_manager,
-              source_flags            = excluded.source_flags,
-              metadata                = excluded.metadata,
-              closed_at               = excluded.closed_at,
-              updated_at              = datetime('now')`,
-      args: [
-        trackingUuid,
-        trackingCode,
-        turnKey,
-        rec.unit_turn_id || rec.unitTurnId || "",
-        rec.unit_id || rec.unitId || "",
-        rec.property_id || rec.propertyId || "",
-        rec.unit_name || rec.unitName || "",
-        rec.property_name || rec.propertyName || "",
-        rec.move_out_date || rec.moveOutDate || "",
-        rec.move_in_date || rec.moveInDate || "",
-        rec.inspection_date || rec.inspectionDate || "",
-        rec.first_wo_date || rec.firstWoDate || "",
-        rec.estimate_requested_date || rec.estimateRequestedDate || "",
-        rec.estimate_received_date || rec.estimateReceivedDate || "",
-        status,
-        parseInt(
-          String(rec.confidence_score || rec.confidenceScore || 0),
-          10,
-        ) || 0,
-        rec.confidence_label || rec.confidenceLabel || "low",
-        rec.site_manager || rec.siteManager || "",
-        JSON.stringify(rec.source_flags || rec.sourceFlags || {}),
-        JSON.stringify(rec.metadata || {}),
-        normalizedClosedAt,
-      ],
-    });
+      const rowForCode = {
+        tracking_uuid: trackingUuid,
+        move_out_date: rec.move_out_date || rec.moveOutDate || "",
+        property_id: rec.property_id || rec.propertyId || "",
+        unit_id: rec.unit_id || rec.unitId || "",
+      };
+      const trackingCode =
+        (existing[0] && String(existing[0].tracking_code || "")) ||
+        String(
+          rec.tracking_code || rec.trackingCode ||
+            trackingCodeFromRow(rowForCode),
+        );
 
-    const milestones = Array.isArray(rec.milestones)
-      ? rec.milestones
-      : Object.entries(rec.milestones || {}).map(([k, v]: [string, any]) => ({
-        key: k,
-        date: v && typeof v === "object" ? v.date : v,
-        source: v && typeof v === "object" ? v.source : "derived",
-        notes: v && typeof v === "object" ? v.notes : "",
-      }));
-    for (const m of milestones) {
-      const mKey = String(m.key || m.milestone_key || "").trim();
-      if (!mKey) continue;
+      const status = String(rec.status || "on_radar");
+      const closedAtInput = rec.closed_at || rec.closedAt || null;
+      const normalizedClosedAt = (status === "closed" || status === "completed")
+        ? (closedAtInput || new Date().toISOString())
+        : null;
+
       await sqlite.execute({
-        sql:
-          `INSERT INTO unit_turn_milestones (tracking_uuid, milestone_key, milestone_date, source, notes, updated_at)
-              VALUES (?, ?, ?, ?, ?, datetime('now'))
-              ON CONFLICT(tracking_uuid, milestone_key) DO UPDATE SET
-                milestone_date = excluded.milestone_date,
-                source         = excluded.source,
-                notes          = excluded.notes,
-                updated_at     = datetime('now')`,
+        sql: `INSERT INTO unit_turn_tracker (
+                tracking_uuid, tracking_code, turn_key, unit_turn_id,
+                unit_id, property_id, unit_name, property_name,
+                move_out_date, move_in_date, inspection_date, first_wo_date,
+                estimate_requested_date, estimate_received_date,
+                status, confidence_score, confidence_label,
+                site_manager, source_flags, metadata, closed_at, updated_at
+              ) VALUES (
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?, datetime('now')
+              )
+              ON CONFLICT(turn_key) DO UPDATE SET
+                unit_turn_id            = excluded.unit_turn_id,
+                unit_id                 = excluded.unit_id,
+                property_id             = excluded.property_id,
+                unit_name               = excluded.unit_name,
+                property_name           = excluded.property_name,
+                move_out_date           = excluded.move_out_date,
+                move_in_date            = excluded.move_in_date,
+                inspection_date         = excluded.inspection_date,
+                first_wo_date           = excluded.first_wo_date,
+                estimate_requested_date = excluded.estimate_requested_date,
+                estimate_received_date  = excluded.estimate_received_date,
+                status                  = excluded.status,
+                confidence_score        = excluded.confidence_score,
+                confidence_label        = excluded.confidence_label,
+                site_manager            = excluded.site_manager,
+                source_flags            = excluded.source_flags,
+                metadata                = excluded.metadata,
+                closed_at               = excluded.closed_at,
+                updated_at              = datetime('now')`,
         args: [
           trackingUuid,
-          mKey,
-          m.date || m.milestone_date || null,
-          m.source || "derived",
-          m.notes || "",
+          trackingCode,
+          turnKey,
+          rec.unit_turn_id || rec.unitTurnId || "",
+          rec.unit_id || rec.unitId || "",
+          rec.property_id || rec.propertyId || "",
+          rec.unit_name || rec.unitName || "",
+          rec.property_name || rec.propertyName || "",
+          rec.move_out_date || rec.moveOutDate || "",
+          rec.move_in_date || rec.moveInDate || "",
+          rec.inspection_date || rec.inspectionDate || "",
+          rec.first_wo_date || rec.firstWoDate || "",
+          rec.estimate_requested_date || rec.estimateRequestedDate || "",
+          rec.estimate_received_date || rec.estimateReceivedDate || "",
+          status,
+          parseInt(
+            String(rec.confidence_score || rec.confidenceScore || 0),
+            10,
+          ) || 0,
+          rec.confidence_label || rec.confidenceLabel || "low",
+          rec.site_manager || rec.siteManager || "",
+          JSON.stringify(rec.source_flags || rec.sourceFlags || {}),
+          JSON.stringify(rec.metadata || {}),
+          normalizedClosedAt,
         ],
       });
+
+      const milestones = Array.isArray(rec.milestones)
+        ? rec.milestones
+        : Object.entries(rec.milestones || {}).map(([k, v]: [string, any]) => ({
+          key: k,
+          date: v && typeof v === "object" ? v.date : v,
+          source: v && typeof v === "object" ? v.source : "derived",
+          notes: v && typeof v === "object" ? v.notes : "",
+        }));
+      for (const m of milestones) {
+        const mKey = String(m.key || m.milestone_key || "").trim();
+        if (!mKey) continue;
+        await sqlite.execute({
+          sql:
+            `INSERT INTO unit_turn_milestones (tracking_uuid, milestone_key, milestone_date, source, notes, updated_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(tracking_uuid, milestone_key) DO UPDATE SET
+                  milestone_date = excluded.milestone_date,
+                  source         = excluded.source,
+                  notes          = excluded.notes,
+                  updated_at     = datetime('now')`,
+          args: [
+            trackingUuid,
+            mKey,
+            m.date || m.milestone_date || null,
+            m.source || "derived",
+            m.notes || "",
+          ],
+        });
+      }
+
+      const linked = Array.isArray(rec.work_orders)
+        ? rec.work_orders
+        : Array.isArray(rec.linked_work_orders)
+        ? rec.linked_work_orders
+        : [];
+
+      if (rec.replace_work_orders) {
+        await sqlite.execute({
+          sql:
+            `UPDATE unit_turn_work_orders SET removed = 1, updated_at = datetime('now') WHERE tracking_uuid = ?`,
+          args: [trackingUuid],
+        });
+      }
+
+      for (const w of linked) {
+        const woId = String(w.wo_id || w.id || "").trim();
+        if (!woId) continue;
+        await sqlite.execute({
+          sql:
+            `INSERT INTO unit_turn_work_orders (tracking_uuid, wo_id, wo_db_uuid, source, status, created_at, removed, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 0, datetime('now'))
+                ON CONFLICT(tracking_uuid, wo_id) DO UPDATE SET
+                  wo_db_uuid = excluded.wo_db_uuid,
+                  source     = excluded.source,
+                  status     = excluded.status,
+                  created_at = excluded.created_at,
+                  removed    = 0,
+                  updated_at = datetime('now')`,
+          args: [
+            trackingUuid,
+            woId,
+            w.wo_db_uuid || w.dbApiId || "",
+            w.source || "inferred",
+            w.status || "",
+            w.created_at || w.created || null,
+          ],
+        });
+      }
+
+      upserted++;
     }
 
-    const linked = Array.isArray(rec.work_orders)
-      ? rec.work_orders
-      : Array.isArray(rec.linked_work_orders)
-      ? rec.linked_work_orders
-      : [];
-
-    if (rec.replace_work_orders) {
-      await sqlite.execute({
-        sql:
-          `UPDATE unit_turn_work_orders SET removed = 1, updated_at = datetime('now') WHERE tracking_uuid = ?`,
-        args: [trackingUuid],
-      });
-    }
-
-    for (const w of linked) {
-      const woId = String(w.wo_id || w.id || "").trim();
-      if (!woId) continue;
-      await sqlite.execute({
-        sql:
-          `INSERT INTO unit_turn_work_orders (tracking_uuid, wo_id, wo_db_uuid, source, status, created_at, removed, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, 0, datetime('now'))
-              ON CONFLICT(tracking_uuid, wo_id) DO UPDATE SET
-                wo_db_uuid = excluded.wo_db_uuid,
-                source     = excluded.source,
-                status     = excluded.status,
-                created_at = excluded.created_at,
-                removed    = 0,
-                updated_at = datetime('now')`,
-        args: [
-          trackingUuid,
-          woId,
-          w.wo_db_uuid || w.dbApiId || "",
-          w.source || "inferred",
-          w.status || "",
-          w.created_at || w.created || null,
-        ],
-      });
-    }
-
-    upserted++;
+    const refreshedBundle = await loadTrackerBundle(180);
+    await cacheSet(
+      `unit_turns_sql_180`,
+      "unit_turns",
+      refreshedBundle,
+      refreshedBundle.length,
+    );
+    return { ok: true, upserted };
+  } catch (err: any) {
+    return {
+      ok: false,
+      status: 500,
+      error: "unit_turns_sync_failed",
+      message: String(err?.message || err),
+    };
   }
-
-  const refreshedBundle = await loadTrackerBundle(180);
-  await cacheSet(
-    `unit_turns_sql_180`,
-    "unit_turns",
-    refreshedBundle,
-    refreshedBundle.length,
-  );
-  return { ok: true, upserted };
 }
 
 export async function handleUnitTurnWorkOrderLink(req: Request): Promise<any> {
@@ -625,12 +656,54 @@ export async function handleUnitTurnWorkOrderLink(req: Request): Promise<any> {
     });
   }
 
+  // Enrich via Reports v2 work_order endpoint when wo_db_uuid is missing or
+  // the supplied value is not a valid UUID (e.g. caller sent the WO number).
+  let resolvedUuid = String(body.wo_db_uuid || body.dbApiId || "").trim();
+  let resolvedStatus = String(body.status || "").trim();
+  let resolvedCreated: string | null = body.created_at || body.created || null;
+  let resolvedUnitTurnId = "";
+  let enrichedFromV2 = false;
+
+  if (!isValidUUID(resolvedUuid)) {
+    try {
+      const v2Rows = await fetchReport("work_order", {
+        work_order_numbers: [woId],
+        paginate_results: "true",
+        per_page: "1",
+      });
+      if (Array.isArray(v2Rows) && v2Rows.length > 0) {
+        const vr = v2Rows[0];
+        resolvedUuid = String(vr.work_order_id || "").trim();
+        if (!resolvedStatus) resolvedStatus = String(vr.status || "").trim();
+        if (!resolvedCreated) resolvedCreated = String(vr.created_at || "").trim() || null;
+        resolvedUnitTurnId = String(vr.unit_turn_id || "").trim();
+        enrichedFromV2 = true;
+      }
+    } catch (_enrichErr) {
+      // Non-fatal: proceed with whatever was supplied
+    }
+  }
+
+  // If we resolved a unit_turn_id from v2, store it on the tracker row so
+  // it can be used for future automatic correlation.
+  if (resolvedUnitTurnId) {
+    try {
+      await sqlite.execute({
+        sql: `UPDATE unit_turn_tracker SET unit_turn_id = ?, updated_at = datetime('now')
+              WHERE tracking_uuid = ? AND (unit_turn_id IS NULL OR unit_turn_id = '')`,
+        args: [resolvedUnitTurnId, trackingUuid],
+      });
+    } catch (_utErr) {
+      // unit_turn_id column may not exist yet — non-fatal
+    }
+  }
+
   await sqlite.execute({
     sql:
       `INSERT INTO unit_turn_work_orders (tracking_uuid, wo_id, wo_db_uuid, source, status, created_at, removed, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, 0, datetime('now'))
           ON CONFLICT(tracking_uuid, wo_id) DO UPDATE SET
-            wo_db_uuid = excluded.wo_db_uuid,
+            wo_db_uuid = CASE WHEN excluded.wo_db_uuid != '' THEN excluded.wo_db_uuid ELSE wo_db_uuid END,
             source     = excluded.source,
             status     = excluded.status,
             removed    = 0,
@@ -638,14 +711,31 @@ export async function handleUnitTurnWorkOrderLink(req: Request): Promise<any> {
     args: [
       trackingUuid,
       woId,
-      body.wo_db_uuid || body.dbApiId || "",
+      resolvedUuid,
       body.source || "manual",
-      body.status || "",
-      body.created_at || body.created || null,
+      resolvedStatus,
+      resolvedCreated,
     ],
   });
 
-  return { ok: true, tracking_uuid: trackingUuid, wo_id: woId };
+  // Bust unit_turns cache so next fetch reflects the new link.
+  try {
+    await sqlite.execute({
+      sql: `DELETE FROM api_cache WHERE cache_key LIKE 'unit_turns_sql_%'`,
+      args: [],
+    });
+  } catch (_cacheErr) {
+    // Non-fatal
+  }
+
+  return {
+    ok: true,
+    tracking_uuid: trackingUuid,
+    wo_id: woId,
+    wo_db_uuid: resolvedUuid,
+    unit_turn_id: resolvedUnitTurnId,
+    enriched_from_v2: enrichedFromV2,
+  };
 }
 
 export async function handleUnitTurnWorkOrderUnlink(
@@ -660,6 +750,7 @@ export async function handleUnitTurnWorkOrderUnlink(
 
   const turnKey = String(body.turn_key || body.turnKey || "").trim();
   const woId = String(body.wo_id || body.woId || "").trim();
+  const woDbUuid = String(body.wo_db_uuid || body.woDbUuid || "").trim();
   if (!turnKey || !woId) {
     return { ok: false, error: "turn_key and wo_id are required" };
   }
@@ -677,9 +768,20 @@ export async function handleUnitTurnWorkOrderUnlink(
   await sqlite.execute({
     sql: `UPDATE unit_turn_work_orders
           SET removed = 1, updated_at = datetime('now')
-          WHERE tracking_uuid = ? AND wo_id = ?`,
-    args: [trackingUuid, woId],
+          WHERE tracking_uuid = ?
+            AND (wo_id = ? OR (? <> '' AND wo_db_uuid = ?))`,
+    args: [trackingUuid, woId, woDbUuid, woDbUuid],
   });
+
+  // Bust unit_turns cache so next fetch reflects unlink changes.
+  try {
+    await sqlite.execute({
+      sql: `DELETE FROM api_cache WHERE cache_key LIKE 'unit_turns_sql_%'`,
+      args: [],
+    });
+  } catch {
+    // Non-fatal
+  }
 
   return { ok: true, tracking_uuid: trackingUuid, wo_id: woId };
 }

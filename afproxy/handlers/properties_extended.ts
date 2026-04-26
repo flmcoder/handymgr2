@@ -57,25 +57,47 @@ export async function handlePropertyNotes(
   }
 
   try {
-    // Fetch from DB API v0
-    const path = `/api/v0/properties/notes?filters%5BPropertyId%5D=${
-      encodeURIComponent(propertyId)
-    }&page%5Bsize%5D=100`;
+    // AppFolio tenants can expose property notes on different v0 paths.
+    // Try the supported variants before falling back to local cache.
+    const paths = [
+      `/api/v0/properties/notes?filters%5BPropertyId%5D=${encodeURIComponent(propertyId)}&page%5Bsize%5D=100`,
+      `/api/v0/properties/${encodeURIComponent(propertyId)}/notes?page%5Bsize%5D=100`,
+      `/api/v0/property_notes?filters%5BPropertyId%5D=${encodeURIComponent(propertyId)}&page%5Bsize%5D=100`,
+    ];
 
-    let resp = await fetchWithTimeout(`${AF_DB}${path}`, {
-      headers: dbHeaders(),
-    });
+    let resp: Response | null = null;
+    let lastStatus = 0;
+    for (const path of paths) {
+      resp = await fetchWithTimeout(`${AF_DB}${path}`, { headers: dbHeaders() });
+      lastStatus = resp.status;
+      if (resp.ok) break;
 
-    if ([401, 403, 404, 422].includes(resp.status)) {
-      resp = await fetchWithTimeout(`${AF_REPORTS}${path}`, {
-        headers: dbHeaders(),
-      });
+      if ([401, 403, 404, 422].includes(resp.status)) {
+        const reportsResp = await fetchWithTimeout(`${AF_REPORTS}${path}`, {
+          headers: dbHeaders(),
+        });
+        lastStatus = reportsResp.status;
+        if (reportsResp.ok) {
+          resp = reportsResp;
+          break;
+        }
+      }
     }
 
-    if (!resp.ok) {
+    if (!resp || !resp.ok) {
+      const dbNotes = await getPropertyNotesFromDB(propertyId);
+      if (dbNotes.length > 0) {
+        return {
+          ok: true,
+          results: dbNotes,
+          count: dbNotes.length,
+          from_cache: true,
+          source: "db_fallback",
+        };
+      }
       return {
         ok: false,
-        error: `Failed to fetch property notes: HTTP ${resp.status}`,
+        error: `Failed to fetch property notes: HTTP ${lastStatus || 0}`,
       };
     }
 
@@ -114,6 +136,16 @@ export async function handlePropertyNotes(
       from_cache: false,
     };
   } catch (err: any) {
+    const dbNotes = await getPropertyNotesFromDB(propertyId);
+    if (dbNotes.length > 0) {
+      return {
+        ok: true,
+        results: dbNotes,
+        count: dbNotes.length,
+        from_cache: true,
+        source: "db_fallback",
+      };
+    }
     return {
       ok: false,
       error: `Property notes fetch error: ${err.message}`,
@@ -503,4 +535,101 @@ export async function getPropertyListingsFromDB(
   } catch {
     return [];
   }
+}
+
+// ── handleBulkUpdateNotes ─────────────────────────────────────────────────────
+// POST ?action=bulk_update_notes
+// Body: { property_ids: string[], note_body: string }
+//
+// Iterates over the supplied property UUID list and POSTs a note to each via
+// the AppFolio DB API v0 /properties/notes endpoint.  A 250 ms pause between
+// each request keeps throughput well under the 8 req/s rate limit.  Failures
+// are collected and returned without aborting the rest of the batch.
+export async function handleBulkUpdateNotes(req: Request): Promise<any> {
+  let body: any = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+
+  const propertyIds: string[] = Array.isArray(body.property_ids)
+    ? body.property_ids.map((id: unknown) => String(id || "").trim()).filter(Boolean)
+    : [];
+  const noteBody = String(body.note_body || body.body || "").trim();
+
+  if (propertyIds.length === 0) {
+    return { ok: false, status: 400, error: "property_ids array is required and must not be empty" };
+  }
+  if (!noteBody) {
+    return { ok: false, status: 400, error: "note_body is required" };
+  }
+  // Hard cap: never blast more than 200 properties in one call.
+  if (propertyIds.length > 200) {
+    return { ok: false, status: 400, error: "property_ids may not exceed 200 per request" };
+  }
+
+  const successful: { property_id: string; note_id: string }[] = [];
+  const failed: { property_id: string; error: string }[] = [];
+
+  const path = `/api/v0/properties/notes`;
+  const baseHeaders = { ...dbHeaders(), "Content-Type": "application/json", "Accept": "application/json" };
+
+  for (const propertyId of propertyIds) {
+    // Validate UUID-ish format before hitting AppFolio to avoid spurious 422s.
+    if (!/^[0-9a-f\-]{10,}$/i.test(propertyId)) {
+      failed.push({ property_id: propertyId, error: "invalid_id: does not look like a UUID" });
+      continue;
+    }
+
+    try {
+      const postBody = JSON.stringify({ data: { PropertyId: propertyId, Body: noteBody } });
+      const postInit: RequestInit = { method: "POST", headers: baseHeaders, body: postBody };
+
+      let resp = await fetchWithTimeout(`${AF_DB}${path}`, postInit);
+      // Retry on auth/routing failures against the reports domain
+      if (resp.status === 401 || resp.status === 403 || resp.status === 404) {
+        resp = await fetchWithTimeout(`${AF_REPORTS}${path}`, postInit);
+      }
+      // On 429 honour Retry-After, then retry once
+      if (resp.status === 429) {
+        const retryAfter = parseInt(resp.headers.get("Retry-After") || "5", 10);
+        await new Promise((r) => setTimeout(r, retryAfter * 1000));
+        resp = await fetchWithTimeout(`${AF_DB}${path}`, postInit);
+      }
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        failed.push({ property_id: propertyId, error: `HTTP ${resp.status}: ${errText.substring(0, 200)}` });
+      } else {
+        const data = await resp.json().catch(() => ({}));
+        const noteId = String((data as any)?.data?.Id || (data as any)?.Id || "");
+        successful.push({ property_id: propertyId, note_id: noteId });
+
+        // Bust property notes cache so the next load picks up the new note.
+        try {
+          await sqlite.execute({
+            sql: `DELETE FROM api_cache WHERE cache_key = ?`,
+            args: [`property_notes_${propertyId}`],
+          });
+        } catch {
+          // Non-fatal
+        }
+      }
+    } catch (err: any) {
+      failed.push({ property_id: propertyId, error: String(err?.message || err).substring(0, 200) });
+    }
+
+    // 250 ms throttle — stays well below AppFolio's 8 req/s limit.
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  return {
+    ok: true,
+    total: propertyIds.length,
+    success_count: successful.length,
+    failure_count: failed.length,
+    successful,
+    failed,
+  };
 }

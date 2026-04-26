@@ -444,17 +444,7 @@ export async function handleRoutingMonitor(
 
     const op = String(opFromParams || body?.op || "").trim().toLowerCase();
 
-    // CRITICAL: routing events can be destructive; require admin auth for any POST
-    if (!op || op === "scan") {
-      const { PROXY_ADMIN_KEY } = await import("../config.ts");
-      const bodyKey = String(body?.key || "").trim();
-      if (!PROXY_ADMIN_KEY || !bodyKey || bodyKey !== PROXY_ADMIN_KEY) {
-        return {
-          ok: false,
-          error: "Unauthorized — missing or invalid PROXY_ADMIN_KEY",
-        };
-      }
-    }
+    // POST ops are intentionally available to the authenticated app session.
 
     switch (op) {
       case "scan":

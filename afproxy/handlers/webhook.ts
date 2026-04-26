@@ -75,6 +75,15 @@ const APPFOLIO_JWKS_URL = Deno.env.get("APPFOLIO_JWKS_URL") ||
   "https://api.appfolio.com/.well-known/jwks.json";
 const APPFOLIO_JWKS = createRemoteJWKSet(new URL(APPFOLIO_JWKS_URL));
 const ADMIN_SECRET = (Deno.env.get("ADMIN_SECRET") || "").trim();
+const WEBHOOK_LIVE_CACHE_TTL = 8000;
+
+let webhookLiveCache:
+  | {
+    data: any;
+    timestamp: number;
+    sinceId: number;
+  }
+  | null = null;
 
 function adminJson(
   body: unknown,
@@ -96,6 +105,13 @@ function isRateLimitedSyncError(err: unknown): boolean {
     err && typeof err === "object" &&
     (err as Record<string, unknown>).rateLimited === true
   );
+}
+
+function isSqlWriteBlockedError(err: unknown): boolean {
+  const msg = String((err as any)?.message || err || "").toLowerCase();
+  return msg.includes("write operations are forbidden") ||
+    msg.includes("operation was blocked") ||
+    (msg.includes("blocked") && msg.includes("sql write"));
 }
 
 function requireAdminAuth(req: Request): Response | null {
@@ -451,7 +467,7 @@ export async function handleWebhookLive(
   }
 
   try {
-    const result = await sqlite.execute({
+    const rs = await sqlite.execute({
       sql: `SELECT id, received_at, raw_body, event_type,
                     resource_type, resource_id
              FROM   webhook_events
@@ -462,7 +478,7 @@ export async function handleWebhookLive(
       args: [sinceId, limit],
     });
 
-    const rows = rowsAsObjects(result);
+    const rows = rowsAsObjects(rs);
     const events = rows.map((r: any) => {
       // Re-parse the raw body to extract all available fields
       const parsed = parseIncomingWebhook(r.raw_body || "");
@@ -1359,6 +1375,7 @@ export async function handleWebhookPost(req: Request): Promise<any> {
 
   // Store raw body verbatim — preserves JWS signature for downstream verification
   let inserted: any;
+  let storageBlocked = false;
   try {
     inserted = await sqlite.execute({
       sql: `INSERT INTO webhook_events
@@ -1374,19 +1391,49 @@ export async function handleWebhookPost(req: Request): Promise<any> {
     });
   } catch (e: any) {
     const msg = String(e?.message || "");
-    if (!/human_description|no such column|SQL_INPUT_ERROR/i.test(msg)) throw e;
-    inserted = await sqlite.execute({
-      sql: `INSERT INTO webhook_events
-             (raw_body, resource_type, resource_id, event_type)
-           VALUES (?, ?, ?, ?)`,
-      args: [
-        rawBody,
-        resolvedResourceType || null,
-        resourceId,
-        eventType,
-      ],
-    });
+    if (isSqlWriteBlockedError(e)) {
+      storageBlocked = true;
+    } else if (/human_description|no such column|SQL_INPUT_ERROR/i.test(msg)) {
+      try {
+        inserted = await sqlite.execute({
+          sql: `INSERT INTO webhook_events
+                 (raw_body, resource_type, resource_id, event_type)
+               VALUES (?, ?, ?, ?)`,
+          args: [
+            rawBody,
+            resolvedResourceType || null,
+            resourceId,
+            eventType,
+          ],
+        });
+      } catch (fallbackErr: any) {
+        if (isSqlWriteBlockedError(fallbackErr)) {
+          storageBlocked = true;
+        } else {
+          throw fallbackErr;
+        }
+      }
+    } else {
+      throw e;
+    }
   }
+
+  if (storageBlocked) {
+    return {
+      ok: true,
+      status: 202,
+      accepted: true,
+      stored: false,
+      warning: "database_write_blocked",
+      hint: "Upgrade Val Town/Turso plan or reduce writes to restore durable webhook logging",
+      event_type: eventType,
+      resource_type: resolvedResourceType,
+      resource_id: resourceId,
+      parse_mode: parsed.parseMode,
+      fetch_back: { attempted: false, ok: false, reason: "storage_blocked" },
+    };
+  }
+
   const insertedEventId = Number((inserted as any)?.lastInsertRowid || 0);
 
   // Process local routing matrix updates asynchronously so inbound webhook ACK
@@ -1541,8 +1588,15 @@ export async function handleWebhookPost(req: Request): Promise<any> {
 
   // Invalidate api_cache entries for the affected resource type
   if (resolvedResourceType && WEBHOOK_CACHE_MAP[resolvedResourceType]) {
-    for (const entityType of WEBHOOK_CACHE_MAP[resolvedResourceType]) {
-      await cacheInvalidate(entityType);
+    try {
+      for (const entityType of WEBHOOK_CACHE_MAP[resolvedResourceType]) {
+        await cacheInvalidate(entityType);
+      }
+    } catch (e: any) {
+      if (!isSqlWriteBlockedError(e)) throw e;
+      console.warn(
+        "[webhook] cache invalidation skipped: SQL writes blocked by plan/quota",
+      );
     }
   }
 

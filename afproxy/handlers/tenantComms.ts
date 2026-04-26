@@ -41,6 +41,7 @@ import {
   isValidAppfolioWorkOrderStatus,
   patchWorkOrder,
   postWoNote,
+  uploadWorkOrderAttachment,
 } from "../lib/appfolio.ts";
 import { auditLog } from "../lib/audit.ts";
 import { PROXY_ADMIN_KEY } from "../config.ts";
@@ -180,6 +181,26 @@ async function readJsonBody(req: Request): Promise<any> {
     return await req.json();
   } catch {
     return null;
+  }
+}
+
+function readPortalUploadToken(req: Request): string {
+  try {
+    const url = new URL(req.url);
+    return String(
+      url.searchParams.get("token") || req.headers.get("x-portal-token") || "",
+    ).trim();
+  } catch {
+    return String(req.headers.get("x-portal-token") || "").trim();
+  }
+}
+
+function readPortalUploadPhase(req: Request): string {
+  try {
+    const url = new URL(req.url);
+    return String(url.searchParams.get("phase") || "general").trim().toLowerCase();
+  } catch {
+    return "general";
   }
 }
 
@@ -595,6 +616,167 @@ export async function handlePortalNote(req: Request): Promise<any> {
   return { ok: noteOk, note_written: noteOk };
 }
 
+export async function handlePortalStatus(req: Request): Promise<any> {
+  const body = await readJsonBody(req);
+  if (!body) {
+    return {
+      ok: false,
+      error: "Invalid JSON body — expected { token, status, note_text? }",
+    };
+  }
+
+  const verified = await verifyPortalContext(String(body.token || ""));
+  if (!verified.ok) return { ok: false, error: verified.error };
+
+  const status = String(body.status || "").trim();
+  const noteText = stripHtml(String(body.note_text || "")).slice(0, 1200);
+  if (!status) return { ok: false, error: "status is required" };
+  if (!isValidAppfolioWorkOrderStatus(status)) {
+    return { ok: false, error: "status must be one of: Scheduled, Waiting, Work Completed" };
+  }
+
+  const patchRes = await patchWorkOrder(verified.context.wo_id, { Status: status });
+  if (!patchRes.ok) {
+    await logPortalEvent(
+      req,
+      verified.tokenRow.token,
+      verified.context.wo_id,
+      verified.context.tech_id,
+      "status_failed",
+      { status, patch_ok: false, patch_status: patchRes.status },
+    );
+    return {
+      ok: false,
+      error: "Failed to update AppFolio work order status",
+      status_value: status,
+      patch_status: patchRes.status,
+    };
+  }
+
+  const noteLines = [
+    `[PORTAL STATUS | ${new Date().toISOString()}]`,
+    `Tech ${verified.context.tech_name} updated the work order status to ${status}.`,
+  ];
+  if (noteText) noteLines.push(`Details: ${noteText}`);
+  const noteOk = await postWoNote(verified.context.wo_id, noteLines.join("\n"));
+
+  await sqlite.execute({
+    sql: `UPDATE magic_link_tokens
+             SET last_action = ?,
+                 last_action_at = datetime('now')
+           WHERE token = ?`,
+    args: [
+      status === "Work Completed" ? "work_completed" : "status_update",
+      verified.tokenRow.token,
+    ],
+  }).catch(() => {});
+
+  await logPortalEvent(
+    req,
+    verified.tokenRow.token,
+    verified.context.wo_id,
+    verified.context.tech_id,
+    "status",
+    { status, note_written: noteOk },
+  );
+  await auditLog(verified.context.wo_id, "portal_status_updated", {
+    tech: verified.context.tech_name,
+    status,
+    note_written: noteOk,
+  });
+
+  return {
+    ok: true,
+    status_value: status,
+    patch_ok: patchRes.ok,
+    patch_status: patchRes.status,
+    note_written: noteOk,
+  };
+}
+
+export async function handlePortalPhotoUpload(req: Request): Promise<any> {
+  const token = readPortalUploadToken(req);
+  const verified = await verifyPortalContext(token);
+  if (!verified.ok) return { ok: false, error: verified.error };
+
+  const bodyBuffer = await req.arrayBuffer();
+  if (!bodyBuffer || bodyBuffer.byteLength === 0) {
+    return { ok: false, error: "Empty upload body" };
+  }
+
+  const phase = readPortalUploadPhase(req);
+  const contentType = req.headers.get("Content-Type") || "application/octet-stream";
+  const uploadRes = await uploadWorkOrderAttachment(
+    verified.context.wo_id,
+    contentType,
+    bodyBuffer,
+  );
+  if (!uploadRes.ok) {
+    await logPortalEvent(
+      req,
+      verified.tokenRow.token,
+      verified.context.wo_id,
+      verified.context.tech_id,
+      "photo_upload_failed",
+      { phase, upload_status: uploadRes.status },
+    );
+    return {
+      ok: false,
+      error: "Failed to upload work-order attachment",
+      upload_status: uploadRes.status,
+      detail: uploadRes.detail,
+    };
+  }
+
+  try {
+    const cacheKey = `wo_attachments_${verified.context.wo_id}`;
+    await sqlite.execute({
+      sql: `DELETE FROM api_cache WHERE cache_key = ? OR cache_key LIKE ?`,
+      args: [cacheKey, `${cacheKey}::%`],
+    });
+  } catch {
+    // non-fatal cache bust
+  }
+
+  const phaseLabel = phase === "before"
+    ? "before"
+    : (phase === "after" ? "after" : "general");
+  const noteOk = await postWoNote(
+    verified.context.wo_id,
+    `[PORTAL PHOTO | ${new Date().toISOString()}]\nTech ${verified.context.tech_name} uploaded a ${phaseLabel} photo through the dispatch portal.`,
+  );
+
+  await sqlite.execute({
+    sql: `UPDATE magic_link_tokens
+             SET last_action = 'photo_upload',
+                 last_action_at = datetime('now')
+           WHERE token = ?`,
+    args: [verified.tokenRow.token],
+  }).catch(() => {});
+
+  await logPortalEvent(
+    req,
+    verified.tokenRow.token,
+    verified.context.wo_id,
+    verified.context.tech_id,
+    "photo_upload",
+    { phase: phaseLabel, note_written: noteOk },
+  );
+  await auditLog(verified.context.wo_id, "portal_photo_uploaded", {
+    tech: verified.context.tech_name,
+    phase: phaseLabel,
+    note_written: noteOk,
+  });
+
+  return {
+    ok: true,
+    upload_status: uploadRes.status,
+    phase: phaseLabel,
+    note_written: noteOk,
+    detail: uploadRes.detail,
+  };
+}
+
 export async function handlePortalNoContact(req: Request): Promise<any> {
   const body = await readJsonBody(req);
   if (!body) {
@@ -848,13 +1030,14 @@ export async function handleSendTenantSMS(req: Request): Promise<any> {
   // ── Single-use enforcement ────────────────────────────────────────────────
   const tokenRow = await lookupMagicToken(token);
   if (Number(tokenRow?.used || 0) === 1) {
+    const usedTemplate = String(
+      tokenRow?.used_template || TEMPLATE_LABELS[template] || "template",
+    );
     return {
       ok: true,
       already_sent: true,
-      template: tokenRow.used_template || TEMPLATE_LABELS[template],
-      message: `Tenant message was already sent (${
-        tokenRow.used_template || "template"
-      }). You can still use schedule, note, and reassignment actions from this portal.`,
+      template: usedTemplate,
+      message: `Tenant message was already sent (${usedTemplate}). You can still use schedule, note, and reassignment actions from this portal.`,
     };
   }
 

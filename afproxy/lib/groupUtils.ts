@@ -4,7 +4,7 @@
 // to a specific property group.
 // ============================================================================
 
-import { cacheGet } from "../db.ts";
+import { cacheGet, rowsAsObjects, sqlite } from "../db.ts";
 
 /**
  * Resolves the Set of AF property UUIDs that belong to the given property group.
@@ -50,7 +50,65 @@ export async function resolveGroupPropertyIds(
   const propIds = target.PropertyIds || target.property_ids || [];
   if (Array.isArray(propIds)) propIds.forEach(addValue);
 
-  return set.size > 0 ? set : null;
+  if (set.size === 0) return null;
+
+  // Normalize group members to AF property UUIDs where possible.
+  // Some group payloads carry property_map_id values while bills carry property_id/PropertyId.
+  const rawIds = Array.from(set);
+  const placeholders = rawIds.map(() => "?").join(",");
+  const canonical = new Set<string>(rawIds);
+
+  const addCanonical = (v: unknown) => {
+    const id = String(v || "").trim();
+    if (id) canonical.add(id);
+  };
+
+  try {
+    const refRows = rowsAsObjects(await sqlite.execute({
+      sql:
+        `SELECT property_id, property_map_id
+         FROM property_reference
+         WHERE property_map_id IN (${placeholders})
+            OR property_id IN (${placeholders})`,
+      args: [...rawIds, ...rawIds],
+    }));
+    refRows.forEach((row) => addCanonical(row.property_id || row.property_map_id));
+  } catch {
+    // Non-fatal: fallback to cached group IDs.
+  }
+
+  try {
+    const pmRows = rowsAsObjects(await sqlite.execute({
+      sql:
+        `SELECT property_id, id
+         FROM property_map
+         WHERE id IN (${placeholders})
+            OR property_id IN (${placeholders})`,
+      args: [...rawIds, ...rawIds],
+    }));
+    pmRows.forEach((row) => addCanonical(row.property_id || row.id));
+  } catch {
+    // Non-fatal: fallback to ids already collected.
+  }
+
+  try {
+    const args: string[] = [];
+    let sql =
+      `SELECT property_id, property_map_id
+       FROM group_resolution_cache
+       WHERE (property_map_id IN (${placeholders}) OR property_id IN (${placeholders}))`;
+    args.push(...rawIds, ...rawIds);
+    if (groupUuid) {
+      sql += " AND property_group_id = ?";
+      args.push(groupUuid);
+    }
+    const grcRows = rowsAsObjects(await sqlite.execute({ sql, args }));
+    grcRows.forEach((row) => addCanonical(row.property_id || row.property_map_id));
+  } catch {
+    // Non-fatal: fallback to ids already collected.
+  }
+
+  return canonical.size > 0 ? canonical : null;
 }
 
 /**
@@ -64,4 +122,30 @@ export function propertyInScope(
   if (!allowedIds) return true;
   if (!propertyId) return false;
   return allowedIds.has(propertyId.trim());
+}
+
+/**
+ * Resolves a UnitId to its parent PropertyId by querying the units cache table.
+ * Returns null when the unit is not found in the local cache.
+ *
+ * Intended for use when a work order / bill / turn record carries a UnitId but
+ * no PropertyId — the resolved PropertyId can then be tested with propertyInScope.
+ */
+export async function unitToPropertyId(
+  unitId: string | null | undefined,
+): Promise<string | null> {
+  if (!unitId) return null;
+  const id = unitId.trim();
+  if (!id) return null;
+  try {
+    const res = await sqlite.execute({
+      sql: `SELECT property_id FROM units WHERE unit_id = ? LIMIT 1`,
+      args: [id],
+    });
+    const rows = rowsAsObjects(res);
+    const propId = rows[0]?.property_id;
+    return propId ? String(propId) : null;
+  } catch {
+    return null;
+  }
 }

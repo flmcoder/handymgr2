@@ -69,6 +69,7 @@ import {
   handlePropertyNotes,
   handleListings,
   handlePropertyStats,
+  handleBulkUpdateNotes,
 } from "./handlers/properties_extended.ts";
 import {
   handleAdminSyncRoute,
@@ -149,6 +150,11 @@ import {
   handleVerifyRole,
   touchDeviceSession,
 } from "./handlers/deviceAuth.ts";
+import {
+  handlePmNotificationAck,
+  handlePmNotificationPost,
+  handlePmNotificationsInbox,
+} from "./handlers/pmNotifications.ts";
 
 const PROXY_VERSION = PROXY_APP_VERSION;
 
@@ -193,6 +199,31 @@ async function isTrustedDeviceToken(token: string): Promise<boolean> {
   }
 }
 
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Newly minted tokens can race with first-wave reads during login startup.
+// Resolve once with a tiny bounded retry window to avoid transient 401 relocks.
+async function resolveTrustedDeviceSession(
+  token: string,
+): Promise<any | null> {
+  if (!token) return null;
+  const attempts = 8;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const session = await getTrustedDeviceSession(token);
+      if (session) return session;
+    } catch {
+      // Continue retry loop; final null keeps auth strict.
+    }
+    if (i < attempts - 1) {
+      await delayMs(Math.min(120 * (i + 1), 900));
+    }
+  }
+  return null;
+}
+
 async function isFrontendAuthorized(headers: Headers): Promise<boolean> {
   const token = extractFrontendToken(headers);
   if (!token) return false;
@@ -219,6 +250,13 @@ function safeParseJSON<T>(raw: string | null | undefined, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function isSqlWriteBlockedError(err: unknown): boolean {
+  const msg = String((err as any)?.message || err || "").toLowerCase();
+  return msg.includes("write operations are forbidden") ||
+    msg.includes("operation was blocked") ||
+    (msg.includes("blocked") && msg.includes("sql write"));
 }
 
 type ProxySettingRow = {
@@ -320,7 +358,16 @@ export default async function handler(req: Request): Promise<Response> {
   let action = "";
   try {
     // ── Ensure all SQLite/Turso tables exist (no-op after first cold start) ─
-    await ensureTables();
+    try {
+      await ensureTables();
+    } catch (e: any) {
+      if (!isSqlWriteBlockedError(e)) throw e;
+      // Val Town free-tier projects can run in read-only mode when write quota is exceeded.
+      // Keep read paths alive and rely on existing stateless auth fallbacks.
+      console.warn(
+        "[SCHEMA WARNING] ensureTables skipped: SQL writes blocked by plan/quota",
+      );
+    }
 
     const url = new URL(req.url);
     const rawPath = (url.pathname || "").replace(/\/+$/, "");
@@ -434,10 +481,13 @@ export default async function handler(req: Request): Promise<Response> {
       (!!PROXY_ADMIN_KEY && headerAdminKey === PROXY_ADMIN_KEY) ||
       (!!adminSecret && headerAdminToken === adminSecret);
     const frontendToken = extractFrontendToken(req.headers);
+    const frontendTokenMatchesSharedSecret =
+      !!frontendToken && !!FRONTEND_PROXY_SECRET &&
+      frontendToken === FRONTEND_PROXY_SECRET;
     let frontendSession: any = null;
-    if (frontendToken) {
+    if (frontendToken && !frontendTokenMatchesSharedSecret) {
       try {
-        frontendSession = await getTrustedDeviceSession(frontendToken);
+        frontendSession = await resolveTrustedDeviceSession(frontendToken);
       } catch (e: any) {
         // Session enrichment should never take down unrelated proxy actions.
         console.warn(
@@ -463,7 +513,7 @@ export default async function handler(req: Request): Promise<Response> {
       !isVerifyRole && !isPublicHealth && !isPublicInfo &&
       !isHeaderAdminAuthorized
     ) {
-      if (!(await isFrontendAuthorized(req.headers))) {
+      if (!frontendTokenMatchesSharedSecret && !frontendSession) {
         return jsonResp({
           ok: false,
           error: "Unauthorized — missing or invalid frontend bearer token",
@@ -479,7 +529,7 @@ export default async function handler(req: Request): Promise<Response> {
       // PM OTP mode is intentionally view-only at API layer.
       if (
         action !== "device_otp_request" && action !== "device_otp_verify" &&
-        action !== "device_setup"
+        action !== "device_setup" && action !== "pm_notifications_ack"
       ) {
         return jsonResp({
           ok: false,
@@ -528,6 +578,7 @@ export default async function handler(req: Request): Promise<Response> {
       "wo_comparison_report",
       "inspections",
       "property_groups",
+      "pm_notifications_inbox",
     ]);
 
     if (sessionScopeUuid && SCOPED_DATA_ACTIONS.has(action)) {
@@ -637,6 +688,9 @@ export default async function handler(req: Request): Promise<Response> {
         case "wo_note_create":
           result = await handleWoNoteCreate(req);
           break;
+        case "bulk_update_notes":
+          result = await handleBulkUpdateNotes(req);
+          break;
         case "wo_attachment_upload":
           result = await handleWoAttachmentUpload(params, req);
           break;
@@ -648,6 +702,9 @@ export default async function handler(req: Request): Promise<Response> {
           break;
         case "unit_turns_sync":
           result = await handleUnitTurnsSync(req);
+          if (result?.status && result.status !== 200) {
+            return jsonResp(result, result.status);
+          }
           break;
         case "unit_turn_wo_link":
           result = await handleUnitTurnWorkOrderLink(req);
@@ -718,6 +775,22 @@ export default async function handler(req: Request): Promise<Response> {
           break;
         case "pm_proxy_user_delete":
           result = await handlePmProxyUserDelete(req);
+          break;
+        case "pm_notifications_post":
+          result = await handlePmNotificationPost(req, frontendSession);
+          if (result?.status && result.status !== 200) {
+            return jsonResp(result, result.status);
+          }
+          break;
+        case "pm_notifications_ack":
+          result = await handlePmNotificationAck(
+            req,
+            frontendSession,
+            frontendToken,
+          );
+          if (result?.status && result.status !== 200) {
+            return jsonResp(result, result.status);
+          }
           break;
 
         // Webhook resolve
@@ -931,11 +1004,32 @@ export default async function handler(req: Request): Promise<Response> {
           if (frontendSession && frontendToken) {
             void touchDeviceSession(frontendToken);
           }
-          result = {
-            ok: true,
-            authenticated: !!frontendSession,
-            session: frontendSession || null,
-          };
+          {
+            // When the token is the shared secret (e.g. stateless HMAC-signed
+            // token accepted via FRONTEND_PROXY_SECRET path), synthesize a
+            // full-admin session so the frontend can proceed without a DB row.
+            const effectiveSession = frontendSession ||
+              (frontendTokenMatchesSharedSecret
+                ? {
+                  device_token: frontendToken,
+                  user_name: "admin",
+                  role: "full",
+                  login_email: "",
+                  property_group_uuid: "",
+                  phone: "",
+                  created_at: new Date().toISOString(),
+                  last_seen_at: new Date().toISOString(),
+                  expires_at: new Date(
+                    Date.now() + 30 * 24 * 60 * 60 * 1000,
+                  ).toISOString(),
+                }
+                : null);
+            result = {
+              ok: true,
+              authenticated: !!effectiveSession,
+              session: effectiveSession || null,
+            };
+          }
           break;
 
         case "webhook_live":
@@ -1069,6 +1163,7 @@ export default async function handler(req: Request): Promise<Response> {
         case "bill_detail":
         case "bills_history":
         case "bill_attachments":
+        case "bills_list_v2":
           result = await handleBills(params, req, action);
           break;
         case "bills_by_vendor":
@@ -1081,8 +1176,8 @@ export default async function handler(req: Request): Promise<Response> {
         case "bills_list":
           {
             const billsParams = new URLSearchParams(url.searchParams);
-            if (params.sessionScopeUuid && !billsParams.get("group_id")) {
-              billsParams.set("group_id", params.sessionScopeUuid);
+            if (sessionScopeUuid && !billsParams.get("group_id")) {
+              billsParams.set("group_id", sessionScopeUuid);
             }
             result = await handleBillsRoute(req, sqlite, billsParams);
           }
@@ -1173,6 +1268,13 @@ export default async function handler(req: Request): Promise<Response> {
         case "pm_proxy_users":
           const { handlePmProxyUsers } = await import("./handlers/pmProxyUsers.ts");
           result = await handlePmProxyUsers();
+          break;
+        case "pm_notifications_inbox":
+          result = await handlePmNotificationsInbox(
+            params,
+            frontendSession,
+            frontendToken,
+          );
           break;
         case "settings_get": {
           const adminKey = params.key || req.headers.get("x-admin-key") || "";
@@ -1375,6 +1477,9 @@ export default async function handler(req: Request): Promise<Response> {
                 "POST ?action=pm_proxy_user_upsert body: { key, email, property_group_uuid, ... }",
                 "POST ?action=pm_proxy_user_delete body: { key, user_uuid|email }",
                 "POST ?action=verify_role body: { password }",
+                "GET  ?action=pm_notifications_inbox&limit=75",
+                "POST ?action=pm_notifications_post body: { message, scope_group_uuid? }",
+                "POST ?action=pm_notifications_ack body: { notification_uuid }",
               ],
               cache: [
                 "GET  ?action=cache_invalidate&type=work_orders",

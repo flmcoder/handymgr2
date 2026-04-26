@@ -212,12 +212,49 @@ The HandyManager webapp currently includes the following major features.
 - `POST ?action=remove_monitored_work_order`
 - `POST ?action=send_tenant_sms`
 - `POST ?action=send_magic_link_test_sms` with body `{ key, phone, tech_name?, tech_id? }` (`key` = `PROXY_ADMIN_KEY`)
+- `GET ?action=wo_attachments&wo_id=UUID`
+- `POST ?action=wo_attachment_upload` with binary body + `Content-Type` header
+- `POST ?action=portal_status` with body `{ token, status, note_text? }`
+- `POST ?action=portal_photo_upload?token=TOKEN&phase=before|after` with binary body
 - `GET/POST ?action=noon_warning_cron`
 - `GET/POST ?action=midnight_reassign_cron`
 - `GET/POST ?action=dispatch_sync_assignees`
 - `GET/POST ?action=dispatch_seed_reassignment_test`
 
 ## Changelog
+
+### 2026-04-21 (v9.2.7)
+
+- Fixed frontend version regression where the topbar build badge reported `v9.2.2` while the app runtime was newer.
+- Bumped frontend app version to `v9.2.7` and synchronized release notes references.
+- Hardened client polling reliability with exponential backoff + jitter in the shared fetch timeout wrapper.
+- Armored live webhook polling loop to prevent permanent stoppage after browser sleep/network transitions (`ERR_NAME_NOT_RESOLVED`, `ERR_NETWORK_CHANGED`, QUIC idle timeout scenarios).
+
+### 2026-04-19 (v9.2.5)
+
+- Added `wo_attachments` and `wo_attachment_upload` actions for work-order file attachments (list + upload).
+- Added `portal_status` action — techs can update WO status (Scheduled / Waiting / Work Completed) from the portal.
+- Added `portal_photo_upload` action — before/after photo uploads from the portal, stored as WO attachments.
+- Portal UI: status update accordion, before/after photo file inputs replacing single disabled button.
+- Frontend WO detail modal: attachments list, scope/instructions section, permission-to-enter, vendor instructions, related bills/vendor cross-navigation buttons.
+- Added 429 Retry-After handling to attachment helpers.
+- Added `wo_attachments` to GET rate-limit guard alongside `wo_detail` and `wo_notes`.
+
+### 2026-04-19 (v9.2.4)
+
+- Added `units` and `unit_lookup` actions: full paginated fetch of `/api/v0/units` (90 s timeout, `LastUpdatedAtFrom` = 5 yr) with Turso `units` cache table (`unit_id PK`, `property_id`, name, status, bedrooms, bathrooms, address, leasing_type, rent_ready, etc.). 6-hour TTL.
+- Added `unitToPropertyId(unitId)` helper in `lib/groupUtils.ts` for resolving UnitId → PropertyId via the units cache — foundation for correct property-group scoping when WO/bills carry only UnitId.
+- Added `unit_id` column to `billing_map` (additive migration) and updated `upsertBillingRows` to persist `UnitId`/`unit_id` from bill records.
+- Added `bills_by_unit` route to `handlers/bills.ts` — server-side pagination of bills filtered by `unit_id`, with optional `group_id` scope.
+- Added `unit_id` extraction to `mapBill` so the frontend `BILLS` array includes `unit_id` for client-side unit filtering.
+- Frontend (`js/app.js`): `UNITS` global, `_unitsByPropertyId` lookup, `fetchUnits()`. Properties section now shows unit count badge per property. Property detail modal adds Units tab (status, bed/bath, per-unit Bills filter button). Billing scope chip updated to show `Property › Unit` breadcrumb with Clear Unit / Clear All buttons. `filterBillsToUnit()` added. `renderBillsSection` and `resetBillingFilter` updated to respect `window.filteredUnitId`.
+- Bumped proxy and frontend version to `v9.2.4`.
+
+### 2026-04-19 (v9.2.3)
+
+- Added `property_stats` for per-property bill, note, and listing aggregates used by the frontend properties directory.
+- Added scoped listing retrieval via `?action=property_listings&property_id=...` while keeping `listings` behavior compatible.
+- Documented and aligned the proxy release to `v9.2.3` with the frontend Properties operations update.
 
 ### 2026-03-24
 

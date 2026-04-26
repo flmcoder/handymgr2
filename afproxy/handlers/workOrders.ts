@@ -18,9 +18,15 @@
 // ============================================================================
 
 import { cacheGet, cacheSet, rowsAsObjects, sqlite, upsertWorkOrderRows } from "../db.ts";
-import { propertyInScope, resolveGroupPropertyIds } from "../lib/groupUtils.ts";
+import { propertyInScope, resolveGroupPropertyIds, unitToPropertyId } from "../lib/groupUtils.ts";
 import { AF_DB, AF_REPORTS, dbHeaders } from "../config.ts";
-import { fetchDbApi, fetchReport } from "../lib/appfolio.ts";
+import {
+  fetchDbApi,
+  fetchReport,
+  fetchWorkOrderAttachments,
+  syncWorkOrderMap,
+  uploadWorkOrderAttachment,
+} from "../lib/appfolio.ts";
 import { daysAgo, fetchWithTimeout, snapDays, today } from "../lib/fetchUtils.ts";
 
 function isUuid(value: string): boolean {
@@ -31,7 +37,7 @@ function isUuid(value: string): boolean {
 async function resolveWoUuidFromReference(
   woRef: string,
 ): Promise<string> {
-  const ref = String(woRef || "").trim();
+  const ref = String(woRef || "").trim().replace(/^#/, "");
   if (!ref) return "";
   if (isUuid(ref)) return ref;
 
@@ -68,22 +74,59 @@ async function resolveWoUuidFromReference(
     const cachedId = String(stateRows[0]?.id || "").trim();
     if (isUuid(cachedId)) return cachedId;
   } catch {
+    // Non-fatal; continue to next resolver.
+  }
+
+  // 2b) Check work_order_map — populated by DB API v0 sync (most reliable local source).
+  try {
+    const mapRows = rowsAsObjects(
+      await sqlite.execute({
+        sql: `SELECT id
+            FROM work_order_map
+            WHERE work_order_number = ?
+            ORDER BY last_updated_at DESC
+            LIMIT 1`,
+        args: [ref],
+      }),
+    );
+    const mapUuid = String(mapRows[0]?.id || "").trim();
+    if (isUuid(mapUuid)) return mapUuid;
+  } catch {
     // Non-fatal; continue to network resolver.
   }
 
-  // 3) Last resort: ask Reports API for the work order row and extract UUID.
+  // 3) Network fallback: query DB API v0 by WorkOrderNumber filter to get UUID.
+  //    Reports API v2 work_order_id is a numeric integer — only DB API returns UUIDs.
+  //    DB API requires filters[Id] or filters[LastUpdatedAtFrom]; include both WorkOrderNumber and LastUpdatedAtFrom.
   try {
-    const rows = await fetchReport("work_order", {
-      work_order_numbers: [ref],
-      paginate_results: true,
-      per_page: 1,
-      status_date: "0",
-    });
-    if (Array.isArray(rows) && rows.length > 0) {
-      const candidate = String(
-        rows[0]?.work_order_id || rows[0]?.Id || rows[0]?.id || "",
-      ).trim();
-      if (isUuid(candidate)) return candidate;
+    const dbPath = `/api/v0/work_orders?filters[WorkOrderNumber]=${encodeURIComponent(ref)}&filters[LastUpdatedAtFrom]=2020-01-01T00:00:00Z&page[size]=5`;
+    const resp = await fetchWithTimeout(`${AF_DB}${dbPath}`, { headers: dbHeaders() });
+    if (resp.ok) {
+      const body = await resp.json();
+      const items: any[] = body.results || body.items || (Array.isArray(body) ? body : []);
+      // Find the row with matching WorkOrderNumber (API may return nearby results).
+      const match = items.find((r: any) =>
+        String(r?.WorkOrderNumber || r?.work_order_number || "").trim() === ref
+      ) || items[0];
+      const candidate = String(match?.Id || match?.id || "").trim();
+      if (isUuid(candidate)) {
+        // Cache in work_order_map for future lookups.
+        const woNum = String(match?.WorkOrderNumber || match?.work_order_number || ref);
+        sqlite.execute({
+          sql: `INSERT OR IGNORE INTO work_order_map
+                  (id, work_order_number, property_map_id, status, priority, category,
+                   description, is_turn_wo, assigned_users_json, last_updated_at, cached_at)
+                VALUES (?, ?, '', ?, ?, '', '', 0, '[]', ?, ?)`,
+          args: [
+            candidate, woNum,
+            String(match?.Status || match?.status || ""),
+            String(match?.Priority || match?.priority || "Normal"),
+            String(match?.LastUpdatedAt || ""),
+            Date.now(),
+          ],
+        }).catch(() => {});
+        return candidate;
+      }
     }
   } catch {
     // Non-fatal; caller will return a validation error.
@@ -96,6 +139,7 @@ export async function handleWorkOrders(
   params: Record<string, string>,
 ): Promise<any> {
   const days = snapDays(parseInt(params.days || "180", 10), "work_orders");
+
   const cacheKey = `work_orders_${days}`;
 
   const cached = await cacheGet(cacheKey, "work_orders");
@@ -115,6 +159,9 @@ export async function handleWorkOrders(
     });
     await cacheSet(cacheKey, "work_orders", results, results.length);
     upsertWorkOrderRows(results).catch(() => {});
+    // Background: populate work_order_map with DB API v0 UUIDs so that
+    // resolveWoUuidFromReference can look up UUIDs by WO number.
+    syncWorkOrderMap(sqlite).catch(() => {});
   }
 
   // Server-side PM scope enforcement: filter to group's properties if scoped.
@@ -128,6 +175,87 @@ export async function handleWorkOrders(
   const resp: Record<string, any> = { ok: true, results, count: results.length, from_cache: fromCache };
   if (cachedAt) resp.cached_at = cachedAt;
   return resp;
+}
+
+export async function handleWoAttachments(
+  params: Record<string, string>,
+): Promise<any> {
+  const woRef = String(params.wo_id || params.uuid || params.id || "").trim();
+  const woUuid = await resolveWoUuidFromReference(woRef);
+  if (!woUuid) return { ok: false, error: "Missing valid work order UUID" };
+
+  const cacheKey = `wo_attachments_${woUuid}`;
+  const force = String(params.force || params.force_refresh || "").toLowerCase() ===
+    "true";
+  if (!force) {
+    const cached = await cacheGet(cacheKey, "work_orders");
+    if (cached && Array.isArray(cached.data)) {
+      return {
+        ok: true,
+        uuid: woUuid,
+        attachments: cached.data,
+        count: cached.data.length,
+        from_cache: true,
+        cached_at: cached.cached_at,
+      };
+    }
+  }
+
+  const result = await fetchWorkOrderAttachments(woUuid);
+  if (!result.ok) {
+    return {
+      ok: false,
+      uuid: woUuid,
+      error: `attachments fetch failed: HTTP ${result.status}`,
+      status: result.status,
+      detail: result.detail,
+    };
+  }
+
+  const attachments = Array.isArray(result.attachments) ? result.attachments : [];
+  await cacheSet(cacheKey, "work_orders", attachments, attachments.length);
+  return {
+    ok: true,
+    uuid: woUuid,
+    attachments,
+    count: attachments.length,
+    from_cache: false,
+  };
+}
+
+export async function handleWoAttachmentUpload(
+  params: Record<string, string>,
+  req?: Request,
+): Promise<any> {
+  const woRef = String(params.wo_id || params.uuid || params.id || "").trim();
+  const woUuid = await resolveWoUuidFromReference(woRef);
+  if (!woUuid) return { ok: false, error: "Missing valid work order UUID" };
+  if (!req) return { ok: false, error: "Request body required" };
+
+  const contentType = req.headers.get("Content-Type") || "application/octet-stream";
+  const bodyBuffer = await req.arrayBuffer();
+  if (!bodyBuffer || bodyBuffer.byteLength === 0) {
+    return { ok: false, error: "Empty upload body" };
+  }
+
+  const result = await uploadWorkOrderAttachment(woUuid, contentType, bodyBuffer);
+
+  const cacheKey = `wo_attachments_${woUuid}`;
+  try {
+    await sqlite.execute({
+      sql: `DELETE FROM api_cache WHERE cache_key = ? OR cache_key LIKE ?`,
+      args: [cacheKey, `${cacheKey}::%`],
+    });
+  } catch {
+    // non-fatal
+  }
+
+  return {
+    ok: result.ok,
+    uuid: woUuid,
+    status: result.status,
+    detail: result.detail,
+  };
 }
 
 export async function handleCompletedWorkOrdersHistory(
@@ -165,6 +293,7 @@ export async function handleCompletedWorkOrdersHistory(
   }
 
   let results = await fetchReport("work_order", {
+    work_order_statuses: ["4", "5", "7"],
     status_date_range_from: effectiveFrom,
     status_date_range_to: effectiveTo,
     status_date: "0",
@@ -455,14 +584,29 @@ export async function handleTurnWorkOrders(
   const days = snapDays(parseInt(params.days || "90", 10), "turn_work_orders");
   const cacheKey = `turn_work_orders_${days}`;
 
+  const resolveScopedPropertyId = async (wo: any): Promise<string> => {
+    const explicitPropertyId = String(wo?.PropertyId || wo?.property_id || "").trim();
+    if (explicitPropertyId) return explicitPropertyId;
+    const unitId = String(wo?.UnitId || wo?.unit_id || "").trim();
+    if (!unitId) return "";
+    const resolved = await unitToPropertyId(unitId);
+    return String(resolved || "").trim();
+  };
+
+  const filterByGroupScope = async (rows: any[], allowedIds: Set<string>): Promise<any[]> => {
+    const scopedRows = await Promise.all(rows.map(async (wo: any) => {
+      const scopePropertyId = await resolveScopedPropertyId(wo);
+      return propertyInScope(scopePropertyId, allowedIds) ? wo : null;
+    }));
+    return scopedRows.filter(Boolean);
+  };
+
   const cached = await cacheGet(cacheKey, "turn_work_orders");
   if (cached) {
     let cachedResults: any[] = cached.data || [];
     const allowedIds = await resolveGroupPropertyIds(params);
     if (allowedIds) {
-      cachedResults = cachedResults.filter((wo: any) =>
-        propertyInScope(String(wo?.PropertyId || wo?.property_id || wo?.UnitId || wo?.unit_id || ""), allowedIds)
-      );
+      cachedResults = await filterByGroupScope(cachedResults, allowedIds);
     }
     return {
       ok: true,
@@ -492,9 +636,7 @@ export async function handleTurnWorkOrders(
   // Server-side PM scope enforcement — runs on both cache-miss and cache-hit paths.
   const allowedIds = await resolveGroupPropertyIds(params);
   if (allowedIds) {
-    const scoped = turnWOs.filter((wo: any) =>
-      propertyInScope(String(wo?.PropertyId || wo?.property_id || wo?.UnitId || wo?.unit_id || ""), allowedIds)
-    );
+    const scoped = await filterByGroupScope(turnWOs, allowedIds);
     return { ok: true, results: scoped, count: scoped.length, from_cache: false };
   }
   return {

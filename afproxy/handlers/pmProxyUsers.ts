@@ -9,6 +9,18 @@ export async function handlePmProxyUsers(): Promise<any> {
   let userList: Record<string, unknown>[] = [];
   let sourceLabel = "appfolio";
 
+  let tableCols = new Set<string>();
+  try {
+    const tableInfo = await sqlite.execute(`PRAGMA table_info(pm_proxy_users)`);
+    tableCols = new Set(
+      rowsAsObjects(tableInfo).map((r: any) => String(r.name || "")),
+    );
+  } catch (_) {
+    tableCols = new Set();
+  }
+
+  const hasCol = (name: string) => tableCols.has(name);
+
   try {
     const afResp = await fetch(`${AF_DB}/api/v0/users?limit=200`, {
       headers: dbHeaders(),
@@ -51,24 +63,62 @@ export async function handlePmProxyUsers(): Promise<any> {
       u.full_name ?? u.name ??
         [u.first_name, u.last_name].filter(Boolean).join(" ") ?? "",
     );
+
+    const insertCols = ["user_uuid", "email", "full_name", "phone"];
+    const insertArgs: any[] = [
+      String(u.id),
+      String(u.email ?? ""),
+      fullName,
+      String(u.phone ?? u.phone_number ?? ""),
+    ];
+    if (hasCol("id")) {
+      insertCols.unshift("id");
+      insertArgs.unshift(String(u.id));
+    }
+    if (hasCol("property_group_uuid")) {
+      insertCols.push("property_group_uuid");
+      insertArgs.push(String(u.property_group_uuid ?? u.property_group_id ?? ""));
+    }
+    if (hasCol("roles")) {
+      insertCols.push("roles");
+      insertArgs.push(JSON.stringify(Array.isArray(u.roles) ? u.roles : []));
+    }
+    if (hasCol("is_active")) {
+      insertCols.push("is_active");
+      insertArgs.push(u.is_active !== false ? 1 : 0);
+    }
+    if (hasCol("active")) {
+      insertCols.push("active");
+      insertArgs.push(u.is_active !== false ? 1 : 0);
+    }
+    if (hasCol("raw_json")) {
+      insertCols.push("raw_json");
+      insertArgs.push(JSON.stringify(u));
+    }
+    if (hasCol("created_at")) insertCols.push("created_at");
+    if (hasCol("updated_at")) insertCols.push("updated_at");
+
+    const valuePlaceholders = insertCols.map((c) =>
+      (c === "created_at" || c === "updated_at") ? "datetime('now')" : "?"
+    );
+
+    const updateClauses = [
+      "full_name=excluded.full_name",
+      "phone=excluded.phone",
+    ];
+    if (hasCol("property_group_uuid")) updateClauses.push("property_group_uuid=excluded.property_group_uuid");
+    if (hasCol("roles")) updateClauses.push("roles=excluded.roles");
+    if (hasCol("is_active")) updateClauses.push("is_active=excluded.is_active");
+    if (hasCol("active")) updateClauses.push("active=excluded.active");
+    if (hasCol("raw_json")) updateClauses.push("raw_json=excluded.raw_json");
+    if (hasCol("id")) updateClauses.push("id=COALESCE(NULLIF(pm_proxy_users.id,''),excluded.id)");
+    if (hasCol("updated_at")) updateClauses.push("updated_at=datetime('now')");
+
     await sqlite.execute({
-      sql: `INSERT OR REPLACE INTO pm_proxy_users
-              (id, user_uuid, full_name, email, phone,
-               property_group_uuid, roles, is_active, active,
-               raw_json, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
-      args: [
-        String(u.id),
-        String(u.id),
-        fullName,
-        String(u.email ?? ""),
-        String(u.phone ?? u.phone_number ?? ""),
-        String(u.property_group_uuid ?? u.property_group_id ?? ""),
-        JSON.stringify(Array.isArray(u.roles) ? u.roles : []),
-        u.is_active !== false ? 1 : 0,
-        u.is_active !== false ? 1 : 0,
-        JSON.stringify(u),
-      ],
+      sql: `INSERT INTO pm_proxy_users (${insertCols.join(", ")})
+            VALUES (${valuePlaceholders.join(", ")})
+            ON CONFLICT(email) DO UPDATE SET ${updateClauses.join(", ")}`,
+      args: insertArgs,
     }).catch((e: unknown) =>
       console.warn("[pm_proxy_users upsert]", String(e))
     );
@@ -76,9 +126,15 @@ export async function handlePmProxyUsers(): Promise<any> {
 
   let cached: any;
   try {
+    const selectCols = ["user_uuid", "full_name", "email", "phone"];
+    if (hasCol("id")) selectCols.unshift("id");
+    if (hasCol("property_group_uuid")) selectCols.push("property_group_uuid");
+    if (hasCol("roles")) selectCols.push("roles");
+    if (hasCol("is_active")) selectCols.push("is_active");
+    if (hasCol("active")) selectCols.push("active");
+    if (hasCol("raw_json")) selectCols.push("raw_json");
     cached = await sqlite.execute(
-      `SELECT id, user_uuid, full_name, email, phone,
-              property_group_uuid, roles, is_active, active, raw_json
+      `SELECT ${selectCols.join(", ")}
        FROM   pm_proxy_users
        ORDER  BY full_name ASC`,
     );

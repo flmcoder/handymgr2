@@ -3,9 +3,260 @@ import { PROXY_ADMIN_KEY } from "../config.ts";
 import { checkRateLimit } from "../lib/rateLimit.ts";
 import { sendSMS } from "../lib/ringcentral.ts";
 
+// ── Stateless HMAC-signed session tokens ─────────────────────────────────────
+// Used as a fallback when the DB is unavailable for writes (e.g. Val Town free
+// plan blocks SQL writes).  Format: "v1.<b64url-payload>.<b64url-sig>"
+// where payload = base64url(JSON({r:role,u:userName,iat:epochSeconds})).
+// Signed with HMAC-SHA256 keyed on FRONTEND_PROXY_SECRET.  Never stored in DB.
+
+const _SESSION_SIGN_KEY_RAW = Deno.env.get("FRONTEND_PROXY_SECRET") || "";
+
+function _b64url(buf: ArrayBuffer): string {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function _b64urlDecode(s: string): Uint8Array {
+  const padded = s.replace(/-/g, "+").replace(/_/g, "/") +
+    "==".slice(0, (4 - (s.length % 4)) % 4);
+  const bin = atob(padded);
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+async function _getSignKey(): Promise<CryptoKey | null> {
+  if (!_SESSION_SIGN_KEY_RAW) return null;
+  try {
+    return await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(_SESSION_SIGN_KEY_RAW),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign", "verify"],
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function mintSignedToken(
+  role: string,
+  userName: string,
+): Promise<string | null> {
+  const key = await _getSignKey();
+  if (!key) return null;
+  const payload = _b64url(
+    new TextEncoder().encode(
+      JSON.stringify({ r: role, u: userName, iat: Math.floor(Date.now() / 1000) }),
+    ).buffer,
+  );
+  const sig = _b64url(
+    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)),
+  );
+  return `v1.${payload}.${sig}`;
+}
+
+async function verifySignedToken(
+  token: string,
+): Promise<{ role: string; userName: string; iat: number } | null> {
+  if (!token || !token.startsWith("v1.")) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [, payload64, sig64] = parts;
+  const key = await _getSignKey();
+  if (!key) return null;
+  try {
+    const valid = await crypto.subtle.verify(
+      "HMAC",
+      key,
+      _b64urlDecode(sig64).buffer as ArrayBuffer,
+      new TextEncoder().encode(payload64),
+    );
+    if (!valid) return null;
+    const data = JSON.parse(new TextDecoder().decode(_b64urlDecode(payload64)));
+    if (!data || !data.r || typeof data.iat !== "number") return null;
+    // Tokens expire after 30 days (2592000 seconds).
+    if (Math.floor(Date.now() / 1000) - data.iat > 2592000) return null;
+    return { role: String(data.r), userName: String(data.u || ""), iat: data.iat };
+  } catch {
+    return null;
+  }
+}
+
 let _trustedDevicesTableReady = false;
 let _pmProxyUsersTableReady = false;
 let _deviceOtpsTableReady = false;
+let _trustedDevicesDbFallbackWarned = false;
+const RECENT_TRUSTED_SESSION_TTL_MS = 10 * 60 * 1000;
+const _recentTrustedSessions = new Map<string, any>();
+
+function rememberRecentTrustedSession(session: {
+  device_token: string;
+  user_name: string;
+  role?: string;
+  login_email?: string;
+  property_group_uuid?: string;
+  phone?: string;
+  created_at?: string;
+  last_seen_at?: string;
+  expires_at?: string;
+}): void {
+  const token = String(session.device_token || '').trim();
+  if (!token) return;
+  _recentTrustedSessions.set(token, {
+    device_token: token,
+    user_name: String(session.user_name || ''),
+    role: String(session.role || 'full') || 'full',
+    login_email: String(session.login_email || ''),
+    property_group_uuid: String(session.property_group_uuid || ''),
+    phone: String(session.phone || ''),
+    created_at: String(session.created_at || new Date().toISOString()),
+    last_seen_at: String(session.last_seen_at || new Date().toISOString()),
+    expires_at: String(session.expires_at || new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)).toISOString()),
+    cached_at_ms: Date.now(),
+  });
+}
+
+function readRecentTrustedSession(token: string): any | null {
+  const entry = _recentTrustedSessions.get(String(token || '').trim());
+  if (!entry) return null;
+  if ((Date.now() - Number(entry.cached_at_ms || 0)) > RECENT_TRUSTED_SESSION_TTL_MS) {
+    _recentTrustedSessions.delete(String(token || '').trim());
+    return null;
+  }
+  return {
+    device_token: entry.device_token,
+    user_name: entry.user_name || '',
+    role: entry.role || 'full',
+    login_email: entry.login_email || '',
+    property_group_uuid: entry.property_group_uuid || '',
+    phone: entry.phone || '',
+    created_at: entry.created_at || '',
+    last_seen_at: entry.last_seen_at || '',
+    expires_at: entry.expires_at || '',
+  };
+}
+
+function forgetRecentTrustedSession(token: string): void {
+  _recentTrustedSessions.delete(String(token || '').trim());
+}
+
+function logTrustedDevicesDbFallback(err: unknown): void {
+  if (_trustedDevicesDbFallbackWarned) return;
+  _trustedDevicesDbFallbackWarned = true;
+  console.warn(
+    "[trusted_devices] sqliteAuth unavailable, falling back to sqlite:",
+    String((err as any)?.message || err || "unknown error").substring(0, 180),
+  );
+}
+
+async function executeTrustedDevicesSql(
+  sql: string,
+  args: any[] = [],
+): Promise<any> {
+  try {
+    return await sqliteAuth.execute({ sql, args });
+  } catch (err) {
+    logTrustedDevicesDbFallback(err);
+    return await sqlite.execute({ sql, args });
+  }
+}
+
+async function executeTrustedDevicesSqlOnBoth(
+  sql: string,
+  args: any[] = [],
+): Promise<void> {
+  try {
+    await sqliteAuth.execute({ sql, args });
+  } catch (err) {
+    logTrustedDevicesDbFallback(err);
+    try {
+      await sqlite.execute({ sql, args });
+    } catch (_) {}
+    return;
+  }
+  // Best-effort keep fallback DB compatible for mixed runtime states.
+  try {
+    await sqlite.execute({ sql, args });
+  } catch (_) {}
+}
+
+function isMissingColumnError(err: unknown): boolean {
+  const msg = String((err as any)?.message || err || "").toLowerCase();
+  return msg.includes("no such column") || msg.includes("has no column named");
+}
+
+async function insertTrustedDeviceSession(args: {
+  token: string;
+  userName: string;
+  role?: string;
+  loginEmail?: string;
+  propertyGroupUuid?: string;
+  phone?: string;
+}): Promise<void> {
+  const token = String(args.token || "").trim();
+  const userName = String(args.userName || "").trim() || "trusted-device";
+  const role = String(args.role || "full").trim() || "full";
+  const loginEmail = String(args.loginEmail || "").trim();
+  const propertyGroupUuid = String(args.propertyGroupUuid || "").trim();
+  const phone = String(args.phone || "").trim();
+
+  // Newest schema
+  try {
+    await executeTrustedDevicesSqlOnBoth(
+      `INSERT INTO trusted_devices
+         (device_token, user_name, role, login_email, property_group_uuid, phone,
+          last_seen_at, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+30 days'), datetime('now'))`,
+      [token, userName, role, loginEmail, propertyGroupUuid, phone],
+    );
+    rememberRecentTrustedSession({
+      device_token: token,
+      user_name: userName,
+      role,
+      login_email: loginEmail,
+      property_group_uuid: propertyGroupUuid,
+      phone,
+    });
+    return;
+  } catch (err: any) {
+    if (!isMissingColumnError(err)) throw err;
+  }
+
+  // Mid schema
+  try {
+    await executeTrustedDevicesSqlOnBoth(
+      `INSERT INTO trusted_devices
+         (device_token, user_name, role, last_seen_at, expires_at, created_at)
+       VALUES (?, ?, ?, datetime('now'), datetime('now', '+30 days'), datetime('now'))`,
+      [token, userName, role],
+    );
+    rememberRecentTrustedSession({
+      device_token: token,
+      user_name: userName,
+      role,
+      login_email: loginEmail,
+      property_group_uuid: propertyGroupUuid,
+      phone,
+    });
+    return;
+  } catch (err: any) {
+    if (!isMissingColumnError(err)) throw err;
+  }
+
+  // Legacy schema
+  await executeTrustedDevicesSqlOnBoth(
+    `INSERT INTO trusted_devices (device_token, user_name, created_at)
+     VALUES (?, ?, datetime('now'))`,
+    [token, userName],
+  );
+  rememberRecentTrustedSession({
+    device_token: token,
+    user_name: userName,
+    role,
+    login_email: loginEmail,
+    property_group_uuid: propertyGroupUuid,
+    phone,
+  });
+}
 
 // UUID generator (fallback if crypto.randomUUID is unavailable)
 function generateUuid(): string {
@@ -31,48 +282,50 @@ function generateUuid(): string {
 
 async function ensureTrustedDevicesTable(): Promise<void> {
   if (_trustedDevicesTableReady) return;
-  await sqliteAuth.execute(`CREATE TABLE IF NOT EXISTS trusted_devices (
-    device_token TEXT PRIMARY KEY,
-    user_name    TEXT,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
+  await executeTrustedDevicesSqlOnBoth(
+    `CREATE TABLE IF NOT EXISTS trusted_devices (
+       device_token TEXT PRIMARY KEY,
+       user_name    TEXT,
+       created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+     )`,
+  );
   try {
-    await sqliteAuth.execute(
+    await executeTrustedDevicesSqlOnBoth(
       `ALTER TABLE trusted_devices ADD COLUMN role TEXT DEFAULT 'full'`,
     );
   } catch (_) {}
   try {
-    await sqliteAuth.execute(
+    await executeTrustedDevicesSqlOnBoth(
       `ALTER TABLE trusted_devices ADD COLUMN login_email TEXT`,
     );
   } catch (_) {}
   try {
-    await sqliteAuth.execute(
+    await executeTrustedDevicesSqlOnBoth(
       `ALTER TABLE trusted_devices ADD COLUMN property_group_uuid TEXT`,
     );
   } catch (_) {}
   try {
-    await sqliteAuth.execute(
+    await executeTrustedDevicesSqlOnBoth(
       `ALTER TABLE trusted_devices ADD COLUMN phone TEXT`,
     );
   } catch (_) {}
   try {
-    await sqliteAuth.execute(
+    await executeTrustedDevicesSqlOnBoth(
       `ALTER TABLE trusted_devices ADD COLUMN last_seen_at TEXT`,
     );
   } catch (_) {}
   try {
-    await sqliteAuth.execute(
+    await executeTrustedDevicesSqlOnBoth(
       `ALTER TABLE trusted_devices ADD COLUMN expires_at TEXT`,
     );
   } catch (_) {}
   try {
-    await sqliteAuth.execute(
+    await executeTrustedDevicesSqlOnBoth(
       `ALTER TABLE trusted_devices ADD COLUMN revoked INTEGER DEFAULT 0`,
     );
   } catch (_) {}
   try {
-    await sqliteAuth.execute(
+    await executeTrustedDevicesSqlOnBoth(
       `ALTER TABLE trusted_devices ADD COLUMN auth_source TEXT`,
     );
   } catch (_) {}
@@ -82,15 +335,39 @@ async function ensureTrustedDevicesTable(): Promise<void> {
 async function ensurePmProxyUsersTable(): Promise<void> {
   if (_pmProxyUsersTableReady) return;
   await sqlite.execute(`CREATE TABLE IF NOT EXISTS pm_proxy_users (
+    id                  TEXT,
     user_uuid           TEXT PRIMARY KEY,
     email               TEXT UNIQUE NOT NULL,
     full_name           TEXT,
     phone               TEXT,
     property_group_uuid TEXT NOT NULL,
+    roles               TEXT NOT NULL DEFAULT '[]',
+    is_active           INTEGER DEFAULT 1,
+    raw_json            TEXT NOT NULL DEFAULT '{}',
     active              INTEGER DEFAULT 1,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  try {
+    await sqlite.execute(
+      `ALTER TABLE pm_proxy_users ADD COLUMN id TEXT`,
+    );
+  } catch (_) {}
+  try {
+    await sqlite.execute(
+      `ALTER TABLE pm_proxy_users ADD COLUMN roles TEXT NOT NULL DEFAULT '[]'`,
+    );
+  } catch (_) {}
+  try {
+    await sqlite.execute(
+      `ALTER TABLE pm_proxy_users ADD COLUMN is_active INTEGER DEFAULT 1`,
+    );
+  } catch (_) {}
+  try {
+    await sqlite.execute(
+      `ALTER TABLE pm_proxy_users ADD COLUMN raw_json TEXT NOT NULL DEFAULT '{}'`,
+    );
+  } catch (_) {}
   try {
     await sqlite.execute(
       `ALTER TABLE pm_proxy_users ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
@@ -282,7 +559,8 @@ async function getPmProxyUserByEmail(
   if (!normalized) return null;
   try {
     const result = await sqlite.execute({
-      sql: `SELECT user_uuid, email, full_name, phone, property_group_uuid, active
+      sql:
+        `SELECT user_uuid, email, full_name, phone, property_group_uuid, active
             FROM pm_proxy_users
             WHERE lower(email) = lower(?) AND active = 1
             LIMIT 1`,
@@ -302,7 +580,8 @@ async function getPmUserAccountsByEmail(
   if (!normalized) return null;
   try {
     const result = await sqlite.execute({
-      sql: `SELECT user_uuid, email, full_name, phone, property_group_uuid, active
+      sql:
+        `SELECT user_uuid, email, full_name, phone, property_group_uuid, active
             FROM pm_user_accounts
             WHERE lower(email) = lower(?) AND coalesce(active,1) = 1
             LIMIT 1`,
@@ -322,13 +601,18 @@ async function getPmProxyUserByPhone(
   if (!normalizedPhone) return null;
   try {
     const result = await sqlite.execute({
-      sql: `SELECT user_uuid, email, full_name, phone, property_group_uuid, active
+      sql:
+        `SELECT user_uuid, email, full_name, phone, property_group_uuid, active
             FROM pm_proxy_users
             WHERE active = 1`,
     });
-    const rows = rowsAsObjects(result || { rows: [], columns: [] }) as PmProxyUser[];
+    const rows = rowsAsObjects(
+      result || { rows: [], columns: [] },
+    ) as PmProxyUser[];
     for (const row of rows) {
-      if (normalizePhone(String(row.phone || "")) === normalizedPhone) return row;
+      if (normalizePhone(String(row.phone || "")) === normalizedPhone) {
+        return row;
+      }
     }
   } catch (_) {
     return null;
@@ -343,13 +627,18 @@ async function getPmUserAccountsByPhone(
   if (!normalizedPhone) return null;
   try {
     const result = await sqlite.execute({
-      sql: `SELECT user_uuid, email, full_name, phone, property_group_uuid, active
+      sql:
+        `SELECT user_uuid, email, full_name, phone, property_group_uuid, active
             FROM pm_user_accounts
             WHERE coalesce(active,1) = 1`,
     });
-    const rows = rowsAsObjects(result || { rows: [], columns: [] }) as PmProxyUser[];
+    const rows = rowsAsObjects(
+      result || { rows: [], columns: [] },
+    ) as PmProxyUser[];
     for (const row of rows) {
-      if (normalizePhone(String(row.phone || "")) === normalizedPhone) return row;
+      if (normalizePhone(String(row.phone || "")) === normalizedPhone) {
+        return row;
+      }
     }
   } catch (_) {
     return null;
@@ -396,8 +685,7 @@ async function insertDeviceOtp(
       msg.includes("has no column named")
     ) {
       await sqlite.execute({
-        sql:
-          `INSERT INTO device_otps (email, code, used, expires_at, user_name)
+        sql: `INSERT INTO device_otps (email, code, used, expires_at, user_name)
             VALUES (?, ?, 0, datetime('now', ?), ?)`,
         args: [email, code, `+${ttlMinutes} minutes`, userName],
       });
@@ -444,12 +732,7 @@ export async function handleDeviceSetup(req: Request): Promise<any> {
     "trusted-device";
   const token = generateUuid();
 
-  await sqliteAuth.execute({
-    sql: `INSERT INTO trusted_devices
-            (device_token, user_name, role, last_seen_at, expires_at, created_at)
-          VALUES (?, ?, 'full', datetime('now'), datetime('now', '+30 days'), datetime('now'))`,
-    args: [token, userName],
-  });
+  await insertTrustedDeviceSession({ token, userName, role: "full" });
 
   return {
     ok: true,
@@ -495,7 +778,8 @@ export async function handleDeviceOtpRequest(req: Request): Promise<any> {
         return {
           ok: false,
           status: 429,
-          error: "Too many OTP requests for this account — try again in 15 minutes.",
+          error:
+            "Too many OTP requests for this account — try again in 15 minutes.",
           retry_after_ms: idRl.retryAfterMs,
         };
       }
@@ -557,7 +841,11 @@ export async function handleDeviceOtpRequest(req: Request): Promise<any> {
       expires_in_minutes: policy.ttlMinutes,
     };
   } catch (err: any) {
-    console.error("[DEVICE_OTP_REQUEST_ERROR]", err?.message || String(err), err);
+    console.error(
+      "[DEVICE_OTP_REQUEST_ERROR]",
+      err?.message || String(err),
+      err,
+    );
     return {
       ok: false,
       status: 500,
@@ -653,12 +941,13 @@ export async function handleDeviceOtpVerify(req: Request): Promise<any> {
   const scopeUuid = String(pmUser?.property_group_uuid || "");
   const phone = String(pmUser?.phone || "");
 
-  await sqliteAuth.execute({
-    sql: `INSERT INTO trusted_devices
-            (device_token, user_name, role, login_email, property_group_uuid, phone,
-             last_seen_at, expires_at, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+30 days'), datetime('now'))`,
-    args: [token, userName, role, email, scopeUuid, phone],
+  await insertTrustedDeviceSession({
+    token,
+    userName,
+    role,
+    loginEmail: email,
+    propertyGroupUuid: scopeUuid,
+    phone,
   });
 
   await sqlite.execute({
@@ -684,30 +973,175 @@ export async function getTrustedDeviceSession(
   token: string,
 ): Promise<any | null> {
   if (!token) return null;
+
+  // Fast path: verify HMAC-signed stateless tokens (used when DB writes are blocked).
+  if (token.startsWith("v1.")) {
+    const decoded = await verifySignedToken(token);
+    if (decoded) {
+      return {
+        device_token: token,
+        user_name: decoded.userName || "password-session",
+        role: decoded.role,
+        login_email: "",
+        property_group_uuid: "",
+        phone: "",
+        created_at: new Date(decoded.iat * 1000).toISOString(),
+        last_seen_at: new Date().toISOString(),
+        expires_at: new Date((decoded.iat + 2592000) * 1000).toISOString(),
+      };
+    }
+    return null; // Signed-token prefix but invalid — don't proceed to DB lookup.
+  }
+
+  const recent = readRecentTrustedSession(token);
+  if (recent) return recent;
   await ensureTrustedDevicesTable();
-  const result = await sqliteAuth.execute({
-    sql: `SELECT device_token, user_name, role, login_email, property_group_uuid,
-                 phone, created_at, last_seen_at, expires_at
-          FROM trusted_devices
-          WHERE device_token = ?
-            AND revoked = 0
-            AND (expires_at IS NULL OR expires_at > datetime('now'))
-          LIMIT 1`,
-    args: [token],
-  });
-  const rows = rowsAsObjects(result);
+
+  async function selectSessionModern(
+    exec: (q: string, a?: any[]) => Promise<any>,
+  ) {
+    const result = await exec(
+      `SELECT device_token, user_name, role, login_email, property_group_uuid,
+              phone, created_at, last_seen_at, expires_at
+         FROM trusted_devices
+        WHERE device_token = ?
+          AND revoked = 0
+          AND (expires_at IS NULL OR expires_at > datetime('now'))
+        LIMIT 1`,
+      [token],
+    );
+    return rowsAsObjects(result);
+  }
+
+  async function selectSessionLegacy(
+    exec: (q: string, a?: any[]) => Promise<any>,
+  ) {
+    const legacy = await exec(
+      `SELECT device_token, user_name, created_at
+         FROM trusted_devices
+        WHERE device_token = ?
+        LIMIT 1`,
+      [token],
+    );
+    return rowsAsObjects(legacy);
+  }
+
+  const authExec = (sql: string, args: any[] = []) =>
+    sqliteAuth.execute({ sql, args });
+  const fallbackExec = (sql: string, args: any[] = []) =>
+    sqlite.execute({ sql, args });
+
+  try {
+    const rows = await selectSessionModern(authExec);
+    if (!rows.length) {
+      const fallbackRows = await selectSessionModern(fallbackExec).catch(
+        () => [],
+      );
+      if (!fallbackRows.length) return null;
+      const row: any = fallbackRows[0];
+      rememberRecentTrustedSession({
+        device_token: row.device_token,
+        user_name: row.user_name || '',
+        role: row.role || 'full',
+        login_email: row.login_email || '',
+        property_group_uuid: row.property_group_uuid || '',
+        phone: row.phone || '',
+        created_at: row.created_at || '',
+        last_seen_at: row.last_seen_at || '',
+        expires_at: row.expires_at || '',
+      });
+      return {
+        device_token: row.device_token,
+        user_name: row.user_name || "",
+        role: row.role || "full",
+        login_email: row.login_email || "",
+        property_group_uuid: row.property_group_uuid || "",
+        phone: row.phone || "",
+        created_at: row.created_at || "",
+        last_seen_at: row.last_seen_at || "",
+        expires_at: row.expires_at || "",
+      };
+    }
+    const row: any = rows[0];
+    rememberRecentTrustedSession({
+      device_token: row.device_token,
+      user_name: row.user_name || '',
+      role: row.role || 'full',
+      login_email: row.login_email || '',
+      property_group_uuid: row.property_group_uuid || '',
+      phone: row.phone || '',
+      created_at: row.created_at || '',
+      last_seen_at: row.last_seen_at || '',
+      expires_at: row.expires_at || '',
+    });
+    return {
+      device_token: row.device_token,
+      user_name: row.user_name || "",
+      role: row.role || "full",
+      login_email: row.login_email || "",
+      property_group_uuid: row.property_group_uuid || "",
+      phone: row.phone || "",
+      created_at: row.created_at || "",
+      last_seen_at: row.last_seen_at || "",
+      expires_at: row.expires_at || "",
+    };
+  } catch (err: any) {
+    if (!isMissingColumnError(err)) {
+      const fallbackRows = await selectSessionModern(fallbackExec).catch(
+        () => [],
+      );
+      if (fallbackRows.length) {
+        const row: any = fallbackRows[0];
+        rememberRecentTrustedSession({
+          device_token: row.device_token,
+          user_name: row.user_name || '',
+          role: row.role || 'full',
+          login_email: row.login_email || '',
+          property_group_uuid: row.property_group_uuid || '',
+          phone: row.phone || '',
+          created_at: row.created_at || '',
+          last_seen_at: row.last_seen_at || '',
+          expires_at: row.expires_at || '',
+        });
+        return {
+          device_token: row.device_token,
+          user_name: row.user_name || "",
+          role: row.role || "full",
+          login_email: row.login_email || "",
+          property_group_uuid: row.property_group_uuid || "",
+          phone: row.phone || "",
+          created_at: row.created_at || "",
+          last_seen_at: row.last_seen_at || "",
+          expires_at: row.expires_at || "",
+        };
+      }
+      throw err;
+    }
+  }
+
+  // Legacy schema fallback (no revoked / expires_at / extra columns)
+  let rows = await selectSessionLegacy(authExec).catch(() => []);
+  if (!rows.length) {
+    rows = await selectSessionLegacy(fallbackExec).catch(() => []);
+  }
   if (!rows.length) return null;
   const row: any = rows[0];
+  rememberRecentTrustedSession({
+    device_token: row.device_token,
+    user_name: row.user_name || '',
+    role: 'full',
+    created_at: row.created_at || '',
+  });
   return {
     device_token: row.device_token,
     user_name: row.user_name || "",
-    role: row.role || "full",
-    login_email: row.login_email || "",
-    property_group_uuid: row.property_group_uuid || "",
-    phone: row.phone || "",
+    role: "full",
+    login_email: "",
+    property_group_uuid: "",
+    phone: "",
     created_at: row.created_at || "",
-    last_seen_at: row.last_seen_at || "",
-    expires_at: row.expires_at || "",
+    last_seen_at: "",
+    expires_at: "",
   };
 }
 
@@ -716,14 +1150,29 @@ export async function getTrustedDeviceSession(
 export async function touchDeviceSession(token: string): Promise<void> {
   if (!token) return;
   try {
-    await sqliteAuth.execute({
-      sql: `UPDATE trusted_devices
-            SET last_seen_at = datetime('now'),
-                expires_at   = datetime('now', '+30 days')
-            WHERE device_token = ? AND revoked = 0`,
-      args: [token],
-    });
+    await executeTrustedDevicesSqlOnBoth(
+      `UPDATE trusted_devices
+          SET last_seen_at = datetime('now'),
+              expires_at   = datetime('now', '+30 days')
+        WHERE device_token = ? AND revoked = 0`,
+      [token],
+    );
+    const recent = readRecentTrustedSession(token);
+    if (recent) {
+      rememberRecentTrustedSession({
+        device_token: token,
+        user_name: recent.user_name || '',
+        role: recent.role || 'full',
+        login_email: recent.login_email || '',
+        property_group_uuid: recent.property_group_uuid || '',
+        phone: recent.phone || '',
+        created_at: recent.created_at || '',
+      });
+    }
   } catch (e: any) {
+    if (isMissingColumnError(e)) {
+      return; // Legacy schema has no rolling session columns; treat as best-effort noop.
+    }
     console.warn(
       "[touchDeviceSession] failed:",
       String(e?.message || e).substring(0, 120),
@@ -836,20 +1285,48 @@ export async function handlePmProxyUserUpsert(req: Request): Promise<any> {
 
     await sqlite.execute({
       sql: `INSERT INTO pm_proxy_users
-              (user_uuid, email, full_name, phone, property_group_uuid, active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+              (id, user_uuid, email, full_name, phone, property_group_uuid, roles, is_active, active, raw_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
             ON CONFLICT(email) DO UPDATE SET
+              id=COALESCE(NULLIF(pm_proxy_users.id, ''), excluded.id),
+              user_uuid=COALESCE(NULLIF(pm_proxy_users.user_uuid, ''), excluded.user_uuid),
               full_name=excluded.full_name,
               phone=excluded.phone,
               property_group_uuid=excluded.property_group_uuid,
+              roles=COALESCE(pm_proxy_users.roles, excluded.roles),
+              is_active=excluded.is_active,
               active=excluded.active,
+              raw_json=COALESCE(pm_proxy_users.raw_json, excluded.raw_json),
               updated_at=datetime('now')`,
-      args: [userUuid, email, fullName, phone, propertyGroupUuid, active],
+      args: [
+        userUuid,
+        userUuid,
+        email,
+        fullName,
+        phone,
+        propertyGroupUuid,
+        "[]",
+        active,
+        active,
+        "{}",
+      ],
     });
+
+    const confirmResult = await sqlite.execute({
+      sql: `SELECT user_uuid
+            FROM pm_proxy_users
+            WHERE lower(email) = lower(?)
+            LIMIT 1`,
+      args: [email],
+    });
+    const confirmedUuid = String(
+      rowsAsObjects(confirmResult || { rows: [], columns: [] })[0]?.user_uuid ||
+        userUuid,
+    );
 
     return {
       ok: true,
-      user_uuid: userUuid,
+      user_uuid: confirmedUuid,
       email,
       full_name: fullName,
       phone,
@@ -938,19 +1415,19 @@ export async function handleTrustedDeviceList(
     parseInt(String(params.offset || "0"), 10) || 0,
   );
 
-  const totalResult = await sqliteAuth.execute({
-    sql: `SELECT COUNT(*) AS total FROM trusted_devices WHERE revoked = 0`,
-  });
+  const totalResult = await executeTrustedDevicesSql(
+    `SELECT COUNT(*) AS total FROM trusted_devices WHERE revoked = 0`,
+  );
   const total = Number(rowsAsObjects(totalResult)[0]?.total || 0);
 
-  const result = await sqliteAuth.execute({
-    sql: `SELECT device_token, user_name, role, login_email, created_at, last_seen_at, expires_at
-          FROM trusted_devices
-          WHERE revoked = 0
-          ORDER BY created_at DESC
-          LIMIT ? OFFSET ?`,
-    args: [limit, offset],
-  });
+  const result = await executeTrustedDevicesSql(
+    `SELECT device_token, user_name, role, login_email, created_at, last_seen_at, expires_at
+       FROM trusted_devices
+      WHERE revoked = 0
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?`,
+    [limit, offset],
+  );
 
   const devices = rowsAsObjects(result).map((d: any) => ({
     device_token: d.device_token,
@@ -1005,10 +1482,10 @@ export async function handleTrustedDeviceRevoke(
     return { ok: false, error: "Missing token/device_token" };
   }
 
-  const result = await sqliteAuth.execute({
-    sql: `UPDATE trusted_devices SET revoked = 1 WHERE device_token = ?`,
-    args: [token],
-  });
+  const result = await executeTrustedDevicesSql(
+    `UPDATE trusted_devices SET revoked = 1 WHERE device_token = ?`,
+    [token],
+  );
 
   return {
     ok: true,
@@ -1058,28 +1535,40 @@ export async function handleVerifyRole(req: Request): Promise<any> {
   else if (guiGm && password === guiGm) matchedRole = "manager";
   else if (guiVendors && password === guiVendors) matchedRole = "vendors";
 
-  if (!matchedRole) return { ok: false, status: 401, error: "Invalid password" };
+  if (!matchedRole) {
+    return { ok: false, status: 401, error: "Invalid password" };
+  }
 
   // Mint a trusted device token so the frontend can authenticate bearer requests.
+  const userName = getBodyField(body, "user_name", "userName", "user") ||
+    "password-session";
   try {
     await ensureTrustedDevicesTable();
     const token = generateUuid();
-    const userName = getBodyField(body, "user_name", "userName", "user") || "password-session";
-    await sqliteAuth.execute({
-      sql: `INSERT INTO trusted_devices
-              (device_token, user_name, role, last_seen_at, expires_at, created_at)
-            VALUES (?, ?, ?, datetime('now'), datetime('now', '+30 days'), datetime('now'))`,
-      args: [token, userName, matchedRole],
+    await insertTrustedDeviceSession({
+      token,
+      userName,
+      role: matchedRole,
     });
     return { ok: true, role: matchedRole, token };
   } catch (e: any) {
-    // Do not return a tokenless success: frontend auth requires bearer token.
-    console.warn("[handleVerifyRole] token mint failed:", String(e?.message || e));
+    console.warn(
+      "[handleVerifyRole] DB write failed, attempting signed token fallback:",
+      String(e?.message || e).substring(0, 160),
+    );
+    // DB writes are blocked (e.g. Val Town free plan). Fall back to a
+    // stateless HMAC-signed token that getTrustedDeviceSession can verify
+    // without any DB access.
+    const signedToken = await mintSignedToken(matchedRole, userName);
+    if (signedToken) {
+      return { ok: true, role: matchedRole, token: signedToken };
+    }
     return {
       ok: false,
-      status: 505,
+      status: 503,
       error:
-        "Password verified but session token could not be created. Check proxy database write access and trusted_devices schema.",
+        "Password verified but session token could not be created. " +
+        "Check proxy database write access or set FRONTEND_PROXY_SECRET to enable stateless auth.",
     };
   }
 }

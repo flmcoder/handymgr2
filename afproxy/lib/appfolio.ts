@@ -253,6 +253,107 @@ export async function postWoNote(
   }
 }
 
+function normalizeAttachmentList(data: any): any[] {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.Results)) return data.Results;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
+export async function fetchWorkOrderAttachments(
+  woId: string,
+): Promise<{
+  ok: boolean;
+  status?: number;
+  attachments?: any[];
+  detail?: string;
+}> {
+  const path = `/api/v0/work_orders/${encodeURIComponent(woId)}/attachments`;
+  let resp = await fetchWithTimeout(`${AF_DB}${path}`, { headers: dbHeaders() });
+  if ([401, 403, 404, 422].includes(resp.status)) {
+    resp = await fetchWithTimeout(`${AF_REPORTS}${path}`, {
+      headers: dbHeaders(),
+    });
+  }
+
+  if (resp.status === 429) {
+    const ra = parseInt(resp.headers.get("Retry-After") || "2", 10);
+    await new Promise((r) => setTimeout(r, ra * 1000));
+    resp = await fetchWithTimeout(`${AF_DB}${path}`, { headers: dbHeaders() });
+  }
+
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => "");
+    return {
+      ok: false,
+      status: resp.status,
+      detail: detail.substring(0, 400),
+    };
+  }
+
+  const data = await resp.json().catch(() => []);
+  return {
+    ok: true,
+    status: resp.status,
+    attachments: normalizeAttachmentList(data),
+  };
+}
+
+export async function uploadWorkOrderAttachment(
+  woId: string,
+  contentType: string,
+  bodyBuffer: ArrayBuffer,
+): Promise<{
+  ok: boolean;
+  status: number;
+  detail: any;
+}> {
+  const path = `/api/v0/work_orders/${encodeURIComponent(woId)}/attachments`;
+  const headers = {
+    ...dbHeaders(),
+    "Content-Type": contentType,
+  };
+
+  let resp = await fetchWithTimeout(`${AF_DB}${path}`, {
+    method: "POST",
+    headers,
+    body: bodyBuffer,
+  });
+  if ([401, 403, 404, 422].includes(resp.status)) {
+    resp = await fetchWithTimeout(`${AF_REPORTS}${path}`, {
+      method: "POST",
+      headers,
+      body: bodyBuffer,
+    });
+  }
+
+  if (resp.status === 429) {
+    const ra = parseInt(resp.headers.get("Retry-After") || "2", 10);
+    await new Promise((r) => setTimeout(r, ra * 1000));
+    resp = await fetchWithTimeout(`${AF_DB}${path}`, {
+      method: "POST",
+      headers,
+      body: bodyBuffer,
+    });
+  }
+
+  const text = await resp.text().catch(() => "");
+  let parsed: any = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = null;
+  }
+
+  return {
+    ok: resp.ok,
+    status: resp.status,
+    detail: parsed ?? text.substring(0, 800),
+  };
+}
+
 // ── patchWorkOrder ────────────────────────────────────────────────────────────
 // PATCH a work order via DB API v0.
 //

@@ -8,7 +8,7 @@
 import { cacheGet, cacheSet, rowsAsObjects, sqlite, upsertBillingRows } from "../db.ts";
 import { resolveGroupPropertyIds } from "../lib/groupUtils.ts";
 import { AF_DB, AF_REPORTS, CORS_HEADERS, dbHeaders } from "../config.ts";
-import { fetchDbApi } from "../lib/appfolio.ts";
+import { fetchDbApi, fetchReport } from "../lib/appfolio.ts";
 import { fetchWithTimeout, snapDays } from "../lib/fetchUtils.ts";
 
 type BillRecord = Record<string, any>;
@@ -20,9 +20,19 @@ const BILL_STATUS_MAP: Record<string, string> = {
   pending: "pending_approval",
   pendingapproval: "pending_approval",
   pending_approval: "pending_approval",
+  awaiting_approval: "pending_approval",
+  needs_approval: "pending_approval",
+  requires_approval: "pending_approval",
+  unapproved: "pending_approval",
   approved: "approved",
+  approved_for_payment: "approved",
   paid: "paid",
+  partially_paid: "paid",
+  partial_payment: "paid",
   void: "void",
+  voided: "void",
+  cancelled: "void",
+  canceled: "void",
   rejected: "rejected",
 };
 
@@ -49,6 +59,51 @@ function billDateString(row: BillRecord): string {
   ).slice(0, 10);
 }
 
+// Populate property_reference table for PM login filtering
+// This creates a denormalized view mapping properties to groups and vendors
+async function populatePropertyReference(
+  bills: BillRecord[],
+): Promise<void> {
+  const now = Date.now();
+  const seen = new Set<string>();
+
+  for (const bill of bills) {
+    const propertyId = String(
+      bill.property_id || bill.PropertyId || bill.property_id_str || "",
+    ).trim();
+    if (!propertyId || seen.has(propertyId)) continue;
+    seen.add(propertyId);
+
+    const vendorId = String(bill.vendor_id || bill.VendorId || "").trim();
+    const vendorName = String(bill.vendor_name || bill.VendorName || vendorId || "").trim();
+    const propertyName = String(bill.property_name || bill.PropertyName || propertyId || "").trim();
+    const propertyGroup = String(bill.property_group || bill.PropertyGroup || "").trim();
+    const propertyManager = String(bill.property_manager || bill.PropertyManager || "").trim();
+
+    try {
+      await sqlite.execute({
+        sql: `INSERT OR REPLACE INTO property_reference
+              (property_map_id, property_id, property_name, property_group_uuid, 
+               property_group_name, vendor_uuid, vendor_name, pm_name, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          propertyId,                    // property_map_id (use property_id as map id)
+          propertyId,                    // property_id
+          propertyName,                  // property_name
+          propertyGroup,                 // property_group_uuid
+          propertyGroup,                 // property_group_name
+          vendorId || null,              // vendor_uuid
+          vendorName || null,            // vendor_name
+          propertyManager || null,       // pm_name
+          now,                           // updated_at
+        ],
+      });
+    } catch {
+      // Non-fatal; property reference enrichment is optional
+    }
+  }
+}
+
 function mapBill(
   row: BillRecord,
   vendorMap: Record<string, string>,
@@ -56,6 +111,21 @@ function mapBill(
   propertyGroupMap: Record<string, string>,
   pmMap: Record<string, string>,
 ): BillRecord {
+  const lineItems = Array.isArray(row.LineItems)
+    ? row.LineItems
+    : (Array.isArray(row.line_items)
+      ? row.line_items
+      : (() => {
+        const rawJson = row.line_items_json;
+        if (!rawJson) return [];
+        try {
+          const parsed = JSON.parse(String(rawJson));
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })());
+  const firstLine = lineItems[0] || {};
   const payeeUuid = String(
     row.PayeeUuid || row.payee_uuid || row.PayeeId || row.payee_id || "",
   );
@@ -68,27 +138,40 @@ function mapBill(
   );
   const propertyId = String(
     row.PropertyId || row.property_id || row.PropertyUuid || row.property_uuid ||
-      "",
+      firstLine.PropertyId || firstLine.property_id || firstLine.PropertyUuid ||
+      firstLine.property_uuid || "",
   );
   const status = normalizeStatus(
-    row.ApprovalStatus || row.approval_status || row.Status || row.status,
+    row.bill_status || row.BillStatus || row.ApprovalStatus || row.approval_status ||
+      row.Status || row.status,
   );
   const amountRaw = row.TotalAmount || row.total_amount || row.Amount ||
     row.amount || "0";
   const amount = Number.parseFloat(String(amountRaw).replace(/[^0-9.-]/g, "")) ||
     0;
   const propertyGroup = String(
-    row.property_group || row.PropertyGroup || propertyGroupMap[propertyId] ||
-      "",
+    row.property_group_name || row.PropertyGroupName || row.property_group ||
+      row.PropertyGroup || propertyGroupMap[propertyId] || "",
+  );
+  const propertyGroupId = String(
+    row.property_group_id || row.property_group_uuid || row.PropertyGroupId ||
+      row.PropertyGroupUuid || "",
   );
   const propertyManager = String(
     row.property_manager || row.PropertyManager ||
       (propertyGroup ? (pmMap[propertyGroup] || "") : ""),
   );
+  const billId = String(
+    row.BillId || row.bill_id || row.Id || row.id || "",
+  ).trim();
+  const billNumber = String(
+    row.bill_number || row.BillNumber || row.InvoiceNumber || row.invoice_number ||
+      row.Reference || row.reference || billId,
+  ).trim();
 
   return {
-    id: String(row.Id || row.id || row.BillId || row.bill_id || ""),
-    bill_number: String(row.Reference || row.reference || row.Id || row.id || ""),
+    id: billId,
+    bill_number: billNumber,
     status,
     status_label: statusLabel(status),
     vendor_id: vendorId,
@@ -103,8 +186,13 @@ function mapBill(
       row.PropertyName || row.property_name || propertyMap[propertyId] ||
         propertyId || "",
     ),
+    property_group_id: propertyGroupId,
+    property_group_uuid: propertyGroupId,
+    property_group_name: propertyGroup,
     property_group: propertyGroup,
+    pm_name: propertyManager,
     property_manager: propertyManager,
+    unit_id: String(row.UnitId || row.unit_id || firstLine.UnitId || firstLine.unit_id || ""),
     work_order_id: String(row.WorkOrderId || row.work_order_id || ""),
     invoice_date: String(row.InvoiceDate || row.invoice_date || "").slice(0, 10),
     due_date: String(row.DueDate || row.due_date || "").slice(0, 10),
@@ -115,9 +203,7 @@ function mapBill(
       remarks: String(row.Remarks || row.remarks || row.CheckMemo || ""),
       // LineItems — present in both list and detail responses on v0.
       // Mapped here so the frontend detail modal can access them without raw fallback.
-      line_items: Array.isArray(row.LineItems)
-        ? row.LineItems
-        : (Array.isArray(row.line_items) ? row.line_items : []),
+      line_items: lineItems,
       raw: row,
   };
 }
@@ -178,9 +264,21 @@ function filterBills(
   const dateTo = String(params.date_to || "").slice(0, 10);
 
   return rows.filter((row) => {
+    // AppFolio v0 may embed PropertyId only in LineItems — check there too.
+    const lineItems = Array.isArray(row.LineItems)
+      ? row.LineItems
+      : (Array.isArray(row.line_items)
+        ? row.line_items
+        : (() => {
+          const rawJson = row.line_items_json;
+          if (!rawJson) return [];
+          try { const p = JSON.parse(String(rawJson)); return Array.isArray(p) ? p : []; } catch { return []; }
+        })());
+    const firstLine = lineItems[0] || {};
     const propId = String(
       row.PropertyId || row.property_id || row.PropertyUuid || row.property_uuid ||
-        "",
+        firstLine.PropertyId || firstLine.property_id ||
+        firstLine.PropertyUuid || firstLine.property_uuid || "",
     );
     if (propertyIds && propertyIds.size > 0 && !propertyIds.has(propId)) {
       return false;
@@ -252,19 +350,47 @@ async function loadPropertyMap(): Promise<Record<string, string>> {
 async function fetchRawBills(
   params: Record<string, string>,
   force = false,
-): Promise<{ rows: BillRecord[]; fromCache: boolean; cachedAt?: string }> {
+): Promise<{ rows: BillRecord[]; fromCache: boolean; cachedAt?: string; sourceApi: "v2" | "v0" }> {
   const days = snapDays(parseInt(params.days || "365", 10) || 365, "bills");
   const max = Math.max(50, Math.min(10000, parseInt(params.max || "1500", 10) || 1500));
   const groupUuid = String(params.group_uuid || "").trim();
+  const preferV2 = String(params.prefer_v2 || "true").toLowerCase() !== "false";
   const cacheKey = groupUuid
-    ? `bills_grp_${groupUuid}_${days}_${max}`
-    : `bills_${days}_${max}`;
+    ? `bills_${preferV2 ? "v2" : "v0"}_grp_${groupUuid}_${days}_${max}`
+    : `bills_${preferV2 ? "v2" : "v0"}_${days}_${max}`;
 
   if (!force) {
     const cached = await cacheGet(cacheKey, "bills");
     if (cached) {
       const data = Array.isArray(cached.data) ? cached.data : [];
-      return { rows: data, fromCache: true, cachedAt: cached.cached_at };
+      return {
+        rows: data,
+        fromCache: true,
+        cachedAt: cached.cached_at,
+        sourceApi: preferV2 ? "v2" : "v0",
+      };
+    }
+  }
+
+  if (preferV2) {
+    try {
+      const fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - days);
+      const toDate = new Date();
+      const reportFilters: Record<string, any> = {
+        occurred_on_from: fromDate.toISOString().slice(0, 10),
+        occurred_on_to: toDate.toISOString().slice(0, 10),
+        date_type: "Bill Date",
+        paginate_results: true,
+        limit: max,
+      };
+      const v2Rows = await fetchReport("bill_detail", reportFilters);
+      const rows = Array.isArray(v2Rows) ? v2Rows : [];
+      await cacheSet(cacheKey, "bills", rows, rows.length);
+      upsertBillingRows(rows).catch(() => {});
+      return { rows, fromCache: false, sourceApi: "v2" };
+    } catch {
+      // Fall through to v0 fallback below.
     }
   }
 
@@ -282,7 +408,7 @@ async function fetchRawBills(
   const rows = await fetchDbApi(path, max);
   await cacheSet(cacheKey, "bills", rows, rows.length);
   upsertBillingRows(rows).catch(() => {});
-  return { rows, fromCache: false };
+  return { rows, fromCache: false, sourceApi: "v0" };
 }
 
 function paginate(rows: BillRecord[], params: Record<string, string>) {
@@ -319,9 +445,14 @@ async function handleBillsList(params: Record<string, string>): Promise<any> {
     loadRoutingPmMap(),
   ]);
 
+  const results = page.rows.map((r) => mapBill(r, vendorMap, propertyMap, propertyGroupMap, pmMap));
+
+  // Populate property reference table asynchronously (non-blocking)
+  populatePropertyReference(results).catch(() => {});
+
   return {
     ok: true,
-    results: page.rows.map((r) => mapBill(r, vendorMap, propertyMap, propertyGroupMap, pmMap)),
+    results,
     count: page.rows.length,
     total: page.total,
     page: page.page,
@@ -329,6 +460,7 @@ async function handleBillsList(params: Record<string, string>): Promise<any> {
     total_pages: page.totalPages,
     from_cache: raw.fromCache,
     cached_at: raw.cachedAt,
+    source_api: raw.sourceApi,
   };
 }
 
@@ -375,6 +507,7 @@ async function handleBillsStats(params: Record<string, string>): Promise<any> {
     paid_this_period_count: paid.length,
     paid_this_period_amount: sumAmount(paid),
     vendors_with_open_bills: vendorsWithOpen.size,
+    source_api: raw.sourceApi,
     from_cache: raw.fromCache,
     cached_at: raw.cachedAt,
   };
@@ -385,8 +518,24 @@ async function handleBillDetail(params: Record<string, string>): Promise<any> {
   if (!billId) return { ok: false, error: "Missing bill_id" };
 
   const raw = await fetchRawBills({ ...params, max: "5000" }, false);
+  const matchesBillId = (row: BillRecord, target: string): boolean => {
+    const t = String(target || "").trim();
+    if (!t) return false;
+    const candidates = [
+      row.BillId,
+      row.bill_id,
+      row.Id,
+      row.id,
+      row.Reference,
+      row.reference,
+      row.bill_number,
+      row.invoice_number,
+    ];
+    return candidates.some((value) => String(value || "").trim() === t);
+  };
+
   let found: BillRecord | undefined = raw.rows.find((r) =>
-    String(r.Id || r.id || "").trim() === billId
+    matchesBillId(r, billId)
   );
 
   if (!found) {
@@ -399,8 +548,12 @@ async function handleBillDetail(params: Record<string, string>): Promise<any> {
 
   if (!found) return { ok: false, error: "Bill not found", bill_id: billId };
 
+  const lookupBillId = String(
+    found.BillId || found.bill_id || found.Id || found.id || billId,
+  ).trim() || billId;
+
   try {
-    const detailPath = `/api/v0/bills/${encodeURIComponent(billId)}`;
+    const detailPath = `/api/v0/bills/${encodeURIComponent(lookupBillId)}`;
     let detailResp = await fetchWithTimeout(`${AF_DB}${detailPath}`, {
       headers: dbHeaders(),
     });
@@ -426,9 +579,14 @@ async function handleBillDetail(params: Record<string, string>): Promise<any> {
     loadRoutingPmMap(),
   ]);
 
+  const result = mapBill(found!, vendorMap, propertyMap, propertyGroupMap, pmMap);
+
+  // Populate property reference table asynchronously (non-blocking)
+  populatePropertyReference([result]).catch(() => {});
+
   return {
     ok: true,
-    result: mapBill(found!, vendorMap, propertyMap, propertyGroupMap, pmMap),
+    result,
   };
 }
 
@@ -447,14 +605,82 @@ async function handleBillsHistory(params: Record<string, string>): Promise<any> 
 
   const rangeDays = Math.max(1, Math.ceil((toMs - fromMs) / 86_400_000) + 1);
   const fetchDays = Math.max(30, Math.min(3650, rangeDays + 14));
-
-  const raw = await fetchRawBills({ ...params, days: String(fetchDays) }, false);
   const propertyIds = await resolveGroupPropertyIds(params);
-  const filtered = filterBills(raw.rows, params, propertyIds);
+  const preferV2 = String(params.prefer_v2 || "true").toLowerCase() !== "false";
+
+  let rawRows: BillRecord[] = [];
+  let fromCache = false;
+  let cachedAt: string | undefined;
+  let sourceApi: "v2" | "v0" = "v0";
+
+  if (preferV2) {
+    try {
+      const reportFilters: Record<string, any> = {
+        occurred_on_from: dateFrom,
+        occurred_on_to: dateTo,
+        date_type: "Bill Date",
+        paginate_results: true,
+        limit: 5000,
+      };
+      if (propertyIds && propertyIds.size > 0) {
+        reportFilters.properties = {
+          property_visibility: "both",
+          properties_ids: Array.from(propertyIds),
+        };
+      }
+      const v2Rows = await fetchReport("bill_detail", reportFilters);
+      rawRows = (Array.isArray(v2Rows) ? v2Rows : []).map((row: BillRecord) => ({
+        Id: row.bill_id || row.id || "",
+        BillId: row.bill_id || row.id || "",
+        BillNumber: row.bill_number || row.invoice_number || row.reference || "",
+        Reference: row.bill_number || row.invoice_number || row.reference || "",
+        VendorId: row.vendor_id || row.vendor_uuid || row.payee_id || row.payee_uuid || "",
+        VendorName: row.vendor_name || row.payee_name || "",
+        PropertyId: row.property_id || "",
+        PropertyName: row.property_name || "",
+        PropertyGroupName: row.property_group_name || row.property_group || "",
+        PropertyGroupUuid: row.property_group_uuid || row.property_group_id || "",
+        PropertyManager: row.pm_name || row.property_manager || "",
+        InvoiceDate: row.bill_date || row.invoice_date || "",
+        DueDate: row.due_date || "",
+        PostingDate: row.payment_date || row.bill_date || "",
+        ApprovalStatus: row.bill_status || row.status || "",
+        TotalAmount: row.total_amount || row.amount || "0",
+        WorkOrderId: row.work_order_id || "",
+        UnitId: row.unit_id || "",
+        line_items: row.line_items || [],
+        raw: row,
+      }));
+      sourceApi = "v2";
+    } catch {
+      // Fall through to v0 path below.
+    }
+  }
+
+  if (!rawRows.length) {
+    const raw = await fetchRawBills({ ...params, days: String(fetchDays) }, false);
+    rawRows = raw.rows;
+    fromCache = raw.fromCache;
+    cachedAt = raw.cachedAt;
+    sourceApi = "v0";
+  }
+
+  const filtered = filterBills(rawRows, params, propertyIds);
   const inRange = filtered.filter((r) => {
     const d = billDateString(r);
     return !!d && d >= dateFrom && d <= dateTo;
   });
+
+  const page = Math.max(1, parseInt(String(params.page || "1"), 10) || 1);
+  const perPage = Math.max(
+    1,
+    Math.min(200, parseInt(String(params.per_page || "100"), 10) || 100),
+  );
+  const total = inRange.length;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * perPage;
+  const paged = inRange.slice(start, start + perPage);
 
   const [vendorMap, propertyMap, propertyGroupMap, pmMap] = await Promise.all([
     loadVendorMap(),
@@ -463,12 +689,23 @@ async function handleBillsHistory(params: Record<string, string>): Promise<any> 
     loadRoutingPmMap(),
   ]);
 
+  const results = paged.map((r) => mapBill(r, vendorMap, propertyMap, propertyGroupMap, pmMap));
+
+  // Populate property reference table asynchronously (non-blocking)
+  populatePropertyReference(results).catch(() => {});
+
   return {
     ok: true,
-    results: inRange.slice(0, 2000).map((r) => mapBill(r, vendorMap, propertyMap, propertyGroupMap, pmMap)),
-    count: inRange.length,
-    from_cache: raw.fromCache,
-    cached_at: raw.cachedAt,
+    results,
+    count: results.length,
+    total,
+    page: safePage,
+    per_page: perPage,
+    total_pages: totalPages,
+    truncated: total > perPage,
+    from_cache: fromCache,
+    cached_at: cachedAt,
+    source_api: sourceApi,
   };
 }
 
@@ -607,6 +844,7 @@ export async function handleBills(
   req?: Request,
   action = "bills",
 ): Promise<any> {
+  if (action === "bills_list_v2") return await handleBillsList(params);
   if (action === "bills_stats") return await handleBillsStats(params);
   if (action === "bill_detail") return await handleBillDetail(params);
   if (action === "bills_history") return await handleBillsHistory(params);
@@ -656,137 +894,158 @@ function normalizeLikeText(value: string | null): string | null {
 
 export async function handleBillsRoute(
   _req: Request,
-  db: SqlClient,
+  _db: SqlClient,
   params: URLSearchParams,
 ): Promise<Response> {
   const action = String(params.get("action") || "").trim();
   const { limit, offset } = parseLimitOffset(params);
   const groupId = normalizeLikeText(params.get("group_id"));
   const status = normalizeLikeText(params.get("status"));
+  const flatParams: Record<string, string> = {};
+  for (const [k, v] of params.entries()) flatParams[k] = v;
+  if (groupId) flatParams.group_id = groupId;
+  if (status) flatParams.status = status;
 
-  let dataSql = "";
-  let countSql = "";
-  let dataArgs: any[] = [];
-  let countArgs: any[] = [];
-
-  if (action === "bills_by_vendor") {
-    const vendorId = normalizeLikeText(params.get("vendor_id"));
-    if (!vendorId) {
-      return billsJson({ ok: false, error: "Missing required query param: vendor_id" }, 400);
-    }
-    if (groupId) {
-      dataSql = "SELECT bm.* FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.vendor_id = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.vendor_id = ?";
-      dataArgs = [groupId, vendorId, limit, offset];
-      countArgs = [groupId, vendorId];
-    } else {
-      dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.vendor_id = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.vendor_id = ?";
-      dataArgs = [vendorId, limit, offset];
-      countArgs = [vendorId];
-    }
-  } else if (action === "bills_by_property") {
-    const propertyId = normalizeLikeText(params.get("property_id"));
-    if (!propertyId) {
-      return billsJson({ ok: false, error: "Missing required query param: property_id" }, 400);
-    }
-    if (groupId) {
-      dataSql = "SELECT bm.* FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.property_map_id = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.property_map_id = ?";
-      dataArgs = [groupId, propertyId, limit, offset];
-      countArgs = [groupId, propertyId];
-    } else {
-      dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.property_map_id = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.property_map_id = ?";
-      dataArgs = [propertyId, limit, offset];
-      countArgs = [propertyId];
-    }
-  } else if (action === "bills_by_wo") {
-    const woId = normalizeLikeText(params.get("wo_id"));
-    if (!woId) {
-      return billsJson({ ok: false, error: "Missing required query param: wo_id" }, 400);
-    }
-    if (groupId) {
-      dataSql = "SELECT bm.* FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.work_order_id = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.work_order_id = ?";
-      dataArgs = [groupId, woId, limit, offset];
-      countArgs = [groupId, woId];
-    } else {
-      dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.work_order_id = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.work_order_id = ?";
-      dataArgs = [woId, limit, offset];
-      countArgs = [woId];
-    }
-  } else if (action === "bills_by_wo_number") {
-    const woNumber = normalizeLikeText(params.get("wo_number"));
-    if (!woNumber) {
-      return billsJson({ ok: false, error: "Missing required query param: wo_number" }, 400);
-    }
-    if (groupId) {
-      dataSql = "SELECT bm.* FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.work_order_number = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.work_order_number = ?";
-      dataArgs = [groupId, woNumber, limit, offset];
-      countArgs = [groupId, woNumber];
-    } else {
-      dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.work_order_number = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.work_order_number = ?";
-      dataArgs = [woNumber, limit, offset];
-      countArgs = [woNumber];
-    }
-  } else if (action === "bills_by_invoice") {
-    const invoiceNumber = normalizeLikeText(params.get("invoice_number"));
-    if (!invoiceNumber) {
-      return billsJson({ ok: false, error: "Missing required query param: invoice_number" }, 400);
-    }
-    // billing_map stores invoice_date; this route maps invoice_number input to that field.
-    if (groupId) {
-      dataSql = "SELECT bm.* FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.invoice_date = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.invoice_date = ?";
-      dataArgs = [groupId, invoiceNumber, limit, offset];
-      countArgs = [groupId, invoiceNumber];
-    } else {
-      dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.invoice_date = ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.invoice_date = ?";
-      dataArgs = [invoiceNumber, limit, offset];
-      countArgs = [invoiceNumber];
-    }
-  } else if (action === "bills_due_range") {
-    const dueFrom = normalizeLikeText(params.get("due_from"));
-    const dueTo = normalizeLikeText(params.get("due_to"));
-    if (!dueFrom || !dueTo) {
-      return billsJson({ ok: false, error: "Missing required query params: due_from and due_to" }, 400);
-    }
-    if (groupId) {
-      dataSql = "SELECT bm.* FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.due_date >= ? AND bm.due_date <= ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND bm.due_date >= ? AND bm.due_date <= ?";
-      dataArgs = [groupId, dueFrom, dueTo, limit, offset];
-      countArgs = [groupId, dueFrom, dueTo];
-    } else {
-      dataSql = "SELECT bm.* FROM billing_map bm WHERE bm.due_date >= ? AND bm.due_date <= ? ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-      countSql = "SELECT COUNT(*) AS total FROM billing_map bm WHERE bm.due_date >= ? AND bm.due_date <= ?";
-      dataArgs = [dueFrom, dueTo, limit, offset];
-      countArgs = [dueFrom, dueTo];
-    }
-  } else if (action === "bills_list") {
-    if (!groupId) {
-      return billsJson({ ok: false, error: "Missing required query param: group_id" }, 400);
-    }
-    dataSql = "SELECT bm.* FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND (? IS NULL OR lower(bm.line_items_json) LIKE '%' || lower(?) || '%') ORDER BY bm.due_date DESC LIMIT ? OFFSET ?";
-    countSql = "SELECT COUNT(*) AS total FROM billing_map bm INNER JOIN group_resolution_cache grc ON grc.property_map_id = bm.property_map_id WHERE grc.property_group_id = ? AND (? IS NULL OR lower(bm.line_items_json) LIKE '%' || lower(?) || '%')";
-    dataArgs = [groupId, status, status, limit, offset];
-    countArgs = [groupId, status, status];
-  } else {
+  const actionHandlers = {
+    bills_by_vendor: true,
+    bills_by_property: true,
+    bills_by_unit: true,
+    bills_by_wo: true,
+    bills_by_wo_number: true,
+    bills_by_invoice: true,
+    bills_due_range: true,
+    bills_list: true,
+  } as const;
+  if (!actionHandlers[action as keyof typeof actionHandlers]) {
     return billsJson({ ok: false, error: `Unsupported bills route action: ${action}` }, 404);
   }
 
+  if (action === "bills_list" && !groupId) {
+    return billsJson({ ok: false, error: "Missing required query param: group_id" }, 400);
+  }
+
+  const vendorId = normalizeLikeText(params.get("vendor_id"));
+  const propertyId = normalizeLikeText(params.get("property_id"));
+  const unitId = normalizeLikeText(params.get("unit_id"));
+  const woId = normalizeLikeText(params.get("wo_id"));
+  const woNumber = normalizeLikeText(params.get("wo_number"));
+  const invoiceNumber = normalizeLikeText(params.get("invoice_number"));
+  const dueFrom = normalizeLikeText(params.get("due_from"));
+  const dueTo = normalizeLikeText(params.get("due_to"));
+
+  if (action === "bills_by_vendor" && !vendorId) {
+    return billsJson({ ok: false, error: "Missing required query param: vendor_id" }, 400);
+  }
+  if (action === "bills_by_property" && !propertyId) {
+    return billsJson({ ok: false, error: "Missing required query param: property_id" }, 400);
+  }
+  if (action === "bills_by_unit" && !unitId) {
+    return billsJson({ ok: false, error: "Missing required query param: unit_id" }, 400);
+  }
+  if (action === "bills_by_wo" && !woId) {
+    return billsJson({ ok: false, error: "Missing required query param: wo_id" }, 400);
+  }
+  if (action === "bills_by_wo_number" && !woNumber) {
+    return billsJson({ ok: false, error: "Missing required query param: wo_number" }, 400);
+  }
+  if (action === "bills_by_invoice" && !invoiceNumber) {
+    return billsJson({ ok: false, error: "Missing required query param: invoice_number" }, 400);
+  }
+  if (action === "bills_due_range" && (!dueFrom || !dueTo)) {
+    return billsJson({ ok: false, error: "Missing required query params: due_from and due_to" }, 400);
+  }
+
+  const rowPropertyId = (row: BillRecord): string => {
+    const lineItems = Array.isArray(row.LineItems)
+      ? row.LineItems
+      : (Array.isArray(row.line_items)
+        ? row.line_items
+        : (() => {
+          const rawJson = row.line_items_json;
+          if (!rawJson) return [];
+          try {
+            const parsed = JSON.parse(String(rawJson));
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })());
+    const firstLine = lineItems[0] || {};
+    return String(
+      row.PropertyId || row.property_id || row.PropertyUuid || row.property_uuid ||
+        firstLine.PropertyId || firstLine.property_id || firstLine.PropertyUuid ||
+        firstLine.property_uuid || "",
+    ).trim();
+  };
+
+  const rowUnitId = (row: BillRecord): string => {
+    const lineItems = Array.isArray(row.LineItems)
+      ? row.LineItems
+      : (Array.isArray(row.line_items)
+        ? row.line_items
+        : []);
+    const firstLine = lineItems[0] || {};
+    return String(row.UnitId || row.unit_id || firstLine.UnitId || firstLine.unit_id || "").trim();
+  };
+
+  const rowVendorId = (row: BillRecord): string =>
+    String(
+      row.VendorId || row.vendor_id || row.VendorUuid || row.vendor_uuid ||
+        row.PayeeUuid || row.payee_uuid || row.PayeeId || row.payee_id || "",
+    ).trim();
+
+  const rowWoId = (row: BillRecord): string =>
+    String(row.WorkOrderId || row.work_order_id || "").trim();
+
+  const rowWoNumber = (row: BillRecord): string =>
+    String(row.WorkOrderNumber || row.work_order_number || row.work_order_num || "").trim();
+
+  const rowInvoice = (row: BillRecord): string =>
+    String(row.InvoiceNumber || row.invoice_number || row.Reference || row.reference || row.InvoiceDate || row.invoice_date || "").trim();
+
+  const rowDueDate = (row: BillRecord): string =>
+    String(row.DueDate || row.due_date || "").slice(0, 10);
+
   try {
-    const dataRes = await db.execute({ sql: dataSql, args: dataArgs });
-    const totalRes = await db.execute({ sql: countSql, args: countArgs });
+    const raw = await fetchRawBills(flatParams, false);
+    const propertyIds = await resolveGroupPropertyIds(flatParams);
+    let filtered = filterBills(raw.rows, flatParams, propertyIds);
+
+    if (action === "bills_by_vendor" && vendorId) {
+      filtered = filtered.filter((row) => rowVendorId(row) === vendorId);
+    } else if (action === "bills_by_property" && propertyId) {
+      filtered = filtered.filter((row) => rowPropertyId(row) === propertyId);
+    } else if (action === "bills_by_unit" && unitId) {
+      filtered = filtered.filter((row) => rowUnitId(row) === unitId);
+    } else if (action === "bills_by_wo" && woId) {
+      filtered = filtered.filter((row) => rowWoId(row) === woId);
+    } else if (action === "bills_by_wo_number" && woNumber) {
+      filtered = filtered.filter((row) => rowWoNumber(row) === woNumber);
+    } else if (action === "bills_by_invoice" && invoiceNumber) {
+      filtered = filtered.filter((row) => rowInvoice(row) === invoiceNumber);
+    } else if (action === "bills_due_range" && dueFrom && dueTo) {
+      filtered = filtered.filter((row) => {
+        const due = rowDueDate(row);
+        if (!due) return false;
+        return due >= dueFrom && due <= dueTo;
+      });
+    }
+
+    const [vendorMap, propertyMap, propertyGroupMap, pmMap] = await Promise.all([
+      loadVendorMap(),
+      loadPropertyMap(),
+      loadPropertyGroupMap(),
+      loadRoutingPmMap(),
+    ]);
+
+    const total = filtered.length;
+    const sliced = filtered.slice(offset, offset + limit);
+    const data = sliced.map((row) => mapBill(row, vendorMap, propertyMap, propertyGroupMap, pmMap));
 
     return billsJson({
       ok: true,
-      data: rowsAsObjects(dataRes),
-      total: asCount(totalRes),
+      data,
+      total,
       limit,
       offset,
     });
