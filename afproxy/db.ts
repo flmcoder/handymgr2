@@ -818,6 +818,107 @@ export async function ensureTables(): Promise<void> {
       source         TEXT NOT NULL DEFAULT 'client_scan'
     )`);
 
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN wo_number TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN property_id TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN property_name TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN unit_name TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN property_group TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN pm_name TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN vendor_id TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN vendor_name TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN vendor_category TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN wo_status TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN wo_priority TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN wo_created_at TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN description TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN matched_trade TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN confidence TEXT NOT NULL DEFAULT 'medium'`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN review_status TEXT NOT NULL DEFAULT 'pending'`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN review_notes TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN reviewed_at TEXT`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN detected_at TEXT NOT NULL DEFAULT (datetime('now'))`,
+      );
+    } catch (_) {}
+    try {
+      await sqlite.execute(
+        `ALTER TABLE routing_events ADD COLUMN source TEXT NOT NULL DEFAULT 'client_scan'`,
+      );
+    } catch (_) {}
+
     await sqlite.execute(`CREATE TABLE IF NOT EXISTS closed_turns (
       turn_id    TEXT PRIMARY KEY,
       closed_at  TEXT NOT NULL DEFAULT (datetime('now')),

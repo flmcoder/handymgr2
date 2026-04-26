@@ -103,6 +103,23 @@ export async function createShortLink(
     }
   }
 
+  // Fallback for partial migrations: store the short code on magic_link_tokens.
+  // resolveShortLink() already knows how to expand via this column.
+  for (let attempt = 0; attempt < SHORT_LINK_ATTEMPTS; attempt++) {
+    const code = _shortCode(6);
+    try {
+      await sqlite.execute({
+        sql: `UPDATE magic_link_tokens
+                 SET short_code = ?
+               WHERE token = ?`,
+        args: [code, token],
+      });
+      return { code, shortUrl: buildShortLinkUrl(code) };
+    } catch {
+      // Continue trying alternate codes.
+    }
+  }
+
   return null;
 }
 
@@ -271,9 +288,8 @@ export async function createMagicLinkSession(
     await sqlite.execute({
       sql: `INSERT OR REPLACE INTO magic_link_tokens
                (token, wo_id, tech_id, tech_name,
-                tenant_phone, tenant_name, property_address, expires_at,
-                lang_pref, meta_json, last_action, last_action_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'generated', datetime('now'))`,
+                tenant_phone, tenant_name, property_address, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         token,
         woId,
@@ -283,10 +299,19 @@ export async function createMagicLinkSession(
         tenantName,
         propertyAddress,
         expiresAt,
-        langPref,
-        JSON.stringify(extraPayload || {}),
       ],
     });
+
+    // Best-effort metadata backfill for partially migrated installs.
+    await sqlite.execute({
+      sql: `UPDATE magic_link_tokens
+               SET lang_pref = ?,
+                   meta_json = ?,
+                   last_action = 'generated',
+                   last_action_at = datetime('now')
+             WHERE token = ?`,
+      args: [langPref, JSON.stringify(extraPayload || {}), token],
+    }).catch(() => {});
   } catch (err: unknown) {
     // CRITICAL: if DB write fails, the single-use enforcement is broken.
     // Fail loudly so the caller knows the token is unsafe to return.

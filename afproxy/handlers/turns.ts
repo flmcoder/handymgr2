@@ -145,6 +145,109 @@ async function ensureUnitTurnSyncSchema(): Promise<void> {
   }
 }
 
+async function resolveWorkOrderDbUuid(
+  woId: string,
+  hintedUuid?: string,
+): Promise<{ uuid: string; unitTurnId: string; status: string; createdAt: string | null }> {
+  const woRef = String(woId || "").replace(/^#/, "").trim();
+  const hint = String(hintedUuid || "").trim();
+  if (!woRef && !hint) {
+    return { uuid: "", unitTurnId: "", status: "", createdAt: null };
+  }
+  if (isValidUUID(hint)) {
+    return { uuid: hint, unitTurnId: "", status: "", createdAt: null };
+  }
+
+  try {
+    const rows = rowsAsObjects(
+      await sqlite.execute({
+        sql: `SELECT wo_db_uuid, status, created_at
+              FROM unit_turn_work_orders
+              WHERE wo_id = ? AND wo_db_uuid IS NOT NULL AND wo_db_uuid <> ''
+              ORDER BY updated_at DESC
+              LIMIT 1`,
+        args: [woRef],
+      }),
+    );
+    const uuid = String(rows[0]?.wo_db_uuid || "").trim();
+    if (isValidUUID(uuid)) {
+      return {
+        uuid,
+        unitTurnId: "",
+        status: String(rows[0]?.status || "").trim(),
+        createdAt: rows[0]?.created_at ? String(rows[0].created_at) : null,
+      };
+    }
+  } catch {
+    // continue
+  }
+
+  try {
+    const rows = rowsAsObjects(
+      await sqlite.execute({
+        sql: `SELECT id
+              FROM work_order_map
+              WHERE work_order_number = ?
+              ORDER BY last_updated_at DESC
+              LIMIT 1`,
+        args: [woRef],
+      }),
+    );
+    const uuid = String(rows[0]?.id || "").trim();
+    if (isValidUUID(uuid)) {
+      return { uuid, unitTurnId: "", status: "", createdAt: null };
+    }
+  } catch {
+    // continue
+  }
+
+  try {
+    const rows = rowsAsObjects(
+      await sqlite.execute({
+        sql: `SELECT id
+              FROM wo_states
+              WHERE wo_number = ?
+              ORDER BY updated_at DESC
+              LIMIT 1`,
+        args: [woRef],
+      }),
+    );
+    const uuid = String(rows[0]?.id || "").trim();
+    if (isValidUUID(uuid)) {
+      return { uuid, unitTurnId: "", status: "", createdAt: null };
+    }
+  } catch {
+    // continue
+  }
+
+  try {
+    const rows = await fetchDbApi(
+      `/api/v0/work_orders?filters[WorkOrderNumber]=${encodeURIComponent(woRef)}&filters[LastUpdatedAtFrom]=2020-01-01T00:00:00Z&page[size]=5`,
+      5,
+    );
+    const match = Array.isArray(rows)
+      ? rows.find((row: Record<string, any>) =>
+        String(row.WorkOrderNumber || row.work_order_number || "").trim() === woRef
+      ) || rows[0]
+      : null;
+    if (match) {
+      const uuid = String(match.Id || match.id || "").trim();
+      if (isValidUUID(uuid)) {
+        return {
+          uuid,
+          unitTurnId: String(match.UnitTurnId || match.unit_turn_id || "").trim(),
+          status: String(match.Status || match.status || "").trim(),
+          createdAt: String(match.CreatedAt || match.created_at || "").trim() || null,
+        };
+      }
+    }
+  } catch {
+    // continue
+  }
+
+  return { uuid: "", unitTurnId: "", status: "", createdAt: null };
+}
+
 async function loadTrackerBundle(days: number): Promise<any[]> {
   const rows = rowsAsObjects(
     await sqlite.execute({
@@ -656,32 +759,20 @@ export async function handleUnitTurnWorkOrderLink(req: Request): Promise<any> {
     });
   }
 
-  // Enrich via Reports v2 work_order endpoint when wo_db_uuid is missing or
-  // the supplied value is not a valid UUID (e.g. caller sent the WO number).
+  // Resolve strictly to the DB API UUID. Reports v2 work_order_id is numeric.
   let resolvedUuid = String(body.wo_db_uuid || body.dbApiId || "").trim();
   let resolvedStatus = String(body.status || "").trim();
   let resolvedCreated: string | null = body.created_at || body.created || null;
   let resolvedUnitTurnId = "";
-  let enrichedFromV2 = false;
+  let resolvedFromLookup = false;
 
   if (!isValidUUID(resolvedUuid)) {
-    try {
-      const v2Rows = await fetchReport("work_order", {
-        work_order_numbers: [woId],
-        paginate_results: "true",
-        per_page: "1",
-      });
-      if (Array.isArray(v2Rows) && v2Rows.length > 0) {
-        const vr = v2Rows[0];
-        resolvedUuid = String(vr.work_order_id || "").trim();
-        if (!resolvedStatus) resolvedStatus = String(vr.status || "").trim();
-        if (!resolvedCreated) resolvedCreated = String(vr.created_at || "").trim() || null;
-        resolvedUnitTurnId = String(vr.unit_turn_id || "").trim();
-        enrichedFromV2 = true;
-      }
-    } catch (_enrichErr) {
-      // Non-fatal: proceed with whatever was supplied
-    }
+    const lookup = await resolveWorkOrderDbUuid(woId, resolvedUuid);
+    resolvedUuid = lookup.uuid;
+    if (!resolvedStatus) resolvedStatus = lookup.status;
+    if (!resolvedCreated) resolvedCreated = lookup.createdAt;
+    resolvedUnitTurnId = lookup.unitTurnId;
+    resolvedFromLookup = !!lookup.uuid;
   }
 
   // If we resolved a unit_turn_id from v2, store it on the tracker row so
@@ -734,7 +825,7 @@ export async function handleUnitTurnWorkOrderLink(req: Request): Promise<any> {
     wo_id: woId,
     wo_db_uuid: resolvedUuid,
     unit_turn_id: resolvedUnitTurnId,
-    enriched_from_v2: enrichedFromV2,
+    resolved_from_lookup: resolvedFromLookup,
   };
 }
 

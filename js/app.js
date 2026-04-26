@@ -7317,16 +7317,17 @@ function applyLocalBillFilters(filterOpts) {
   filterOpts = filterOpts || {};
   if (__CACHED_BILLS.length === 0) return []; // No cache yet
   
-  var groupToFilterBy = filterOpts.groupId || '';
+  var groupToFilterBy = String(filterOpts.groupId || '').trim();
+  var groupNameToFilterBy = String(filterOpts.groupName || '').trim();
   var statusToFilterBy = filterOpts.status || '';
   var searchText = (filterOpts.search || '').toLowerCase();
+  var hasGroupMaps = !!(Object.keys(_nameToGroups || {}).length || Object.keys(_uuidToGroups || {}).length || Object.keys(_idToGroups || {}).length);
   
   return __CACHED_BILLS.filter(function(b) {
     // Filter by property group if specified
-    if (groupToFilterBy) {
-      var billPropId = String(b.propertyId || b.property_id || '').trim();
-      var billGroupId = __PROPERTY_TO_GROUP_MAP[billPropId];
-      if (billGroupId !== groupToFilterBy) return false;
+    if (groupToFilterBy || groupNameToFilterBy) {
+      var effectiveGroupName = groupNameToFilterBy || groupToFilterBy;
+      if (!billMatchesGroupScope(b, effectiveGroupName, groupToFilterBy, hasGroupMaps)) return false;
     }
     
     // Filter by status if specified
@@ -7460,7 +7461,7 @@ async function loadBillingPage(opts) {
     // Use cached bills with client-side group filtering
     var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
     var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
-    var filteredBills = applyLocalBillFilters({ groupId: groupUuid || grp });
+    var filteredBills = applyLocalBillFilters({ groupId: groupUuid, groupName: grp });
     
     _billingServerTotal = filteredBills.length;
     _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
@@ -8027,7 +8028,7 @@ function wireBillingFilters() {
     if (__CACHED_BILLS.length > 0) {
       var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
       var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
-      var filteredBills = applyLocalBillFilters({ groupId: groupUuid || grp });
+      var filteredBills = applyLocalBillFilters({ groupId: groupUuid, groupName: grp });
       _billingServerTotal = filteredBills.length;
       _billingServerTotalPages = Math.max(1, Math.ceil(_billingServerTotal / BILLS_PAGE_SIZE));
       _billingServerPage = 1;
