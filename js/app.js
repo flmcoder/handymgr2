@@ -1191,15 +1191,88 @@ function isTabAllowedForRole(tabName) {
   return true;
 }
 
+var _subtabDockCurrent = null;
+var _subtabDockInitialized = false;
+
+function initSubtabDock() {
+  if (_subtabDockInitialized) return;
+  _subtabDockInitialized = true;
+  document.querySelectorAll('.section .section-subtabs, .section .wo-subtabs, .section .subtabs').forEach(function(el) {
+    if (!el.__dockPlaceholder) {
+      var marker = document.createComment('subtab-dock-marker');
+      el.parentNode.insertBefore(marker, el);
+      el.__dockPlaceholder = marker;
+      var section = el.closest('.section');
+      el.__dockSectionId = section ? section.id : '';
+    }
+  });
+}
+
+function undockSubtab(el) {
+  if (!el || !el.__dockPlaceholder || !el.__dockPlaceholder.parentNode) return;
+  el.__dockPlaceholder.parentNode.insertBefore(el, el.__dockPlaceholder.nextSibling);
+}
+
+function syncSubtabDock() {
+  initSubtabDock();
+  var dock = document.getElementById('subtabDock');
+  var dockBody = document.getElementById('subtabDockBody');
+  var dockLabel = document.getElementById('subtabDockLabel');
+  if (!dock || !dockBody) return;
+
+  var activeSection = document.querySelector('.section.active');
+  var candidate = null;
+  if (activeSection) {
+    candidate = activeSection.querySelector('.section-subtabs, .wo-subtabs, .subtabs');
+    if (!candidate && _subtabDockCurrent && _subtabDockCurrent.__dockSectionId === activeSection.id) {
+      candidate = _subtabDockCurrent;
+    }
+  }
+
+  if (_subtabDockCurrent && _subtabDockCurrent !== candidate) {
+    undockSubtab(_subtabDockCurrent);
+    _subtabDockCurrent.classList.remove('dock-mounted');
+    _subtabDockCurrent = null;
+  }
+
+  if (!candidate) {
+    dock.style.display = 'none';
+    dockBody.innerHTML = '';
+    return;
+  }
+
+  // Set label from the active nav tab text (strip badge numbers)
+  if (dockLabel) {
+    var activeTab = document.querySelector('.nav-tab.active');
+    var labelText = activeTab ? (activeTab.textContent || '').trim().replace(/\s+[\d—]+$/, '').trim() : '';
+    dockLabel.textContent = labelText || '';
+  }
+
+  dock.style.display = '';
+  candidate.classList.add('dock-mounted');
+  dockBody.innerHTML = '';
+  dockBody.appendChild(candidate);
+  _subtabDockCurrent = candidate;
+}
+
 function forceActiveTab(tabName) {
-  $$('.nav-tab').forEach(function(t) {
-    t.classList.toggle('active', t.getAttribute('data-tab') === tabName);
-  });
-  $$('.section').forEach(function(s) {
-    s.classList.toggle('active', s.id === 'sec-' + tabName);
-  });
-  setMobileNavLabelFromActiveTab();
-  closeMobileNav();
+  var targetTab = document.querySelector('.nav-tab[data-tab="' + tabName + '"]');
+  if (targetTab) {
+    // 1. Deselect all tabs
+    document.querySelectorAll('.nav-tab').forEach(function(t){ t.classList.remove('active'); });
+    // 2. Select the target tab
+    targetTab.classList.add('active');
+    // 3. Hide all sections
+    document.querySelectorAll('.section').forEach(function(s){ s.classList.remove('active'); });
+    // 4. Show target section
+    var sec = document.getElementById('sec-' + tabName);
+    if (sec) sec.classList.add('active');
+    
+    // 5. Fire navigation cleanup and subtab docking
+    setMobileNavLabelFromActiveTab();
+    closeMobileNav();
+    syncSubtabDock();
+  }
 }
 
 function isMobileViewport() {
@@ -1249,7 +1322,6 @@ function wipeCredentials() {
   _pmScopeEmail = '';
   closeMobileNav();
 }
-
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
 var AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 var _sessionExpiryHandled = false;
