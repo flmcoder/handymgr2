@@ -80,135 +80,202 @@
   </div>
 </div>
 
-<!-- ==================== APPLICATION SHELL ==================== -->
 <div id="appShell">
 
-<!-- Top Bar -->
-<div class="topbar">
-  <div class="topbar-left">
-    <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
-    <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.6.9</span></div>
-    <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
-    <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
-  </div>
-  <div class="topbar-right">
-    <button class="mobile-nav-toggle" id="mobileNavToggle" title="Open menu" aria-label="Open navigation menu" aria-expanded="false">
-      <i class="fas fa-bars"></i>
-    </button>
-    <button class="theme-toggle-btn" id="appSettingsBtn" title="App settings" aria-label="App settings"><i class="fas fa-cog"></i></button>
-    <button class="theme-toggle-btn" id="themeToggle" title="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
-    <div class="cache-badge live" id="cacheBadge" title="Data source"><i class="fas fa-database"></i> <span id="cacheBadgeText">—</span></div>
-    <div class="sync-timestamp" id="syncTimestamp"></div>
-    <button class="refresh-btn" id="refreshBtn" title="Refresh all data from API"><i class="fas fa-sync-alt"></i> Refresh</button>
-    <div class="rate-badge" id="rateBadge">4/4 req/s</div>
-    <button class="lock-btn" id="lockBtn"><i class="fas fa-lock"></i> Lock</button>
-    <input type="file" id="cacheFileInput" accept=".json,.hmc" style="display:none">
-  </div>
-</div>
-
-<!-- Navigation -->
-<div class="mobile-nav-backdrop" id="mobileNavBackdrop"></div>
-<nav class="nav-tabs" id="navTabs">
-  <button class="nav-tab active" data-tab="dashboard"><i class="fas fa-th-large"></i> Dashboard</button>
-  <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="badge" id="woBadge">—</span></button>
-  <button class="nav-tab" data-tab="routing"><i class="fas fa-route"></i> Routing <span class="badge" id="routingBadge" style="display:none">0</span></button>
-  <button class="nav-tab" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
-  <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Billing / AP <span class="badge" id="billingBadge" style="display:none">0</span></button>
-    <button class="nav-tab" data-tab="properties"><i class="fas fa-home"></i> Properties</button>
-  <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
-  <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
-  <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
-  <button class="nav-tab" data-tab="templates"><i class="fas fa-envelope-open-text"></i> Templates</button>
-  <button class="nav-tab" data-tab="dispatch">⚡ Dispatch <span class="badge-dispatch" id="dispatchBadge" style="display:none">0</span></button>
-  <button class="nav-tab" data-tab="dbadmin"><i class="fas fa-database"></i> Database</button>
-  <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
-</nav>
-
-<!-- Global Property Group Filter Bar -->
-<div class="global-filter-bar" id="globalFilterBar">
-  <i class="fas fa-layer-group gf-icon"></i>
-  <span>Group:</span>
-  <select id="globalGroupFilter"><option value="">All Properties</option></select>
-  <span id="globalGroupActive" style="display:none" class="gf-active">
-    <span id="globalGroupName"></span>
-    <button class="gf-clear" id="globalGroupClear" title="Clear filter">&times;</button>
-  </span>
-  <button class="gf-load-btn" id="btnGlobalLoadGroups" title="Refresh property groups from API"><i class="fas fa-sync-alt"></i> Reload Groups</button>
-</div>
-
-<!-- Main Content -->
-<div class="main-content">
-
-<!-- CORS Banner — collapsible -->
-<div class="cors-banner" id="corsBanner">
-  <div class="cors-banner-header" id="corsBannerToggle" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
-    <span><strong><i class="fas fa-exclamation-triangle"></i> Connection Error</strong> — <span id="corsMsg" style="font-weight:normal;font-size:12px">The request was blocked.</span></span>
-    <i class="fas fa-chevron-down cors-toggle-icon" style="font-size:10px;transition:transform 0.2s"></i>
-  </div>
-  <div class="cors-banner-body" id="corsBannerBody" style="display:none;margin-top:10px;font-size:12px;">
-    <strong>How to fix:</strong><br>
-    <strong style="color:var(--accent)">A) CSP Blocked?</strong> Click <strong>"Allow additional resources"</strong> popup at top of page.<br>
-    <strong style="color:var(--accent)">B) 401/404?</strong> Redeploy proxy with correct credentials.<br>
-    <span id="corsDetail" style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);display:block;margin-top:6px"></span>
-  </div>
-</div>
-
-<section class="section active" id="sec-dashboard">
-  <div id="filterIndicator" style="display:none"></div>
-  <div class="kpi-grid stagger">
-    <div class="kpi-card amber kpi-clickable" data-kpi="open"><div class="kpi-label">Open Work Orders</div><div class="kpi-value" id="kpiOpen">—</div><div class="kpi-sub" id="kpiOpenSub">Loading…</div></div>
-    <div class="kpi-card red kpi-clickable" data-kpi="urgent"><div class="kpi-label">Urgent / Critical</div><div class="kpi-value" id="kpiUrgent">—</div><div class="kpi-sub" id="kpiUrgentSub">Loading…</div></div>
-    <div class="kpi-card blue kpi-clickable" data-kpi="turns"><div class="kpi-label">Active Turns</div><div class="kpi-value" id="kpiTurns">—</div><div class="kpi-sub" id="kpiTurnsSub">Loading…</div></div>
-    <div class="kpi-card green kpi-clickable" data-kpi="moveouts"><div class="kpi-label">Upcoming Move-Outs</div><div class="kpi-value" id="kpiMoveOuts">—</div><div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div></div>
-    <div class="kpi-card purple kpi-clickable" data-kpi="flagged"><div class="kpi-label">Flagged for Follow-Up</div><div class="kpi-value" id="kpiFlagged">—</div><div class="kpi-sub" id="kpiFlaggedSub">Loading…</div></div>
-    <div class="kpi-card amber"><div class="kpi-label">Pending Bill Approvals</div><div class="kpi-value" id="kpiPendingBills">—</div><div class="kpi-sub" id="kpiPendingBillsSub">Loading…</div></div>
-  </div>
-
-  <div class="table-wrapper" style="margin-bottom:20px" id="managerOverviewSection">
-    <div class="table-header">
-      <div class="table-title"><i class="fas fa-chart-line" style="color:var(--info)"></i> Handy Manager - Fort Lowell Realty & Property Management</div>
-    </div>
-    <div class="kpi-grid" style="padding:12px 12px 16px">
-      <div class="kpi-card red"><div class="kpi-label">Avg Turnover Completion</div><div class="kpi-value" id="kpiMgrAvgTurnCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div></div>
-      <div class="kpi-card amber"><div class="kpi-label">Avg Days Since Inspection</div><div class="kpi-value" id="kpiMgrAvgInspectionAge">—</div><div class="kpi-sub" id="kpiMgrAvgInspectionAgeSub">Loading…</div></div>
-      <div class="kpi-card blue"><div class="kpi-label">Avg WO Open Days</div><div class="kpi-value" id="kpiMgrAvgWOCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgWOCompletionSub">Loading…</div></div>
-      <div class="kpi-card green"><div class="kpi-label">Recent Completed Turns</div><div class="kpi-value" id="kpiMgrCompletedTurns">—</div><div class="kpi-sub" id="kpiMgrCompletedTurnsSub">Loading…</div></div>
-      <div class="kpi-card purple" id="kpiVacancyCard"><div class="kpi-label">Vacancies by Group</div><div class="kpi-value" id="kpiVacancyGroups">—</div><div class="kpi-sub" id="kpiVacancyGroupsSub">Loading…</div></div>
-    </div>
-  </div>
-
-  <div class="table-wrapper" style="margin-bottom:20px" id="turnDashboardSection">
-    <div class="table-header">
+  <nav class="sidebar" id="navTabs">
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-icon"><img src="assets/logo.png" alt="Logo" width="24"></div>
       <div>
-        <div class="table-title"><i class="fas fa-film" style="color:var(--accent)"></i> Turn Progress Dashboard</div>
-        <div class="section-subtitle">Click any card to jump to the turn board for more details.</div>
-      </div>
-      <div class="turn-dash-controls">
-        <select id="dashTurnPmFilter" class="form-select" style="font-size:12px;padding:5px 10px;min-width:150px;font-family:var(--font-mono)">
-          <option value="">All PMs</option>
-        </select>
-        <select id="dashTurnViewMode" class="form-select" style="font-size:12px;padding:5px 10px;min-width:140px;font-family:var(--font-mono)">
-          <option value="cards">Card View</option>
-          <option value="compact">Compact View</option>
-        </select>
-        <button class="action-btn" id="dashTurnSync" type="button"><i class="fas fa-bolt"></i> Sync</button>
-        <span id="dashTurnSyncAgo" style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Never synced</span>
-        <button class="action-btn" id="dashTvMode" type="button"><i class="fas fa-tv"></i> TV Mode</button>
-        <button class="action-btn" id="dashTurnPrev" type="button"><i class="fas fa-chevron-left"></i></button>
-        <div class="turn-dash-page-label" id="dashTurnPageLabel">1 / 1</div>
-        <button class="action-btn" id="dashTurnNext" type="button"><i class="fas fa-chevron-right"></i></button>
+        <div class="sidebar-brand-text">HandyManager</div>
+        <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.6.9</div>
       </div>
     </div>
-    <div class="turn-dash-ticker" id="dashTurnTicker" style="display:none">
-      <div class="turn-dash-ticker-track" id="dashTurnTickerTrack"></div>
-    </div>
-    <div class="turn-dash-summary" id="dashTurnSummary">Loading active turns…</div>
-    <div class="turn-dash-strip-wrap">
-      <div class="turn-dash-strip" id="dashTurnStrip"></div>
-    </div>
-  </div>
 
+    <div class="sidebar-nav-body">
+      <div class="nav-section">
+        <div class="nav-section-label">Overview</div>
+        <button class="nav-tab active" data-tab="dashboard"><i class="fas fa-th-large"></i> Dashboard</button>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-label">Operations</div>
+        <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="nav-badge" id="woBadge">—</span></button>
+        <button class="nav-tab" data-tab="routing"><i class="fas fa-route"></i> Routing <span class="nav-badge" id="routingBadge" style="display:none">0</span></button>
+        <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="nav-badge" id="turnBadge">—</span></button>
+        <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="nav-badge" id="inspBadge">—</span></button>
+        <button class="nav-tab" data-tab="dispatch"><i class="fas fa-bolt"></i> Dispatch <span class="nav-badge" id="dispatchBadge" style="display:none">0</span></button>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-label">Financial</div>
+        <button class="nav-tab" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
+        <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Bills <span class="nav-badge" id="billingBadge" style="display:none">0</span></button>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-label">Resources</div>
+        <button class="nav-tab" data-tab="properties"><i class="fas fa-home"></i> Properties</button>
+        <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
+        <button class="nav-tab" data-tab="templates"><i class="fas fa-envelope-open-text"></i> Templates</button>
+      </div>
+      <div class="nav-section nav-section-system">
+        <div class="nav-section-label">System</div>
+        <button class="nav-tab" data-tab="dbadmin"><i class="fas fa-database"></i> Database</button>
+        <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
+      </div>
+
+      <div class="subtab-dock" id="subtabDock" style="display:none">
+        <div class="subtab-dock-label" id="subtabDockLabel"></div>
+        <div class="subtab-dock-inner" id="subtabDockBody"></div>
+      </div>
+    </div>
+  </nav>
+
+  <header class="topbar">
+    <div class="topbar-left">
+      <button class="mobile-hamburger" id="mobileNavToggle"><i class="fas fa-bars"></i></button>
+      <div class="topbar-page-title" id="pageTitle">Dashboard</div>
+      <div class="topbar-status loading" id="apiStatus">
+        <span class="status-dot"></span>
+        <span id="apiStatusText">Connecting…</span>
+      </div>
+      <span class="role-badge" id="roleBadge" style="margin-left:8px"><i class="fas fa-hard-hat"></i> Vendor Only</span>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-cache live" id="cacheBadge" title="Data source"><i class="fas fa-database"></i> <span id="cacheBadgeText">—</span></div>
+      <div class="sync-timestamp" id="syncTimestamp" style="display:none"></div>
+      <div class="rate-badge" id="rateBadge" style="display:none">4/4 req/s</div>
+      <button class="refresh-btn" id="refreshBtn" title="Refresh all data from API"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <button class="topbar-btn" id="themeToggle" title="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
+      <button class="topbar-btn" id="appSettingsBtn" title="App settings"><i class="fas fa-cog"></i></button>
+      <button class="lock-btn" id="lockBtn"><i class="fas fa-lock"></i> Lock</button>
+      <input type="file" id="cacheFileInput" accept=".json,.hmc" style="display:none">
+    </div>
+  </header>
+
+  <div class="mobile-nav-overlay" id="mobileNavBackdrop"></div>
+
+  <main class="main-content">
+
+    <div class="filter-bar" id="globalFilterBar">
+      <i class="fas fa-layer-group filter-bar-icon"></i>
+      <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">Group:</span>
+      <select id="globalGroupFilter"><option value="">All Properties</option></select>
+      <span id="globalGroupActive" style="display:none" class="gf-active">
+        <span id="globalGroupName"></span>
+        <button class="action-btn" id="globalGroupClear" title="Clear filter" style="margin-left:6px;height:24px;padding:0 6px">&times;</button>
+      </span>
+      <button class="action-btn" id="btnGlobalLoadGroups" title="Refresh property groups from API" style="margin-left:auto"><i class="fas fa-sync-alt"></i> Reload Groups</button>
+    </div>
+
+    <div class="cors-banner" id="corsBanner" style="display:none;background:var(--error-bg);border:1px solid var(--error-border);border-radius:var(--radius);padding:12px;margin-bottom:20px">
+      <div class="cors-banner-header" id="corsBannerToggle" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+        <span style="color:var(--error-text)"><strong><i class="fas fa-exclamation-triangle"></i> Connection Error</strong> — <span id="corsMsg" style="font-weight:normal;font-size:12px">The request was blocked.</span></span>
+        <i class="fas fa-chevron-down cors-toggle-icon" style="color:var(--error-text);font-size:10px;transition:transform 0.2s"></i>
+      </div>
+      <div class="cors-banner-body" id="corsBannerBody" style="display:none;margin-top:10px;font-size:12px;color:var(--error-text)">
+        <strong>How to fix:</strong><br>
+        <strong>A) CSP Blocked?</strong> Click <strong>"Allow additional resources"</strong> popup at top of page.<br>
+        <strong>B) 401/404?</strong> Redeploy proxy with correct credentials.<br>
+        <span id="corsDetail" style="font-family:var(--font-mono);font-size:10px;display:block;margin-top:6px;opacity:0.8"></span>
+      </div>
+    </div>
+
+    <section class="section active" id="sec-dashboard">
+      <div id="filterIndicator" style="display:none"></div>
+
+      <div class="kpi-grid stagger">
+        <div class="kpi-card amber kpi-clickable" data-kpi="open">
+          <div class="kpi-label">Open Work Orders</div>
+          <div class="kpi-value" id="kpiOpen">—</div>
+          <div class="kpi-sub" id="kpiOpenSub">Loading…</div>
+        </div>
+        <div class="kpi-card red kpi-clickable" data-kpi="urgent">
+          <div class="kpi-label">Urgent / Critical</div>
+          <div class="kpi-value" id="kpiUrgent">—</div>
+          <div class="kpi-sub" id="kpiUrgentSub">Loading…</div>
+        </div>
+        <div class="kpi-card blue kpi-clickable" data-kpi="turns">
+          <div class="kpi-label">Active Turns</div>
+          <div class="kpi-value" id="kpiTurns">—</div>
+          <div class="kpi-sub" id="kpiTurnsSub">Loading…</div>
+        </div>
+        <div class="kpi-card green kpi-clickable" data-kpi="moveouts">
+          <div class="kpi-label">Upcoming Move-Outs</div>
+          <div class="kpi-value" id="kpiMoveOuts">—</div>
+          <div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div>
+        </div>
+        <div class="kpi-card purple kpi-clickable" data-kpi="flagged">
+          <div class="kpi-label">Flagged Follow-Up</div>
+          <div class="kpi-value" id="kpiFlagged">—</div>
+          <div class="kpi-sub" id="kpiFlaggedSub">Loading…</div>
+        </div>
+        <div class="kpi-card accent">
+          <div class="kpi-label">Pending Bills</div>
+          <div class="kpi-value" id="kpiPendingBills">—</div>
+          <div class="kpi-sub" id="kpiPendingBillsSub">Loading…</div>
+        </div>
+      </div>
+
+      <div class="section-card" id="managerOverviewSection">
+        <div class="section-card-header">
+          <div class="section-card-title"><i class="fas fa-chart-line" style="color:var(--info)"></i> Handy Manager - Fort Lowell Realty</div>
+        </div>
+        <div class="kpi-grid stagger" style="padding:16px;">
+          <div class="kpi-card red">
+            <div class="kpi-label">Avg Turn Completion</div>
+            <div class="kpi-value" id="kpiMgrAvgTurnCompletion">—</div>
+            <div class="kpi-sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div>
+          </div>
+          <div class="kpi-card amber">
+            <div class="kpi-label">Avg Inspection Age</div>
+            <div class="kpi-value" id="kpiMgrAvgInspectionAge">—</div>
+            <div class="kpi-sub" id="kpiMgrAvgInspectionAgeSub">Loading…</div>
+          </div>
+          <div class="kpi-card blue">
+            <div class="kpi-label">Avg WO Open Days</div>
+            <div class="kpi-value" id="kpiMgrAvgWOCompletion">—</div>
+            <div class="kpi-sub" id="kpiMgrAvgWOCompletionSub">Loading…</div>
+          </div>
+          <div class="kpi-card green">
+            <div class="kpi-label">Completed Turns</div>
+            <div class="kpi-value" id="kpiMgrCompletedTurns">—</div>
+            <div class="kpi-sub" id="kpiMgrCompletedTurnsSub">Loading…</div>
+          </div>
+          <div class="kpi-card purple" id="kpiVacancyCard">
+            <div class="kpi-label">Vacancies by Group</div>
+            <div class="kpi-value" id="kpiVacancyGroups">—</div>
+            <div class="kpi-sub" id="kpiVacancyGroupsSub">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-card" id="turnDashboardSection">
+        <div class="section-card-header">
+          <div>
+            <div class="section-card-title"><i class="fas fa-film" style="color:var(--accent)"></i> Turn Progress Dashboard</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Click any card to jump to the turn board for more details.</div>
+          </div>
+          <div class="section-card-actions">
+            <select id="dashTurnPmFilter" style="height:32px;padding:0 28px 0 10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-inset);color:var(--text-primary);font-family:var(--font-mono);font-size:12px;cursor:pointer;-webkit-appearance:none;appearance:none;background-image:url('data:image/svg+xml,%3Csvg width=%2710%27 height=%276%27 viewBox=%270 0 10 6%27 fill=%27none%27 xmlns=%27http://www.w3.org/2000/svg%27%3E%3Cpath d=%27M1 1l4 4 4-4%27 stroke=%27%239399a8%27 stroke-width=%271.5%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 8px center;min-width:140px;">
+              <option value="">All PMs</option>
+            </select>
+            <select id="dashTurnViewMode" style="height:32px;padding:0 28px 0 10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-inset);color:var(--text-primary);font-family:var(--font-mono);font-size:12px;cursor:pointer;-webkit-appearance:none;appearance:none;background-image:url('data:image/svg+xml,%3Csvg width=%2710%27 height=%276%27 viewBox=%270 0 10 6%27 fill=%27none%27 xmlns=%27http://www.w3.org/2000/svg%27%3E%3Cpath d=%27M1 1l4 4 4-4%27 stroke=%27%239399a8%27 stroke-width=%271.5%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 8px center;min-width:130px;">
+              <option value="cards">Card View</option>
+              <option value="compact">Compact View</option>
+            </select>
+            <button class="action-btn" id="dashTurnSync" type="button"><i class="fas fa-bolt"></i> Sync</button>
+            <span id="dashTurnSyncAgo" style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);display:none">Never synced</span>
+            <button class="action-btn" id="dashTvMode" type="button"><i class="fas fa-tv"></i> TV Mode</button>
+            <button class="action-btn" id="dashTurnPrev" type="button"><i class="fas fa-chevron-left"></i></button>
+            <div style="font-family:var(--font-mono);font-size:12px;font-weight:700" id="dashTurnPageLabel">1 / 1</div>
+            <button class="action-btn" id="dashTurnNext" type="button"><i class="fas fa-chevron-right"></i></button>
+          </div>
+        </div>
+        <div class="turn-dash-ticker" id="dashTurnTicker" style="display:none;padding:8px 16px;background:var(--bg-inset);border-bottom:1px solid var(--border-subtle)">
+          <div class="turn-dash-ticker-track" id="dashTurnTickerTrack"></div>
+        </div>
+        <div class="turn-dash-summary" id="dashTurnSummary" style="padding:12px 20px;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--border-subtle)">Loading active turns…</div>
+        <div class="turn-card-strip" id="dashTurnStrip" style="padding:16px;"></div>
+      </div>
+      
   <!-- Attention Required — Stalled Turns + Overdue Inspections + Vendor Alerts -->
   <div class="table-wrapper" style="margin-bottom:20px" id="attentionSection">
     <div class="table-header">
