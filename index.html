@@ -6,15 +6,16 @@
 <meta name="theme-color" content="#3578e5">
 <title>HandyManager - An AppFolio Utility</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700;800&family=Karla:wght@400;500;600;700&family=Inconsolata:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=Karla:wght@400;500;600;700&family=Inconsolata:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-<link rel="stylesheet" href="css/app.css"> 
-<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
 </head>
 <body>
+
 <!-- ==================== VAULT UNLOCK SCREEN ==================== -->
 <div id="vaultScreen">
   <div class="vault-box">
+    <button class="vault-config-btn vault-theme-btn" id="vaultThemeToggle" type="button" title="Toggle light/dark mode" aria-label="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
     <button class="vault-config-btn" id="advancedToggle" type="button" title="Proxy settings" aria-label="Proxy settings"><i class="fas fa-cog"></i></button>
     <div class="vault-panel" id="vaultMainPanel">
       <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
@@ -80,202 +81,168 @@
   </div>
 </div>
 
+<!-- ==================== APPLICATION SHELL ==================== -->
 <div id="appShell">
 
-  <nav class="sidebar" id="navTabs">
-    <div class="sidebar-brand">
-      <div class="sidebar-brand-icon"><img src="assets/logo.png" alt="Logo" width="24"></div>
+<!-- Top Bar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
+    <div class="topbar-divider"></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.6.9</span></div>
+    <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
+    <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
+  </div>
+  <div class="topbar-right">
+    <button class="mobile-nav-toggle" id="mobileNavToggle" title="Open menu" aria-label="Open navigation menu" aria-expanded="false">
+      <i class="fas fa-bars"></i>
+    </button>
+    <button class="theme-toggle-btn" id="appSettingsBtn" title="App settings" aria-label="App settings"><i class="fas fa-cog"></i></button>
+    <button class="theme-toggle-btn" id="themeToggle" title="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
+    <div class="cache-badge live" id="cacheBadge" title="Data source"><i class="fas fa-database"></i> <span id="cacheBadgeText">—</span></div>
+    <div class="sync-timestamp" id="syncTimestamp"></div>
+    <button class="refresh-btn" id="refreshBtn" title="Refresh all data from API"><i class="fas fa-sync-alt"></i> Refresh</button>
+    <div class="rate-badge" id="rateBadge">4/4 req/s</div>
+    <button class="lock-btn" id="lockBtn"><i class="fas fa-lock"></i> Lock</button>
+    <input type="file" id="cacheFileInput" accept=".json,.hmc" style="display:none">
+  </div>
+</div>
+
+<!-- Navigation -->
+<div class="mobile-nav-backdrop" id="mobileNavBackdrop"></div>
+<nav class="nav-tabs" id="navTabs">
+  <!-- Sidebar Brand -->
+  <div class="sidebar-brand">
+    <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
+    <div>
+      <div class="sidebar-brand-text">HandyMgr</div>
+      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.6.9</div>
+    </div>
+  </div>
+
+  <!-- Scrollable nav body -->
+  <div class="sidebar-nav-body">
+    <div class="nav-section">
+      <div class="nav-section-label">Overview</div>
+      <button class="nav-tab active" data-tab="dashboard"><i class="fas fa-th-large"></i> Dashboard</button>
+    </div>
+    <div class="nav-section">
+      <div class="nav-section-label">Operations</div>
+      <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="badge" id="woBadge">—</span></button>
+      <button class="nav-tab" data-tab="routing"><i class="fas fa-route"></i> Routing <span class="badge" id="routingBadge" style="display:none">0</span></button>
+      <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
+      <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
+      <button class="nav-tab" data-tab="dispatch"><i class="fas fa-bolt"></i> Dispatch <span class="badge-dispatch" id="dispatchBadge" style="display:none">0</span></button>
+    </div>
+    <div class="nav-section">
+      <div class="nav-section-label">Financial</div>
+      <button class="nav-tab" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
+      <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Bills <span class="badge" id="billingBadge" style="display:none">0</span></button>
+    </div>
+    <div class="nav-section">
+      <div class="nav-section-label">Resources</div>
+      <button class="nav-tab" data-tab="properties"><i class="fas fa-home"></i> Properties</button>
+      <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
+      <button class="nav-tab" data-tab="templates"><i class="fas fa-envelope-open-text"></i> Templates</button>
+    </div>
+    <div class="nav-section nav-section-system">
+      <div class="nav-section-label">System</div>
+      <button class="nav-tab" data-tab="dbadmin"><i class="fas fa-database"></i> Database</button>
+      <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
+    </div>
+
+    <!-- Subtab dock — lives here, populated by syncSubtabDock() -->
+    <div class="subtab-dock" id="subtabDock" style="display:none">
+      <div class="subtab-dock-label" id="subtabDockLabel"></div>
+      <div class="subtab-dock-inner" id="subtabDockBody"></div>
+    </div>
+  </div><!-- /sidebar-nav-body -->
+</nav>
+
+<!-- Global Property Group Filter Bar -->
+<div class="global-filter-bar" id="globalFilterBar">
+  <i class="fas fa-layer-group gf-icon"></i>
+  <span>Group:</span>
+  <select id="globalGroupFilter"><option value="">All Properties</option></select>
+  <span id="globalGroupActive" style="display:none" class="gf-active">
+    <span id="globalGroupName"></span>
+    <button class="gf-clear" id="globalGroupClear" title="Clear filter">&times;</button>
+  </span>
+  <button class="gf-load-btn" id="btnGlobalLoadGroups" title="Refresh property groups from API"><i class="fas fa-sync-alt"></i> Reload Groups</button>
+</div>
+
+<!-- Main Content -->
+<div class="main-content">
+
+<!-- CORS Banner — collapsible -->
+<div class="cors-banner" id="corsBanner">
+  <div class="cors-banner-header" id="corsBannerToggle" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+    <span><strong><i class="fas fa-exclamation-triangle"></i> Connection Error</strong> — <span id="corsMsg" style="font-weight:normal;font-size:12px">The request was blocked.</span></span>
+    <i class="fas fa-chevron-down cors-toggle-icon" style="font-size:10px;transition:transform 0.2s"></i>
+  </div>
+  <div class="cors-banner-body" id="corsBannerBody" style="display:none;margin-top:10px;font-size:12px;">
+    <strong>How to fix:</strong><br>
+    <strong style="color:var(--accent)">A) CSP Blocked?</strong> Click <strong>"Allow additional resources"</strong> popup at top of page.<br>
+    <strong style="color:var(--accent)">B) 401/404?</strong> Redeploy proxy with correct credentials.<br>
+    <span id="corsDetail" style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);display:block;margin-top:6px"></span>
+  </div>
+</div>
+
+<section class="section active" id="sec-dashboard">
+  <div id="filterIndicator" style="display:none"></div>
+  <div class="kpi-grid stagger">
+    <div class="kpi-card amber kpi-clickable" data-kpi="open"><div class="kpi-label">Open Work Orders</div><div class="kpi-value" id="kpiOpen">—</div><div class="kpi-sub" id="kpiOpenSub">Loading…</div></div>
+    <div class="kpi-card red kpi-clickable" data-kpi="urgent"><div class="kpi-label">Urgent / Critical</div><div class="kpi-value" id="kpiUrgent">—</div><div class="kpi-sub" id="kpiUrgentSub">Loading…</div></div>
+    <div class="kpi-card blue kpi-clickable" data-kpi="turns"><div class="kpi-label">Active Turns</div><div class="kpi-value" id="kpiTurns">—</div><div class="kpi-sub" id="kpiTurnsSub">Loading…</div></div>
+    <div class="kpi-card green kpi-clickable" data-kpi="moveouts"><div class="kpi-label">Upcoming Move-Outs</div><div class="kpi-value" id="kpiMoveOuts">—</div><div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div></div>
+    <div class="kpi-card purple kpi-clickable" data-kpi="flagged"><div class="kpi-label">Flagged for Follow-Up</div><div class="kpi-value" id="kpiFlagged">—</div><div class="kpi-sub" id="kpiFlaggedSub">Loading…</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">Pending Bill Approvals</div><div class="kpi-value" id="kpiPendingBills">—</div><div class="kpi-sub" id="kpiPendingBillsSub">Loading…</div></div>
+  </div>
+
+  <div class="table-wrapper" style="margin-bottom:20px" id="managerOverviewSection">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-chart-line" style="color:var(--info)"></i> Handy Manager - Fort Lowell Realty & Property Management</div>
+    </div>
+    <div class="kpi-grid" style="padding:12px 12px 16px">
+      <div class="kpi-card red"><div class="kpi-label">Avg Turnover Completion</div><div class="kpi-value" id="kpiMgrAvgTurnCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div></div>
+      <div class="kpi-card amber"><div class="kpi-label">Avg Days Since Inspection</div><div class="kpi-value" id="kpiMgrAvgInspectionAge">—</div><div class="kpi-sub" id="kpiMgrAvgInspectionAgeSub">Loading…</div></div>
+      <div class="kpi-card blue"><div class="kpi-label">Avg WO Open Days</div><div class="kpi-value" id="kpiMgrAvgWOCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgWOCompletionSub">Loading…</div></div>
+      <div class="kpi-card green"><div class="kpi-label">Recent Completed Turns</div><div class="kpi-value" id="kpiMgrCompletedTurns">—</div><div class="kpi-sub" id="kpiMgrCompletedTurnsSub">Loading…</div></div>
+      <div class="kpi-card purple" id="kpiVacancyCard"><div class="kpi-label">Vacancies by Group</div><div class="kpi-value" id="kpiVacancyGroups">—</div><div class="kpi-sub" id="kpiVacancyGroupsSub">Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="table-wrapper" style="margin-bottom:20px" id="turnDashboardSection">
+    <div class="table-header">
       <div>
-        <div class="sidebar-brand-text">HandyManager</div>
-        <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.6.9</div>
+        <div class="table-title"><i class="fas fa-film" style="color:var(--accent)"></i> Turn Progress Dashboard</div>
+        <div class="section-subtitle">Click any card to jump to the turn board for more details.</div>
+      </div>
+      <div class="turn-dash-controls">
+        <select id="dashTurnPmFilter" class="form-select" style="font-size:12px;padding:5px 10px;min-width:150px;font-family:var(--font-mono)">
+          <option value="">All PMs</option>
+        </select>
+        <select id="dashTurnViewMode" class="form-select" style="font-size:12px;padding:5px 10px;min-width:140px;font-family:var(--font-mono)">
+          <option value="cards">Card View</option>
+          <option value="compact">Compact View</option>
+        </select>
+        <button class="action-btn" id="dashTurnSync" type="button"><i class="fas fa-bolt"></i> Sync</button>
+        <span id="dashTurnSyncAgo" style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Never synced</span>
+        <button class="action-btn" id="dashTvMode" type="button"><i class="fas fa-tv"></i> TV Mode</button>
+        <button class="action-btn" id="dashTurnPrev" type="button"><i class="fas fa-chevron-left"></i></button>
+        <div class="turn-dash-page-label" id="dashTurnPageLabel">1 / 1</div>
+        <button class="action-btn" id="dashTurnNext" type="button"><i class="fas fa-chevron-right"></i></button>
       </div>
     </div>
-
-    <div class="sidebar-nav-body">
-      <div class="nav-section">
-        <div class="nav-section-label">Overview</div>
-        <button class="nav-tab active" data-tab="dashboard"><i class="fas fa-th-large"></i> Dashboard</button>
-      </div>
-      <div class="nav-section">
-        <div class="nav-section-label">Operations</div>
-        <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="nav-badge" id="woBadge">—</span></button>
-        <button class="nav-tab" data-tab="routing"><i class="fas fa-route"></i> Routing <span class="nav-badge" id="routingBadge" style="display:none">0</span></button>
-        <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="nav-badge" id="turnBadge">—</span></button>
-        <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="nav-badge" id="inspBadge">—</span></button>
-        <button class="nav-tab" data-tab="dispatch"><i class="fas fa-bolt"></i> Dispatch <span class="nav-badge" id="dispatchBadge" style="display:none">0</span></button>
-      </div>
-      <div class="nav-section">
-        <div class="nav-section-label">Financial</div>
-        <button class="nav-tab" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
-        <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Bills <span class="nav-badge" id="billingBadge" style="display:none">0</span></button>
-      </div>
-      <div class="nav-section">
-        <div class="nav-section-label">Resources</div>
-        <button class="nav-tab" data-tab="properties"><i class="fas fa-home"></i> Properties</button>
-        <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
-        <button class="nav-tab" data-tab="templates"><i class="fas fa-envelope-open-text"></i> Templates</button>
-      </div>
-      <div class="nav-section nav-section-system">
-        <div class="nav-section-label">System</div>
-        <button class="nav-tab" data-tab="dbadmin"><i class="fas fa-database"></i> Database</button>
-        <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
-      </div>
-
-      <div class="subtab-dock" id="subtabDock" style="display:none">
-        <div class="subtab-dock-label" id="subtabDockLabel"></div>
-        <div class="subtab-dock-inner" id="subtabDockBody"></div>
-      </div>
+    <div class="turn-dash-ticker" id="dashTurnTicker" style="display:none">
+      <div class="turn-dash-ticker-track" id="dashTurnTickerTrack"></div>
     </div>
-  </nav>
-
-  <header class="topbar">
-    <div class="topbar-left">
-      <button class="mobile-hamburger" id="mobileNavToggle"><i class="fas fa-bars"></i></button>
-      <div class="topbar-page-title" id="pageTitle">Dashboard</div>
-      <div class="topbar-status loading" id="apiStatus">
-        <span class="status-dot"></span>
-        <span id="apiStatusText">Connecting…</span>
-      </div>
-      <span class="role-badge" id="roleBadge" style="margin-left:8px"><i class="fas fa-hard-hat"></i> Vendor Only</span>
+    <div class="turn-dash-summary" id="dashTurnSummary">Loading active turns…</div>
+    <div class="turn-dash-strip-wrap">
+      <div class="turn-dash-strip" id="dashTurnStrip"></div>
     </div>
-    <div class="topbar-right">
-      <div class="topbar-cache live" id="cacheBadge" title="Data source"><i class="fas fa-database"></i> <span id="cacheBadgeText">—</span></div>
-      <div class="sync-timestamp" id="syncTimestamp" style="display:none"></div>
-      <div class="rate-badge" id="rateBadge" style="display:none">4/4 req/s</div>
-      <button class="refresh-btn" id="refreshBtn" title="Refresh all data from API"><i class="fas fa-sync-alt"></i> Refresh</button>
-      <button class="topbar-btn" id="themeToggle" title="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
-      <button class="topbar-btn" id="appSettingsBtn" title="App settings"><i class="fas fa-cog"></i></button>
-      <button class="lock-btn" id="lockBtn"><i class="fas fa-lock"></i> Lock</button>
-      <input type="file" id="cacheFileInput" accept=".json,.hmc" style="display:none">
-    </div>
-  </header>
+  </div>
 
-  <div class="mobile-nav-overlay" id="mobileNavBackdrop"></div>
-
-  <main class="main-content">
-
-   <div class="filter-bar" id="globalFilterBar" style="display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius); margin-bottom: 20px; flex-wrap: wrap;">
-      <i class="fas fa-layer-group filter-bar-icon" style="color:var(--text-muted); font-size:13px;"></i>
-      <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">Group:</span>
-      <select id="globalGroupFilter"><option value="">All Properties</option></select>
-      <span id="globalGroupActive" style="display:none" class="gf-active">
-        <span id="globalGroupName"></span>
-        <button class="action-btn" id="globalGroupClear" title="Clear filter" style="margin-left:6px;height:24px;padding:0 6px">&times;</button>
-      </span>
-      <button class="action-btn" id="btnGlobalLoadGroups" title="Refresh property groups from API" style="margin-left:auto"><i class="fas fa-sync-alt"></i> Reload Groups</button>
-    </div>
-
-    <div class="cors-banner" id="corsBanner" style="display:none;background:var(--error-bg);border:1px solid var(--error-border);border-radius:var(--radius);padding:12px;margin-bottom:20px">
-      <div class="cors-banner-header" id="corsBannerToggle" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
-        <span style="color:var(--error-text)"><strong><i class="fas fa-exclamation-triangle"></i> Connection Error</strong> — <span id="corsMsg" style="font-weight:normal;font-size:12px">The request was blocked.</span></span>
-        <i class="fas fa-chevron-down cors-toggle-icon" style="color:var(--error-text);font-size:10px;transition:transform 0.2s"></i>
-      </div>
-      <div class="cors-banner-body" id="corsBannerBody" style="display:none;margin-top:10px;font-size:12px;color:var(--error-text)">
-        <strong>How to fix:</strong><br>
-        <strong>A) CSP Blocked?</strong> Click <strong>"Allow additional resources"</strong> popup at top of page.<br>
-        <strong>B) 401/404?</strong> Redeploy proxy with correct credentials.<br>
-        <span id="corsDetail" style="font-family:var(--font-mono);font-size:10px;display:block;margin-top:6px;opacity:0.8"></span>
-      </div>
-    </div>
-
-    <section class="section active" id="sec-dashboard">
-      <div id="filterIndicator" style="display:none"></div>
-
-      <div class="kpi-grid stagger">
-        <div class="kpi-card amber kpi-clickable" data-kpi="open">
-          <div class="kpi-label">Open Work Orders</div>
-          <div class="kpi-value" id="kpiOpen">—</div>
-          <div class="kpi-sub" id="kpiOpenSub">Loading…</div>
-        </div>
-        <div class="kpi-card red kpi-clickable" data-kpi="urgent">
-          <div class="kpi-label">Urgent / Critical</div>
-          <div class="kpi-value" id="kpiUrgent">—</div>
-          <div class="kpi-sub" id="kpiUrgentSub">Loading…</div>
-        </div>
-        <div class="kpi-card blue kpi-clickable" data-kpi="turns">
-          <div class="kpi-label">Active Turns</div>
-          <div class="kpi-value" id="kpiTurns">—</div>
-          <div class="kpi-sub" id="kpiTurnsSub">Loading…</div>
-        </div>
-        <div class="kpi-card green kpi-clickable" data-kpi="moveouts">
-          <div class="kpi-label">Upcoming Move-Outs</div>
-          <div class="kpi-value" id="kpiMoveOuts">—</div>
-          <div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div>
-        </div>
-        <div class="kpi-card purple kpi-clickable" data-kpi="flagged">
-          <div class="kpi-label">Flagged Follow-Up</div>
-          <div class="kpi-value" id="kpiFlagged">—</div>
-          <div class="kpi-sub" id="kpiFlaggedSub">Loading…</div>
-        </div>
-        <div class="kpi-card accent">
-          <div class="kpi-label">Pending Bills</div>
-          <div class="kpi-value" id="kpiPendingBills">—</div>
-          <div class="kpi-sub" id="kpiPendingBillsSub">Loading…</div>
-        </div>
-      </div>
-
-      <div class="section-card" id="managerOverviewSection">
-        <div class="section-card-header">
-          <div class="section-card-title"><i class="fas fa-chart-line" style="color:var(--info)"></i> Handy Manager - Fort Lowell Realty</div>
-        </div>
-        <div class="kpi-grid stagger" style="padding:16px;">
-          <div class="kpi-card red">
-            <div class="kpi-label">Avg Turn Completion</div>
-            <div class="kpi-value" id="kpiMgrAvgTurnCompletion">—</div>
-            <div class="kpi-sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div>
-          </div>
-          <div class="kpi-card amber">
-            <div class="kpi-label">Avg Inspection Age</div>
-            <div class="kpi-value" id="kpiMgrAvgInspectionAge">—</div>
-            <div class="kpi-sub" id="kpiMgrAvgInspectionAgeSub">Loading…</div>
-          </div>
-          <div class="kpi-card blue">
-            <div class="kpi-label">Avg WO Open Days</div>
-            <div class="kpi-value" id="kpiMgrAvgWOCompletion">—</div>
-            <div class="kpi-sub" id="kpiMgrAvgWOCompletionSub">Loading…</div>
-          </div>
-          <div class="kpi-card green">
-            <div class="kpi-label">Completed Turns</div>
-            <div class="kpi-value" id="kpiMgrCompletedTurns">—</div>
-            <div class="kpi-sub" id="kpiMgrCompletedTurnsSub">Loading…</div>
-          </div>
-          <div class="kpi-card purple" id="kpiVacancyCard">
-            <div class="kpi-label">Vacancies by Group</div>
-            <div class="kpi-value" id="kpiVacancyGroups">—</div>
-            <div class="kpi-sub" id="kpiVacancyGroupsSub">Loading…</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="section-card" id="turnDashboardSection">
-        <div class="section-card-header">
-          <div>
-            <div class="section-card-title"><i class="fas fa-film" style="color:var(--accent)"></i> Turn Progress Dashboard</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Click any card to jump to the turn board for more details.</div>
-          </div>
-          <div class="section-card-actions">
-            <select id="dashTurnPmFilter" style="height:32px;padding:0 28px 0 10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-inset);color:var(--text-primary);font-family:var(--font-mono);font-size:12px;cursor:pointer;-webkit-appearance:none;appearance:none;background-image:url('data:image/svg+xml,%3Csvg width=%2710%27 height=%276%27 viewBox=%270 0 10 6%27 fill=%27none%27 xmlns=%27http://www.w3.org/2000/svg%27%3E%3Cpath d=%27M1 1l4 4 4-4%27 stroke=%27%239399a8%27 stroke-width=%271.5%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 8px center;min-width:140px;">
-              <option value="">All PMs</option>
-            </select>
-            <select id="dashTurnViewMode" style="height:32px;padding:0 28px 0 10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-inset);color:var(--text-primary);font-family:var(--font-mono);font-size:12px;cursor:pointer;-webkit-appearance:none;appearance:none;background-image:url('data:image/svg+xml,%3Csvg width=%2710%27 height=%276%27 viewBox=%270 0 10 6%27 fill=%27none%27 xmlns=%27http://www.w3.org/2000/svg%27%3E%3Cpath d=%27M1 1l4 4 4-4%27 stroke=%27%239399a8%27 stroke-width=%271.5%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 8px center;min-width:130px;">
-              <option value="cards">Card View</option>
-              <option value="compact">Compact View</option>
-            </select>
-            <button class="action-btn" id="dashTurnSync" type="button"><i class="fas fa-bolt"></i> Sync</button>
-            <span id="dashTurnSyncAgo" style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);display:none">Never synced</span>
-            <button class="action-btn" id="dashTvMode" type="button"><i class="fas fa-tv"></i> TV Mode</button>
-            <button class="action-btn" id="dashTurnPrev" type="button"><i class="fas fa-chevron-left"></i></button>
-            <div style="font-family:var(--font-mono);font-size:12px;font-weight:700" id="dashTurnPageLabel">1 / 1</div>
-            <button class="action-btn" id="dashTurnNext" type="button"><i class="fas fa-chevron-right"></i></button>
-          </div>
-        </div>
-        <div class="turn-dash-ticker" id="dashTurnTicker" style="display:none;padding:8px 16px;background:var(--bg-inset);border-bottom:1px solid var(--border-subtle)">
-          <div class="turn-dash-ticker-track" id="dashTurnTickerTrack"></div>
-        </div>
-        <div class="turn-dash-summary" id="dashTurnSummary" style="padding:12px 20px;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--border-subtle)">Loading active turns…</div>
-        <div class="turn-card-strip" id="dashTurnStrip" style="padding:16px;"></div>
-      </div>
-      
   <!-- Attention Required — Stalled Turns + Overdue Inspections + Vendor Alerts -->
   <div class="table-wrapper" style="margin-bottom:20px" id="attentionSection">
     <div class="table-header">
@@ -322,7 +289,6 @@
       <div class="table-header">
         <div class="table-title"><i class="fas fa-bolt" style="color:var(--accent)"></i> Recent Activity Feed</div>
         <div style="display:flex;gap:6px;align-items:center">
-          <button class="action-btn" id="btnWebhookConfig" title="Configure HTTP POST webhook"><i class="fas fa-plug"></i> Webhook</button>
           <button class="sec-refresh" id="btnRefreshDash"><i class="fas fa-sync-alt"></i> Refresh</button>
         </div>
       </div>
@@ -464,7 +430,6 @@
         </table>
       </div>
     </div>
-  </div>
   </div>
 </section>
 
@@ -625,8 +590,8 @@
 <section class="section" id="sec-billing">
   <div class="section-header">
     <div>
-      <div class="section-title"><i class="fas fa-file-invoice-dollar" style="color:var(--success)"></i> Billing / AP Review</div>
-      <div class="section-subtitle">Bills pending approval — filtered by active property group</div>
+      <div class="section-title"><i class="fas fa-file-invoice-dollar" style="color:var(--success)"></i> Bills / AP Review</div>
+      <div class="section-subtitle">Bills and aged payables filtered by the active property group scope</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="billStatusFilter" class="filter-select" style="font-size:12px;padding:4px 8px">
@@ -642,14 +607,17 @@
       <button class="action-btn" id="btnRefreshBills"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
-  <div class="kpi-grid stagger" style="margin-bottom:16px">
+  <div class="kpi-grid stagger" id="billingKpiGrid" style="margin-bottom:16px">
     <div class="kpi-card amber"><div class="kpi-label">Pending Approval</div><div class="kpi-value" id="billKpiPending">—</div><div class="kpi-sub" id="billKpiPendingSub">bills awaiting sign-off</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Total Outstanding</div><div class="kpi-value" id="billKpiTotal">—</div><div class="kpi-sub" id="billKpiTotalSub">approved not yet paid</div></div>
     <div class="kpi-card green"><div class="kpi-label">Paid This Period</div><div class="kpi-value" id="billKpiPaid">—</div><div class="kpi-sub" id="billKpiPaidSub">last 30 days</div></div>
     <div class="kpi-card purple"><div class="kpi-label">Vendors w/ Open Bills</div><div class="kpi-value" id="billKpiVendors">—</div><div class="kpi-sub" id="billKpiVendorsSub">distinct payees</div></div>
   </div>
   <div class="section-subtabs" id="billingSubtabs">
-    <button class="section-subtab active" data-billing-subtab="queue"><i class="fas fa-list-alt"></i> Bills Queue</button>
+    <button class="section-subtab active" data-billing-subtab="queue"><i class="fas fa-list-alt"></i> Bills</button>
+    <button class="section-subtab" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
+    <button class="section-subtab" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
+    <button class="section-subtab" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
     <button class="section-subtab" data-billing-subtab="history"><i class="fas fa-clock-rotate-left"></i> Bill History</button>
   </div>
   <div class="section-subpanel active" id="billing-subpanel-queue">
@@ -732,6 +700,153 @@
   </div>
   </div>
 
+  <div class="section-subpanel" id="billing-subpanel-payables" style="display:none">
+  <div class="table-wrapper" style="margin-top:12px">
+    <div class="table-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <div class="table-title"><i class="fas fa-file-invoice" style="color:var(--accent)"></i> Aged Payables</div>
+        <div class="section-subtitle">Open payables scoped to the active global property-group filter or assigned PM group.</div>
+      </div>
+      <div id="payablesSummary" style="font-size:12px;color:var(--text-muted)">Open the Payables sub-tab to load aged payables.</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--border)">
+      <label for="payablesOccurredOn" style="font-size:12px;color:var(--text-muted)">As Of</label>
+      <input type="date" id="payablesOccurredOn" class="filter-select" style="padding:6px 10px;font-size:12px">
+      <select id="payablesPartyTypeFilter" class="filter-select" style="padding:6px 10px;font-size:12px">
+        <option value="">All Parties</option>
+        <option value="Vendor">Vendor</option>
+        <option value="Owner">Owner</option>
+        <option value="Occupancy">Occupancy</option>
+        <option value="Management Company">Management Company</option>
+      </select>
+      <input type="text" id="payablesSearch" placeholder="Search payee, property, property id, vendor id..." style="min-width:260px;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);font-size:12px;flex:1 1 260px">
+      <button id="refreshPayablesBtn" class="action-btn"><i class="fas fa-sync-alt"></i> Refresh Payables</button>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="payablesTable">
+        <thead>
+          <tr>
+            <th>Payee</th>
+            <th>Property</th>
+            <th>Type</th>
+            <th>Total</th>
+            <th>Not Yet Due</th>
+            <th>0-30</th>
+            <th>30-60</th>
+            <th>60-90</th>
+            <th>90+</th>
+            <th>30+</th>
+            <th>60+</th>
+          </tr>
+        </thead>
+        <tbody id="payablesTableBody">
+          <tr><td colspan="11" style="text-align:center;padding:20px;color:var(--text-muted);">Open the Payables sub-tab to load report data.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="table-footer" id="payablesFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
+  </div>
+  </div>
+
+  <div class="section-subpanel" id="billing-subpanel-charge-detail" style="display:none">
+  <div class="table-wrapper" style="margin-top:12px">
+    <div class="table-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <div class="table-title"><i class="fas fa-receipt" style="color:var(--accent)"></i> Charge Detail</div>
+        <div class="section-subtitle">Charge and receipt detail scoped to the active property-group filter.</div>
+      </div>
+      <div id="chargeDetailSummary" style="font-size:12px;color:var(--text-muted)">Open Charge Detail to load report data.</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--border)">
+      <label for="chargeDetailFrom" style="font-size:12px;color:var(--text-muted)">Charge From</label>
+      <input type="date" id="chargeDetailFrom" class="filter-select" style="padding:6px 10px;font-size:12px">
+      <label for="chargeDetailTo" style="font-size:12px;color:var(--text-muted)">Charge To</label>
+      <input type="date" id="chargeDetailTo" class="filter-select" style="padding:6px 10px;font-size:12px">
+      <select id="chargeDetailPaymentStatus" class="filter-select" style="padding:6px 10px;font-size:12px">
+        <option value="All">All Payments</option>
+        <option value="Paid">Paid</option>
+        <option value="Unpaid">Unpaid</option>
+        <option value="Partially Paid">Partially Paid</option>
+      </select>
+      <input type="text" id="chargeDetailSearch" placeholder="Search tenant, property, account, party id..." style="min-width:260px;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);font-size:12px;flex:1 1 260px">
+      <button id="refreshChargeDetailBtn" class="action-btn"><i class="fas fa-sync-alt"></i> Refresh Charges</button>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="chargeDetailTable">
+        <thead>
+          <tr>
+            <th>Charge Date</th>
+            <th>Received From</th>
+            <th>Property / Unit</th>
+            <th>Account</th>
+            <th>Charge</th>
+            <th>Paid</th>
+            <th>Balance</th>
+            <th>Receipt</th>
+            <th>Type</th>
+          </tr>
+        </thead>
+        <tbody id="chargeDetailBody">
+          <tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text-muted);">Open the Charge Detail sub-tab to load report data.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="table-footer" id="chargeDetailFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
+  </div>
+  </div>
+
+  <div class="section-subpanel" id="billing-subpanel-bill-detail" style="display:none">
+  <div class="table-wrapper" style="margin-top:12px">
+    <div class="table-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <div class="table-title"><i class="fas fa-file-lines" style="color:var(--accent)"></i> Bill Detail</div>
+        <div class="section-subtitle">Detailed bill rows with approval and payment context, scoped to the active property-group filter.</div>
+      </div>
+      <div id="billDetailSummary" style="font-size:12px;color:var(--text-muted)">Open Bill Detail to load report data.</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--border)">
+      <label for="billDetailFrom" style="font-size:12px;color:var(--text-muted)">From</label>
+      <input type="date" id="billDetailFrom" class="filter-select" style="padding:6px 10px;font-size:12px">
+      <label for="billDetailTo" style="font-size:12px;color:var(--text-muted)">To</label>
+      <input type="date" id="billDetailTo" class="filter-select" style="padding:6px 10px;font-size:12px">
+      <select id="billDetailDateType" class="filter-select" style="padding:6px 10px;font-size:12px">
+        <option value="Bill Date">Bill Date</option>
+        <option value="Due Date">Due Date</option>
+        <option value="Payment Date">Payment Date</option>
+      </select>
+      <select id="billDetailApprovalFilter" class="filter-select" style="padding:6px 10px;font-size:12px">
+        <option value="">All Approvals</option>
+        <option value="Approved">Approved</option>
+        <option value="Pending">Pending</option>
+        <option value="Denied">Denied</option>
+      </select>
+      <input type="text" id="billDetailSearch" placeholder="Search payee, property, account, txn id..." style="min-width:260px;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);font-size:12px;flex:1 1 260px">
+      <button id="refreshBillDetailBtn" class="action-btn"><i class="fas fa-sync-alt"></i> Refresh Bill Detail</button>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="billDetailTable">
+        <thead>
+          <tr>
+            <th>Bill Date</th>
+            <th>Payee</th>
+            <th>Property / Unit</th>
+            <th>Account</th>
+            <th>Paid</th>
+            <th>Unpaid</th>
+            <th>Approval</th>
+            <th>Payment</th>
+            <th>Type</th>
+          </tr>
+        </thead>
+        <tbody id="billDetailBody">
+          <tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text-muted);">Open the Bill Detail sub-tab to load report data.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="table-footer" id="billDetailFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
+  </div>
+  </div>
+
   <div class="section-subpanel" id="billing-subpanel-history" style="display:none">
   <div class="table-wrapper" style="margin-top:12px">
     <div class="table-header">
@@ -784,6 +899,7 @@
     </div>
     <div class="section-subtabs" id="propertiesSubtabs">
       <button class="section-subtab active" data-properties-subtab="directory"><i class="fas fa-table"></i> Directory</button>
+      <button class="section-subtab" data-properties-subtab="renewals"><i class="fas fa-file-signature"></i> Renewals</button>
       <button class="section-subtab" data-properties-subtab="bulk"><i class="fas fa-pen-to-square"></i> Bulk Notes</button>
     </div>
     <div class="section-subpanel active" id="properties-subpanel-directory">
@@ -821,6 +937,55 @@
         <button class="action-btn" id="propertiesNextPage" style="padding:3px 8px">Next</button>
       </div>
     </div>
+    </div>
+    <div class="section-subpanel" id="properties-subpanel-renewals" style="display:none">
+      <div class="table-wrapper">
+        <div class="table-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <div class="table-title"><i class="fas fa-file-signature" style="color:var(--accent)"></i> Renewal Summary</div>
+            <div class="section-subtitle">Lease renewals and pending offers scoped to the active global property-group filter.</div>
+          </div>
+          <div id="renewalsSummary" style="font-size:12px;color:var(--text-muted)">Choose a month range to load renewals.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--border)">
+          <label for="renewalsFromMonth" style="font-size:12px;color:var(--text-muted)">Lease From</label>
+          <input type="month" id="renewalsFromMonth" class="filter-select" style="padding:6px 10px;font-size:12px">
+          <label for="renewalsToMonth" style="font-size:12px;color:var(--text-muted)">Lease To</label>
+          <input type="month" id="renewalsToMonth" class="filter-select" style="padding:6px 10px;font-size:12px">
+          <select id="renewalsStatusFilter" class="filter-select" style="padding:6px 10px;font-size:12px">
+            <option value="all">All Statuses</option>
+            <option value="Renewed">Renewed</option>
+            <option value="Did Not Renew">Did Not Renew</option>
+            <option value="Month To Month">Month To Month</option>
+            <option value="Pending">Pending</option>
+            <option value="Canceled by User">Canceled by User</option>
+          </select>
+          <input type="text" id="renewalsSearch" placeholder="Search tenant, property, unit, term..." style="min-width:240px;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);font-size:12px;flex:1 1 240px">
+          <button id="refreshRenewalsBtn" class="action-btn"><i class="fas fa-sync-alt"></i> Refresh Renewals</button>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="renewalsTable">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Tenant</th>
+                <th>Property / Unit</th>
+                <th>Lease Term</th>
+                <th>Current Rent</th>
+                <th>Prior Rent</th>
+                <th>Change</th>
+                <th>Respond By</th>
+                <th>Sent</th>
+                <th>Countersigned</th>
+                <th>Agent</th>
+              </tr>
+            </thead>
+            <tbody id="renewalsTableBody">
+              <tr><td colspan="11" style="text-align:center;padding:20px;color:var(--text-muted);">Open the Renewals sub-tab to load report data.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
     <div class="section-subpanel" id="properties-subpanel-bulk" style="display:none">
       <div class="table-wrapper properties-bulk-panel">
@@ -1144,26 +1309,91 @@
 <section class="section" id="sec-errors">
   <div class="section-header">
     <div><div class="section-title"><i class="fas fa-exclamation-triangle" style="color:var(--accent)"></i> API Error Log &amp; Retry Queue</div><div class="section-subtitle">Exponential backoff for 533 &bull; Retry-After for 429 &bull; Semantic validation for 422</div></div>
-    <button class="action-btn" id="btnClearErrors"><i class="fas fa-trash"></i> Clear Resolved</button>
-  </div>
-  <div class="systems-health-panel" id="systemsHealthPanel" style="display:none">
-    <div class="systems-health-head">
-      <div>
-        <div class="systems-health-title"><i class="fas fa-heart-pulse"></i> Systems Active Checker</div>
-        <div class="systems-health-subtitle">Manager/Admin only &bull; SQL, middleware, API v0/v2, magic links, reassignment, routing, PM users</div>
-      </div>
-      <div class="systems-health-actions">
-        <button class="action-btn" id="btnRunSystemHealth"><i class="fas fa-stethoscope"></i> Run Checker</button>
-        <button class="action-btn" id="btnSendSystemHealthDebug"><i class="fas fa-paper-plane"></i> Send Debug</button>
-      </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <button class="action-btn" id="btnWebhookConfig" title="Configure HTTP POST webhook"><i class="fas fa-plug"></i> Webhook</button>
+      <button class="action-btn" id="btnClearErrors"><i class="fas fa-trash"></i> Clear Resolved</button>
     </div>
-    <div class="systems-health-summary" id="systemHealthSummary">
-      <span class="systems-health-dot idle"></span>
-      <span>No checks run yet</span>
-    </div>
-    <div class="systems-health-grid" id="systemHealthGrid"></div>
   </div>
-  <div class="error-log stagger" id="errorLog"></div>
+  <div class="section-subtabs" id="errorsSubtabs">
+    <button class="section-subtab active" data-errors-subtab="log"><i class="fas fa-triangle-exclamation"></i> API Log</button>
+    <button class="section-subtab" data-errors-subtab="email-delivery" id="errorsEmailDeliveryTab"><i class="fas fa-envelope-circle-check"></i> Email Delivery</button>
+  </div>
+  <div class="section-subpanel active" id="errors-subpanel-log">
+    <div class="systems-health-panel" id="systemsHealthPanel" style="display:none">
+      <div class="systems-health-head">
+        <div>
+          <div class="systems-health-title"><i class="fas fa-heart-pulse"></i> Systems Active Checker</div>
+          <div class="systems-health-subtitle">Manager/Admin only &bull; SQL, middleware, API v0/v2, magic links, reassignment, routing, PM users</div>
+        </div>
+        <div class="systems-health-actions">
+          <button class="action-btn" id="btnRunSystemHealth"><i class="fas fa-stethoscope"></i> Run Checker</button>
+          <button class="action-btn" id="btnSendSystemHealthDebug"><i class="fas fa-paper-plane"></i> Send Debug</button>
+        </div>
+      </div>
+      <div class="systems-health-summary" id="systemHealthSummary">
+        <span class="systems-health-dot idle"></span>
+        <span>No checks run yet</span>
+      </div>
+      <div class="systems-health-grid" id="systemHealthGrid"></div>
+    </div>
+    <div class="error-log stagger" id="errorLog"></div>
+  </div>
+  <div class="section-subpanel" id="errors-subpanel-email-delivery" style="display:none">
+    <div class="table-wrapper" style="margin-top:12px">
+      <div class="table-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <div class="table-title"><i class="fas fa-envelope-circle-check" style="color:var(--accent)"></i> Email Delivery Errors</div>
+          <div class="section-subtitle">Manager/Admin review for active properties, scoped by the global property-group filter when applied.</div>
+        </div>
+        <div id="emailErrorsSummary" style="font-size:12px;color:var(--text-muted)">Open Email Delivery to load active delivery failures.</div>
+      </div>
+      <div class="kpi-grid stagger" id="emailErrorsKpiGrid" style="margin:0 12px 12px">
+        <div class="kpi-card red"><div class="kpi-label">Errors In Range</div><div class="kpi-value" id="emailErrorsKpiTotal">—</div><div class="kpi-sub" id="emailErrorsKpiTotalSub">active-scope email failures</div></div>
+        <div class="kpi-card amber"><div class="kpi-label">Invalid Address</div><div class="kpi-value" id="emailErrorsKpiInvalid">—</div><div class="kpi-sub" id="emailErrorsKpiInvalidSub">address quality issues</div></div>
+        <div class="kpi-card blue"><div class="kpi-label">Rejected / Spam</div><div class="kpi-value" id="emailErrorsKpiRejected">—</div><div class="kpi-sub" id="emailErrorsKpiRejectedSub">recipient mailbox blocks</div></div>
+        <div class="kpi-card purple"><div class="kpi-label">Repeat Recipients</div><div class="kpi-value" id="emailErrorsKpiRepeat">—</div><div class="kpi-sub" id="emailErrorsKpiRepeatSub">multiple failures in range</div></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--border)">
+        <label for="emailErrorsFrom" style="font-size:12px;color:var(--text-muted)">Sent From</label>
+        <input type="date" id="emailErrorsFrom" class="filter-select" style="padding:6px 10px;font-size:12px">
+        <label for="emailErrorsTo" style="font-size:12px;color:var(--text-muted)">Sent To</label>
+        <input type="date" id="emailErrorsTo" class="filter-select" style="padding:6px 10px;font-size:12px">
+        <select id="emailErrorsPartyType" class="filter-select" style="padding:6px 10px;font-size:12px">
+          <option value="Tenant">Tenants / Homeowners</option>
+          <option value="Owner">Owners</option>
+        </select>
+        <select id="emailErrorsStatusFilter" class="filter-select" style="padding:6px 10px;font-size:12px">
+          <option value="">All Failure Types</option>
+          <option value="invalid">Invalid Address</option>
+          <option value="rejected">Rejected</option>
+          <option value="spam">Marked as Spam</option>
+          <option value="other">Other</option>
+        </select>
+        <input type="text" id="emailErrorsSearch" placeholder="Search property, unit, recipient, subject, email..." style="min-width:280px;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);font-size:12px;flex:1 1 280px">
+        <button id="refreshEmailErrorsBtn" class="action-btn"><i class="fas fa-sync-alt"></i> Refresh Email Errors</button>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table" id="emailErrorsTable">
+          <thead>
+            <tr>
+              <th>Sent</th>
+              <th>Status</th>
+              <th>Property / Unit</th>
+              <th>Recipient</th>
+              <th>Subject</th>
+              <th>To</th>
+              <th>From</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="emailErrorsBody">
+            <tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">Open the Email Delivery sub-tab to load report data.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-footer" id="emailErrorsFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
+    </div>
+  </div>
 </section>
 
 <!-- ═══ DATABASE ADMIN ═══ -->
@@ -1272,40 +1502,41 @@
           </label>
           <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Only allow emails in the PM Scoped Login Users list above</div>
         </div>
-        <!-- Allowed domain -->
+
         <div>
           <div style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Allowed Email Domain</div>
-          <input type="text" id="otpSettingDomain" class="dbadmin-key-input" style="max-width:none;width:100%;font-family:var(--font-mono)" placeholder="flraz.com (env fallback)">
-          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Leave blank to use <code>OTP_ALLOWED_DOMAIN</code> env var</div>
+          <input type="text" class="dbadmin-key-input" id="otpSettingDomain" style="max-width:none;width:100%" placeholder="flraz.com (optional)">
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Leave blank to allow any domain</div>
         </div>
-        <!-- TTL -->
+
         <div>
-          <div style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">OTP Code TTL (minutes)</div>
-          <input type="number" id="otpSettingTtl" class="dbadmin-key-input" style="max-width:none;width:100%;font-family:var(--font-mono)" min="3" max="60" placeholder="10">
-          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">How long a sent OTP code stays valid (min 3)</div>
+          <div style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">OTP TTL Minutes</div>
+          <input type="number" min="3" max="30" step="1" class="dbadmin-key-input" id="otpSettingTtl" style="max-width:none;width:100%" value="10">
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Valid range: 3 to 30 minutes</div>
         </div>
       </div>
-      <div style="padding:10px 14px;display:flex;align-items:center;gap:8px;background:var(--bg-secondary)">
-        <button class="dbadmin-btn primary" id="btnOtpSettingsSave" style="padding:4px 14px"><i class="fas fa-save"></i> Save Settings</button>
+
+      <div style="padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--border)">
+        <button class="dbadmin-btn primary" id="btnOtpSettingsSave"><i class="fas fa-save"></i> Save OTP Settings</button>
         <span id="otpSettingsSaveStatus" style="font-size:11px;color:var(--text-muted)"></span>
       </div>
     </div>
-
-    <details class="dbadmin-history" id="dbHistoryWrap"><summary><i class="fas fa-history"></i> Query History</summary><div class="dbadmin-history-list" id="dbHistoryList"></div></details>
   </div>
 </section>
 
+<!-- Dispatch Tech Roster Modal -->
 <div class="dispatch-modal-overlay" id="techRosterModal">
   <div class="dispatch-modal">
     <div class="dispatch-modal__head">
       <h3 id="techRosterModalTitle">Add Tech to Roster</h3>
-      <button class="dispatch-modal__close" id="techRosterModalClose">✕</button>
+      <button class="dispatch-modal__close" id="techRosterModalClose">&times;</button>
     </div>
     <div class="dispatch-modal__body">
       <input type="hidden" id="rosterTechIdHidden">
+
       <div class="form-group">
         <label class="form-label">AppFolio User UUID <span style="color:var(--danger)">*</span></label>
-        <input type="text" class="form-input" id="rosterTechId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="font-family:var(--font-mono);font-size:.82rem">
+        <input type="text" class="form-input" id="rosterTechId" placeholder="00000000-0000-0000-0000-000000000000" style="font-family:var(--font-mono)">
       </div>
       <div class="form-group">
         <label class="form-label">Full Name <span style="color:var(--danger)">*</span></label>
@@ -1441,7 +1672,7 @@
   <div class="progress-dock-steps" id="progSteps"></div>
 </div>
 
-</main><!-- /appShell -->
+</div><!-- /appShell -->
 
 <!-- Webhook Config Modal -->
 <div class="modal-overlay" id="webhookModal">
@@ -1463,9 +1694,9 @@
       <div class="form-group">
         <label class="form-label">Polling Interval</label>
         <select class="form-select" id="webhookPollInterval">
-          <option value="0">Disabled</option>
+          <option value="0" selected>Disabled</option>
           <option value="30">Every 30 seconds</option>
-          <option value="60" selected>Every 60 seconds</option>
+          <option value="60">Every 60 seconds</option>
           <option value="300">Every 5 minutes</option>
         </select>
       </div>

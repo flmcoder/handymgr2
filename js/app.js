@@ -18,11 +18,19 @@ function toggleTheme() {
   updateThemeIcon();
 }
 function updateThemeIcon() {
-  var btn = document.querySelector('#themeToggle');
-  if (!btn) return;
   var isDark = document.documentElement.classList.contains('dark');
-  btn.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-  btn.title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
+  var iconHtml = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+  var title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
+  var topbarBtn = $('#themeToggle');
+  var vaultBtn = $('#vaultThemeToggle');
+  if (topbarBtn) {
+    topbarBtn.innerHTML = iconHtml;
+    topbarBtn.title = title;
+  }
+  if (vaultBtn) {
+    vaultBtn.innerHTML = iconHtml;
+    vaultBtn.title = title;
+  }
 }
 
 // ---- Helpers ----
@@ -54,8 +62,10 @@ function syncDisplayedAppVersion() {
   var bareVersion = String(APP_VERSION || '').replace(/^v/i, '');
   var buildTag = $('#buildBadgeTag');
   var vaultVersion = $('#vaultSessionVersion');
+  var sidebarVer = $('#sidebarBrandVer');
   if (buildTag) buildTag.textContent = bareVersion;
   if (vaultVersion) vaultVersion.textContent = 'Secured Session: ' + APP_VERSION;
+  if (sidebarVer) sidebarVer.textContent = APP_VERSION;
 }
 
 syncDisplayedAppVersion();
@@ -1216,98 +1226,76 @@ function undockSubtab(el) {
 function syncSubtabDock() {
   initSubtabDock();
   var dock = document.getElementById('subtabDock');
-  var dockBody = document.getElementById('subtabDockBody');
-  var dockLabel = document.getElementById('subtabDockLabel');
-  if (!dock || !dockBody) return;
-
-  var activeSection = document.querySelector('.section.active');
-  var candidate = null;
-  if (activeSection) {
-    candidate = activeSection.querySelector('.section-subtabs, .wo-subtabs, .subtabs');
-    if (!candidate && _subtabDockCurrent && _subtabDockCurrent.__dockSectionId === activeSection.id) {
-      candidate = _subtabDockCurrent;
-    }
-  }
-
-  if (_subtabDockCurrent && _subtabDockCurrent !== candidate) {
+  if (_subtabDockCurrent) {
     undockSubtab(_subtabDockCurrent);
     _subtabDockCurrent.classList.remove('dock-mounted');
     _subtabDockCurrent = null;
   }
-
-  if (!candidate) {
-    dock.style.display = 'none';
-    dockBody.innerHTML = '';
-    return;
-  }
-
-  // Set label from the active nav tab text (strip badge numbers)
-  if (dockLabel) {
-    var activeTab = document.querySelector('.nav-tab.active');
-    var labelText = activeTab ? (activeTab.textContent || '').trim().replace(/\s+[\d—]+$/, '').trim() : '';
-    dockLabel.textContent = labelText || '';
-  }
-
-  dock.style.display = '';
-  candidate.classList.add('dock-mounted');
-  dockBody.innerHTML = '';
-  dockBody.appendChild(candidate);
-  _subtabDockCurrent = candidate;
+  document.querySelectorAll('.section .section-subtabs, .section .wo-subtabs, .section .subtabs').forEach(function(el) {
+    if (el.classList.contains('dock-mounted')) {
+      undockSubtab(el);
+      el.classList.remove('dock-mounted');
+    }
+  });
+  if (dock) dock.style.display = 'none';
 }
 
-function forceActiveTab(tabName) {
-  var targetTab = document.querySelector('.nav-tab[data-tab="' + tabName + '"]');
-  if (targetTab) {
-    // 1. Deselect all tabs
-    document.querySelectorAll('.nav-tab').forEach(function(t){ t.classList.remove('active'); });
-    // 2. Select the target tab
-    targetTab.classList.add('active');
-    // 3. Hide all sections
-    document.querySelectorAll('.section').forEach(function(s){ s.classList.remove('active'); });
-    // 4. Show target section
-    var sec = document.getElementById('sec-' + tabName);
-    if (sec) sec.classList.add('active');
-    
-    // 5. Fire navigation cleanup and subtab docking
-    setMobileNavLabelFromActiveTab();
-    closeMobileNav();
-    syncSubtabDock();
-  }
+function isMobileNavViewport() {
+  return window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
 }
 
-function isMobileViewport() {
-  return window.matchMedia('(max-width: 768px)').matches;
+function setMobileNavLabelFromActiveTab() {
+  var btn = document.getElementById('mobileNavToggle');
+  if (!btn) return;
+  var activeTab = document.querySelector('.nav-tab.active');
+  var label = 'Open navigation menu';
+  if (activeTab) {
+    var text = (activeTab.textContent || '').replace(/\s+/g, ' ').trim().replace(/\s+[\d—]+$/, '').trim();
+    if (text) label = 'Open navigation menu (current: ' + text + ')';
+  }
+  btn.setAttribute('aria-label', label);
+  btn.setAttribute('title', label);
+}
+
+function openMobileNav() {
+  if (!isMobileNavViewport()) return;
+  document.body.classList.add('mobile-nav-open');
+  var btn = document.getElementById('mobileNavToggle');
+  if (btn) btn.setAttribute('aria-expanded', 'true');
 }
 
 function closeMobileNav() {
   document.body.classList.remove('mobile-nav-open');
-  var toggleBtn = document.getElementById('mobileNavToggle');
-  if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+  var btn = document.getElementById('mobileNavToggle');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 
 function toggleMobileNav() {
-  if (!isMobileViewport()) return;
-  var nextState = !document.body.classList.contains('mobile-nav-open');
-  document.body.classList.toggle('mobile-nav-open', nextState);
-  var toggleBtn = document.getElementById('mobileNavToggle');
-  if (toggleBtn) toggleBtn.setAttribute('aria-expanded', nextState ? 'true' : 'false');
-}
-
-function setMobileNavLabelFromActiveTab() {
-  var toggleBtn = document.getElementById('mobileNavToggle');
-  if (!toggleBtn) return;
-  var activeTab = document.querySelector('.nav-tab.active');
-  var label = activeTab ? activeTab.textContent.replace(/\s+/g, ' ').trim() : 'Menu';
-  toggleBtn.title = 'Menu: ' + label;
-  toggleBtn.setAttribute('aria-label', 'Open navigation menu. Current tab: ' + label);
+  if (!isMobileNavViewport()) return;
+  if (document.body.classList.contains('mobile-nav-open')) closeMobileNav();
+  else openMobileNav();
 }
 
 function syncMobileNavForViewport() {
-  if (!isMobileViewport()) {
+  if (!isMobileNavViewport()) {
     closeMobileNav();
+    return;
   }
   setMobileNavLabelFromActiveTab();
 }
+
+function forceActiveTab(tabName) {
+  $$('.nav-tab').forEach(function(t) {
+    t.classList.toggle('active', t.getAttribute('data-tab') === tabName);
+  });
+  $$('.section').forEach(function(s) {
+    s.classList.toggle('active', s.id === 'sec-' + tabName);
+  });
+  setMobileNavLabelFromActiveTab();
+  closeMobileNav();
+  syncSubtabDock();
+}
+
 
 function wipeCredentials() {
   if (API_CREDS) {
@@ -1320,8 +1308,9 @@ function wipeCredentials() {
   _accessRole = 'full';
   _pmScopeGroupUuid = '';
   _pmScopeEmail = '';
-  closeMobileNav();
+  if (typeof closeMobileNav === 'function') closeMobileNav();
 }
+
 // ── Auto-sync: selective background refresh every 30 min ───────────────────
 var AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 var _sessionExpiryHandled = false;
@@ -1398,7 +1387,7 @@ function forceProxySessionExpiryLockout(contextLabel) {
   _proxySessionStartupGraceUntil = 0;
 
   var vault = $('#vaultScreen');
-  if (vault) vault.style.display = 'flex';
+  if (vault) vault.style.display = 'grid';
   var shell = $('#appShell');
   if (shell) shell.classList.remove('unlocked');
   setVaultPanel('main');
@@ -1510,7 +1499,7 @@ function lockVault() {
   // Note: IndexedDB cache is NOT cleared on lock — data persists for next unlock
   updateCacheBadge('offline');
   $('#appShell').classList.remove('unlocked');
-  $('#vaultScreen').style.display = 'flex';
+  $('#vaultScreen').style.display = 'grid';
   $('#vaultPassphrase').value = '';
   $('#vaultError').classList.remove('show');
   $('#corsBanner').classList.remove('show');
@@ -2034,10 +2023,8 @@ function resolveUrl(path, method) {
       } catch (e) { /* use as-is */ }
     }
     var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
-    if (method !== 'GET' && method !== 'HEAD') {
-      return API_PROXY + sep + 'action=passthrough&path=' + encodeURIComponent(apiPath);
-    }
-    return API_PROXY + sep + 'path=' + encodeURIComponent(apiPath);
+    // Always use explicit passthrough action so v2 report calls do not fall back to compat defaults.
+    return API_PROXY + sep + 'action=passthrough&path=' + encodeURIComponent(apiPath);
   }
   // Direct connection (no proxy) — build full URL
   if (path.indexOf('http') === 0) return path;
@@ -2151,8 +2138,6 @@ var rateLimiter = {
       if (!drawer || !fab || !items || !status || !badge || !fabBadge) return;
 
       var _rows = [];
-      var _pollTimer = null;
-      var _pollMs = 25000;
       var _unread = 0;
 
       function isInboxRoleAllowed() {
@@ -2250,7 +2235,7 @@ var rateLimiter = {
           setStatus(isOpen() ? 'Inbox synced' : ('Inbox synced · ' + _unread + ' unread'));
           populateScopeOptions();
         } catch (err) {
-          setStatus('Inbox unavailable. Retrying…');
+          setStatus('Inbox unavailable. Re-open drawer to retry.');
           console.debug('pm inbox poll skipped:', err && err.message ? err.message : err);
         }
       }
@@ -2333,12 +2318,12 @@ var rateLimiter = {
       function boot() {
         applyVisibility();
         refreshInbox();
-        if (_pollTimer) clearInterval(_pollTimer);
-        _pollTimer = setInterval(function() {
-          applyVisibility();
-          if (!document.hidden) refreshInbox();
-        }, _pollMs);
       }
+
+      document.addEventListener('visibilitychange', function() {
+        applyVisibility();
+        if (!document.hidden && isOpen()) refreshInbox();
+      });
 
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot);
@@ -2675,6 +2660,13 @@ var SYSTEM_HEALTH_STATE = {
   lastError: '',
 };
 var _systemHealthAutoRunDone = false;
+var EMAIL_DELIVERY_ERROR_ROWS = [];
+var EMAIL_DELIVERY_VISIBLE_ROWS = [];
+var _emailDeliveryErrorsLoading = false;
+var _emailDeliveryErrorsLastError = '';
+var _emailDeliveryErrorsLoadedKey = '';
+var _emailDeliveryErrorsPage = 0;
+var _emailDeliveryErrorsPageSize = 25;
 
 function logApiError(code, msg, action) {
   var now = new Date();
@@ -2696,6 +2688,20 @@ function getSystemHealthStatusLabel(status) {
   return 'Idle';
 }
 
+function getSystemHealthStatusClass(status) {
+  var value = String(status || '').toLowerCase();
+  if (value === 'green' || value === 'yellow' || value === 'red') return value;
+  return 'idle';
+}
+
+function getSystemHealthBadgeHtml(status) {
+  var statusClass = getSystemHealthStatusClass(status);
+  return '<span class="systems-health-badge ' + statusClass + '">' +
+    '<span class="systems-health-badge-dot ' + statusClass + '"></span>' +
+    '<span class="systems-health-badge-label">' + escapeHtml(getSystemHealthStatusLabel(status)) + '</span>' +
+  '</span>';
+}
+
 function getSystemHealthSummaryText() {
   if (SYSTEM_HEALTH_STATE.running) return 'Running checks...';
   if (SYSTEM_HEALTH_STATE.lastError) return 'Checker failed: ' + SYSTEM_HEALTH_STATE.lastError;
@@ -2705,9 +2711,9 @@ function getSystemHealthSummaryText() {
     ? (' @ ' + String(SYSTEM_HEALTH_STATE.data.generated_at).replace('T', ' ').replace('Z', ' UTC'))
     : '';
   return getSystemHealthStatusLabel(SYSTEM_HEALTH_STATE.data.status) +
-    ' - red: ' + Number(summary.red_count || 0) +
-    ', yellow: ' + Number(summary.yellow_count || 0) +
-    ', green: ' + Number(summary.green_count || 0) + stamp;
+    ' - fail: ' + Number(summary.red_count || 0) +
+    ', warn: ' + Number(summary.yellow_count || 0) +
+    ', pass: ' + Number(summary.green_count || 0) + stamp;
 }
 
 function renderSystemHealthPanel() {
@@ -2751,7 +2757,7 @@ function renderSystemHealthPanel() {
     html += '<div class="systems-health-card ' + status + '">';
     html += '<div class="systems-health-card-head">';
     html += '<div class="systems-health-card-title">' + escapeHtml(String(check.label || check.key || 'Check')) + '</div>';
-    html += '<span class="systems-health-badge ' + status + '">' + escapeHtml(status) + '</span>';
+    html += getSystemHealthBadgeHtml(status);
     html += '</div>';
     html += '<div class="systems-health-card-detail">' + escapeHtml(String(check.detail || '')) + '</div>';
     html += '</div>';
@@ -4214,6 +4220,9 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       ? 'Proxy connected, but database schema is out of date. Deploy latest proxy migrations and retry.'
       : (errMsg || 'Login failed \u2014 check password and proxy URL.');
     $('#vaultError').classList.add('show');
+    showToast(schemaErr
+      ? 'Proxy schema is out of date. Deploy latest proxy migrations.'
+      : ('Login failed: ' + (errMsg || 'Invalid password or proxy URL')), { kind: 'warning' });
     $('#vaultPassphrase').value = '';
     $('#vaultPassphrase').focus();
   } finally {
@@ -8328,6 +8337,24 @@ function wireBillingFilters() {
       runBillHistorySearch();
       return;
     }
+    if (currentBillingSubtab === 'charge-detail') {
+      _chargeDetailLoadedKey = '';
+      _chargeDetailPage = 0;
+      renderBillingSection({ forceRefresh: true });
+      return;
+    }
+    if (currentBillingSubtab === 'bill-detail') {
+      _billDetailLoadedKey = '';
+      _billDetailPage = 0;
+      renderBillingSection({ forceRefresh: true });
+      return;
+    }
+    if (currentBillingSubtab === 'payables') {
+      _payablesLoadedKey = '';
+      _payablesPage = 0;
+      renderBillingSection({ forceRefresh: true });
+      return;
+    }
     // Apply client-side group filter to cached bills instantly
     if (__CACHED_BILLS.length > 0) {
       var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
@@ -9232,7 +9259,7 @@ function renderDashboardKPIs() {
   if (unassignedUrgent.length > 0) urgSubText += ' \u2022 ' + unassignedUrgent.length + ' unassigned';
   $('#kpiUrgentSub').textContent = urgSubText;
   $('#kpiTurns').textContent = activeTurns.length;
-  $('#kpiTurnsSub').textContent = TURNS.length + ' total turns';
+  $('#kpiTurnsSub').textContent = activeTurns.length > 0 ? activeTurns.length + ' active now' : 'No active turns';
   $('#kpiMoveOuts').textContent = moveOuts.length;
   $('#kpiMoveOutsSub').textContent = moveOuts.length > 0 ? moveOuts[0].daysLeft + 'd until next' : 'None in ' + CONFIG.MOVEOUT_WINDOW_DAYS + ' days';
   $('#kpiFlagged').textContent = flaggedCount;
@@ -9502,13 +9529,36 @@ var currentWOAgeFilter = '';
 var currentWOSort = 'oldest';
 var currentWOView = 'board'; // 'board' | 'list'
 var currentWOSubtab = 'active'; // active | completed | closure | followup
-var currentBillingSubtab = 'queue'; // queue | history
-var currentPropertiesSubtab = 'directory'; // directory | bulk
+var currentBillingSubtab = 'queue'; // queue | payables | history
+var currentPropertiesSubtab = 'directory'; // directory | renewals | bulk
+var currentErrorsSubtab = 'log'; // log | email-delivery
 var currentActivityFilter = 'all';
 var expandedWOColumn = '';
 var kanbanBoardScrollState = { left: 0, top: 0 };
 var woCloseAssist = { currentPage: 0, pageSize: 10 };
 var showCompletedWOHistory = false;
+var PAYABLES_ROWS = [];
+var _payablesLoading = false;
+var _payablesLoadedKey = '';
+var _payablesLastError = '';
+var _payablesPage = 0;
+var _payablesPageSize = 50;
+var CHARGE_DETAIL_ROWS = [];
+var _chargeDetailLoading = false;
+var _chargeDetailLoadedKey = '';
+var _chargeDetailLastError = '';
+var _chargeDetailPage = 0;
+var _chargeDetailPageSize = 50;
+var BILL_DETAIL_REPORT_ROWS = [];
+var _billDetailLoading = false;
+var _billDetailLoadedKey = '';
+var _billDetailLastError = '';
+var _billDetailPage = 0;
+var _billDetailPageSize = 50;
+var RENEWALS_ROWS = [];
+var _renewalsLoading = false;
+var _renewalsLoadedKey = '';
+var _renewalsLastError = '';
 
 function setWOView(viewType) {
   currentWOView = viewType === 'list' ? 'list' : 'board';
@@ -9543,10 +9593,11 @@ function setWOSubtab(tab) {
     showCompletedWOHistory = true;
     renderCompletedWOHistorySection();
   }
+  syncSubtabDock();
 }
 
 function setBillingSubtab(tab) {
-  var allowed = { queue: true, history: true };
+  var allowed = { queue: true, payables: true, 'charge-detail': true, 'bill-detail': true, history: true };
   var target = allowed[tab] ? tab : 'queue';
   currentBillingSubtab = target;
 
@@ -9554,17 +9605,1186 @@ function setBillingSubtab(tab) {
     btn.classList.toggle('active', btn.getAttribute('data-billing-subtab') === target);
   });
 
-  ['queue', 'history'].forEach(function(name) {
+  ['queue', 'payables', 'charge-detail', 'bill-detail', 'history'].forEach(function(name) {
     var panel = $('#billing-subpanel-' + name);
     if (!panel) return;
     var isActive = name === target;
     panel.classList.toggle('active', isActive);
     panel.style.display = isActive ? '' : 'none';
   });
+
+  syncBillingToolbarForSubtab();
+
+  if (target === 'queue' || target === 'payables' || target === 'charge-detail' || target === 'bill-detail') {
+    renderBillingSection();
+  }
+  syncSubtabDock();
+}
+
+function setErrorsSubtab(tab) {
+  var allowed = { log: true, 'email-delivery': true };
+  var canViewEmail = canViewEmailDeliveryErrors();
+  var target = allowed[tab] ? tab : 'log';
+  if (target === 'email-delivery' && !canViewEmail) target = 'log';
+  currentErrorsSubtab = target;
+
+  $$('[data-errors-subtab]').forEach(function(btn) {
+    var name = btn.getAttribute('data-errors-subtab');
+    if (name === 'email-delivery') btn.style.display = canViewEmail ? '' : 'none';
+    btn.classList.toggle('active', name === target);
+  });
+
+  ['log', 'email-delivery'].forEach(function(name) {
+    var panel = $('#errors-subpanel-' + name);
+    if (!panel) return;
+    var isActive = name === target;
+    panel.classList.toggle('active', isActive);
+    panel.style.display = isActive ? '' : 'none';
+  });
+
+  renderErrorsSection();
+  syncSubtabDock();
+}
+
+function dateInputValue(dateLike) {
+  var date = dateLike instanceof Date ? new Date(dateLike.getTime()) : new Date(dateLike || Date.now());
+  if (isNaN(date.getTime())) date = new Date();
+  return date.toISOString().slice(0, 10);
+}
+
+function startOfMonthValue(dateLike) {
+  var date = dateLike instanceof Date ? new Date(dateLike.getTime()) : new Date(dateLike || Date.now());
+  if (isNaN(date.getTime())) date = new Date();
+  return dateInputValue(new Date(date.getFullYear(), date.getMonth(), 1));
+}
+
+async function fetchPagedJsonReport(path, payload, statusLabel) {
+  var rows = [];
+  var nextUrl = null;
+  var pageCount = 0;
+  while (pageCount < 50) {
+    var data = nextUrl
+      ? await apiFetch(nextUrl)
+      : await apiFetch(path, { method: 'POST', body: JSON.stringify(payload) });
+    if (data && Array.isArray(data.results)) rows = rows.concat(data.results);
+    else if (Array.isArray(data)) rows = rows.concat(data);
+    nextUrl = (data && (data.next_page_url || data.next_page_path)) ? (data.next_page_url || data.next_page_path) : null;
+    if (!nextUrl) break;
+    pageCount += 1;
+    if (statusLabel) setApiStatus('loading', statusLabel + ': ' + rows.length + ' rows');
+    await sleep(100);
+  }
+  return rows;
+}
+
+async function fetchReportRows(reportName, payload, statusLabel) {
+  if (!reportName) throw new Error('Missing report name');
+  if (API_PROXY) {
+    var url = buildProxyActionUrl('report', { name: reportName });
+    var token = getProxyAccessToken();
+    var headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    var maxRetries = 1;
+    for (var attempt = 0; attempt <= maxRetries; attempt++) {
+      var res = await fetchWithTimeout(url, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(payload || {})
+      }, 90000);
+      if (res.status === 429) {
+        var retryAfter = parseInt(res.headers.get('Retry-After') || '5', 10);
+        if (attempt < maxRetries) {
+          await sleep(Math.max(1, retryAfter) * 1000);
+          continue;
+        }
+      }
+      if (!res.ok) {
+        var errText = '';
+        try { errText = await res.text(); } catch (eErr) { /* */ }
+        throw new Error(res.status + ': ' + (errText || res.statusText || 'Report request failed'));
+      }
+      var data = await res.json();
+      if (!data || data.ok === false) {
+        throw new Error((data && data.error) || ('Report failed: ' + reportName));
+      }
+      if (statusLabel) setApiStatus('loading', statusLabel + ': ' + ((data && data.results && data.results.length) || 0) + ' rows');
+      return Array.isArray(data && data.results) ? data.results : [];
+    }
+    throw new Error('429: Rate limited while loading report ' + reportName);
+  }
+  return await fetchPagedJsonReport('/api/v2/reports/' + reportName + '.json', payload, statusLabel);
+}
+
+function ensureChargeDetailDateRange() {
+  var fromEl = $('#chargeDetailFrom');
+  var toEl = $('#chargeDetailTo');
+  if (!fromEl || !toEl) return;
+  if (!fromEl.value) fromEl.value = startOfMonthValue(new Date());
+  if (!toEl.value) toEl.value = dateInputValue(new Date());
+}
+
+function ensureBillDetailDateRange() {
+  var fromEl = $('#billDetailFrom');
+  var toEl = $('#billDetailTo');
+  if (!fromEl || !toEl) return;
+  if (!fromEl.value) fromEl.value = startOfMonthValue(new Date());
+  if (!toEl.value) toEl.value = dateInputValue(new Date());
+}
+
+function buildScopedPropertiesPayload() {
+  var explicitUuid = String(getEffectiveGroupUuid() || '').trim();
+  if (explicitUuid) return { property_groups_ids: [explicitUuid] };
+  if ((_accessRole === 'pm_readonly' || _accessRole === 'manager') && forcedPropertyGroupUuid) {
+    return { property_groups_ids: [String(forcedPropertyGroupUuid).trim()] };
+  }
+  return { property_groups_ids: [] };
+}
+
+function buildChargeDetailRequestPayload() {
+  ensureChargeDetailDateRange();
+  var fromEl = $('#chargeDetailFrom');
+  var toEl = $('#chargeDetailTo');
+  var paymentStatusEl = $('#chargeDetailPaymentStatus');
+  var chargeDateFrom = String(fromEl ? fromEl.value : '').trim();
+  var chargeDateTo = String(toEl ? toEl.value : '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(chargeDateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(chargeDateTo)) throw new Error('Charge detail date range is required');
+  if (chargeDateFrom > chargeDateTo) throw new Error('Charge detail date range is invalid');
+  return {
+    property_visibility: 'active',
+    properties: buildScopedPropertiesPayload(),
+    payment_status: String(paymentStatusEl ? paymentStatusEl.value : 'All').trim() || 'All',
+    charge_date_from: chargeDateFrom,
+    charge_date_to: chargeDateTo,
+    columns: [
+      'txn_id',
+      'party_id',
+      'receivable_invoice_detail_id',
+      'unit_id',
+      'property',
+      'property_name',
+      'property_id',
+      'unit',
+      'unit_address',
+      'party_type',
+      'charge_date',
+      'account_number',
+      'account_name',
+      'received_from',
+      'charge_amount',
+      'charge_description',
+      'paid_amount',
+      'receipt_info',
+      'receipt_type',
+      'receipt_date',
+      'receipt_reference',
+      'owners_phone_number_email',
+      'owners',
+      'created_by',
+      'created_at',
+      'last_edited_at',
+      'work_order_id',
+      'bill_id'
+    ]
+  };
+}
+
+function buildBillDetailRequestPayload() {
+  ensureBillDetailDateRange();
+  var fromEl = $('#billDetailFrom');
+  var toEl = $('#billDetailTo');
+  var dateTypeEl = $('#billDetailDateType');
+  var occurredOnFrom = String(fromEl ? fromEl.value : '').trim();
+  var occurredOnTo = String(toEl ? toEl.value : '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(occurredOnFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(occurredOnTo)) throw new Error('Bill detail date range is required');
+  if (occurredOnFrom > occurredOnTo) throw new Error('Bill detail date range is invalid');
+  return {
+    property_visibility: 'active',
+    properties: buildScopedPropertiesPayload(),
+    date_type: String(dateTypeEl ? dateTypeEl.value : 'Bill Date').trim() || 'Bill Date',
+    payment_status: 'All',
+    created_by: 'All',
+    reverse_transaction: '0',
+    occurred_on_from: occurredOnFrom,
+    occurred_on_to: occurredOnTo,
+    columns: [
+      'reference_number',
+      'bill_date',
+      'due_date',
+      'account',
+      'account_name',
+      'account_number',
+      'property',
+      'property_name',
+      'property_id',
+      'property_address',
+      'unit',
+      'payee_name',
+      'paid',
+      'unpaid',
+      'check_number',
+      'payment_date',
+      'description',
+      'work_order',
+      'cash_account',
+      'txn_id',
+      'payable_invoice_detail_id',
+      'unit_id',
+      'approval_status',
+      'approved_by',
+      'last_approver',
+      'next_approvers',
+      'days_pending_approval',
+      'created_by',
+      'txn_created_at',
+      'txn_updated_at',
+      'bank_account',
+      'vendor_id',
+      'work_order_id',
+      'party_id',
+      'party_type'
+    ]
+  };
+}
+
+function getChargeDetailRequestKey() {
+  var payload = buildChargeDetailRequestPayload();
+  return JSON.stringify({
+    properties: payload.properties,
+    payment_status: payload.payment_status,
+    charge_date_from: payload.charge_date_from,
+    charge_date_to: payload.charge_date_to
+  });
+}
+
+function getBillDetailRequestKey() {
+  var payload = buildBillDetailRequestPayload();
+  return JSON.stringify({
+    properties: payload.properties,
+    date_type: payload.date_type,
+    occurred_on_from: payload.occurred_on_from,
+    occurred_on_to: payload.occurred_on_to
+  });
+}
+
+function ensurePayablesAsOfDate() {
+  var occurredOnEl = $('#payablesOccurredOn');
+  if (!occurredOnEl) return;
+  if (!occurredOnEl.value) occurredOnEl.value = new Date().toISOString().slice(0, 10);
+}
+
+function getPayablesScopeGroupUuids() {
+  var explicitUuid = String(getEffectiveGroupUuid() || '').trim();
+  if (explicitUuid) return [explicitUuid];
+  if ((_accessRole === 'pm_readonly' || _accessRole === 'manager') && forcedPropertyGroupUuid) {
+    return [String(forcedPropertyGroupUuid).trim()];
+  }
+  return [];
+}
+
+function buildPayablesRequestPayload() {
+  ensurePayablesAsOfDate();
+  var occurredOnEl = $('#payablesOccurredOn');
+  var occurredOn = String(occurredOnEl ? occurredOnEl.value : '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(occurredOn)) {
+    throw new Error('Payables as-of date is required');
+  }
+  return {
+    property_visibility: 'active',
+    properties: {
+      property_groups_ids: getPayablesScopeGroupUuids(),
+    },
+    occurred_on_to: occurredOn,
+    columns: [
+      'property',
+      'property_name',
+      'property_id',
+      'property_address',
+      'unit_id',
+      'payee_name',
+      'amount_payable',
+      'not_yet_due',
+      '0_to30',
+      '30_to60',
+      '60_to90',
+      '90_plus',
+      '30_plus',
+      '60_plus',
+      'party_id',
+      'party_type'
+    ]
+  };
+}
+
+function getPayablesRequestKey() {
+  var payload = buildPayablesRequestPayload();
+  return JSON.stringify({
+    occurred_on_to: payload.occurred_on_to,
+    property_groups_ids: payload.properties && payload.properties.property_groups_ids ? payload.properties.property_groups_ids : []
+  });
+}
+
+function syncBillingToolbarForSubtab() {
+  var isQueue = currentBillingSubtab === 'queue';
+  var billStatusFilter = $('#billStatusFilter');
+  var billingKpiGrid = $('#billingKpiGrid');
+  if (billStatusFilter) billStatusFilter.style.display = isQueue ? '' : 'none';
+  if (billingKpiGrid) billingKpiGrid.style.display = isQueue ? '' : 'none';
+}
+
+function formatPayablesCurrency(value) {
+  return currency(amountToNumber(value || 0), 2);
+}
+
+function renderPayablesPaginationControls(totalRows) {
+  var footer = $('#payablesFooter');
+  if (!footer) return;
+  if (totalRows <= 0) {
+    footer.style.display = 'none';
+    footer.innerHTML = '';
+    return;
+  }
+
+  var totalPages = Math.max(1, Math.ceil(totalRows / _payablesPageSize));
+  if (_payablesPage >= totalPages) _payablesPage = totalPages - 1;
+  var start = _payablesPage * _payablesPageSize + 1;
+  var end = Math.min(totalRows, (_payablesPage + 1) * _payablesPageSize);
+  var prevDisabled = _payablesPage <= 0 ? ' disabled' : '';
+  var nextDisabled = _payablesPage >= totalPages - 1 ? ' disabled' : '';
+
+  footer.style.display = '';
+  footer.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+      '<span>Showing ' + start + '–' + end + ' of ' + totalRows + ' payables</span>' +
+      '<span style="display:inline-flex;align-items:center;gap:8px">' +
+        '<button class="action-btn" id="payablesPagePrev" style="padding:3px 8px"' + prevDisabled + '>Prev</button>' +
+        '<span style="font-family:var(--font-mono);font-size:11px">Page ' + (_payablesPage + 1) + ' / ' + totalPages + '</span>' +
+        '<button class="action-btn" id="payablesPageNext" style="padding:3px 8px"' + nextDisabled + '>Next</button>' +
+        '<select id="payablesPageSize" style="font-family:var(--font-mono);font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">' +
+          '<option value="25"' + (_payablesPageSize === 25 ? ' selected' : '') + '>25</option>' +
+          '<option value="50"' + (_payablesPageSize === 50 ? ' selected' : '') + '>50</option>' +
+          '<option value="100"' + (_payablesPageSize === 100 ? ' selected' : '') + '>100</option>' +
+        '</select>' +
+      '</span>' +
+    '</div>';
+
+  var prevBtn = $('#payablesPagePrev');
+  var nextBtn = $('#payablesPageNext');
+  var sizeSel = $('#payablesPageSize');
+  if (prevBtn) {
+    prevBtn.addEventListener('click', function() {
+      if (_payablesPage <= 0) return;
+      _payablesPage -= 1;
+      renderPayablesTable();
+    });
+  }
+  if (nextBtn) {
+    nextBtn.addEventListener('click', function() {
+      if (_payablesPage >= totalPages - 1) return;
+      _payablesPage += 1;
+      renderPayablesTable();
+    });
+  }
+  if (sizeSel) {
+    sizeSel.addEventListener('change', function() {
+      var next = Math.max(1, Math.min(200, parseInt(String(sizeSel.value || _payablesPageSize), 10) || _payablesPageSize));
+      if (next === _payablesPageSize) return;
+      _payablesPageSize = next;
+      _payablesPage = 0;
+      renderPayablesTable();
+    });
+  }
+}
+
+function renderPayablesTable() {
+  var tbody = $('#payablesTableBody');
+  if (!tbody) return;
+  ensurePayablesAsOfDate();
+
+  if (_payablesLoading) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px">' + loadingHtml('Loading payables…') + '</td></tr>';
+    renderPayablesPaginationControls(0);
+    return;
+  }
+
+  if (_payablesLastError) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--danger);">' + escapeHtml(_payablesLastError) + '</td></tr>';
+    renderPayablesPaginationControls(0);
+    return;
+  }
+
+  var search = String($('#payablesSearch') ? $('#payablesSearch').value : '').trim().toLowerCase();
+  var partyType = String($('#payablesPartyTypeFilter') ? $('#payablesPartyTypeFilter').value : '').trim();
+  var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+  var rows = (PAYABLES_ROWS || []).slice();
+
+  if (effectiveGroup) {
+    rows = rows.filter(function(row) {
+      return isInPropertyGroup(row.property_id || row.propertyId || '', row.property_name || row.property || '', effectiveGroup);
+    });
+  }
+  if (partyType) {
+    rows = rows.filter(function(row) {
+      return String(row.party_type || '').trim() === partyType;
+    });
+  }
+  if (search) {
+    rows = rows.filter(function(row) {
+      var haystack = [
+        row.payee_name,
+        row.property,
+        row.property_name,
+        row.property_address,
+        row.property_id,
+        row.party_id,
+        row.party_type,
+        row.unit_id
+      ].join(' ').toLowerCase();
+      return haystack.indexOf(search) !== -1;
+    });
+  }
+
+  rows.sort(function(a, b) {
+    var amountDiff = amountToNumber(b.amount_payable || 0) - amountToNumber(a.amount_payable || 0);
+    if (amountDiff !== 0) return amountDiff;
+    return String(a.property_name || a.property || '').localeCompare(String(b.property_name || b.property || ''));
+  });
+
+  var summaryEl = $('#payablesSummary');
+  if (summaryEl) {
+    var totalAmount = rows.reduce(function(sum, row) {
+      return sum + amountToNumber(row.amount_payable || 0);
+    }, 0);
+    var scopeText = effectiveGroup || ((_accessRole === 'pm_readonly' || _accessRole === 'manager') && forcedPropertyGroupUuid ? (resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'Assigned PM Group') : 'All Properties');
+    summaryEl.textContent = rows.length + ' payables • ' + formatPayablesCurrency(totalAmount) + ' total • ' + scopeText;
+  }
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--text-muted);">No payables match the current scope and filters.</td></tr>';
+    renderPayablesPaginationControls(0);
+    return;
+  }
+
+  var start = _payablesPage * _payablesPageSize;
+  var pageRows = rows.slice(start, start + _payablesPageSize);
+  tbody.innerHTML = pageRows.map(function(row) {
+    var propertyLabel = String(row.property_name || row.property || '—');
+    var propertyIdText = String(row.property_id || '').trim();
+    var unitIdText = String(row.unit_id || '').trim();
+    var propertyMeta = [];
+    if (propertyIdText) propertyMeta.push('PID ' + propertyIdText);
+    if (unitIdText) propertyMeta.push('UNIT ' + unitIdText);
+    var payeeMeta = [];
+    if (row.party_id) payeeMeta.push('PAYEE ' + String(row.party_id));
+    if (row.party_type) payeeMeta.push(String(row.party_type));
+    return '<tr>' +
+      '<td><div style="font-weight:600">' + escapeHtml(String(row.payee_name || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(payeeMeta.join(' • ')) + '</div></td>' +
+      '<td><div style="font-weight:600">' + escapeHtml(propertyLabel) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(propertyMeta.join(' • ') || String(row.property_address || '')) + '</div></td>' +
+      '<td>' + escapeHtml(String(row.party_type || '—')) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row.amount_payable)) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row.not_yet_due)) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['0_to30'])) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['30_to60'])) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['60_to90'])) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['90_plus'])) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['30_plus'])) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['60_plus'])) + '</td>' +
+    '</tr>';
+  }).join('');
+
+  renderPayablesPaginationControls(rows.length);
+}
+
+async function renderPayablesSection(opts) {
+  opts = opts || {};
+  var tbody = $('#payablesTableBody');
+  if (!tbody) return;
+  ensurePayablesAsOfDate();
+
+  var requestKey;
+  try {
+    requestKey = getPayablesRequestKey();
+  } catch (err) {
+    _payablesLastError = String(err && (err.message || err) || 'Could not build payables request');
+    renderPayablesTable();
+    return;
+  }
+
+  if (_payablesLoading) {
+    renderPayablesTable();
+    return;
+  }
+  if (!opts.forceRefresh && _payablesLoadedKey === requestKey) {
+    _payablesLastError = '';
+    renderPayablesTable();
+    return;
+  }
+
+  _payablesLoading = true;
+  _payablesLastError = '';
+  _payablesPage = 0;
+  renderPayablesTable();
+  setSectionBusy('sec-billing', true, 'Loading payables…');
+
+  try {
+    var payload = buildPayablesRequestPayload();
+    var data = await apiFetch('/api/v2/reports/aged_payables_summary.json', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    PAYABLES_ROWS = Array.isArray(data && data.results) ? data.results.slice() : [];
+    _payablesLoadedKey = requestKey;
+    _payablesLastError = '';
+  } catch (err) {
+    PAYABLES_ROWS = [];
+    _payablesLastError = 'Failed to load payables: ' + String(err && (err.message || err) || 'Unknown error');
+  } finally {
+    _payablesLoading = false;
+    setSectionBusy('sec-billing', false);
+    renderPayablesTable();
+  }
+}
+
+function openPropertyDetailFromAssociation(propertyId, propertyName) {
+  if (!propertyId) return;
+  var btn = document.createElement('button');
+  btn.setAttribute('data-property-id', String(propertyId || ''));
+  btn.setAttribute('data-property-name', String(propertyName || ''));
+  showPropertyDetailModal(btn);
+}
+
+function openChargeDetailModal(row) {
+  if (!row) return;
+  var propertyId = String(row.property_id || '').trim();
+  var propertyName = String(row.property_name || row.property || '').trim();
+  var unitId = String(row.unit_id || '').trim();
+  var unitName = String(row.unit || row.unit_address || '').trim();
+  var balance = amountToNumber(row.charge_amount || 0) - amountToNumber(row.paid_amount || 0);
+  var afLink = API_VHOST && row.txn_id
+    ? ('https://' + API_VHOST + '.appfolio.com/receivables/' + encodeURIComponent(String(row.txn_id)))
+    : '';
+  var propertyButtons = '';
+  if (propertyId) {
+    propertyButtons += '<button class="action-btn" id="chargeDetailOpenProperty" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-building"></i> Property</button>';
+    propertyButtons += '<button class="action-btn" id="chargeDetailGoBills" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-filter"></i> Bills</button>';
+  }
+  if (unitId) {
+    propertyButtons += '<button class="action-btn" id="chargeDetailGoUnitBills" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-door-open"></i> Unit Bills</button>';
+  }
+  showItemDetail('Charge Detail — ' + String(row.txn_id || row.receivable_invoice_detail_id || 'Record'), [
+    { section: 'Charge', icon: 'fa-receipt' },
+    { label: 'Txn ID', value: String(row.txn_id || '—') },
+    { label: 'Receivable Detail ID', value: String(row.receivable_invoice_detail_id || '—') },
+    { label: 'Charge Date', value: row.charge_date ? formatDate(row.charge_date) : '—' },
+    { label: 'Account', value: String((row.account_number || '—') + ' — ' + (row.account_name || '—')) },
+    { label: 'Description', value: String(row.charge_description || '—') },
+    { label: 'Charge Amount', value: formatPayablesCurrency(row.charge_amount) },
+    { label: 'Paid Amount', value: formatPayablesCurrency(row.paid_amount) },
+    { label: 'Balance', value: formatPayablesCurrency(balance) },
+    { section: 'Receipt', icon: 'fa-money-check-dollar' },
+    { label: 'Received From', value: String(row.received_from || '—') },
+    { label: 'Receipt Type', value: String(row.receipt_type || '—') },
+    { label: 'Receipt Date', value: row.receipt_date ? String(row.receipt_date) : '—' },
+    { label: 'Receipt Reference', value: String(row.receipt_reference || '—') },
+    { label: 'Receipt Info', value: String(row.receipt_info || '—') },
+    { section: 'Associations', icon: 'fa-link' },
+    { label: 'Property / Unit', html: '<span>' + escapeHtml(propertyName || '—') + (propertyId ? ' <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">(' + escapeHtml(propertyId) + ')</span>' : '') + (unitName ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">' + escapeHtml(unitName) + (unitId ? ' (' + escapeHtml(unitId) + ')' : '') + '</div>' : '') + '</span>' + propertyButtons },
+    { label: 'Party', value: String((row.received_from || '—') + ((row.party_id || row.party_type) ? (' (' + [row.party_type, row.party_id].filter(Boolean).join(' • ') + ')') : '')) },
+    { label: 'Owners', value: String(row.owners || '—') },
+    { label: 'Owner Contact', value: String(row.owners_phone_number_email || '—') },
+    { label: 'Work Order / Bill', value: String((row.work_order_id || '—') + ' / ' + (row.bill_id || '—')) },
+    { section: 'Audit', icon: 'fa-clock-rotate-left' },
+    { label: 'Created By', value: String(row.created_by || '—') },
+    { label: 'Created At', value: row.created_at ? formatNoteDateTime(row.created_at) : '—' },
+    { label: 'Last Edited', value: row.last_edited_at ? formatNoteDateTime(row.last_edited_at) : '—' }
+  ], afLink);
+
+  requestAnimationFrame(function() {
+    var openPropertyBtn = document.getElementById('chargeDetailOpenProperty');
+    var goBillsBtn = document.getElementById('chargeDetailGoBills');
+    var goUnitBillsBtn = document.getElementById('chargeDetailGoUnitBills');
+    if (openPropertyBtn) openPropertyBtn.addEventListener('click', function() { openPropertyDetailFromAssociation(propertyId, propertyName); });
+    if (goBillsBtn) goBillsBtn.addEventListener('click', function() { closeModal('itemDetailModal'); filterBillsToProperty(propertyId, propertyName); });
+    if (goUnitBillsBtn) goUnitBillsBtn.addEventListener('click', function() { closeModal('itemDetailModal'); filterBillsToUnit(unitId, unitName || unitId, propertyId, propertyName); });
+  });
+}
+
+function openBillDetailReportModal(row) {
+  if (!row) return;
+  var propertyId = String(row.property_id || '').trim();
+  var propertyName = String(row.property_name || row.property || '').trim();
+  var unitId = String(row.unit_id || '').trim();
+  var unitName = String(row.unit || '').trim();
+  var vendorId = String(row.vendor_id || '').trim();
+  var vendorName = String(row.payee_name || '').trim();
+  var afLink = API_VHOST && row.txn_id
+    ? ('https://' + API_VHOST + '.appfolio.com/bills/' + encodeURIComponent(String(row.txn_id)))
+    : '';
+  var assocHtml = '<span>' + escapeHtml(propertyName || '—') + (propertyId ? ' <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">(' + escapeHtml(propertyId) + ')</span>' : '') + '</span>' +
+    (unitName ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">' + escapeHtml(unitName) + (unitId ? ' (' + escapeHtml(unitId) + ')' : '') + '</div>' : '') +
+    (propertyId ? ' <button class="action-btn" id="billDetailReportGoBills" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-filter"></i> Bills</button>' : '') +
+    (unitId ? ' <button class="action-btn" id="billDetailReportGoUnitBills" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-door-open"></i> Unit Bills</button>' : '') +
+    (propertyId ? ' <button class="action-btn" id="billDetailReportOpenProperty" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-building"></i> Property</button>' : '');
+  var payeeHtml = '<span>' + escapeHtml(vendorName || '—') + (vendorId ? ' <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">(' + escapeHtml(vendorId) + ')</span>' : '') + '</span>' +
+    (vendorId ? ' <button class="action-btn" id="billDetailReportOpenVendor" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-store"></i> Vendor</button>' : '');
+  showItemDetail('Bill Detail — ' + String(row.txn_id || row.payable_invoice_detail_id || 'Record'), [
+    { section: 'Bill', icon: 'fa-file-lines' },
+    { label: 'Txn ID', value: String(row.txn_id || '—') },
+    { label: 'Payable Detail ID', value: String(row.payable_invoice_detail_id || '—') },
+    { label: 'Reference Number', value: String(row.reference_number || '—') },
+    { label: 'Bill Date', value: row.bill_date ? formatDate(row.bill_date) : '—' },
+    { label: 'Due Date', value: row.due_date ? formatDate(row.due_date) : '—' },
+    { label: 'Account', value: String(row.account || ((row.account_number || '—') + ' — ' + (row.account_name || '—'))) },
+    { label: 'Description', value: String(row.description || '—') },
+    { label: 'Paid', value: formatPayablesCurrency(row.paid) },
+    { label: 'Unpaid', value: formatPayablesCurrency(row.unpaid) },
+    { section: 'Associations', icon: 'fa-link' },
+    { label: 'Payee', html: payeeHtml },
+    { label: 'Property / Unit', html: assocHtml },
+    { label: 'Approval', value: String(row.approval_status || '—') + (row.approved_by ? (' — ' + row.approved_by) : '') },
+    { label: 'Work Order', value: String(row.work_order_id || row.work_order || '—') },
+    { label: 'Party', value: String([row.party_type, row.party_id].filter(Boolean).join(' • ') || '—') },
+    { section: 'Payment', icon: 'fa-money-check-dollar' },
+    { label: 'Check Number', value: String(row.check_number || '—') },
+    { label: 'Payment Date', value: row.payment_date ? formatDate(row.payment_date) : '—' },
+    { label: 'Cash Account', value: String(row.cash_account || '—') },
+    { label: 'Bank Account', value: String(row.bank_account || '—') },
+    { section: 'Audit', icon: 'fa-clock-rotate-left' },
+    { label: 'Created By', value: String(row.created_by || '—') },
+    { label: 'Created At', value: row.txn_created_at ? formatNoteDateTime(row.txn_created_at) : '—' },
+    { label: 'Updated At', value: row.txn_updated_at ? formatNoteDateTime(row.txn_updated_at) : '—' }
+  ], afLink);
+
+  requestAnimationFrame(function() {
+    var openVendorBtn = document.getElementById('billDetailReportOpenVendor');
+    var openPropertyBtn = document.getElementById('billDetailReportOpenProperty');
+    var goBillsBtn = document.getElementById('billDetailReportGoBills');
+    var goUnitBillsBtn = document.getElementById('billDetailReportGoUnitBills');
+    if (openVendorBtn) openVendorBtn.addEventListener('click', function() { closeModal('itemDetailModal'); if (vendorId) openVendorModal(vendorId); });
+    if (openPropertyBtn) openPropertyBtn.addEventListener('click', function() { openPropertyDetailFromAssociation(propertyId, propertyName); });
+    if (goBillsBtn) goBillsBtn.addEventListener('click', function() { closeModal('itemDetailModal'); filterBillsToProperty(propertyId, propertyName); });
+    if (goUnitBillsBtn) goUnitBillsBtn.addEventListener('click', function() { closeModal('itemDetailModal'); filterBillsToUnit(unitId, unitName || unitId, propertyId, propertyName); });
+  });
+}
+
+function renderSimpleReportFooter(footerId, page, pageSize, totalRows, baseId, onChange) {
+  var footer = $(footerId);
+  if (!footer) return;
+  if (totalRows <= 0) {
+    footer.style.display = 'none';
+    footer.innerHTML = '';
+    return;
+  }
+  var totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  var safePage = Math.max(0, Math.min(totalPages - 1, page));
+  var start = safePage * pageSize + 1;
+  var end = Math.min(totalRows, (safePage + 1) * pageSize);
+  var prevDisabled = safePage <= 0 ? ' disabled' : '';
+  var nextDisabled = safePage >= totalPages - 1 ? ' disabled' : '';
+  footer.style.display = '';
+  footer.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+    '<span>Showing ' + start + '–' + end + ' of ' + totalRows + ' rows</span>' +
+    '<span style="display:inline-flex;align-items:center;gap:8px">' +
+      '<button class="action-btn" id="' + baseId + 'Prev" style="padding:3px 8px"' + prevDisabled + '>Prev</button>' +
+      '<span style="font-family:var(--font-mono);font-size:11px">Page ' + (safePage + 1) + ' / ' + totalPages + '</span>' +
+      '<button class="action-btn" id="' + baseId + 'Next" style="padding:3px 8px"' + nextDisabled + '>Next</button>' +
+      '<select id="' + baseId + 'Size" style="font-family:var(--font-mono);font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">' +
+        '<option value="25"' + (pageSize === 25 ? ' selected' : '') + '>25</option>' +
+        '<option value="50"' + (pageSize === 50 ? ' selected' : '') + '>50</option>' +
+        '<option value="100"' + (pageSize === 100 ? ' selected' : '') + '>100</option>' +
+      '</select>' +
+    '</span>' +
+  '</div>';
+  var prevBtn = document.getElementById(baseId + 'Prev');
+  var nextBtn = document.getElementById(baseId + 'Next');
+  var sizeSel = document.getElementById(baseId + 'Size');
+  if (prevBtn) prevBtn.addEventListener('click', function() { if (safePage > 0) onChange(safePage - 1, pageSize); });
+  if (nextBtn) nextBtn.addEventListener('click', function() { if (safePage < totalPages - 1) onChange(safePage + 1, pageSize); });
+  if (sizeSel) sizeSel.addEventListener('change', function() {
+    var nextSize = Math.max(1, Math.min(200, parseInt(String(sizeSel.value || pageSize), 10) || pageSize));
+    onChange(0, nextSize);
+  });
+}
+
+function renderChargeDetailTable() {
+  var tbody = $('#chargeDetailBody');
+  if (!tbody) return;
+  ensureChargeDetailDateRange();
+  if (_chargeDetailLoading) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">' + loadingHtml('Loading charge detail…') + '</td></tr>';
+    renderSimpleReportFooter('#chargeDetailFooter', 0, _chargeDetailPageSize, 0, 'chargeDetailPage', function() {});
+    return;
+  }
+  if (_chargeDetailLastError) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--danger);">' + escapeHtml(_chargeDetailLastError) + '</td></tr>';
+    renderSimpleReportFooter('#chargeDetailFooter', 0, _chargeDetailPageSize, 0, 'chargeDetailPage', function() {});
+    return;
+  }
+  var search = String($('#chargeDetailSearch') ? $('#chargeDetailSearch').value : '').trim().toLowerCase();
+  var rows = (CHARGE_DETAIL_ROWS || []).slice();
+  if (search) {
+    rows = rows.filter(function(row) {
+      return [row.received_from, row.property, row.property_name, row.account_name, row.account_number, row.party_id, row.txn_id, row.receivable_invoice_detail_id].join(' ').toLowerCase().indexOf(search) !== -1;
+    });
+  }
+  rows.sort(function(a, b) {
+    var aDate = String(a.charge_date || '');
+    var bDate = String(b.charge_date || '');
+    if (aDate !== bDate) return bDate.localeCompare(aDate);
+    return String(a.property_name || a.property || '').localeCompare(String(b.property_name || b.property || ''));
+  });
+  var summaryEl = $('#chargeDetailSummary');
+  if (summaryEl) {
+    var totalCharge = rows.reduce(function(sum, row) { return sum + amountToNumber(row.charge_amount || 0); }, 0);
+    var totalPaid = rows.reduce(function(sum, row) { return sum + amountToNumber(row.paid_amount || 0); }, 0);
+    summaryEl.textContent = rows.length + ' charge rows • ' + formatPayablesCurrency(totalCharge) + ' charged • ' + formatPayablesCurrency(totalPaid) + ' paid';
+  }
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text-muted);">No charge detail rows match the current filters.</td></tr>';
+    renderSimpleReportFooter('#chargeDetailFooter', 0, _chargeDetailPageSize, 0, 'chargeDetailPage', function() {});
+    return;
+  }
+  var start = _chargeDetailPage * _chargeDetailPageSize;
+  var pageRows = rows.slice(start, start + _chargeDetailPageSize);
+  tbody.innerHTML = pageRows.map(function(row) {
+    var charge = amountToNumber(row.charge_amount || 0);
+    var paid = amountToNumber(row.paid_amount || 0);
+    var balance = charge - paid;
+    return '<tr class="clickable-row" data-charge-detail-id="' + escapeHtml(String(row.txn_id || row.receivable_invoice_detail_id || '')) + '" tabindex="0" role="button" aria-label="Open charge detail">' +
+      '<td>' + escapeHtml(row.charge_date ? formatDate(row.charge_date) : '—') + '</td>' +
+      '<td><div style="font-weight:600">' + escapeHtml(String(row.received_from || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml([row.party_type, row.party_id].filter(Boolean).join(' • ')) + '</div></td>' +
+      '<td><div style="font-weight:600">' + escapeHtml(String(row.property_name || row.property || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml([row.unit || row.unit_address, row.property_id ? 'PID ' + row.property_id : '', row.unit_id ? 'UNIT ' + row.unit_id : ''].filter(Boolean).join(' • ')) + '</div></td>' +
+      '<td><div style="font-family:var(--font-mono)">' + escapeHtml(String(row.account_number || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(String(row.account_name || '—')) + '</div></td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(charge)) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(paid)) + '</td>' +
+      '<td style="font-family:var(--font-mono);color:' + (balance > 0 ? 'var(--danger)' : 'var(--success)') + '">' + escapeHtml(formatPayablesCurrency(balance)) + '</td>' +
+      '<td><div>' + escapeHtml(String(row.receipt_type || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(String(row.receipt_reference || row.receipt_info || '—')) + '</div></td>' +
+      '<td>' + escapeHtml(String(row.party_type || '—')) + '</td>' +
+    '</tr>';
+  }).join('');
+  Array.prototype.forEach.call(tbody.querySelectorAll('tr[data-charge-detail-id]'), function(rowEl, idx) {
+    var openRow = function(evt) {
+      if (evt && evt.type === 'keydown' && evt.key !== 'Enter' && evt.key !== ' ') return;
+      if (evt && evt.preventDefault) evt.preventDefault();
+      openChargeDetailModal(pageRows[idx]);
+    };
+    rowEl.addEventListener('click', openRow);
+    rowEl.addEventListener('keydown', openRow);
+  });
+  renderSimpleReportFooter('#chargeDetailFooter', _chargeDetailPage, _chargeDetailPageSize, rows.length, 'chargeDetailPage', function(nextPage, nextSize) {
+    _chargeDetailPage = nextPage;
+    _chargeDetailPageSize = nextSize;
+    renderChargeDetailTable();
+  });
+}
+
+function renderBillDetailTable() {
+  var tbody = $('#billDetailBody');
+  if (!tbody) return;
+  ensureBillDetailDateRange();
+  if (_billDetailLoading) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">' + loadingHtml('Loading bill detail…') + '</td></tr>';
+    renderSimpleReportFooter('#billDetailFooter', 0, _billDetailPageSize, 0, 'billDetailPage', function() {});
+    return;
+  }
+  if (_billDetailLastError) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--danger);">' + escapeHtml(_billDetailLastError) + '</td></tr>';
+    renderSimpleReportFooter('#billDetailFooter', 0, _billDetailPageSize, 0, 'billDetailPage', function() {});
+    return;
+  }
+  var search = String($('#billDetailSearch') ? $('#billDetailSearch').value : '').trim().toLowerCase();
+  var approval = String($('#billDetailApprovalFilter') ? $('#billDetailApprovalFilter').value : '').trim();
+  var rows = (BILL_DETAIL_REPORT_ROWS || []).slice();
+  if (approval) {
+    rows = rows.filter(function(row) { return String(row.approval_status || '').trim() === approval; });
+  }
+  if (search) {
+    rows = rows.filter(function(row) {
+      return [row.payee_name, row.property, row.property_name, row.account_name, row.account_number, row.txn_id, row.payable_invoice_detail_id, row.party_id, row.vendor_id].join(' ').toLowerCase().indexOf(search) !== -1;
+    });
+  }
+  rows.sort(function(a, b) {
+    var aDate = String(a.bill_date || '');
+    var bDate = String(b.bill_date || '');
+    if (aDate !== bDate) return bDate.localeCompare(aDate);
+    return amountToNumber(b.unpaid || 0) - amountToNumber(a.unpaid || 0);
+  });
+  var summaryEl = $('#billDetailSummary');
+  if (summaryEl) {
+    var totalPaid = rows.reduce(function(sum, row) { return sum + amountToNumber(row.paid || 0); }, 0);
+    var totalUnpaid = rows.reduce(function(sum, row) { return sum + amountToNumber(row.unpaid || 0); }, 0);
+    summaryEl.textContent = rows.length + ' bill rows • ' + formatPayablesCurrency(totalPaid) + ' paid • ' + formatPayablesCurrency(totalUnpaid) + ' unpaid';
+  }
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text-muted);">No bill detail rows match the current filters.</td></tr>';
+    renderSimpleReportFooter('#billDetailFooter', 0, _billDetailPageSize, 0, 'billDetailPage', function() {});
+    return;
+  }
+  var start = _billDetailPage * _billDetailPageSize;
+  var pageRows = rows.slice(start, start + _billDetailPageSize);
+  tbody.innerHTML = pageRows.map(function(row) {
+    return '<tr class="clickable-row" data-bill-detail-report-id="' + escapeHtml(String(row.txn_id || row.payable_invoice_detail_id || '')) + '" tabindex="0" role="button" aria-label="Open bill detail row">' +
+      '<td>' + escapeHtml(row.bill_date ? formatDate(row.bill_date) : '—') + '<div style="font-size:11px;color:var(--text-muted)">Due ' + escapeHtml(row.due_date ? formatDate(row.due_date) : '—') + '</div></td>' +
+      '<td><div style="font-weight:600">' + escapeHtml(String(row.payee_name || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml([row.party_type, row.party_id || row.vendor_id].filter(Boolean).join(' • ')) + '</div></td>' +
+      '<td><div style="font-weight:600">' + escapeHtml(String(row.property_name || row.property || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml([row.unit, row.property_id ? 'PID ' + row.property_id : '', row.unit_id ? 'UNIT ' + row.unit_id : ''].filter(Boolean).join(' • ')) + '</div></td>' +
+      '<td><div style="font-family:var(--font-mono)">' + escapeHtml(String(row.account_number || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(String(row.account_name || '—')) + '</div></td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row.paid)) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row.unpaid)) + '</td>' +
+      '<td>' + escapeHtml(String(row.approval_status || '—')) + '<div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(String(row.approved_by || row.created_by || '—')) + '</div></td>' +
+      '<td>' + escapeHtml(String(row.check_number || '—')) + '<div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(row.payment_date ? formatDate(row.payment_date) : '—') + '</div></td>' +
+      '<td>' + escapeHtml(String(row.party_type || '—')) + '</td>' +
+    '</tr>';
+  }).join('');
+  Array.prototype.forEach.call(tbody.querySelectorAll('tr[data-bill-detail-report-id]'), function(rowEl, idx) {
+    var openRow = function(evt) {
+      if (evt && evt.type === 'keydown' && evt.key !== 'Enter' && evt.key !== ' ') return;
+      if (evt && evt.preventDefault) evt.preventDefault();
+      openBillDetailReportModal(pageRows[idx]);
+    };
+    rowEl.addEventListener('click', openRow);
+    rowEl.addEventListener('keydown', openRow);
+  });
+  renderSimpleReportFooter('#billDetailFooter', _billDetailPage, _billDetailPageSize, rows.length, 'billDetailPage', function(nextPage, nextSize) {
+    _billDetailPage = nextPage;
+    _billDetailPageSize = nextSize;
+    renderBillDetailTable();
+  });
+}
+
+async function renderChargeDetailSection(opts) {
+  opts = opts || {};
+  var requestKey;
+  try {
+    requestKey = getChargeDetailRequestKey();
+  } catch (err) {
+    _chargeDetailLastError = String(err && (err.message || err) || 'Could not build charge detail request');
+    renderChargeDetailTable();
+    return;
+  }
+  if (_chargeDetailLoading) { renderChargeDetailTable(); return; }
+  if (!opts.forceRefresh && _chargeDetailLoadedKey === requestKey) { _chargeDetailLastError = ''; renderChargeDetailTable(); return; }
+  _chargeDetailLoading = true;
+  _chargeDetailLastError = '';
+  _chargeDetailPage = 0;
+  renderChargeDetailTable();
+  setSectionBusy('sec-billing', true, 'Loading charge detail…');
+  try {
+    CHARGE_DETAIL_ROWS = await fetchReportRows('charge_detail', buildChargeDetailRequestPayload(), 'charge_detail');
+    _chargeDetailLoadedKey = requestKey;
+  } catch (err) {
+    CHARGE_DETAIL_ROWS = [];
+    _chargeDetailLastError = 'Failed to load charge detail: ' + String(err && (err.message || err) || 'Unknown error');
+  } finally {
+    _chargeDetailLoading = false;
+    setSectionBusy('sec-billing', false);
+    renderChargeDetailTable();
+  }
+}
+
+async function renderBillDetailSection(opts) {
+  opts = opts || {};
+  var requestKey;
+  try {
+    requestKey = getBillDetailRequestKey();
+  } catch (err) {
+    _billDetailLastError = String(err && (err.message || err) || 'Could not build bill detail request');
+    renderBillDetailTable();
+    return;
+  }
+  if (_billDetailLoading) { renderBillDetailTable(); return; }
+  if (!opts.forceRefresh && _billDetailLoadedKey === requestKey) { _billDetailLastError = ''; renderBillDetailTable(); return; }
+  _billDetailLoading = true;
+  _billDetailLastError = '';
+  _billDetailPage = 0;
+  renderBillDetailTable();
+  setSectionBusy('sec-billing', true, 'Loading bill detail…');
+  try {
+    BILL_DETAIL_REPORT_ROWS = await fetchReportRows('bill_detail', buildBillDetailRequestPayload(), 'bill_detail');
+    _billDetailLoadedKey = requestKey;
+  } catch (err) {
+    BILL_DETAIL_REPORT_ROWS = [];
+    _billDetailLastError = 'Failed to load bill detail: ' + String(err && (err.message || err) || 'Unknown error');
+  } finally {
+    _billDetailLoading = false;
+    setSectionBusy('sec-billing', false);
+    renderBillDetailTable();
+  }
+}
+
+function renderBillingSection(opts) {
+  if (currentBillingSubtab === 'payables') {
+    renderPayablesSection(opts);
+    return;
+  }
+  if (currentBillingSubtab === 'charge-detail') {
+    renderChargeDetailSection(opts);
+    return;
+  }
+  if (currentBillingSubtab === 'bill-detail') {
+    renderBillDetailSection(opts);
+    return;
+  }
+  if (currentBillingSubtab === 'history') {
+    if (opts && opts.forceRefresh) runBillHistorySearch();
+    return;
+  }
+  renderBillsSection();
+}
+
+function monthInputValue(dateLike) {
+  var date = dateLike instanceof Date ? dateLike : new Date(dateLike || Date.now());
+  if (isNaN(date.getTime())) date = new Date();
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
+}
+
+function addMonthsToDate(dateLike, monthDelta) {
+  var date = dateLike instanceof Date ? new Date(dateLike.getTime()) : new Date(dateLike || Date.now());
+  if (isNaN(date.getTime())) date = new Date();
+  return new Date(date.getFullYear(), date.getMonth() + monthDelta, 1);
+}
+
+function ensureRenewalsMonthRange() {
+  var fromEl = $('#renewalsFromMonth');
+  var toEl = $('#renewalsToMonth');
+  if (!fromEl || !toEl) return;
+  if (!fromEl.value) fromEl.value = monthInputValue(new Date());
+  if (!toEl.value) toEl.value = monthInputValue(addMonthsToDate(new Date(), 3));
+}
+
+function getRenewalsScopeGroupUuids() {
+  var explicitUuid = String(getEffectiveGroupUuid() || '').trim();
+  if (explicitUuid) return [explicitUuid];
+  if ((_accessRole === 'pm_readonly' || _accessRole === 'manager') && forcedPropertyGroupUuid) {
+    return [String(forcedPropertyGroupUuid).trim()];
+  }
+  return [];
+}
+
+function buildRenewalsRequestPayload() {
+  ensureRenewalsMonthRange();
+  var fromEl = $('#renewalsFromMonth');
+  var toEl = $('#renewalsToMonth');
+  var statusEl = $('#renewalsStatusFilter');
+  var startOnFrom = String(fromEl ? fromEl.value : '').trim();
+  var startOnTo = String(toEl ? toEl.value : '').trim();
+  if (!/^\d{4}-\d{2}$/.test(startOnFrom) || !/^\d{4}-\d{2}$/.test(startOnTo)) {
+    throw new Error('Renewals month range is required');
+  }
+  if (startOnFrom > startOnTo) {
+    throw new Error('Lease From month must be before Lease To month');
+  }
+  var groupUuids = getRenewalsScopeGroupUuids();
+  var payload = {
+    properties: {
+      property_groups_ids: groupUuids,
+    },
+    unit_visibility: 'active',
+    start_on_from: startOnFrom,
+    start_on_to: startOnTo,
+    columns: [
+      'unit_name',
+      'property',
+      'property_name',
+      'property_id',
+      'tenant_name',
+      'lease_start',
+      'lease_end',
+      'previous_rent',
+      'rent',
+      'respond_by_date',
+      'renewal_sent_date',
+      'countersigned_date',
+      'automatic_renewal_date',
+      'percent_difference',
+      'dollar_difference',
+      'status',
+      'term',
+      'lease_start_month',
+      'tenant_agent',
+      'tenant_tags'
+    ]
+  };
+  var statusValue = String(statusEl ? statusEl.value : 'all').trim();
+  if (statusValue && statusValue !== 'all') payload.statuses = [statusValue];
+  return payload;
+}
+
+function getRenewalsRequestKey() {
+  var payload = buildRenewalsRequestPayload();
+  return JSON.stringify({
+    groupUuids: payload.properties && payload.properties.property_groups_ids ? payload.properties.property_groups_ids : [],
+    start_on_from: payload.start_on_from,
+    start_on_to: payload.start_on_to,
+    statuses: payload.statuses || ['all']
+  });
+}
+
+function renewalStatusBadge(status) {
+  var normalized = String(status || '').trim().toLowerCase();
+  var style = 'background:var(--bg-secondary);color:var(--text-primary);';
+  if (normalized === 'renewed') style = 'background:color-mix(in srgb, var(--success) 14%, transparent);color:var(--success);border:1px solid color-mix(in srgb, var(--success) 35%, transparent);';
+  else if (normalized === 'pending') style = 'background:color-mix(in srgb, var(--warning) 14%, transparent);color:var(--warning);border:1px solid color-mix(in srgb, var(--warning) 35%, transparent);';
+  else if (normalized === 'did not renew' || normalized === 'month to month') style = 'background:color-mix(in srgb, var(--danger) 14%, transparent);color:var(--danger);border:1px solid color-mix(in srgb, var(--danger) 35%, transparent);';
+  return '<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;' + style + '">' + escapeHtml(String(status || '—')) + '</span>';
+}
+
+function renderRenewalsTable() {
+  var tbody = $('#renewalsTableBody');
+  if (!tbody) return;
+  ensureRenewalsMonthRange();
+
+  if (_renewalsLoading) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px">' + loadingHtml('Loading renewals…') + '</td></tr>';
+    return;
+  }
+
+  var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+  var statusValue = String($('#renewalsStatusFilter') ? $('#renewalsStatusFilter').value : 'all').trim();
+  var search = String($('#renewalsSearch') ? $('#renewalsSearch').value : '').trim().toLowerCase();
+  var rows = (RENEWALS_ROWS || []).slice();
+
+  if (effectiveGroup) {
+    rows = rows.filter(function(row) {
+      return isInPropertyGroup(row.property_id || row.propertyId || '', row.property_name || row.property || '', effectiveGroup);
+    });
+  }
+  if (statusValue && statusValue !== 'all') {
+    rows = rows.filter(function(row) {
+      return String(row.status || '').trim() === statusValue;
+    });
+  }
+  if (search) {
+    rows = rows.filter(function(row) {
+      var haystack = [
+        row.tenant_name,
+        row.property_name,
+        row.property,
+        row.unit_name,
+        row.status,
+        row.term,
+        row.tenant_agent,
+        row.tenant_tags
+      ].join(' ').toLowerCase();
+      return haystack.indexOf(search) !== -1;
+    });
+  }
+
+  rows.sort(function(a, b) {
+    var aStart = String(a.lease_start || '');
+    var bStart = String(b.lease_start || '');
+    if (aStart !== bStart) return aStart.localeCompare(bStart);
+    return String(a.property_name || a.property || '').localeCompare(String(b.property_name || b.property || ''));
+  });
+
+  var summaryEl = $('#renewalsSummary');
+  if (summaryEl) {
+    var counts = {};
+    rows.forEach(function(row) {
+      var key = String(row.status || 'Unknown').trim() || 'Unknown';
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    var countSummary = Object.keys(counts).sort().map(function(key) {
+      return key + ': ' + counts[key];
+    }).join(' • ');
+    var scopeText = effectiveGroup || ((_accessRole === 'pm_readonly' || _accessRole === 'manager') && forcedPropertyGroupUuid ? (resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'Assigned PM Group') : 'All Properties');
+    summaryEl.textContent = rows.length + ' renewal rows • ' + scopeText + (countSummary ? ' • ' + countSummary : '');
+  }
+
+  if (_renewalsLastError) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--danger);">' + escapeHtml(_renewalsLastError) + '</td></tr>';
+    return;
+  }
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--text-muted);">No renewals match the current scope and filters.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(function(row) {
+    var propertyLabel = String(row.property_name || row.property || '—');
+    var unitLabel = String(row.unit_name || '—');
+    var leaseEnd = row.lease_end ? formatDate(row.lease_end) : '—';
+    var leaseStart = row.lease_start ? formatDate(row.lease_start) : '—';
+    var delta = amountToNumber(row.dollar_difference || 0);
+    var deltaPct = String(row.percent_difference || '').trim();
+    var deltaColor = delta > 0 ? 'var(--danger)' : (delta < 0 ? 'var(--success)' : 'var(--text-primary)');
+    var deltaText = currency(delta, 2) + (deltaPct ? ' (' + escapeHtml(deltaPct) + '%)' : '');
+    return '<tr>' +
+      '<td>' + renewalStatusBadge(row.status) + '</td>' +
+      '<td><div style="font-weight:600">' + escapeHtml(String(row.tenant_name || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">Lease ' + escapeHtml(String(row.term || '—')) + '</div></td>' +
+      '<td><div style="font-weight:600">' + escapeHtml(propertyLabel) + '</div><div style="font-size:11px;color:var(--text-muted)">Unit ' + escapeHtml(unitLabel) + '</div></td>' +
+      '<td><div>' + escapeHtml(leaseStart) + '</div><div style="font-size:11px;color:var(--text-muted)">to ' + escapeHtml(leaseEnd) + '</div></td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(currency(row.rent, 2)) + '</td>' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(currency(row.previous_rent, 2)) + '</td>' +
+      '<td style="font-family:var(--font-mono);color:' + deltaColor + '">' + deltaText + '</td>' +
+      '<td>' + escapeHtml(formatDate(row.respond_by_date)) + '</td>' +
+      '<td>' + escapeHtml(formatDate(row.renewal_sent_date)) + '</td>' +
+      '<td>' + escapeHtml(formatDate(row.countersigned_date || row.automatic_renewal_date)) + '</td>' +
+      '<td><div>' + escapeHtml(String(row.tenant_agent || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(String(row.tenant_tags || '')) + '</div></td>' +
+    '</tr>';
+  }).join('');
+}
+
+async function renderRenewalsSection(opts) {
+  opts = opts || {};
+  var tbody = $('#renewalsTableBody');
+  if (!tbody) return;
+  ensureRenewalsMonthRange();
+
+  if (_renewalsLoading) {
+    renderRenewalsTable();
+    return;
+  }
+
+  var requestKey;
+  try {
+    requestKey = getRenewalsRequestKey();
+  } catch (err) {
+    _renewalsLastError = String(err && (err.message || err) || 'Could not build renewals request');
+    renderRenewalsTable();
+    return;
+  }
+
+  if (!opts.forceRefresh && _renewalsLoadedKey === requestKey) {
+    _renewalsLastError = '';
+    renderRenewalsTable();
+    return;
+  }
+
+  _renewalsLoading = true;
+  _renewalsLastError = '';
+  renderRenewalsTable();
+  setSectionBusy('sec-properties', true, 'Loading renewals…');
+
+  try {
+    var payload = buildRenewalsRequestPayload();
+    var data = await apiFetch('/api/v2/reports/renewal_summary.json', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    RENEWALS_ROWS = Array.isArray(data && data.results) ? data.results.slice() : [];
+    _renewalsLoadedKey = requestKey;
+    _renewalsLastError = '';
+  } catch (err) {
+    RENEWALS_ROWS = [];
+    _renewalsLastError = 'Failed to load renewals: ' + String(err && (err.message || err) || 'Unknown error');
+  } finally {
+    _renewalsLoading = false;
+    setSectionBusy('sec-properties', false);
+    renderRenewalsTable();
+  }
+}
+
+function syncPropertiesToolbarForSubtab() {
+  var isRenewals = currentPropertiesSubtab === 'renewals';
+  var searchEl = $('#propertySearch');
+  var localGroupEl = $('#propertyGroupFilter');
+  var bulkBtn = $('#btnBulkNoteOpen');
+  if (searchEl) searchEl.style.display = isRenewals ? 'none' : '';
+  if (localGroupEl) localGroupEl.style.display = isRenewals ? 'none' : '';
+  if (bulkBtn) bulkBtn.style.display = isRenewals ? 'none' : '';
 }
 
 function setPropertiesSubtab(tab) {
-  var allowed = { directory: true, bulk: true };
+  var allowed = { directory: true, renewals: true, bulk: true };
   var target = allowed[tab] ? tab : 'directory';
   currentPropertiesSubtab = target;
 
@@ -9572,7 +10792,7 @@ function setPropertiesSubtab(tab) {
     btn.classList.toggle('active', btn.getAttribute('data-properties-subtab') === target);
   });
 
-  ['directory', 'bulk'].forEach(function(name) {
+  ['directory', 'renewals', 'bulk'].forEach(function(name) {
     var panel = $('#properties-subpanel-' + name);
     if (!panel) return;
     var isActive = name === target;
@@ -9580,7 +10800,9 @@ function setPropertiesSubtab(tab) {
     panel.style.display = isActive ? '' : 'none';
   });
 
-  if (target === 'directory') {
+  syncPropertiesToolbarForSubtab();
+
+  if (target === 'directory' || target === 'renewals') {
     renderPropertiesSection();
     return;
   }
@@ -9590,6 +10812,7 @@ function setPropertiesSubtab(tab) {
     var grp = String(scope.effectiveGroup || 'All Groups');
     scopeEl.textContent = 'Current scope: ' + grp + '. Use "Open Bulk Note Composer" to apply the same note across scoped properties.';
   }
+  syncSubtabDock();
 }
 
 function getPropertiesScope(localValue) {
@@ -11497,6 +12720,10 @@ function renderPropertiesRowsFromCache() {
 
 function renderPropertiesSection(opts) {
   opts = opts || {};
+  if (currentPropertiesSubtab === 'renewals') {
+    renderRenewalsSection(opts);
+    return;
+  }
   var tbody = $('#propertiesTableBody');
   if (!tbody) return;
 
@@ -11815,7 +13042,7 @@ function renderTurnKPIs() {
 
   var e = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
   e('kpiActiveTurns', confirmed.length);
-  e('kpiActiveTurnsSub', confirmed.length + ' confirmed' + (upcoming.length > 0 ? ' (' + upcoming.length + ' upcoming)' : ''));
+  e('kpiActiveTurnsSub', confirmed.length > 0 ? confirmed.length + ' confirmed in-progress' : 'No confirmed active turns');
   e('kpiOnRadar', onRadar.length);
   var radarUpcoming = radarUpcomingCount;
   var radarPast     = onRadar.filter(function(p) { return !p.isUpcoming; }).length;
@@ -13828,6 +15055,317 @@ function renderErrorLog() {
   container.innerHTML = html;
 }
 
+function canViewEmailDeliveryErrors() {
+  return _accessRole === 'full' || _accessRole === 'manager';
+}
+
+function ensureEmailDeliveryErrorsDateRange() {
+  var fromEl = $('#emailErrorsFrom');
+  var toEl = $('#emailErrorsTo');
+  if (fromEl && !fromEl.value) {
+    var fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 7);
+    fromEl.value = dateInputValue(fromDate);
+  }
+  if (toEl && !toEl.value) toEl.value = dateInputValue(new Date());
+}
+
+function getEmailDeliveryErrorsRequestKey() {
+  ensureEmailDeliveryErrorsDateRange();
+  var fromEl = $('#emailErrorsFrom');
+  var toEl = $('#emailErrorsTo');
+  var partyTypeEl = $('#emailErrorsPartyType');
+  return JSON.stringify({
+    groupUuid: getEffectiveGroupUuid(),
+    from: fromEl ? String(fromEl.value || '') : '',
+    to: toEl ? String(toEl.value || '') : '',
+    partyType: partyTypeEl ? String(partyTypeEl.value || 'Tenant') : 'Tenant'
+  });
+}
+
+function buildEmailDeliveryErrorsRequestPayload() {
+  ensureEmailDeliveryErrorsDateRange();
+  var fromEl = $('#emailErrorsFrom');
+  var toEl = $('#emailErrorsTo');
+  var partyTypeEl = $('#emailErrorsPartyType');
+  var groupUuid = getEffectiveGroupUuid();
+  var payload = {
+    party_type: String(partyTypeEl ? (partyTypeEl.value || 'Tenant') : 'Tenant').trim() || 'Tenant',
+    property_visibility: 'active',
+    property_group_ids: [],
+    sent_at_from: String(fromEl ? (fromEl.value || '') : '').trim(),
+    sent_at_to: String(toEl ? (toEl.value || '') : '').trim(),
+    properties: {
+      properties_ids: [],
+      property_groups_ids: [],
+      portfolios_ids: [],
+      owners_ids: []
+    }
+  };
+  if (groupUuid) {
+    payload.property_group_ids = [groupUuid];
+    payload.properties.property_groups_ids = [groupUuid];
+  }
+  return payload;
+}
+
+function getEmailDeliveryStatusClass(status) {
+  var value = String(status || '').trim().toLowerCase();
+  if (value.indexOf('invalid') !== -1) return 'invalid';
+  if (value.indexOf('reject') !== -1) return 'rejected';
+  if (value.indexOf('spam') !== -1) return 'spam';
+  return 'other';
+}
+
+function resolveEmailDeliveryErrorContext(row) {
+  var propertyLabel = String(row.property || row.property_name || '').trim();
+  var unitLabel = String(row.unit || row.unit_name || '').trim();
+  var propertyMeta = resolvePropertyMetaFromMaps(row.property_id || row.PropertyId || '', propertyLabel, row.property_group_id || '');
+  return {
+    propertyMeta: propertyMeta,
+    propertyName: propertyMeta.name || propertyLabel,
+    unitName: unitLabel,
+    occupancyId: String(row.occupancy_id || row.OccupancyId || '').trim(),
+    tenantId: String(row.tenant_id || row.TenantId || '').trim(),
+    tenantLink: appfolioUrl('tenant', row.occupancy_id || row.OccupancyId || ''),
+  };
+}
+
+function updateEmailDeliveryErrorsKpis(rows) {
+  var list = Array.isArray(rows) ? rows : [];
+  var invalidCount = 0;
+  var rejectedCount = 0;
+  var repeatRecipients = 0;
+  var recipientCounts = {};
+  list.forEach(function(row) {
+    var statusClass = getEmailDeliveryStatusClass(row.email_delivery_status || row.delivery_status || '');
+    if (statusClass === 'invalid') invalidCount++;
+    if (statusClass === 'rejected' || statusClass === 'spam') rejectedCount++;
+    var emailTo = String(row.email_to || '').trim().toLowerCase();
+    if (emailTo) recipientCounts[emailTo] = (recipientCounts[emailTo] || 0) + 1;
+  });
+  Object.keys(recipientCounts).forEach(function(key) {
+    if (recipientCounts[key] > 1) repeatRecipients++;
+  });
+  if ($('#emailErrorsKpiTotal')) $('#emailErrorsKpiTotal').textContent = String(list.length);
+  if ($('#emailErrorsKpiInvalid')) $('#emailErrorsKpiInvalid').textContent = String(invalidCount);
+  if ($('#emailErrorsKpiRejected')) $('#emailErrorsKpiRejected').textContent = String(rejectedCount);
+  if ($('#emailErrorsKpiRepeat')) $('#emailErrorsKpiRepeat').textContent = String(repeatRecipients);
+  if ($('#emailErrorsKpiTotalSub')) $('#emailErrorsKpiTotalSub').textContent = list.length ? 'rows in the current active scope' : 'active-scope email failures';
+  if ($('#emailErrorsKpiInvalidSub')) $('#emailErrorsKpiInvalidSub').textContent = invalidCount ? 'invalid addresses detected' : 'no invalid-address failures';
+  if ($('#emailErrorsKpiRejectedSub')) $('#emailErrorsKpiRejectedSub').textContent = rejectedCount ? 'mailbox rejection or spam events' : 'no rejection or spam events';
+  if ($('#emailErrorsKpiRepeatSub')) $('#emailErrorsKpiRepeatSub').textContent = repeatRecipients ? 'recipients with more than one failure' : 'no repeat-recipient failures';
+}
+
+function openEmailDeliveryErrorModal(row) {
+  if (!row) return;
+  var ctx = resolveEmailDeliveryErrorContext(row);
+  var subject = String(row.email_subject || row.subject || '').trim();
+  var recipient = String(row.recipient || [row.first_name, row.last_name].filter(Boolean).join(' ') || '').trim();
+  var propertyId = String(ctx.propertyMeta.id || '').trim();
+  var propertyName = String(ctx.propertyName || '').trim();
+  var unitName = String(ctx.unitName || '').trim();
+  var modalActions = [];
+  if (propertyName) {
+    if (propertyId) modalActions.push('<button class="action-btn" id="emailErrorOpenPropertyBtn"><i class="fas fa-building"></i> Property</button>');
+    modalActions.push('<button class="action-btn" id="emailErrorBillsBtn"><i class="fas fa-file-invoice-dollar"></i> Bills</button>');
+  }
+  if (unitName) {
+    modalActions.push('<button class="action-btn" id="emailErrorUnitBillsBtn"><i class="fas fa-layer-group"></i> Unit Bills</button>');
+  }
+  if (ctx.tenantLink) {
+    modalActions.push('<a class="action-btn" id="emailErrorTenantLinkBtn" href="' + escapeHtml(ctx.tenantLink) + '" target="_blank" rel="noopener noreferrer" style="text-decoration:none"><i class="fas fa-arrow-up-right-from-square"></i> Tenant</a>');
+  }
+  showItemDetail('Email Delivery Error — ' + (recipient || subject || 'Record'), [
+    { label: 'Status', html: '<span class="email-error-status ' + getEmailDeliveryStatusClass(row.email_delivery_status || '') + '">' + escapeHtml(String(row.email_delivery_status || 'Unknown')) + '</span>' },
+    { label: 'Sent At', value: row.email_sent_at ? formatDate(row.email_sent_at) : '—' },
+    { label: 'Recipient', value: recipient || '—' },
+    { label: 'Property', value: propertyName || '—' },
+    { label: 'Unit', value: unitName || '—' },
+    { label: 'Subject', value: subject || '—' },
+    { label: 'Email To', value: row.email_to || '—' },
+    { label: 'Email From', value: row.email_from || '—' },
+    { label: 'Occupancy ID', value: ctx.occupancyId || '—' },
+    { label: 'Tenant ID', value: ctx.tenantId || '—' },
+    { section: 'Actions', icon: 'fa-link' },
+    { label: 'Cross-Tab Links', html: modalActions.length ? '<div style="display:flex;gap:8px;flex-wrap:wrap">' + modalActions.join('') + '</div>' : '<span style="color:var(--text-muted)">No linked actions available for this row.</span>' }
+  ], ctx.tenantLink || '');
+
+  var propertyBtn = $('#emailErrorOpenPropertyBtn');
+  if (propertyBtn) {
+    propertyBtn.addEventListener('click', function() {
+      closeModal('itemDetailModal');
+      showPropertyDetailModal({
+        getAttribute: function(name) {
+          if (name === 'data-property-id') return propertyId;
+          if (name === 'data-property-name') return propertyName;
+          return '';
+        }
+      });
+    });
+  }
+  var billsBtn = $('#emailErrorBillsBtn');
+  if (billsBtn) {
+    billsBtn.addEventListener('click', function() {
+      closeModal('itemDetailModal');
+      filterBillsToProperty(propertyId, propertyName);
+    });
+  }
+  var unitBillsBtn = $('#emailErrorUnitBillsBtn');
+  if (unitBillsBtn) {
+    unitBillsBtn.addEventListener('click', function() {
+      closeModal('itemDetailModal');
+      filterBillsToUnit(unitName, unitName, propertyId, propertyName);
+    });
+  }
+}
+
+function renderEmailDeliveryErrorsTable() {
+  var tbody = $('#emailErrorsBody');
+  var summaryEl = $('#emailErrorsSummary');
+  if (!tbody) return;
+
+  ensureEmailDeliveryErrorsDateRange();
+  updateEmailDeliveryErrorsKpis(EMAIL_DELIVERY_ERROR_ROWS);
+
+  if (!canViewEmailDeliveryErrors()) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)"><i class="fas fa-lock" style="margin-right:6px"></i>Email delivery review is restricted to manager/admin sessions.</td></tr>';
+    if (summaryEl) summaryEl.textContent = 'Manager/Admin only';
+    renderSimpleReportFooter('#emailErrorsFooter', 0, _emailDeliveryErrorsPageSize, 0, 'emailErrorsPage', function() {});
+    return;
+  }
+
+  if (_emailDeliveryErrorsLoading) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px">' + loadingHtml('Loading email delivery errors…') + '</td></tr>';
+    renderSimpleReportFooter('#emailErrorsFooter', 0, _emailDeliveryErrorsPageSize, 0, 'emailErrorsPage', function() {});
+    return;
+  }
+
+  if (_emailDeliveryErrorsLastError) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--danger)">' + escapeHtml(_emailDeliveryErrorsLastError) + '</td></tr>';
+    if (summaryEl) summaryEl.textContent = 'Email delivery error load failed';
+    renderSimpleReportFooter('#emailErrorsFooter', 0, _emailDeliveryErrorsPageSize, 0, 'emailErrorsPage', function() {});
+    return;
+  }
+
+  var searchEl = $('#emailErrorsSearch');
+  var statusFilterEl = $('#emailErrorsStatusFilter');
+  var query = String(searchEl ? (searchEl.value || '') : '').trim().toLowerCase();
+  var statusFilter = String(statusFilterEl ? (statusFilterEl.value || '') : '').trim().toLowerCase();
+  var rows = (EMAIL_DELIVERY_ERROR_ROWS || []).filter(function(row) {
+    var statusClass = getEmailDeliveryStatusClass(row.email_delivery_status || '');
+    if (statusFilter && statusClass !== statusFilter) return false;
+    if (!query) return true;
+    var haystack = [
+      row.property,
+      row.unit,
+      row.recipient,
+      row.email_subject,
+      row.email_to,
+      row.email_from,
+      row.email_delivery_status,
+      row.first_name,
+      row.last_name,
+      row.tenant_id,
+      row.occupancy_id
+    ].map(function(value) { return String(value || '').toLowerCase(); }).join(' ');
+    return haystack.indexOf(query) !== -1;
+  });
+  updateEmailDeliveryErrorsKpis(rows);
+
+  var totalRows = rows.length;
+  var totalPages = Math.max(1, Math.ceil(totalRows / _emailDeliveryErrorsPageSize));
+  if (_emailDeliveryErrorsPage >= totalPages) _emailDeliveryErrorsPage = totalPages - 1;
+  if (_emailDeliveryErrorsPage < 0) _emailDeliveryErrorsPage = 0;
+
+  var start = _emailDeliveryErrorsPage * _emailDeliveryErrorsPageSize;
+  var visibleRows = rows.slice(start, start + _emailDeliveryErrorsPageSize);
+  EMAIL_DELIVERY_VISIBLE_ROWS = visibleRows;
+
+  var effectiveGroup = getEffectiveGroupId();
+  var scopeText = effectiveGroup || ((_accessRole === 'manager' || _accessRole === 'pm_readonly') && forcedPropertyGroupUuid ? (resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'Assigned PM Group') : 'All Active Properties');
+  if (summaryEl) {
+    summaryEl.textContent = totalRows
+      ? (totalRows + ' failures across ' + scopeText + ' in the selected date range')
+      : ('No email delivery failures found for ' + scopeText + ' in the selected date range');
+  }
+
+  if (!visibleRows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">No email delivery failures matched the current filters.</td></tr>';
+    renderSimpleReportFooter('#emailErrorsFooter', 0, _emailDeliveryErrorsPageSize, totalRows, 'emailErrorsPage', function(nextPage, nextSize) {
+      _emailDeliveryErrorsPage = nextPage;
+      _emailDeliveryErrorsPageSize = nextSize;
+      renderEmailDeliveryErrorsTable();
+    });
+    return;
+  }
+
+  tbody.innerHTML = visibleRows.map(function(row, idx) {
+    var statusText = String(row.email_delivery_status || 'Unknown').trim() || 'Unknown';
+    var statusClass = getEmailDeliveryStatusClass(statusText);
+    var ctx = resolveEmailDeliveryErrorContext(row);
+    var hasPropertyLink = ctx.propertyName ? '<button class="action-btn" data-email-error-action="property-bills" data-email-error-row-index="' + idx + '" style="padding:2px 8px;font-size:10px">Bills</button>' : '';
+    var hasTenantLink = ctx.tenantLink ? '<a class="action-btn" href="' + escapeHtml(ctx.tenantLink) + '" target="_blank" rel="noopener noreferrer" style="padding:2px 8px;font-size:10px;text-decoration:none" onclick="event.stopPropagation()"><i class="fas fa-arrow-up-right-from-square"></i></a>' : '';
+    return '<tr class="clickable-row" data-email-error-row-index="' + idx + '" tabindex="0" role="button" aria-label="Open email delivery error detail">' +
+      '<td>' + escapeHtml(row.email_sent_at ? formatDate(row.email_sent_at) : '—') + '</td>' +
+      '<td><span class="email-error-status ' + statusClass + '">' + escapeHtml(statusText) + '</span></td>' +
+      '<td>' + escapeHtml(ctx.propertyName || '—') + '<br><span style="font-size:11px;color:var(--text-muted)">' + escapeHtml(ctx.unitName || '—') + '</span></td>' +
+      '<td>' + escapeHtml(String(row.recipient || [row.first_name, row.last_name].filter(Boolean).join(' ') || '—')) + '</td>' +
+      '<td>' + escapeHtml(String(row.email_subject || '—')) + '</td>' +
+      '<td>' + escapeHtml(String(row.email_to || '—')) + '</td>' +
+      '<td>' + escapeHtml(String(row.email_from || '—')) + '</td>' +
+      '<td><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' + hasPropertyLink + hasTenantLink + '</div></td>' +
+    '</tr>';
+  }).join('');
+
+  renderSimpleReportFooter('#emailErrorsFooter', _emailDeliveryErrorsPage, _emailDeliveryErrorsPageSize, totalRows, 'emailErrorsPage', function(nextPage, nextSize) {
+    _emailDeliveryErrorsPage = nextPage;
+    _emailDeliveryErrorsPageSize = nextSize;
+    renderEmailDeliveryErrorsTable();
+  });
+}
+
+async function renderEmailDeliveryErrorsSection(opts) {
+  var options = opts || {};
+  var tbody = $('#emailErrorsBody');
+  if (!tbody) return;
+
+  if (!canViewEmailDeliveryErrors()) {
+    _emailDeliveryErrorsLoading = false;
+    _emailDeliveryErrorsLastError = '';
+    renderEmailDeliveryErrorsTable();
+    return;
+  }
+
+  var requestKey = getEmailDeliveryErrorsRequestKey();
+  if (!options.forceRefresh && _emailDeliveryErrorsLoadedKey === requestKey && EMAIL_DELIVERY_ERROR_ROWS.length) {
+    renderEmailDeliveryErrorsTable();
+    return;
+  }
+
+  _emailDeliveryErrorsLoading = true;
+  _emailDeliveryErrorsLastError = '';
+  renderEmailDeliveryErrorsTable();
+  try {
+    EMAIL_DELIVERY_ERROR_ROWS = await fetchPagedJsonReport('/api/v2/reports/email_delivery_errors.json', buildEmailDeliveryErrorsRequestPayload(), 'email_delivery_errors');
+    _emailDeliveryErrorsLoadedKey = requestKey;
+    _emailDeliveryErrorsPage = 0;
+  } catch (err) {
+    _emailDeliveryErrorsLastError = 'Failed to load email delivery errors: ' + String((err && err.message) || err || 'Unknown error');
+  } finally {
+    _emailDeliveryErrorsLoading = false;
+    renderEmailDeliveryErrorsTable();
+  }
+}
+
+function renderErrorsSection(opts) {
+  if (currentErrorsSubtab === 'email-delivery') {
+    renderEmailDeliveryErrorsSection(opts);
+    return;
+  }
+  renderErrorLog();
+}
+
 function populateDropdowns() {
   renderSystemHealthPanel();
   // Properties dropdown for New WO modal (build string first, assign once)
@@ -14257,6 +15795,10 @@ function wireUpUI() {
         renderPropertiesSection();
       }
 
+      if (tabName === 'errors') {
+        renderErrorsSection();
+      }
+
       // Lazy-load Vendors on first tab click
       if (tabName === 'vendors' && !_vendorsLazyLoaded && VENDORS.length === 0) {
         _vendorsLazyLoaded = true;
@@ -14299,6 +15841,7 @@ function wireUpUI() {
       if (tabName === 'routing') {
         try { await initRoutingMonitor(); } catch (e) { showToast('Routing monitor load failed: ' + (e.message || e)); }
       }
+      syncSubtabDock();
     });
   });
 
@@ -14377,6 +15920,17 @@ function wireUpUI() {
     });
   });
   setPropertiesSubtab(currentPropertiesSubtab || 'directory');
+
+  // Keep active section subtabs in the global top dock above group filter.
+  syncSubtabDock();
+
+  // Errors sub-tabs
+  $$('[data-errors-subtab]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      setErrorsSubtab(btn.getAttribute('data-errors-subtab'));
+    });
+  });
+  setErrorsSubtab(currentErrorsSubtab || 'log');
 
   // Collapsible panels
   $$('.collapsible-panel').forEach(function(panel) {
@@ -14681,6 +16235,88 @@ function wireUpUI() {
       sendSystemHealthDebugEmail();
     });
   }
+  var emailErrorsFrom = $('#emailErrorsFrom');
+  if (emailErrorsFrom) {
+    emailErrorsFrom.addEventListener('change', function() {
+      _emailDeliveryErrorsLoadedKey = '';
+      if (currentErrorsSubtab === 'email-delivery') renderErrorsSection({ forceRefresh: true });
+    });
+  }
+  var emailErrorsTo = $('#emailErrorsTo');
+  if (emailErrorsTo) {
+    emailErrorsTo.addEventListener('change', function() {
+      _emailDeliveryErrorsLoadedKey = '';
+      if (currentErrorsSubtab === 'email-delivery') renderErrorsSection({ forceRefresh: true });
+    });
+  }
+  var emailErrorsPartyType = $('#emailErrorsPartyType');
+  if (emailErrorsPartyType) {
+    emailErrorsPartyType.addEventListener('change', function() {
+      _emailDeliveryErrorsLoadedKey = '';
+      if (currentErrorsSubtab === 'email-delivery') renderErrorsSection({ forceRefresh: true });
+    });
+  }
+  var emailErrorsStatusFilter = $('#emailErrorsStatusFilter');
+  if (emailErrorsStatusFilter) {
+    emailErrorsStatusFilter.addEventListener('change', function() {
+      _emailDeliveryErrorsPage = 0;
+      renderEmailDeliveryErrorsTable();
+    });
+  }
+  var emailErrorsSearch = $('#emailErrorsSearch');
+  if (emailErrorsSearch) {
+    emailErrorsSearch.addEventListener('input', debounce(function() {
+      _emailDeliveryErrorsPage = 0;
+      renderEmailDeliveryErrorsTable();
+    }, CONFIG.DEBOUNCE_MS));
+  }
+  var refreshEmailErrorsBtn = $('#refreshEmailErrorsBtn');
+  if (refreshEmailErrorsBtn) {
+    refreshEmailErrorsBtn.addEventListener('click', function() {
+      _emailDeliveryErrorsLoadedKey = '';
+      renderErrorsSection({ forceRefresh: true });
+    });
+  }
+  var emailErrorsBody = $('#emailErrorsBody');
+  if (emailErrorsBody) {
+    emailErrorsBody.addEventListener('click', function(event) {
+      var actionBtn = event.target.closest('[data-email-error-action]');
+      if (actionBtn) {
+        event.stopPropagation();
+        var rowIndex = parseInt(String(actionBtn.getAttribute('data-email-error-row-index') || '-1'), 10);
+        var row = EMAIL_DELIVERY_VISIBLE_ROWS[rowIndex];
+        if (!row) return;
+        var ctx = resolveEmailDeliveryErrorContext(row);
+        var action = actionBtn.getAttribute('data-email-error-action');
+        if (action === 'property-bills') {
+          filterBillsToProperty(ctx.propertyMeta.id || '', ctx.propertyName || '');
+        }
+        return;
+      }
+      var rowEl = event.target.closest('tr[data-email-error-row-index]');
+      if (!rowEl) return;
+      var idx = parseInt(String(rowEl.getAttribute('data-email-error-row-index') || '-1'), 10);
+      if (idx < 0 || idx >= EMAIL_DELIVERY_VISIBLE_ROWS.length) return;
+      openEmailDeliveryErrorModal(EMAIL_DELIVERY_VISIBLE_ROWS[idx]);
+    });
+    emailErrorsBody.addEventListener('keydown', function(event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      var rowEl = event.target.closest('tr[data-email-error-row-index]');
+      if (!rowEl) return;
+      event.preventDefault();
+      var idx = parseInt(String(rowEl.getAttribute('data-email-error-row-index') || '-1'), 10);
+      if (idx < 0 || idx >= EMAIL_DELIVERY_VISIBLE_ROWS.length) return;
+      openEmailDeliveryErrorModal(EMAIL_DELIVERY_VISIBLE_ROWS[idx]);
+    });
+  }
+  document.addEventListener('groupFilterChanged', function() {
+    var activeTab = document.querySelector('.nav-tab.active');
+    var tabName = activeTab ? activeTab.getAttribute('data-tab') : '';
+    if (tabName !== 'errors' || currentErrorsSubtab !== 'email-delivery') return;
+    _emailDeliveryErrorsLoadedKey = '';
+    _emailDeliveryErrorsPage = 0;
+    renderErrorsSection({ forceRefresh: true });
+  });
 
   // Refresh button — force full reload from API
   $('#refreshBtn').addEventListener('click', function() { refreshData(); });
@@ -14702,10 +16338,35 @@ function wireUpUI() {
   if (billRefreshBtn) {
     billRefreshBtn.addEventListener('click', async function() {
       try {
-        await loadBillingPage({ forceRefresh: true, forceHardLock: true });
-        showToast('Billing refreshed', { kind: 'success' });
+        if (currentBillingSubtab === 'history') {
+          BILL_HISTORY_PAGE = 0;
+          await runBillHistorySearch();
+          showToast('Bill history refreshed', { kind: 'success' });
+        } else if (currentBillingSubtab === 'charge-detail') {
+          _chargeDetailLoadedKey = '';
+          await renderChargeDetailSection({ forceRefresh: true });
+          showToast('Charge detail refreshed', { kind: 'success' });
+        } else if (currentBillingSubtab === 'bill-detail') {
+          _billDetailLoadedKey = '';
+          await renderBillDetailSection({ forceRefresh: true });
+          showToast('Bill detail refreshed', { kind: 'success' });
+        } else if (currentBillingSubtab === 'payables') {
+          _payablesLoadedKey = '';
+          await renderPayablesSection({ forceRefresh: true });
+          showToast('Payables refreshed', { kind: 'success' });
+        } else {
+          await loadBillingPage({ forceRefresh: true, forceHardLock: true });
+          showToast('Billing refreshed', { kind: 'success' });
+        }
       } catch (e) {
-        showToast('Bills refresh failed: ' + (e.message || e));
+        var label = currentBillingSubtab === 'history'
+          ? 'Bill history'
+          : (currentBillingSubtab === 'payables'
+            ? 'Payables'
+            : (currentBillingSubtab === 'charge-detail'
+              ? 'Charge detail'
+              : (currentBillingSubtab === 'bill-detail' ? 'Bill detail' : 'Bills')));
+        showToast(label + ' refresh failed: ' + (e.message || e));
       }
     });
   }
@@ -14724,6 +16385,111 @@ function wireUpUI() {
     billHistBtn.addEventListener('click', function() {
       BILL_HISTORY_PAGE = 0;
       runBillHistorySearch();
+    });
+  }
+  var payablesOccurredOn = $('#payablesOccurredOn');
+  if (payablesOccurredOn) {
+    payablesOccurredOn.addEventListener('change', function() {
+      _payablesLoadedKey = '';
+      if (currentBillingSubtab === 'payables') renderBillingSection({ forceRefresh: true });
+    });
+  }
+  var payablesPartyTypeFilter = $('#payablesPartyTypeFilter');
+  if (payablesPartyTypeFilter) {
+    payablesPartyTypeFilter.addEventListener('change', function() {
+      _payablesPage = 0;
+      renderPayablesTable();
+    });
+  }
+  var payablesSearch = $('#payablesSearch');
+  if (payablesSearch) {
+    payablesSearch.addEventListener('input', debounce(function() {
+      _payablesPage = 0;
+      renderPayablesTable();
+    }, CONFIG.DEBOUNCE_MS));
+  }
+  var refreshPayablesBtn = $('#refreshPayablesBtn');
+  if (refreshPayablesBtn) {
+    refreshPayablesBtn.addEventListener('click', function() {
+      _payablesLoadedKey = '';
+      renderBillingSection({ forceRefresh: true });
+    });
+  }
+  var chargeDetailFrom = $('#chargeDetailFrom');
+  if (chargeDetailFrom) {
+    chargeDetailFrom.addEventListener('change', function() {
+      _chargeDetailLoadedKey = '';
+      if (currentBillingSubtab === 'charge-detail') renderBillingSection({ forceRefresh: true });
+    });
+  }
+  var chargeDetailTo = $('#chargeDetailTo');
+  if (chargeDetailTo) {
+    chargeDetailTo.addEventListener('change', function() {
+      _chargeDetailLoadedKey = '';
+      if (currentBillingSubtab === 'charge-detail') renderBillingSection({ forceRefresh: true });
+    });
+  }
+  var chargeDetailPaymentStatus = $('#chargeDetailPaymentStatus');
+  if (chargeDetailPaymentStatus) {
+    chargeDetailPaymentStatus.addEventListener('change', function() {
+      _chargeDetailLoadedKey = '';
+      if (currentBillingSubtab === 'charge-detail') renderBillingSection({ forceRefresh: true });
+    });
+  }
+  var chargeDetailSearch = $('#chargeDetailSearch');
+  if (chargeDetailSearch) {
+    chargeDetailSearch.addEventListener('input', debounce(function() {
+      _chargeDetailPage = 0;
+      renderChargeDetailTable();
+    }, CONFIG.DEBOUNCE_MS));
+  }
+  var refreshChargeDetailBtn = $('#refreshChargeDetailBtn');
+  if (refreshChargeDetailBtn) {
+    refreshChargeDetailBtn.addEventListener('click', function() {
+      _chargeDetailLoadedKey = '';
+      renderBillingSection({ forceRefresh: true });
+    });
+  }
+  var billDetailFrom = $('#billDetailFrom');
+  if (billDetailFrom) {
+    billDetailFrom.addEventListener('change', function() {
+      _billDetailLoadedKey = '';
+      if (currentBillingSubtab === 'bill-detail') renderBillingSection({ forceRefresh: true });
+    });
+  }
+  var billDetailTo = $('#billDetailTo');
+  if (billDetailTo) {
+    billDetailTo.addEventListener('change', function() {
+      _billDetailLoadedKey = '';
+      if (currentBillingSubtab === 'bill-detail') renderBillingSection({ forceRefresh: true });
+    });
+  }
+  var billDetailDateType = $('#billDetailDateType');
+  if (billDetailDateType) {
+    billDetailDateType.addEventListener('change', function() {
+      _billDetailLoadedKey = '';
+      if (currentBillingSubtab === 'bill-detail') renderBillingSection({ forceRefresh: true });
+    });
+  }
+  var billDetailApprovalFilter = $('#billDetailApprovalFilter');
+  if (billDetailApprovalFilter) {
+    billDetailApprovalFilter.addEventListener('change', function() {
+      _billDetailPage = 0;
+      renderBillDetailTable();
+    });
+  }
+  var billDetailSearch = $('#billDetailSearch');
+  if (billDetailSearch) {
+    billDetailSearch.addEventListener('input', debounce(function() {
+      _billDetailPage = 0;
+      renderBillDetailTable();
+    }, CONFIG.DEBOUNCE_MS));
+  }
+  var refreshBillDetailBtn = $('#refreshBillDetailBtn');
+  if (refreshBillDetailBtn) {
+    refreshBillDetailBtn.addEventListener('click', function() {
+      _billDetailLoadedKey = '';
+      renderBillingSection({ forceRefresh: true });
     });
   }
   wireBillingFilters();
@@ -14776,9 +16542,45 @@ function wireUpUI() {
       renderPropertiesSection({ forceRefresh: true });
     });
   }
+  var renewalsFromMonth = $('#renewalsFromMonth');
+  if (renewalsFromMonth) {
+    renewalsFromMonth.addEventListener('change', function() {
+      _renewalsLoadedKey = '';
+      if (currentPropertiesSubtab === 'renewals') renderPropertiesSection({ forceRefresh: true });
+    });
+  }
+  var renewalsToMonth = $('#renewalsToMonth');
+  if (renewalsToMonth) {
+    renewalsToMonth.addEventListener('change', function() {
+      _renewalsLoadedKey = '';
+      if (currentPropertiesSubtab === 'renewals') renderPropertiesSection({ forceRefresh: true });
+    });
+  }
+  var renewalsStatusFilter = $('#renewalsStatusFilter');
+  if (renewalsStatusFilter) {
+    renewalsStatusFilter.addEventListener('change', function() {
+      renderRenewalsTable();
+    });
+  }
+  var renewalsSearch = $('#renewalsSearch');
+  if (renewalsSearch) {
+    renewalsSearch.addEventListener('input', debounce(function() {
+      renderRenewalsTable();
+    }, CONFIG.DEBOUNCE_MS));
+  }
+  var refreshRenewalsBtn = $('#refreshRenewalsBtn');
+  if (refreshRenewalsBtn) {
+    refreshRenewalsBtn.addEventListener('click', function() {
+      _renewalsLoadedKey = '';
+      renderPropertiesSection({ forceRefresh: true });
+    });
+  }
 
   // Theme toggle
   $('#themeToggle').addEventListener('click', function() { toggleTheme(); });
+  if ($('#vaultThemeToggle')) {
+    $('#vaultThemeToggle').addEventListener('click', function() { toggleTheme(); });
+  }
   updateThemeIcon(); // sync icon with initial state
 
   // Settings modal
@@ -14838,7 +16640,7 @@ function wireUpUI() {
     workorders: function() { renderWorkOrders(); },
     routing: function() { loadRoutingEventsAndStats().catch(function() {}); loadRoutingCapabilities().catch(function() {}); },
     payroll: function() { renderPayroll(); },
-    billing: function() { renderBillsSection(); },
+    billing: function() { renderBillingSection(); },
     properties: function() { renderPropertiesSection(); },
     turnboard: function() { renderTurnPipelineUI(); },
     inspections: function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
@@ -15525,9 +17327,9 @@ async function fetchAllLive() {
     await saveAllToCache();
     updateProgress(-1, '', 'Sync complete \u2014 ' + summary);
     hideProgress();
-    // Start webhook auto-poll (default 60s)
+    // Webhook auto-poll is opt-in; keep default receiver-style behavior.
     var pollSel = $('#webhookPollInterval');
-    var pollInterval = pollSel ? (parseInt(pollSel.value, 10) || 0) : 60;
+    var pollInterval = pollSel ? (parseInt(pollSel.value, 10) || 0) : 0;
     if (pollInterval > 0) setupWebhookAutoPoll(pollInterval);
   } else if (API_ERRORS.length > 0) {
     setApiStatus('error', 'API Errors \u2014 Check Log');
@@ -16360,7 +18162,6 @@ renderDashboardKPIs = function() {
 
   var _events = [];
   var _seenCount = 0;
-  var _pollTimer = null;
 
   var WH_LABELS = {
     'work_order.created': 'Work Order Created',
@@ -16394,6 +18195,7 @@ renderDashboardKPIs = function() {
   function clearUnseen() {
     _seenCount = _events.length;
     updateBadge();
+    refreshWebhookLive();
   }
 
   function updateBadge() {
@@ -16494,27 +18296,21 @@ renderDashboardKPIs = function() {
     }
   }
 
-  var POLL_INTERVAL_MS = 30000;
-  async function _poll() {
-    if (_pollTimer) {
-      clearTimeout(_pollTimer);
-      _pollTimer = null;
-    }
+  async function refreshWebhookLive() {
     try {
       await Promise.allSettled([
         safePollWebhookEvents(),
         safePollLiveEvents()
       ]);
     } catch (criticalErr) {
-      console.error('Critical error in webhook polling engine:', criticalErr);
-    } finally {
-      _pollTimer = setTimeout(_poll, POLL_INTERVAL_MS);
+      console.error('Critical error in webhook refresh:', criticalErr);
     }
   }
 
   window.WebhookLive = {
     clearUnseen: clearUnseen,
-    merge: mergeEvents
+    merge: mergeEvents,
+    refresh: refreshWebhookLive
   };
 
   if (typeof pollWebhookEvents === 'function') {
@@ -16530,13 +18326,13 @@ renderDashboardKPIs = function() {
     };
   }
 
-  setTimeout(_poll, 2000);
   document.addEventListener('visibilitychange', function() {
     if (!document.hidden) {
-      console.log('Tab active: forcing immediate webhook poll sync...');
-      _poll();
+      console.log('Tab active: forcing immediate webhook live refresh...');
+      refreshWebhookLive();
     }
   });
+  setTimeout(refreshWebhookLive, 1000);
   render();
 })();
 
@@ -18228,7 +20024,7 @@ function decodeWebhookEventV9(evt) {
             if(secId==='sec-workorders'){try{renderWorkOrders();}catch(e){}}
             else if(secId==='sec-turnboard'){try{renderTurnBoard();}catch(e){}}
             else if(secId==='sec-dashboard'){try{renderDashboardKPIs();}catch(e){} try{renderTurnDashboardStrip();}catch(e){} try{renderActivityFeed();}catch(e){}}
-            else if(secId==='sec-billing'){try{renderBillsSection();}catch(e){}}
+            else if(secId==='sec-billing'){try{renderBillingSection();}catch(e){}}
             else if(secId==='sec-inspections'){try{renderInspections('');}catch(e){}}
             else if(secId==='sec-vendors'){try{renderVendors('');}catch(e){}}
           });
@@ -18368,7 +20164,7 @@ function decodeWebhookEventV9(evt) {
         var woKeys=['work_orders','turn_work_orders','turns','upcoming_moveouts','bills'];
         var detail=(e&&e.detail&&e.detail.keys)?e.detail.keys:[];
         if(detail.some(function(k){return woKeys.indexOf(k)!==-1;})){try{renderDashboardKPIs();}catch(err){}}
-        if(detail.some(function(k){return k==='bills';})){try{renderBillsSection();}catch(err){}}
+        if(detail.some(function(k){return k==='bills';})){try{renderBillingSection();}catch(err){}}
       });
     });
     document.addEventListener('visibilitychange',function(){if(!document.hidden&&_pollTimer)_poll();});
