@@ -88,7 +88,8 @@
   --z-layer-toast: 12000;
   --glass-surface: rgba(255, 255, 255, 0.72);
   --glass-border: rgba(255, 255, 255, 0.38);
-  
+
+
   --kpi-glow-amber: color-mix(in srgb, var(--amber) 42%, transparent);
   --kpi-glow-red: color-mix(in srgb, var(--red) 42%, transparent);
   --kpi-glow-green: color-mix(in srgb, var(--green) 42%, transparent);
@@ -951,6 +952,83 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .section { display: none; }
 .section.active { display: block; animation: fadeIn 0.3s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── Modern Buttons & Inputs (Ember & Slate) ── */
+.action-btn, .sec-refresh, .filter-btn, .subtab-btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.action-btn:hover, .sec-refresh:hover, .filter-btn:hover, .subtab-btn:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.action-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+.action-btn.primary:hover {
+  background: var(--accent-hover);
+}
+
+/* Modern Dropdowns */
+select, .form-select, #globalGroupFilter {
+  height: 32px;
+  padding: 0 28px 0 12px !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: var(--radius-sm) !important;
+  background-color: var(--bg-inset) !important;
+  color: var(--text-primary) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 12px !important;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239399a8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 10px center !important;
+  transition: var(--transition);
+}
+select:hover, .form-select:hover {
+  border-color: var(--accent) !important;
+}
+select:focus, .form-select:focus {
+  outline: none;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-dim) !important;
+}
+
+/* Modern Text Inputs */
+input[type="text"], input[type="date"], input[type="month"], input[type="number"], .search-box input, .form-input {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-inset);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  transition: var(--transition);
+}
+input:focus, .search-box input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
 
 /* KPI Cards */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
