@@ -154,8 +154,8 @@
 
   <main class="main-content">
 
-    <div class="filter-bar" id="globalFilterBar">
-      <i class="fas fa-layer-group filter-bar-icon"></i>
+   <div class="filter-bar" id="globalFilterBar" style="display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius); margin-bottom: 20px; flex-wrap: wrap;">
+      <i class="fas fa-layer-group filter-bar-icon" style="color:var(--text-muted); font-size:13px;"></i>
       <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">Group:</span>
       <select id="globalGroupFilter"><option value="">All Properties</option></select>
       <span id="globalGroupActive" style="display:none" class="gf-active">
@@ -1441,7 +1441,7 @@
   <div class="progress-dock-steps" id="progSteps"></div>
 </div>
 
-</div><!-- /appShell -->
+</main><!-- /appShell -->
 
 <!-- Webhook Config Modal -->
 <div class="modal-overlay" id="webhookModal">
