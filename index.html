@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="stylesheet" href="css/app.css">
 </head>
-<body>
+<body class="theme-neo dashboard-skin-neo-on">
 
 <!-- ==================== VAULT UNLOCK SCREEN ==================== -->
 <div id="vaultScreen">
@@ -77,7 +77,7 @@
       <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.6.9</span></div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.7.1</span></div>
   </div>
 </div>
 
@@ -89,7 +89,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.6.9</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.7.1</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -97,6 +97,7 @@
     <button class="mobile-nav-toggle" id="mobileNavToggle" title="Open menu" aria-label="Open navigation menu" aria-expanded="false">
       <i class="fas fa-bars"></i>
     </button>
+    <button class="messages-btn" id="messagesBtn" title="View operational alerts and messages" aria-label="Messages and alerts"><i class="fas fa-bell"></i><span class="messages-badge" id="messagesBadge" style="display:none">0</span></button>
     <button class="theme-toggle-btn" id="appSettingsBtn" title="App settings" aria-label="App settings"><i class="fas fa-cog"></i></button>
     <button class="theme-toggle-btn" id="themeToggle" title="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
     <div class="cache-badge live" id="cacheBadge" title="Data source"><i class="fas fa-database"></i> <span id="cacheBadgeText">—</span></div>
@@ -116,7 +117,7 @@
     <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
     <div>
       <div class="sidebar-brand-text">HandyMgr</div>
-      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.6.9</div>
+      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.7.1</div>
     </div>
   </div>
 
@@ -188,31 +189,78 @@
   </div>
 </div>
 
-<section class="section active" id="sec-dashboard">
-  <div id="filterIndicator" style="display:none"></div>
-  <div class="kpi-grid stagger">
-    <div class="kpi-card amber kpi-clickable" data-kpi="open"><div class="kpi-label">Open Work Orders</div><div class="kpi-value" id="kpiOpen">—</div><div class="kpi-sub" id="kpiOpenSub">Loading…</div></div>
-    <div class="kpi-card red kpi-clickable" data-kpi="urgent"><div class="kpi-label">Urgent / Critical</div><div class="kpi-value" id="kpiUrgent">—</div><div class="kpi-sub" id="kpiUrgentSub">Loading…</div></div>
-    <div class="kpi-card blue kpi-clickable" data-kpi="turns"><div class="kpi-label">Active Turns</div><div class="kpi-value" id="kpiTurns">—</div><div class="kpi-sub" id="kpiTurnsSub">Loading…</div></div>
-    <div class="kpi-card green kpi-clickable" data-kpi="moveouts"><div class="kpi-label">Upcoming Move-Outs</div><div class="kpi-value" id="kpiMoveOuts">—</div><div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div></div>
-    <div class="kpi-card purple kpi-clickable" data-kpi="flagged"><div class="kpi-label">Flagged for Follow-Up</div><div class="kpi-value" id="kpiFlagged">—</div><div class="kpi-sub" id="kpiFlaggedSub">Loading…</div></div>
-    <div class="kpi-card amber"><div class="kpi-label">Pending Bill Approvals</div><div class="kpi-value" id="kpiPendingBills">—</div><div class="kpi-sub" id="kpiPendingBillsSub">Loading…</div></div>
+<section class="section active hm-neo-dashboard" id="sec-dashboard">
+  <div id="filterIndicator" class="u-hidden"></div>
+  <div class="kpi-grid kpi-grid--neo stagger dashboard-kpi-rail">
+    <div class="kpi-card kpi-card--neo kpi-card--warning amber kpi-clickable" data-kpi="open"><div class="kpi-label">Open Work Orders</div><div class="kpi-value" id="kpiOpen">—</div><div class="kpi-sub" id="kpiOpenSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--critical red kpi-clickable" data-kpi="urgent"><div class="kpi-label">Urgent / Critical</div><div class="kpi-value" id="kpiUrgent">—</div><div class="kpi-sub" id="kpiUrgentSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--info blue kpi-clickable" data-kpi="turns"><div class="kpi-label">Active Turns</div><div class="kpi-value" id="kpiTurns">—</div><div class="kpi-sub" id="kpiTurnsSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--healthy green kpi-clickable" data-kpi="moveouts"><div class="kpi-label">Upcoming Move-Outs</div><div class="kpi-value" id="kpiMoveOuts">—</div><div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--info purple kpi-clickable" data-kpi="flagged"><div class="kpi-label">Flagged for Follow-Up</div><div class="kpi-value" id="kpiFlagged">—</div><div class="kpi-sub" id="kpiFlaggedSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--warning amber"><div class="kpi-label">Pending Bill Approvals</div><div class="kpi-value" id="kpiPendingBills">—</div><div class="kpi-sub" id="kpiPendingBillsSub">Loading…</div></div>
   </div>
 
-  <div class="table-wrapper" style="margin-bottom:20px" id="managerOverviewSection">
+  <div class="table-wrapper neo-surface-raised dashboard-overview-shell" style="margin-bottom:20px" id="managerOverviewSection">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-chart-line" style="color:var(--info)"></i> Handy Manager - Fort Lowell Realty & Property Management</div>
     </div>
-    <div class="kpi-grid" style="padding:12px 12px 16px">
-      <div class="kpi-card red"><div class="kpi-label">Avg Turnover Completion</div><div class="kpi-value" id="kpiMgrAvgTurnCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div></div>
-      <div class="kpi-card amber"><div class="kpi-label">Avg Days Since Inspection</div><div class="kpi-value" id="kpiMgrAvgInspectionAge">—</div><div class="kpi-sub" id="kpiMgrAvgInspectionAgeSub">Loading…</div></div>
-      <div class="kpi-card blue"><div class="kpi-label">Avg WO Open Days</div><div class="kpi-value" id="kpiMgrAvgWOCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgWOCompletionSub">Loading…</div></div>
-      <div class="kpi-card green"><div class="kpi-label">Recent Completed Turns</div><div class="kpi-value" id="kpiMgrCompletedTurns">—</div><div class="kpi-sub" id="kpiMgrCompletedTurnsSub">Loading…</div></div>
-      <div class="kpi-card purple" id="kpiVacancyCard"><div class="kpi-label">Vacancies by Group</div><div class="kpi-value" id="kpiVacancyGroups">—</div><div class="kpi-sub" id="kpiVacancyGroupsSub">Loading…</div></div>
+    <div class="kpi-grid kpi-grid--neo kpi-grid--secondary" style="padding:12px 12px 16px">
+      <div class="kpi-card kpi-card--neo kpi-card--critical red"><div class="kpi-label">Avg Turnover Completion</div><div class="kpi-value" id="kpiMgrAvgTurnCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div></div>
+      <div class="kpi-card kpi-card--neo kpi-card--warning amber"><div class="kpi-label">Avg Days Since Inspection</div><div class="kpi-value" id="kpiMgrAvgInspectionAge">—</div><div class="kpi-sub" id="kpiMgrAvgInspectionAgeSub">Loading…</div></div>
+      <div class="kpi-card kpi-card--neo kpi-card--info blue"><div class="kpi-label">Avg WO Open Days</div><div class="kpi-value" id="kpiMgrAvgWOCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgWOCompletionSub">Loading…</div></div>
+      <div class="kpi-card kpi-card--neo kpi-card--healthy green"><div class="kpi-label">Recent Completed Turns</div><div class="kpi-value" id="kpiMgrCompletedTurns">—</div><div class="kpi-sub" id="kpiMgrCompletedTurnsSub">Loading…</div></div>
+      <div class="kpi-card kpi-card--neo kpi-card--info purple" id="kpiVacancyCard"><div class="kpi-label">Vacancies by Group</div><div class="kpi-value" id="kpiVacancyGroups">—</div><div class="kpi-sub" id="kpiVacancyGroupsSub">Loading…</div></div>
     </div>
   </div>
 
-  <div class="table-wrapper" style="margin-bottom:20px" id="turnDashboardSection">
+  <div class="dashboard-visual-lane">
+    <div class="table-wrapper visual-panel visual-panel--signal neo-surface-raised" id="dashboardSignalPanel">
+      <div class="table-header visual-panel__header">
+        <div>
+          <div class="table-title"><i class="fas fa-wave-square" style="color:var(--accent)"></i> Operations Pulse</div>
+          <div class="section-subtitle">A quick mission-control read on what needs attention now.</div>
+        </div>
+      </div>
+      <div class="visual-panel__body">
+        <div class="signal-headline" id="dashSignalHeadline">Loading operational signal…</div>
+        <div class="signal-meta" id="dashSignalMeta">Checking work orders, inspections, turns, bills, and alerts…</div>
+        <div class="signal-chip-grid" id="dashSignalChips"></div>
+      </div>
+    </div>
+
+    <div class="table-wrapper visual-panel visual-panel--followup neo-surface-raised" id="staleDataPanel">
+      <div class="table-header visual-panel__header">
+        <div>
+          <div class="table-title"><i class="fas fa-hourglass-half" style="color:var(--warning)"></i> Follow-Up Queue</div>
+          <div class="section-subtitle">Old data, missing actions, and compliance drift worth chasing down.</div>
+        </div>
+      </div>
+      <div class="visual-panel__body">
+        <div class="stale-data-list" id="staleDataList">
+          <div class="u-empty-state">Loading follow-up items…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-wrapper visual-panel visual-panel--pager neo-surface-raised" id="pagerPreviewPanel">
+      <div class="table-header visual-panel__header">
+        <div>
+          <div class="table-title"><i class="fas fa-tower-broadcast" style="color:var(--info)"></i> Pager Center</div>
+          <div class="section-subtitle">Operational comms, acknowledgements, and PM follow-up in one place.</div>
+        </div>
+      </div>
+      <div class="visual-panel__body">
+        <div class="pager-preview" id="pagerPreviewList">
+          <div class="u-empty-state">Pager center warming up…</div>
+        </div>
+        <div class="pager-preview__actions">
+          <button class="action-btn primary pager-open-btn" id="dashOpenPager" type="button"><i class="fas fa-bell"></i> Open Pager Center</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-wrapper neo-surface-raised" style="margin-bottom:20px" id="turnDashboardSection">
     <div class="table-header">
       <div>
         <div class="table-title"><i class="fas fa-film" style="color:var(--accent)"></i> Turn Progress Dashboard</div>
@@ -244,37 +292,37 @@
   </div>
 
   <!-- Attention Required — Stalled Turns + Overdue Inspections + Vendor Alerts -->
-  <div class="table-wrapper" style="margin-bottom:20px" id="attentionSection">
+  <div class="table-wrapper neo-surface-raised action-board-shell" style="margin-bottom:20px" id="attentionSection">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-exclamation-circle" style="color:var(--danger)"></i> Attention Required</div>
     </div>
-    <div id="attentionGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;padding:12px">
-      <div id="attentionStalled" class="attention-card">
+    <div id="attentionGrid" class="action-board">
+      <div id="attentionStalled" class="attention-card attention-card--danger">
         <div class="attention-card-title"><i class="fas fa-hourglass-half" style="color:var(--warning)"></i> Stalled Turns</div>
-        <div id="attentionStalledBody" style="font-size:12px;color:var(--text-secondary)">Loading…</div>
+        <div id="attentionStalledBody" class="attention-card__body">Loading…</div>
       </div>
-      <div id="attentionOverdue" class="attention-card">
+      <div id="attentionOverdue" class="attention-card attention-card--critical">
         <div class="attention-card-title"><i class="fas fa-clipboard-check" style="color:var(--danger)"></i> Overdue Inspections</div>
-        <div id="attentionOverdueBody" style="font-size:12px;color:var(--text-secondary)">Loading…</div>
+        <div id="attentionOverdueBody" class="attention-card__body">Loading…</div>
       </div>
-      <div id="attentionVendors" class="attention-card">
+      <div id="attentionVendors" class="attention-card attention-card--info">
         <div class="attention-card-title"><i class="fas fa-hard-hat" style="color:var(--info)"></i> Vendor Alerts</div>
-        <div id="attentionVendorsBody" style="font-size:12px;color:var(--text-secondary)">Loading…</div>
+        <div id="attentionVendorsBody" class="attention-card__body">Loading…</div>
       </div>
-      <div id="attentionUrgent" class="attention-card">
+      <div id="attentionUrgent" class="attention-card attention-card--critical">
         <div class="attention-card-title"><i class="fas fa-bolt" style="color:var(--danger)"></i> Urgent / Overdue</div>
-        <div id="attentionUrgentBody" style="font-size:12px;color:var(--text-secondary)">Loading…</div>
+        <div id="attentionUrgentBody" class="attention-card__body">Loading…</div>
       </div>
-      <div id="attentionBills" class="attention-card">
+      <div id="attentionBills" class="attention-card attention-card--warning">
         <div class="attention-card-title"><i class="fas fa-file-invoice-dollar" style="color:var(--warning)"></i> Pending Bill Approvals</div>
-        <div id="attentionBillsBody" style="font-size:12px;color:var(--text-secondary)">Loading…</div>
+        <div id="attentionBillsBody" class="attention-card__body">Loading…</div>
       </div>
     </div>
   </div>
 
   <!-- Two-Column: Move-Outs + Activity Feed -->
-  <div class="dash-columns">
-    <div class="table-wrapper" id="moveOutSection">
+  <div class="dash-columns dashboard-support-grid">
+    <div class="table-wrapper neo-surface-raised" id="moveOutSection">
       <div class="table-header">
         <div class="table-title"><i class="fas fa-door-open" style="color:var(--warning)"></i> Upcoming Move-Outs (60 days)</div>
       </div>
@@ -285,10 +333,10 @@
         </table>
       </div>
     </div>
-    <div class="table-wrapper">
+    <div class="table-wrapper neo-surface-raised">
       <div class="table-header">
         <div class="table-title"><i class="fas fa-bolt" style="color:var(--accent)"></i> Recent Activity Feed</div>
-        <div style="display:flex;gap:6px;align-items:center">
+        <div class="table-actions">
           <button class="sec-refresh" id="btnRefreshDash"><i class="fas fa-sync-alt"></i> Refresh</button>
         </div>
       </div>
@@ -437,37 +485,37 @@
   <div class="section-header">
     <div>
       <div class="section-title"><i class="fas fa-route" style="color:var(--accent)"></i> PM Routing Monitor</div>
-      <div class="section-subtitle">Flags external vendor assignments that match enabled in-house work types, grouped by PM portfolio mapping.</div>
+      <div class="section-subtitle">, See where work is getting assigned.</div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <select id="routingStatusFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:130px">
+    <div class="u-toolbar-row">
+      <select id="routingStatusFilter" class="u-toolbar-select u-minw-130">
         <option value="pending">Pending</option>
-        <option value="all">All Statuses</option>
-        <option value="approved_external">Approved External</option>
+        <option value="all">All</option>
+        <option value="approved_external">Approved Vendor</option>
         <option value="reassign_inhouse">Reassign In-House</option>
         <option value="dismissed">Dismissed</option>
       </select>
-      <select id="routingPmFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:150px">
+      <select id="routingPmFilter" class="u-toolbar-select u-minw-150">
         <option value="all">All PMs</option>
       </select>
-      <select id="routingDaysFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px">
+      <select id="routingDaysFilter" class="u-toolbar-select u-minw-120">
         <option value="30">30 Days</option>
         <option value="60">60 Days</option>
         <option value="90">90 Days</option>
         <option value="180">180 Days</option>
       </select>
-      <select id="routingTradeFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:140px">
+      <select id="routingTradeFilter" class="u-toolbar-select u-minw-140">
         <option value="all">All Work Types</option>
       </select>
-      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search flagged events…" id="routingSearch" style="min-width:180px"></div>
+      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search flagged events…" id="routingSearch" class="u-minw-180"></div>
       <button class="action-btn" id="btnRoutingMapToggle"><i class="fas fa-user-tag"></i> PM Map</button>
       <button class="action-btn" id="btnRoutingCapToggle"><i class="fas fa-sliders-h"></i> Work Types</button>
-      <select id="routingMinConfidence" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:130px" title="Minimum confidence to flag events">
+      <select id="routingMinConfidence" class="u-toolbar-select u-minw-130" title="Minimum confidence to flag events">
         <option value="medium">Flag medium+</option>
         <option value="high">Flag high only</option>
         <option value="low">Flag all</option>
       </select>
-      <select id="routingHighThreshold" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:130px" title="Keywords/trade hits needed for high confidence">
+      <select id="routingHighThreshold" class="u-toolbar-select u-minw-130" title="Keywords/trade hits needed for high confidence">
         <option value="2">High at 2+ hits</option>
         <option value="3">High at 3+ hits</option>
         <option value="4">High at 4+ hits</option>
@@ -485,7 +533,7 @@
     <div class="routing-kpi"><div class="routing-kpi-label">Last Scan</div><div class="routing-kpi-value" id="routingKpiLast">—</div></div>
   </div>
 
-  <div class="table-wrapper" style="margin-bottom:12px">
+  <div class="table-wrapper u-table-wrap-gap">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-trophy" style="color:var(--warning)"></i> PM Scorecard (by portfolio routing)</div>
     </div>
@@ -497,10 +545,10 @@
     </div>
   </div>
 
-  <div class="table-wrapper" style="margin-bottom:12px">
+  <div class="table-wrapper u-table-wrap-gap">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-list-check" style="color:var(--accent)"></i> Flagged Routing Events</div>
-      <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="routingSummary">—</div>
+      <div class="u-table-meta" id="routingSummary">—</div>
     </div>
     <div class="table-scroll">
       <table class="data-table">
@@ -510,20 +558,20 @@
     </div>
     <div class="wo-history-pagination">
       <div class="page-label" id="routingEventsPageLabel">Page 1 of 1</div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <label style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">Per page</label>
-        <select id="routingPageSize" style="font-family:var(--font-mono);font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:76px">
+      <div class="u-pagination-row">
+        <label class="u-toolbar-label">Per page</label>
+        <select id="routingPageSize" class="u-toolbar-select u-toolbar-select-sm">
           <option value="25">25</option>
           <option value="50">50</option>
           <option value="100">100</option>
         </select>
-        <button class="action-btn" id="btnRoutingPrevPage" style="padding:4px 10px;font-size:11px"><i class="fas fa-chevron-left"></i> Prev</button>
-        <button class="action-btn" id="btnRoutingNextPage" style="padding:4px 10px;font-size:11px">Next <i class="fas fa-chevron-right"></i></button>
+        <button class="action-btn u-action-btn-sm" id="btnRoutingPrevPage"><i class="fas fa-chevron-left"></i> Prev</button>
+        <button class="action-btn u-action-btn-sm" id="btnRoutingNextPage">Next <i class="fas fa-chevron-right"></i></button>
       </div>
     </div>
   </div>
 
-  <div class="table-wrapper" id="routingCapabilitiesWrap" style="display:none;margin-bottom:12px">
+  <div class="table-wrapper u-table-wrap-gap" id="routingCapabilitiesWrap" style="display:none">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-sliders-h" style="color:var(--info)"></i> In-House Work Type Toggles</div>
       <button class="action-btn" id="btnRoutingCapAdd"><i class="fas fa-plus"></i> Add Work Type</button>
@@ -539,12 +587,12 @@
   <div class="table-wrapper" id="routingPmMapWrap" style="display:none">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-user-tag" style="color:var(--purple)"></i> Portfolio Group to PM Mapping</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div class="u-toolbar-row">
         <button class="action-btn" id="btnRoutingMapAutofill"><i class="fas fa-wand-magic-sparkles"></i> Auto-Fill from Site Managers</button>
         <button class="action-btn primary" id="btnRoutingMapSave"><i class="fas fa-save"></i> Save Mapping</button>
       </div>
     </div>
-    <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">
+    <div class="u-table-note">
       PM attribution comes from property group. Update names here so leaderboard reflects PM owners.
     </div>
     <div class="table-scroll">
@@ -593,8 +641,8 @@
       <div class="section-title"><i class="fas fa-file-invoice-dollar" style="color:var(--success)"></i> Bills / AP Review</div>
       <div class="section-subtitle">Bills and aged payables filtered by the active property group scope</div>
     </div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <select id="billStatusFilter" class="filter-select" style="font-size:12px;padding:4px 8px">
+    <div class="u-toolbar-row">
+      <select id="billStatusFilter" class="filter-select u-toolbar-select-sm">
         <option value="">All Statuses</option>
         <option value="pending_approval">Pending Approval</option>
         <option value="approved">Approved</option>
@@ -607,7 +655,7 @@
       <button class="action-btn" id="btnRefreshBills"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
-  <div class="kpi-grid stagger" id="billingKpiGrid" style="margin-bottom:16px">
+  <div class="kpi-grid stagger billing-kpi-grid" id="billingKpiGrid">
     <div class="kpi-card amber"><div class="kpi-label">Pending Approval</div><div class="kpi-value" id="billKpiPending">—</div><div class="kpi-sub" id="billKpiPendingSub">bills awaiting sign-off</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Total Outstanding</div><div class="kpi-value" id="billKpiTotal">—</div><div class="kpi-sub" id="billKpiTotalSub">approved not yet paid</div></div>
     <div class="kpi-card green"><div class="kpi-label">Paid This Period</div><div class="kpi-value" id="billKpiPaid">—</div><div class="kpi-sub" id="billKpiPaidSub">last 30 days</div></div>
@@ -624,8 +672,8 @@
   <div class="table-wrapper">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-list-alt" style="color:var(--accent)"></i> Bills <span id="billing-source-badge" class="source-badge legacy">⚠ Legacy</span></div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="billing-filter-type" class="filter-select" style="display:none">
+      <div class="u-toolbar-row">
+        <select id="billing-filter-type" class="filter-select u-hidden">
           <!-- hidden select keeps wireBillingFilters logic intact -->
           <option value="bills_list">Group Bills</option>
           <option value="bills_by_vendor">By Vendor</option>
@@ -635,25 +683,25 @@
           <option value="bills_by_invoice">By Invoice</option>
           <option value="bills_due_range">Due Date Range</option>
         </select>
-        <div id="billing-filter-btns" style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">
-          <button class="action-btn billing-ftype-btn active" data-ftype="bills_list" style="padding:3px 9px;font-size:11px">Group Bills</button>
-          <button class="action-btn billing-ftype-btn" data-ftype="bills_by_vendor" style="padding:3px 9px;font-size:11px">By Vendor</button>
-          <button class="action-btn billing-ftype-btn" data-ftype="bills_by_property" style="padding:3px 9px;font-size:11px">By Property</button>
-          <button class="action-btn billing-ftype-btn" data-ftype="bills_by_wo" style="padding:3px 9px;font-size:11px">By WO</button>
-          <button class="action-btn billing-ftype-btn" data-ftype="bills_by_invoice" style="padding:3px 9px;font-size:11px">By Invoice</button>
-          <button class="action-btn billing-ftype-btn" data-ftype="bills_due_range" style="padding:3px 9px;font-size:11px">Due Range</button>
+        <div id="billing-filter-btns" class="u-toolbar-row">
+          <button class="action-btn billing-ftype-btn active u-action-btn-sm" data-ftype="bills_list">Group Bills</button>
+          <button class="action-btn billing-ftype-btn u-action-btn-sm" data-ftype="bills_by_vendor">By Vendor</button>
+          <button class="action-btn billing-ftype-btn u-action-btn-sm" data-ftype="bills_by_property">By Property</button>
+          <button class="action-btn billing-ftype-btn u-action-btn-sm" data-ftype="bills_by_wo">By WO</button>
+          <button class="action-btn billing-ftype-btn u-action-btn-sm" data-ftype="bills_by_invoice">By Invoice</button>
+          <button class="action-btn billing-ftype-btn u-action-btn-sm" data-ftype="bills_due_range">Due Range</button>
         </div>
-        <span id="billing-input-wrapper" style="display:flex;align-items:center;gap:6px">
-          <input type="text" id="billing-filter-input" class="search-box" placeholder="Vendor/Property/WO/Invoice…" style="min-width:180px">
+        <span id="billing-input-wrapper" class="u-pagination-row">
+          <input type="text" id="billing-filter-input" class="search-box u-minw-180" placeholder="Vendor/Property/WO/Invoice…">
         </span>
-        <span id="billing-date-range" style="display:none;align-items:center;gap:6px;flex-wrap:wrap">
-          <label style="font-size:11px;color:var(--text-muted)">Due</label>
-          <input type="date" id="billing-due-from" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
-          <span style="font-size:11px;color:var(--text-muted)">to</span>
-          <input type="date" id="billing-due-to" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
+        <span id="billing-date-range" class="u-pagination-row" style="display:none">
+          <label class="u-toolbar-label">Due</label>
+          <input type="date" id="billing-due-from" class="u-input-compact">
+          <span class="u-toolbar-label">to</span>
+          <input type="date" id="billing-due-to" class="u-input-compact">
         </span>
-        <span id="billing-status-wrapper" style="display:none;align-items:center;gap:6px">
-          <select id="billing-status-filter" class="filter-select" style="font-size:12px;padding:4px 8px">
+        <span id="billing-status-wrapper" class="u-pagination-row" style="display:none">
+          <select id="billing-status-filter" class="filter-select u-toolbar-select-sm">
             <option value="">Any Status</option>
             <option value="pending_approval">Pending Approval</option>
             <option value="approved">Approved</option>
@@ -661,24 +709,24 @@
             <option value="void">Void</option>
           </select>
         </span>
-        <button class="action-btn" id="billing-filter-apply" style="padding:4px 8px"><i class="fas fa-filter"></i> Apply</button>
-        <button class="action-btn" id="billing-filter-reset" style="padding:4px 8px"><i class="fas fa-undo"></i> Reset</button>
-        <input type="text" id="billSearch" class="search-box" placeholder="Search vendor, property…" style="min-width:180px">
+        <button class="action-btn u-action-btn-sm" id="billing-filter-apply"><i class="fas fa-filter"></i> Apply</button>
+        <button class="action-btn u-action-btn-sm" id="billing-filter-reset"><i class="fas fa-undo"></i> Reset</button>
+        <input type="text" id="billSearch" class="search-box u-minw-180" placeholder="Search vendor, property…">
       </div>
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px">
-        <span style="font-size:11px;color:var(--text-muted)"><i class="fas fa-clock"></i> Period:</span>
-        <button class="action-btn billing-period-btn active" data-days="7" style="padding:2px 8px;font-size:11px">7d</button>
-        <button class="action-btn billing-period-btn" data-days="30" style="padding:2px 8px;font-size:11px">30d</button>
-        <button class="action-btn billing-period-btn" data-days="60" style="padding:2px 8px;font-size:11px">60d</button>
-        <button class="action-btn billing-period-btn" data-days="90" style="padding:2px 8px;font-size:11px">90d</button>
-        <button class="action-btn billing-period-btn" data-days="180" style="padding:2px 8px;font-size:11px">180d</button>
-        <span style="font-size:11px;color:var(--text-muted)">or custom:</span>
-        <input type="date" id="billUpdatedFrom2" style="padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:11px">
-        <span style="font-size:11px;color:var(--text-muted)">–</span>
-        <input type="date" id="billUpdatedTo2" style="padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:11px">
+      <div class="u-pagination-row billing-period-row">
+        <span class="u-toolbar-label"><i class="fas fa-clock"></i> Period:</span>
+        <button class="action-btn billing-period-btn active u-action-btn-sm" data-days="7">7d</button>
+        <button class="action-btn billing-period-btn u-action-btn-sm" data-days="30">30d</button>
+        <button class="action-btn billing-period-btn u-action-btn-sm" data-days="60">60d</button>
+        <button class="action-btn billing-period-btn u-action-btn-sm" data-days="90">90d</button>
+        <button class="action-btn billing-period-btn u-action-btn-sm" data-days="180">180d</button>
+        <span class="u-toolbar-label">or custom:</span>
+        <input type="date" id="billUpdatedFrom2" class="u-input-compact u-toolbar-select-sm">
+        <span class="u-toolbar-label">–</span>
+        <input type="date" id="billUpdatedTo2" class="u-input-compact u-toolbar-select-sm">
       </div>
     </div>
-    <div id="billingPropertyScope" style="display:none;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--bg-secondary)"></div>
+    <div id="billingPropertyScope" class="u-scope-chip" style="display:none"></div>
     <div class="table-scroll">
       <table class="data-table" id="billTable">
         <thead>
@@ -693,10 +741,10 @@
             <th>Linked WO</th>
           </tr>
         </thead>
-        <tbody id="billBody"><tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px">Load bills using the Refresh button above</td></tr></tbody>
+        <tbody id="billBody"><tr><td colspan="8" class="u-table-empty-cell">Load bills using the Refresh button above</td></tr></tbody>
       </table>
     </div>
-    <div class="table-footer" id="billFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
+    <div class="table-footer u-table-footer-compact" id="billFooter" style="display:none"></div>
   </div>
   </div>
 
@@ -888,13 +936,13 @@
         <div class="section-title"><i class="fas fa-home" style="color:var(--accent)"></i> Properties Directory</div>
         <div class="section-subtitle">View properties, notes, listings, and associated bills</div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <input type="text" id="propertySearch" placeholder="Search properties..." style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);font-size:13px;">
-        <select id="propertyGroupFilter" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);font-size:13px;">
+      <div class="u-toolbar-row">
+        <input type="text" id="propertySearch" class="u-input-compact" placeholder="Search properties...">
+        <select id="propertyGroupFilter" class="u-input-compact">
           <option value="">All Groups</option>
         </select>
-        <button id="refreshPropertiesBtn" style="padding:6px 12px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);border-radius:4px;cursor:pointer;font-size:13px;"><i class="fas fa-sync-alt"></i> Refresh</button>
-        <button id="btnBulkNoteOpen" onclick="openBulkNoteModal()" style="padding:6px 12px;border:1px solid var(--accent);background:var(--bg-secondary);color:var(--accent);border-radius:4px;cursor:pointer;font-size:13px;"><i class="fas fa-pen-to-square"></i> Bulk Update Notes</button>
+        <button id="refreshPropertiesBtn" class="action-btn"><i class="fas fa-sync-alt"></i> Refresh</button>
+        <button id="btnBulkNoteOpen" onclick="openBulkNoteModal()" class="action-btn"><i class="fas fa-pen-to-square"></i> Bulk Update Notes</button>
       </div>
     </div>
     <div class="section-subtabs" id="propertiesSubtabs">
@@ -920,21 +968,21 @@
           </tr>
         </thead>
         <tbody id="propertiesTableBody">
-          <tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">Loading properties...</td></tr>
+          <tr><td colspan="10" class="u-table-empty-cell">Loading properties...</td></tr>
         </tbody>
       </table>
     </div>
-    <div class="table-footer" id="propertiesFooter" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 12px;font-size:11px;color:var(--text-muted)">
+    <div class="table-footer u-table-footer-split" id="propertiesFooter">
       <div id="propertiesPageMeta">Page 1 of 1</div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <label for="propertiesPageSize" style="font-size:11px;color:var(--text-muted)">Rows</label>
-        <select id="propertiesPageSize" class="filter-select" style="font-size:11px;padding:3px 6px">
+      <div class="u-pagination-row">
+        <label for="propertiesPageSize" class="u-toolbar-label">Rows</label>
+        <select id="propertiesPageSize" class="filter-select u-toolbar-select-sm">
           <option value="25">25</option>
           <option value="50" selected>50</option>
           <option value="100">100</option>
         </select>
-        <button class="action-btn" id="propertiesPrevPage" style="padding:3px 8px">Prev</button>
-        <button class="action-btn" id="propertiesNextPage" style="padding:3px 8px">Next</button>
+        <button class="action-btn u-action-btn-sm" id="propertiesPrevPage">Prev</button>
+        <button class="action-btn u-action-btn-sm" id="propertiesNextPage">Next</button>
       </div>
     </div>
     </div>
@@ -1014,7 +1062,8 @@
   <div class="section-header" style="margin-top:4px">
     <div>
       <div class="section-title"><i class="fas fa-exchange-alt" style="color:var(--accent)"></i> Turn Pipeline</div>
-      <div class="section-subtitle">Hybrid pipeline — Tenant Directory + Unit Turns + Work Orders + Inspections &bull; Webhook events fill gaps</div>
+      <div class="section-subtitle">Hybrid pipeline - Unit Turns - Work Orders - Inspections - Flows
+      </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <select class="form-select" id="turnPipeFilter" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
@@ -1093,7 +1142,7 @@
 
 <section class="section" id="sec-vendors">
   <div class="section-header">
-    <div><div class="section-title"><i class="fas fa-hard-hat" style="color:var(--accent)"></i> Vendor Directory</div><div class="section-subtitle">Search and browse vendors synced from AppFolio &bull; Categories saved locally</div></div>
+    <div><div class="section-title"><i class="fas fa-hard-hat" style="color:var(--accent)"></i> Vendor Directory</div><div class="section-subtitle">Search and browse vendors from AppFolio</div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <select id="vendorCategoryFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:120px">
         <option value="">All Categories</option>
@@ -1326,15 +1375,49 @@
           <div class="systems-health-subtitle">Manager/Admin only &bull; SQL, middleware, API v0/v2, magic links, reassignment, routing, PM users</div>
         </div>
         <div class="systems-health-actions">
-          <button class="action-btn" id="btnRunSystemHealth"><i class="fas fa-stethoscope"></i> Run Checker</button>
+          <button class="action-btn" id="btnRunSystemHealth"><i class="fas fa-stethoscope"></i>Run Test</button>
           <button class="action-btn" id="btnSendSystemHealthDebug"><i class="fas fa-paper-plane"></i> Send Debug</button>
         </div>
       </div>
       <div class="systems-health-summary" id="systemHealthSummary">
         <span class="systems-health-dot idle"></span>
-        <span>No checks run yet</span>
+        <span>No tests run yet</span>
       </div>
       <div class="systems-health-grid" id="systemHealthGrid"></div>
+    </div>
+    <div class="table-wrapper" id="ipRateLimitsPanel" style="margin-top:12px;display:none">
+      <div class="table-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <div class="table-title"><i class="fas fa-shield-halved" style="color:var(--accent)"></i> Shortlink Rate Limit Manager</div>
+          <div class="section-subtitle">Manager/Admin release-valve for false positives behind shared NAT/CGNAT.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="password" id="ipRateLimitAdminKey" class="search-box" placeholder="PROXY_ADMIN_KEY" style="min-width:180px;padding:6px 10px">
+          <button class="action-btn" id="btnRefreshIpRateLimits"><i class="fas fa-rotate"></i> Refresh</button>
+          <button class="action-btn" id="btnClearAllIpRateLimits"><i class="fas fa-broom"></i> Clear All</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--border)">
+        <input type="text" id="ipRateLimitUnblockIp" placeholder="IP to unblock (e.g. 203.0.113.7)" style="min-width:240px;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);font-size:12px;flex:1 1 260px">
+        <button class="action-btn" id="btnUnblockIpRateLimit"><i class="fas fa-unlock"></i> Unblock IP</button>
+        <span id="ipRateLimitSummary" style="font-size:12px;color:var(--text-muted)">No data loaded.</span>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table" id="ipRateLimitsTable">
+          <thead>
+            <tr>
+              <th>IP Address</th>
+              <th>Failed Attempts</th>
+              <th>Last Attempt</th>
+              <th>Blocked Until</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="ipRateLimitsBody">
+            <tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">Run Refresh to load active rate limits.</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
     <div class="error-log stagger" id="errorLog"></div>
   </div>
@@ -1343,7 +1426,7 @@
       <div class="table-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div>
           <div class="table-title"><i class="fas fa-envelope-circle-check" style="color:var(--accent)"></i> Email Delivery Errors</div>
-          <div class="section-subtitle">Manager/Admin review for active properties, scoped by the global property-group filter when applied.</div>
+          <div class="section-subtitle">Emails that failed to deliver from AppFolio.</div>
         </div>
         <div id="emailErrorsSummary" style="font-size:12px;color:var(--text-muted)">Open Email Delivery to load active delivery failures.</div>
       </div>
@@ -1587,7 +1670,7 @@
 </div>
 
 <!-- Live Webhook Feed Drawer -->
-<div class="live-feed-drawer" id="live-feed-drawer">
+<div class="live-feed-drawer neo-surface-raised" id="live-feed-drawer">
 
   <div class="live-feed-header">
     <span>📡 Live Activity</span>
@@ -1613,38 +1696,38 @@
   <span class="fab-badge" id="fab-badge" style="display:none"></span>
 </button>
 
-<!-- PM Notifications Inbox Drawer -->
-<div class="live-feed-drawer" id="pm-inbox-drawer" style="right:-400px">
+<!-- PM Notifications & Operational Alerts Drawer -->
+<div class="live-feed-drawer pager-center neo-surface-raised" id="pm-inbox-drawer" style="right:-400px">
 
-  <div class="live-feed-header">
-    <span><i class="fas fa-inbox" style="margin-right:6px"></i>PM Inbox</span>
+  <div class="live-feed-header pager-center__header">
+    <span><i class="fas fa-bell" style="margin-right:6px"></i>Messages</span>
     <span class="feed-badge" id="pm-inbox-badge" style="display:none"></span>
     <button class="live-feed-toggle" onclick="document.getElementById('pm-inbox-drawer').classList.remove('open'); if (window.PmInbox && typeof window.PmInbox.clearUnseen === 'function') window.PmInbox.clearUnseen();">✕</button>
   </div>
 
-  <div style="padding:10px 12px;border-bottom:1px solid var(--border);background:var(--bg-secondary);display:none" id="pmInboxComposerWrap">
-    <div style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:6px">Manager Broadcast</div>
-    <textarea id="pmInboxComposerText" rows="3" placeholder="Post a note for PM acknowledgement..." style="width:100%;resize:vertical;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:12px"></textarea>
-    <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
-      <select id="pmInboxComposerScope" class="form-select" style="min-width:170px;max-width:220px;font-size:11px">
+  <div class="pager-center__composer u-hidden" id="pmInboxComposerWrap">
+    <div class="pager-center__composer-title">Manager Broadcast</div>
+    <textarea class="pager-center__textarea" id="pmInboxComposerText" rows="3" placeholder="Post a note for PM acknowledgement..."></textarea>
+    <div class="pager-center__composer-actions">
+      <select id="pmInboxComposerScope" class="form-select pager-center__scope">
         <option value="">All PMs (Global)</option>
       </select>
-      <button class="action-btn primary" id="pmInboxComposerSend" style="font-size:11px"><i class="fas fa-paper-plane"></i> Post</button>
+      <button class="action-btn primary pager-center__send" id="pmInboxComposerSend"><i class="fas fa-paper-plane"></i> Post</button>
     </div>
   </div>
 
-  <div class="live-feed-status" id="pm-inbox-status">
+  <div class="live-feed-status pager-center__status" id="pm-inbox-status">
     <span class="feed-pulse"></span> Checking manager inbox updates…
   </div>
 
-  <div class="live-feed-scroll" id="pm-inbox-items">
+  <div class="live-feed-scroll pager-center__feed" id="pm-inbox-items">
     <p class="feed-empty">No inbox notices yet.</p>
   </div>
 
 </div>
 
 <!-- Floating open button when PM inbox drawer is closed -->
-<button class="live-feed-fab pm-inbox-fab" id="pm-inbox-fab"
+<button class="live-feed-fab pm-inbox-fab pager-fab" id="pm-inbox-fab"
         onclick="document.getElementById('pm-inbox-drawer').classList.toggle('open'); if (window.PmInbox && typeof window.PmInbox.clearUnseen === 'function') window.PmInbox.clearUnseen();"
         style="display:none">
   <i class="fas fa-inbox"></i>
@@ -1938,8 +2021,8 @@
   <span id="toastMsg"></span>
 </div>
 
-<script src="js/app.js"></script>
+<script src="js/app.js?v=20260429c"></script>
 
-<script src="js/login-effects.js"></script>
+<script src="js/login-effects.js?v=20260429c"></script>
 </body>
 </html>
