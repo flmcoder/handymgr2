@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=Karla:wght@400;500;600;700&family=Inconsolata:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/app.css?v=20260429d">
 </head>
 <body class="theme-neo dashboard-skin-neo-on">
 
@@ -123,32 +123,30 @@
 
   <!-- Scrollable nav body -->
   <div class="sidebar-nav-body">
-    <div class="nav-section">
+    <div class="nav-section" id="navGroupOverview">
       <div class="nav-section-label">Overview</div>
       <button class="nav-tab active" data-tab="dashboard"><i class="fas fa-th-large"></i> Dashboard</button>
+      <button class="nav-tab nav-role-gm" data-tab="routing"><i class="fas fa-route"></i> Routing <span class="badge" id="routingBadge" style="display:none">0</span></button>
+      <button class="nav-tab nav-role-admin" data-tab="dispatch"><i class="fas fa-bolt"></i> Dispatch <span class="badge-dispatch" id="dispatchBadge" style="display:none">0</span></button>
     </div>
-    <div class="nav-section">
+    <div class="nav-section" id="navGroupOperations">
       <div class="nav-section-label">Operations</div>
       <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="badge" id="woBadge">—</span></button>
-      <button class="nav-tab" data-tab="routing"><i class="fas fa-route"></i> Routing <span class="badge" id="routingBadge" style="display:none">0</span></button>
       <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
       <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
-      <button class="nav-tab" data-tab="dispatch"><i class="fas fa-bolt"></i> Dispatch <span class="badge-dispatch" id="dispatchBadge" style="display:none">0</span></button>
+      <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Billing <span class="badge" id="billingBadge" style="display:none">0</span></button>
+      <button class="nav-tab nav-role-gm" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
     </div>
-    <div class="nav-section">
-      <div class="nav-section-label">Financial</div>
-      <button class="nav-tab" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
-      <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Bills <span class="badge" id="billingBadge" style="display:none">0</span></button>
-    </div>
-    <div class="nav-section">
+    <div class="nav-section" id="navGroupResources">
       <div class="nav-section-label">Resources</div>
+      <button class="nav-tab" data-tab="occupancy"><i class="fas fa-building"></i> Occupancy</button>
       <button class="nav-tab" data-tab="properties"><i class="fas fa-home"></i> Properties</button>
       <button class="nav-tab" data-tab="vendors"><i class="fas fa-hard-hat"></i> Vendors</button>
       <button class="nav-tab" data-tab="templates"><i class="fas fa-envelope-open-text"></i> Templates</button>
     </div>
-    <div class="nav-section nav-section-system">
+    <div class="nav-section nav-section-system" id="navGroupSystem">
       <div class="nav-section-label">System</div>
-      <button class="nav-tab" data-tab="dbadmin"><i class="fas fa-database"></i> Database</button>
+      <button class="nav-tab nav-role-admin" data-tab="dbadmin"><i class="fas fa-database"></i> Database</button>
       <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
     </div>
 
@@ -638,113 +636,75 @@
 <section class="section" id="sec-billing">
   <div class="section-header">
     <div>
-      <div class="section-title"><i class="fas fa-file-invoice-dollar" style="color:var(--success)"></i> Bills / AP Review</div>
-      <div class="section-subtitle">Bills and aged payables filtered by the active property group scope</div>
+      <div class="section-title"><i class="fas fa-file-invoice-dollar" style="color:var(--success)"></i> Billing</div>
+      <div class="section-subtitle">Billing records from AppFolio — filtered by property group scope</div>
     </div>
     <div class="u-toolbar-row">
-      <select id="billStatusFilter" class="filter-select u-toolbar-select-sm">
-        <option value="">All Statuses</option>
-        <option value="pending_approval">Pending Approval</option>
-        <option value="approved">Approved</option>
-        <option value="paid">Paid</option>
-        <option value="void">Void</option>
-      </select>
-      <!-- date range moved to period bar below the filter row -->
-      <input type="date" id="billUpdatedFrom" style="display:none">
-      <input type="date" id="billUpdatedTo" style="display:none">
-      <button class="action-btn" id="btnRefreshBills"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <button class="action-btn" id="btnRefreshBilling"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <div class="billing-more-wrap" style="position:relative">
+        <button class="action-btn" id="btnMoreBillReports"><i class="fas fa-ellipsis-h"></i> More Reports</button>
+        <div class="billing-more-dropdown" id="billingMoreDropdown" style="display:none">
+          <button class="billing-more-item" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
+          <button class="billing-more-item" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
+          <button class="billing-more-item" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
+        </div>
+      </div>
     </div>
   </div>
   <div class="kpi-grid stagger billing-kpi-grid" id="billingKpiGrid">
-    <div class="kpi-card amber"><div class="kpi-label">Pending Approval</div><div class="kpi-value" id="billKpiPending">—</div><div class="kpi-sub" id="billKpiPendingSub">bills awaiting sign-off</div></div>
-    <div class="kpi-card blue"><div class="kpi-label">Total Outstanding</div><div class="kpi-value" id="billKpiTotal">—</div><div class="kpi-sub" id="billKpiTotalSub">approved not yet paid</div></div>
-    <div class="kpi-card green"><div class="kpi-label">Paid This Period</div><div class="kpi-value" id="billKpiPaid">—</div><div class="kpi-sub" id="billKpiPaidSub">last 30 days</div></div>
-    <div class="kpi-card purple"><div class="kpi-label">Vendors w/ Open Bills</div><div class="kpi-value" id="billKpiVendors">—</div><div class="kpi-sub" id="billKpiVendorsSub">distinct payees</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">Total Records</div><div class="kpi-value" id="billKpiPending">—</div><div class="kpi-sub" id="billKpiPendingSub">billing entries loaded</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Total Billed</div><div class="kpi-value" id="billKpiTotal">—</div><div class="kpi-sub" id="billKpiTotalSub">sum of amount_total</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Billed This Month</div><div class="kpi-value" id="billKpiPaid">—</div><div class="kpi-sub" id="billKpiPaidSub">last_billed_on in period</div></div>
+    <div class="kpi-card purple"><div class="kpi-label">Unique Vendors</div><div class="kpi-value" id="billKpiVendors">—</div><div class="kpi-sub" id="billKpiVendorsSub">distinct payees</div></div>
   </div>
-  <div class="section-subtabs" id="billingSubtabs">
-    <button class="section-subtab active" data-billing-subtab="queue"><i class="fas fa-list-alt"></i> Bills</button>
-    <button class="section-subtab" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
-    <button class="section-subtab" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
-    <button class="section-subtab" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
-    <button class="section-subtab" data-billing-subtab="history"><i class="fas fa-clock-rotate-left"></i> Bill History</button>
-  </div>
-  <div class="section-subpanel active" id="billing-subpanel-queue">
+  <!-- hidden date inputs kept for legacy code compat -->
+  <input type="date" id="billUpdatedFrom" style="display:none">
+  <input type="date" id="billUpdatedTo" style="display:none">
+
+  <!-- Main Billing View — saved report uuid -->
+  <div class="section-subpanel active" id="billing-subpanel-main">
   <div class="table-wrapper">
     <div class="table-header">
-      <div class="table-title"><i class="fas fa-list-alt" style="color:var(--accent)"></i> Bills <span id="billing-source-badge" class="source-badge legacy">⚠ Legacy</span></div>
+      <div class="table-title"><i class="fas fa-file-invoice-dollar" style="color:var(--accent)"></i> Billing Records</div>
       <div class="u-toolbar-row">
-        <select id="billing-filter-type" class="filter-select u-hidden">
-          <!-- hidden select keeps wireBillingFilters logic intact -->
-          <option value="bills_list">Group Bills</option>
-          <option value="bills_by_vendor">By Vendor</option>
-          <option value="bills_by_property">By Property</option>
-          <option value="bills_by_wo">By Work Order</option>
-          <option value="bills_by_wo_number">By WO Number</option>
-          <option value="bills_by_invoice">By Invoice</option>
-          <option value="bills_due_range">Due Date Range</option>
+        <input type="text" id="billingMainSearch" class="search-box u-minw-220" placeholder="Search WO, property, vendor, description (comma-separated)…">
+        <span class="u-toolbar-label">From</span>
+        <input type="date" id="billingMainFrom" class="u-input-compact">
+        <span class="u-toolbar-label">To</span>
+        <input type="date" id="billingMainTo" class="u-input-compact">
+        <select id="billingMainStatus" class="filter-select u-toolbar-select-sm">
+          <option value="">All WO Statuses</option>
+          <option value="Completed">Completed</option>
+          <option value="In Progress">In Progress</option>
+          <option value="Open">Open</option>
+          <option value="Canceled">Canceled</option>
         </select>
-        <div id="billing-filter-btns" class="u-toolbar-row">
-          <button class="action-btn billing-ftype-btn active u-action-btn-sm" data-ftype="bills_list">Group Bills</button>
-          <button class="action-btn billing-ftype-btn u-action-btn-sm" data-ftype="bills_by_vendor">By Vendor</button>
-          <button class="action-btn billing-ftype-btn u-action-btn-sm" data-ftype="bills_by_property">By Property</button>
-          <button class="action-btn billing-ftype-btn u-action-btn-sm" data-ftype="bills_by_wo">By WO</button>
-          <button class="action-btn billing-ftype-btn u-action-btn-sm" data-ftype="bills_by_invoice">By Invoice</button>
-          <button class="action-btn billing-ftype-btn u-action-btn-sm" data-ftype="bills_due_range">Due Range</button>
-        </div>
-        <span id="billing-input-wrapper" class="u-pagination-row">
-          <input type="text" id="billing-filter-input" class="search-box u-minw-180" placeholder="Vendor/Property/WO/Invoice…">
-        </span>
-        <span id="billing-date-range" class="u-pagination-row" style="display:none">
-          <label class="u-toolbar-label">Due</label>
-          <input type="date" id="billing-due-from" class="u-input-compact">
-          <span class="u-toolbar-label">to</span>
-          <input type="date" id="billing-due-to" class="u-input-compact">
-        </span>
-        <span id="billing-status-wrapper" class="u-pagination-row" style="display:none">
-          <select id="billing-status-filter" class="filter-select u-toolbar-select-sm">
-            <option value="">Any Status</option>
-            <option value="pending_approval">Pending Approval</option>
-            <option value="approved">Approved</option>
-            <option value="paid">Paid</option>
-            <option value="void">Void</option>
-          </select>
-        </span>
-        <button class="action-btn u-action-btn-sm" id="billing-filter-apply"><i class="fas fa-filter"></i> Apply</button>
-        <button class="action-btn u-action-btn-sm" id="billing-filter-reset"><i class="fas fa-undo"></i> Reset</button>
-        <input type="text" id="billSearch" class="search-box u-minw-180" placeholder="Search vendor, property…">
-      </div>
-      <div class="u-pagination-row billing-period-row">
-        <span class="u-toolbar-label"><i class="fas fa-clock"></i> Period:</span>
-        <button class="action-btn billing-period-btn active u-action-btn-sm" data-days="7">7d</button>
-        <button class="action-btn billing-period-btn u-action-btn-sm" data-days="30">30d</button>
-        <button class="action-btn billing-period-btn u-action-btn-sm" data-days="60">60d</button>
-        <button class="action-btn billing-period-btn u-action-btn-sm" data-days="90">90d</button>
-        <button class="action-btn billing-period-btn u-action-btn-sm" data-days="180">180d</button>
-        <span class="u-toolbar-label">or custom:</span>
-        <input type="date" id="billUpdatedFrom2" class="u-input-compact u-toolbar-select-sm">
-        <span class="u-toolbar-label">–</span>
-        <input type="date" id="billUpdatedTo2" class="u-input-compact u-toolbar-select-sm">
       </div>
     </div>
-    <div id="billingPropertyScope" class="u-scope-chip" style="display:none"></div>
     <div class="table-scroll">
-      <table class="data-table" id="billTable">
+      <table class="data-table" id="billingMainTable">
         <thead>
           <tr>
-            <th>Invoice / Bill Ref</th>
-            <th>Vendor</th>
+            <th>Billing ID</th>
             <th>Property</th>
-            <th>Group</th>
+            <th>WO Description</th>
+            <th>Vendor</th>
             <th>Amount</th>
-            <th>Date</th>
-            <th>Status</th>
-            <th>Linked WO</th>
+            <th>WO Status</th>
+            <th>Created</th>
+            <th>Last Billed</th>
           </tr>
         </thead>
-        <tbody id="billBody"><tr><td colspan="8" class="u-table-empty-cell">Load bills using the Refresh button above</td></tr></tbody>
+        <tbody id="billingMainBody"><tr><td colspan="8" class="u-table-empty-cell">Click Refresh to load billing records</td></tr></tbody>
       </table>
     </div>
-    <div class="table-footer u-table-footer-compact" id="billFooter" style="display:none"></div>
+    <div class="table-footer u-table-footer-split" id="billingMainFooter" style="display:none">
+      <div id="billingMainPageMeta">Page 1 of 1</div>
+      <div class="u-pagination-row">
+        <button class="action-btn u-action-btn-sm" id="billingMainPrev"><i class="fas fa-chevron-left"></i></button>
+        <button class="action-btn u-action-btn-sm" id="billingMainNext"><i class="fas fa-chevron-right"></i></button>
+      </div>
+    </div>
   </div>
   </div>
 
@@ -894,40 +854,6 @@
     <div class="table-footer" id="billDetailFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
   </div>
   </div>
-
-  <div class="section-subpanel" id="billing-subpanel-history" style="display:none">
-  <div class="table-wrapper" style="margin-top:12px">
-    <div class="table-header">
-      <div class="table-title"><i class="fas fa-clock-rotate-left" style="color:var(--accent)"></i> Bill History Search</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <label style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">From</label>
-        <input type="date" id="billHistFrom" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
-        <label style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">To</label>
-        <input type="date" id="billHistTo" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
-        <button class="action-btn" id="btnBillHistSearch"><i class="fas fa-search"></i> Search History</button>
-      </div>
-    </div>
-    <div class="table-scroll">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Bill #</th>
-            <th>Vendor / Payee</th>
-            <th>Property</th>
-            <th>Group</th>
-            <th>Property Manager</th>
-            <th>Amount</th>
-            <th>Invoice Date</th>
-            <th>Status</th>
-            <th>WO</th>
-          </tr>
-        </thead>
-        <tbody id="billHistBody"><tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">Run a date search to load historical bills</td></tr></tbody>
-      </table>
-    </div>
-    <div class="table-footer" id="billHistFooter" style="display:none;padding:8px 14px;font-size:11px;color:var(--text-muted)"></div>
-  </div>
-  </div>
 </section>
 
 <section class="section" id="sec-properties">
@@ -947,6 +873,8 @@
     </div>
     <div class="section-subtabs" id="propertiesSubtabs">
       <button class="section-subtab active" data-properties-subtab="directory"><i class="fas fa-table"></i> Directory</button>
+      <button class="section-subtab" data-properties-subtab="performance"><i class="fas fa-chart-line"></i> Performance</button>
+      <button class="section-subtab" data-properties-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
       <button class="section-subtab" data-properties-subtab="renewals"><i class="fas fa-file-signature"></i> Renewals</button>
       <button class="section-subtab" data-properties-subtab="bulk"><i class="fas fa-pen-to-square"></i> Bulk Notes</button>
     </div>
@@ -985,6 +913,46 @@
         <button class="action-btn u-action-btn-sm" id="propertiesNextPage">Next</button>
       </div>
     </div>
+    </div>
+    <!-- Performance subpanel -->
+    <div class="section-subpanel" id="properties-subpanel-performance" style="display:none">
+      <div class="table-wrapper">
+        <div class="table-header">
+          <div class="table-title"><i class="fas fa-chart-line" style="color:var(--accent)"></i> Property Performance</div>
+          <div class="u-toolbar-row">
+            <input type="text" id="propPerfSearch" class="search-box u-minw-200" placeholder="Search property, group…">
+            <button class="action-btn" id="btnRefreshPropPerf"><i class="fas fa-sync-alt"></i> Refresh</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="propPerfTable">
+            <thead><tr>
+              <th>Property</th><th>Group</th><th>Units</th><th>Occupied</th><th>Vacancies</th><th>Occ. Rate</th><th>Avg Rent</th><th>Total Rent</th>
+            </tr></thead>
+            <tbody id="propPerfBody"><tr><td colspan="8" class="u-table-empty-cell">Click Refresh to load performance data</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <!-- Vacancies subpanel -->
+    <div class="section-subpanel" id="properties-subpanel-vacancies" style="display:none">
+      <div class="table-wrapper">
+        <div class="table-header">
+          <div class="table-title"><i class="fas fa-door-open" style="color:var(--accent)"></i> Unit Vacancies</div>
+          <div class="u-toolbar-row">
+            <input type="text" id="propVacSearch" class="search-box u-minw-200" placeholder="Search property, unit…">
+            <button class="action-btn" id="btnRefreshPropVac"><i class="fas fa-sync-alt"></i> Refresh</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="propVacTable">
+            <thead><tr>
+              <th>Property</th><th>Unit</th><th>Bedrooms</th><th>Bathrooms</th><th>Sq Ft</th><th>Market Rent</th><th>Vacant Since</th><th>Days Vacant</th>
+            </tr></thead>
+            <tbody id="propVacBody"><tr><td colspan="8" class="u-table-empty-cell">Click Refresh to load vacancy data</td></tr></tbody>
+          </table>
+        </div>
+      </div>
     </div>
     <div class="section-subpanel" id="properties-subpanel-renewals" style="display:none">
       <div class="table-wrapper">
@@ -1138,6 +1106,117 @@
   <div class="table-wrap"><table class="wo-table"><thead><tr>
     <th class="sortable" data-inspsort="property">Property</th><th class="sortable" data-inspsort="unit">Unit</th><th class="sortable desc" data-inspsort="daysSince">Last Inspection</th><th>Tenant</th><th>Move-in</th><th>Move-out</th><th class="sortable" data-inspsort="status">Status</th><th>Turn</th>
   </tr></thead><tbody id="inspBody"></tbody></table></div>
+</section>
+
+<!-- ═══════════════════════════════════════════ OCCUPANCY SECTION ══ -->
+<section class="section" id="sec-occupancy">
+  <div class="section-header">
+    <div>
+      <div class="section-title"><i class="fas fa-building" style="color:var(--accent)"></i> Occupancy</div>
+      <div class="section-subtitle">Tenant activity, applications, delinquency and leasing data from AppFolio v2</div>
+    </div>
+    <div class="u-toolbar-row">
+      <button class="action-btn" id="btnRefreshOccupancy"><i class="fas fa-sync-alt"></i> Refresh</button>
+    </div>
+  </div>
+  <div class="section-subtabs" id="occupancySubtabs">
+    <button class="section-subtab active" data-occupancy-subtab="tenant-transactions"><i class="fas fa-receipt"></i> Transactions</button>
+    <button class="section-subtab" data-occupancy-subtab="tenant-directory"><i class="fas fa-users"></i> Tenant Directory</button>
+    <button class="section-subtab" data-occupancy-subtab="delinquency"><i class="fas fa-exclamation-circle"></i> Delinquency</button>
+    <button class="section-subtab" data-occupancy-subtab="applications"><i class="fas fa-file-alt"></i> Applications</button>
+    <button class="section-subtab" data-occupancy-subtab="showings"><i class="fas fa-calendar-check"></i> Showings</button>
+    <button class="section-subtab" data-occupancy-subtab="guest-cards"><i class="fas fa-id-card"></i> Guest Cards</button>
+  </div>
+
+  <div class="section-subpanel active" id="occupancy-subpanel-tenant-transactions">
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div class="table-title"><i class="fas fa-receipt" style="color:var(--accent)"></i> Tenant Transaction Summary</div>
+        <div class="u-toolbar-row">
+          <input type="text" id="tenantTxSearch" class="search-box u-minw-200" placeholder="Search tenant, property…">
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table" id="tenantTxTable">
+        <thead><tr><th>Tenant</th><th>Property / Unit</th><th>Charges</th><th>Payments</th><th>Balance</th><th>Last Activity</th></tr></thead>
+        <tbody id="tenantTxBody"><tr><td colspan="6" class="u-table-empty-cell">Click Refresh to load transaction data</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="section-subpanel" id="occupancy-subpanel-tenant-directory" style="display:none">
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div class="table-title"><i class="fas fa-users" style="color:var(--accent)"></i> Tenant Directory</div>
+        <div class="u-toolbar-row">
+          <input type="text" id="tenantDirSearch" class="search-box u-minw-200" placeholder="Search tenant, email, phone…">
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table" id="tenantDirTable">
+        <thead><tr><th>Tenant</th><th>Property / Unit</th><th>Email</th><th>Phone</th><th>Lease Start</th><th>Lease End</th><th>Move-In</th></tr></thead>
+        <tbody id="tenantDirBody"><tr><td colspan="7" class="u-table-empty-cell">Click Refresh to load tenant directory</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="section-subpanel" id="occupancy-subpanel-delinquency" style="display:none">
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div class="table-title"><i class="fas fa-exclamation-circle" style="color:var(--danger)"></i> Delinquency Report</div>
+        <div class="u-toolbar-row">
+          <input type="text" id="delinquencySearch" class="search-box u-minw-200" placeholder="Search tenant, property…">
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table" id="delinquencyTable">
+        <thead><tr><th>Tenant</th><th>Property / Unit</th><th>Balance Due</th><th>Days Past Due</th><th>Last Payment</th><th>Status</th></tr></thead>
+        <tbody id="delinquencyBody"><tr><td colspan="6" class="u-table-empty-cell">Click Refresh to load delinquency data</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="section-subpanel" id="occupancy-subpanel-applications" style="display:none">
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div class="table-title"><i class="fas fa-file-alt" style="color:var(--accent)"></i> Rental Applications</div>
+        <div class="u-toolbar-row">
+          <input type="text" id="applicationsSearch" class="search-box u-minw-200" placeholder="Search applicant, property…">
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table" id="applicationsTable">
+        <thead><tr><th>Applicant</th><th>Property / Unit</th><th>Status</th><th>Applied On</th><th>Decision</th><th>Agent</th></tr></thead>
+        <tbody id="applicationsBody"><tr><td colspan="6" class="u-table-empty-cell">Click Refresh to load applications</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="section-subpanel" id="occupancy-subpanel-showings" style="display:none">
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div class="table-title"><i class="fas fa-calendar-check" style="color:var(--accent)"></i> Showings</div>
+        <div class="u-toolbar-row">
+          <input type="text" id="showingsSearch" class="search-box u-minw-200" placeholder="Search prospect, property…">
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table" id="showingsTable">
+        <thead><tr><th>Prospect</th><th>Property / Unit</th><th>Scheduled</th><th>Status</th><th>Agent</th><th>Notes</th></tr></thead>
+        <tbody id="showingsBody"><tr><td colspan="6" class="u-table-empty-cell">Click Refresh to load showings</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="section-subpanel" id="occupancy-subpanel-guest-cards" style="display:none">
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div class="table-title"><i class="fas fa-id-card" style="color:var(--accent)"></i> Guest Cards</div>
+        <div class="u-toolbar-row">
+          <input type="text" id="guestCardsSearch" class="search-box u-minw-200" placeholder="Search prospect, property…">
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table" id="guestCardsTable">
+        <thead><tr><th>Prospect</th><th>Property</th><th>Interested In</th><th>Source</th><th>Created</th><th>Status</th></tr></thead>
+        <tbody id="guestCardsBody"><tr><td colspan="6" class="u-table-empty-cell">Click Refresh to load guest cards</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
 </section>
 
 <section class="section" id="sec-vendors">
@@ -1689,13 +1768,6 @@
 
 </div>
 
-<!-- Floating open button when drawer is closed -->
-<button class="live-feed-fab" id="live-feed-fab"
-        onclick="document.getElementById('live-feed-drawer').classList.toggle('open'); WebhookLive.clearUnseen()">
-  📡
-  <span class="fab-badge" id="fab-badge" style="display:none"></span>
-</button>
-
 <!-- PM Notifications & Operational Alerts Drawer -->
 <div class="live-feed-drawer pager-center neo-surface-raised" id="pm-inbox-drawer" style="right:-400px">
 
@@ -2021,8 +2093,8 @@
   <span id="toastMsg"></span>
 </div>
 
-<script src="js/app.js?v=20260429c"></script>
+<script src="js/app.js?v=20260429d"></script>
 
-<script src="js/login-effects.js?v=20260429c"></script>
+<script src="js/login-effects.js?v=20260429d"></script>
 </body>
 </html>
