@@ -309,6 +309,7 @@ registerOfflineServiceWorker();
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+var escHtml = escapeHtml;
 
 // ── hmConfirm / hmPrompt ──────────────────────────────────────────────────────
 // Promise-based modal replacements for native confirm() and prompt().
@@ -1290,14 +1291,15 @@ function getStoredAccessRole() {
 function isTabAllowedForRole(tabName) {
   if (_accessRole === 'vendors') return tabName === 'vendors';
   if (_accessRole === 'pm_readonly') {
-    var pmAllowedTabs = ['dashboard', 'workorders', 'billing', 'properties', 'turnboard', 'vendors', 'inspections', 'errors'];
+    var pmAllowedTabs = ['dashboard', 'workorders', 'billing', 'occupancy', 'properties', 'turnboard', 'vendors', 'inspections', 'errors'];
     return pmAllowedTabs.indexOf(tabName) !== -1;
   }
   if (_accessRole === 'manager') {
-    // Manager role allowed tabs: workorders, turnboard, vendors, inspections, errors
-    var allowedTabs = ['dashboard', 'workorders', 'routing', 'billing', 'properties', 'turnboard', 'vendors', 'inspections', 'errors'];
-    return allowedTabs.indexOf(tabName) !== -1;
+    // GM role: all PM tabs + routing + payroll
+    var gmAllowedTabs = ['dashboard', 'workorders', 'routing', 'billing', 'occupancy', 'properties', 'turnboard', 'vendors', 'inspections', 'payroll', 'errors'];
+    return gmAllowedTabs.indexOf(tabName) !== -1;
   }
+  // full / admin: all tabs
   return true;
 }
 
@@ -1624,6 +1626,12 @@ function lockVault() {
 // Apply access role restrictions — hides tabs/sections not allowed for the role
 // Called after unlock + before initApp
 function applyAccessRole() {
+  // Apply body role class for CSS-driven role-gated nav items
+  document.body.classList.remove('role-vendors', 'role-pm', 'role-gm', 'role-admin');
+  if (_accessRole === 'pm_readonly') document.body.classList.add('role-pm');
+  else if (_accessRole === 'manager') document.body.classList.add('role-gm');
+  else if (_accessRole === 'full') document.body.classList.add('role-admin');
+
   if (_accessRole === 'vendors') {
     document.body.classList.add('role-vendors');
     $$('.nav-tab').forEach(function(t) {
@@ -1639,13 +1647,15 @@ function applyAccessRole() {
     var gfBar = document.getElementById('globalFilterBar');
     if (gfBar) gfBar.style.display = 'none';
   } else {
-    document.body.classList.remove('role-vendors');
     var activeTab = document.querySelector('.nav-tab.active');
     var activeTabName = activeTab ? activeTab.getAttribute('data-tab') : 'dashboard';
     $$('.nav-tab').forEach(function(t) {
       var tabName = t.getAttribute('data-tab');
       var allowed = isTabAllowedForRole(tabName);
-      t.style.display = allowed ? '' : 'none';
+      // nav-role-gm / nav-role-admin buttons are handled by CSS body class
+      if (!t.classList.contains('nav-role-gm') && !t.classList.contains('nav-role-admin')) {
+        t.style.display = allowed ? '' : 'none';
+      }
       if (!allowed) t.classList.remove('active');
     });
     $$('.section').forEach(function(s) {
@@ -2274,6 +2284,8 @@ var rateLimiter = {
         fabBadge.textContent = txt;
         badge.style.display = n > 0 ? '' : 'none';
         fabBadge.style.display = n > 0 ? '' : 'none';
+        // Toggle transparency class — fab is dim when no unread messages
+        if (fab) fab.classList.toggle('has-unread', n > 0);
       }
 
       function renderAlertsSection() {
@@ -10337,7 +10349,7 @@ function renderActivityFeed() {
 
   var html = '';
   activities.forEach(function(a) {
-    html += '<tr>';
+    html += '<tr class="u-row-click" data-woca-idx="' + idx + '" title="Click row to view details & send pager notice">';
     html += '<td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;"><i class="fas ' + a.icon + '" style="color:' + a.iconColor + ';margin-right:4px;font-size:10px"></i>' + a.time + '</td>';
     html += '<td>' + a.event + '</td>';
     html += '<td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">' + a.entity + '</td>';
@@ -10357,8 +10369,15 @@ var currentWOAgeFilter = '';
 var currentWOSort = 'oldest';
 var currentWOView = 'board'; // 'board' | 'list'
 var currentWOSubtab = 'active'; // active | completed | closure | followup
-var currentBillingSubtab = 'queue'; // queue | payables | history
-var currentPropertiesSubtab = 'directory'; // directory | renewals | bulk
+var currentBillingSubtab = 'main'; // main | payables | charge-detail | bill-detail
+var currentPropertiesSubtab = 'directory'; // directory | performance | vacancies | renewals | bulk
+var currentOccupancySubtab = 'tenant-transactions'; // tenant-transactions | tenant-directory | delinquency | applications | showings | guest-cards
+// Billing main (saved report)
+var _billingMainData = [];
+var _billingMainFiltered = [];
+var _billingMainPage = 1;
+var _billingMainPageSize = 25;
+var _billingMainLoading = false;
 var currentErrorsSubtab = 'log'; // log | email-delivery
 var currentActivityFilter = 'all';
 var expandedWOColumn = '';
@@ -10425,15 +10444,15 @@ function setWOSubtab(tab) {
 }
 
 function setBillingSubtab(tab) {
-  var allowed = { queue: true, payables: true, 'charge-detail': true, 'bill-detail': true, history: true };
-  var target = allowed[tab] ? tab : 'queue';
+  var allowed = { main: true, payables: true, 'charge-detail': true, 'bill-detail': true };
+  var target = allowed[tab] ? tab : 'main';
   currentBillingSubtab = target;
 
   $$('[data-billing-subtab]').forEach(function(btn) {
     btn.classList.toggle('active', btn.getAttribute('data-billing-subtab') === target);
   });
 
-  ['queue', 'payables', 'charge-detail', 'bill-detail', 'history'].forEach(function(name) {
+  ['main', 'payables', 'charge-detail', 'bill-detail'].forEach(function(name) {
     var panel = $('#billing-subpanel-' + name);
     if (!panel) return;
     var isActive = name === target;
@@ -10441,11 +10460,18 @@ function setBillingSubtab(tab) {
     panel.style.display = isActive ? '' : 'none';
   });
 
-  syncBillingToolbarForSubtab();
+  // Close the more-reports dropdown whenever a subtab changes
+  var dd = $('#billingMoreDropdown');
+  if (dd) dd.style.display = 'none';
 
-  if (target === 'queue' || target === 'payables' || target === 'charge-detail' || target === 'bill-detail') {
-    renderBillingSection();
+  if (target === 'main') {
+    // auto-load if empty
+    if (!_billingMainLoading && _billingMainData.length === 0) loadBillingMain();
+    return;
   }
+  if (target === 'payables') { renderPayablesSection(); return; }
+  if (target === 'charge-detail') { renderChargeDetailSection(); return; }
+  if (target === 'bill-detail') { renderBillDetailSection(); return; }
   syncSubtabDock();
 }
 
@@ -10752,11 +10778,9 @@ function getPayablesRequestKey() {
 }
 
 function syncBillingToolbarForSubtab() {
-  var isQueue = currentBillingSubtab === 'queue';
-  var billStatusFilter = $('#billStatusFilter');
+  var isMain = currentBillingSubtab === 'main' || !currentBillingSubtab;
   var billingKpiGrid = $('#billingKpiGrid');
-  if (billStatusFilter) billStatusFilter.style.display = isQueue ? '' : 'none';
-  if (billingKpiGrid) billingKpiGrid.style.display = isQueue ? '' : 'none';
+  if (billingKpiGrid) billingKpiGrid.style.display = isMain ? '' : 'none';
 }
 
 function formatPayablesCurrency(value) {
@@ -11339,23 +11363,188 @@ async function renderBillDetailSection(opts) {
 }
 
 function renderBillingSection(opts) {
-  if (currentBillingSubtab === 'payables') {
-    renderPayablesSection(opts);
+  if (currentBillingSubtab === 'payables') { renderPayablesSection(opts); return; }
+  if (currentBillingSubtab === 'charge-detail') { renderChargeDetailSection(opts); return; }
+  if (currentBillingSubtab === 'bill-detail') { renderBillDetailSection(opts); return; }
+  // default: main
+  if (opts && opts.forceRefresh) loadBillingMain();
+}
+
+/* ─── Billing Main: saved report ──────────────────────────────────────────── */
+async function loadBillingMain() {
+  if (_billingMainLoading) return;
+  _billingMainLoading = true;
+  var body = $('#billingMainBody');
+  if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading billing records…</td></tr>';
+  setSectionBusy('sec-billing', true, 'Loading billing records…');
+  try {
+    var data = await proxyAction('billing_saved_report');
+    var rows = (data && data.billing_search_results) ? data.billing_search_results : [];
+    _billingMainData = rows;
+    applyBillingMainFilters();
+  } catch(e) {
+    if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell u-text-danger">Error: ' + escHtml(String(e && e.message || e)) + '</td></tr>';
+  } finally {
+    _billingMainLoading = false;
+    setSectionBusy('sec-billing', false);
+  }
+}
+
+function applyBillingMainFilters() {
+  var search = String(($('#billingMainSearch') || {}).value || '').trim().toLowerCase();
+  var fromVal = String(($('#billingMainFrom') || {}).value || '').trim();
+  var toVal   = String(($('#billingMainTo')   || {}).value || '').trim();
+  var status  = String(($('#billingMainStatus') || {}).value || '').trim();
+  var terms = search ? search.split(',').map(function(t){ return t.trim(); }).filter(Boolean) : [];
+  var filtered = _billingMainData.filter(function(row) {
+    if (terms.length) {
+      var haystack = [
+        row.billing_id || '',
+        (row.property_context && row.property_context.property_name) || '',
+        (row.work_order && row.work_order.description) || '',
+        (row.vendor && row.vendor.vendor_name) || ''
+      ].join(' ').toLowerCase();
+      if (!terms.every(function(t){ return haystack.indexOf(t) !== -1; })) return false;
+    }
+    if (fromVal || toVal) {
+      var created = (row.dates && row.dates.created_at) || '';
+      if (fromVal && created < fromVal) return false;
+      if (toVal   && created > toVal)   return false;
+    }
+    if (status) {
+      var woStatus = (row.work_order && row.work_order.status) || '';
+      if (woStatus.toLowerCase() !== status.toLowerCase()) return false;
+    }
+    return true;
+  });
+  _billingMainFiltered = filtered;
+  _billingMainPage = 1;
+  renderBillingMainTable();
+}
+
+function renderBillingMainTable() {
+  var body = $('#billingMainBody');
+  var footer = $('#billingMainFooter');
+  var pageMeta = $('#billingMainPageMeta');
+  if (!body) return;
+  var rows = _billingMainFiltered;
+  var total = rows.length;
+  var pageCount = Math.max(1, Math.ceil(total / _billingMainPageSize));
+  _billingMainPage = Math.min(_billingMainPage, pageCount);
+  var start = (_billingMainPage - 1) * _billingMainPageSize;
+  var pageRows = rows.slice(start, start + _billingMainPageSize);
+
+  // KPI update
+  var kpiCount = $('#billKpiPending'), kpiTotal = $('#billKpiTotal'), kpiPaid = $('#billKpiPaid'), kpiVendors = $('#billKpiVendors');
+  if (kpiCount) kpiCount.textContent = total.toLocaleString();
+  var totalBilled = rows.reduce(function(s, r){ return s + (r.financials && r.financials.amount_total ? Number(r.financials.amount_total) : 0); }, 0);
+  if (kpiTotal) kpiTotal.textContent = '$' + totalBilled.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+  var now = new Date(), thisMonth = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  var billedThisMonth = rows.filter(function(r){ return r.dates && r.dates.last_billed_on && String(r.dates.last_billed_on).slice(0,7) === thisMonth; }).reduce(function(s,r){ return s + (r.financials && r.financials.amount_total ? Number(r.financials.amount_total) : 0); }, 0);
+  if (kpiPaid) kpiPaid.textContent = '$' + billedThisMonth.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+  var vendorSet = {};
+  rows.forEach(function(r){ if (r.vendor && r.vendor.vendor_id) vendorSet[r.vendor.vendor_id] = true; });
+  if (kpiVendors) kpiVendors.textContent = Object.keys(vendorSet).length.toLocaleString();
+
+  if (total === 0) {
+    body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell">No billing records match the current filters</td></tr>';
+    if (footer) footer.style.display = 'none';
     return;
   }
-  if (currentBillingSubtab === 'charge-detail') {
-    renderChargeDetailSection(opts);
-    return;
+
+  var html = '';
+  pageRows.forEach(function(row) {
+    var billingId = escHtml(row.billing_id || '—');
+    var propName  = escHtml((row.property_context && row.property_context.property_name) || '—');
+    var woDesc    = escHtml((row.work_order && row.work_order.description) || '—');
+    var vendor    = escHtml((row.vendor && row.vendor.vendor_name) || '—');
+    var amount    = row.financials && row.financials.amount_total != null
+                    ? '$' + Number(row.financials.amount_total).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})
+                    : '—';
+    var woStatus  = escHtml((row.work_order && row.work_order.status) || '—');
+    var created   = escHtml((row.dates && row.dates.created_at) || '—');
+    var lastBill  = escHtml((row.dates && row.dates.last_billed_on) || '—');
+    var statusCls = woStatus === 'Completed' ? 'badge-success' : woStatus === 'In Progress' ? 'badge-warning' : woStatus === 'Open' ? 'badge-info' : 'badge-muted';
+    html += '<tr class="u-row-click" data-billing-id="' + escHtml(row.billing_id || '') + '">' +
+      '<td><span class="u-mono-sm">' + billingId + '</span></td>' +
+      '<td>' + propName + '</td>' +
+      '<td>' + woDesc + '</td>' +
+      '<td>' + vendor + '</td>' +
+      '<td class="u-num-cell">' + amount + '</td>' +
+      '<td><span class="badge ' + statusCls + '">' + woStatus + '</span></td>' +
+      '<td class="u-date-cell">' + created + '</td>' +
+      '<td class="u-date-cell">' + lastBill + '</td>' +
+      '</tr>';
+  });
+  body.innerHTML = html;
+
+  body.querySelectorAll('.u-row-click').forEach(function(tr) {
+    tr.addEventListener('click', function() {
+      var bid = tr.getAttribute('data-billing-id');
+      var row = _billingMainData.find(function(r){ return r.billing_id === bid; });
+      if (row) showBillingMainModal(row);
+    });
+  });
+
+  if (footer) footer.style.display = pageCount > 1 ? '' : 'none';
+  if (pageMeta) pageMeta.textContent = 'Page ' + _billingMainPage + ' of ' + pageCount + ' (' + total.toLocaleString() + ' records)';
+  var prev = $('#billingMainPrev'), next = $('#billingMainNext');
+  if (prev) prev.disabled = _billingMainPage <= 1;
+  if (next) next.disabled = _billingMainPage >= pageCount;
+}
+
+function showBillingMainModal(row) {
+  var woNum  = (row.work_order && row.work_order.number) || '';
+  var woDesc = (row.work_order && row.work_order.description) || '';
+  var woType = (row.work_order && row.work_order.type) || '';
+  var woStatus = (row.work_order && row.work_order.status) || '';
+  var prop   = (row.property_context && row.property_context.property_name) || '';
+  var addr   = (row.property_context && row.property_context.address) || '';
+  var vendor = (row.vendor && row.vendor.vendor_name) || '—';
+  var amt    = row.financials && row.financials.amount_total != null
+               ? '$' + Number(row.financials.amount_total).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+  var vendorBill  = row.financials && row.financials.vendor_bill_amount != null ? '$' + Number(row.financials.vendor_bill_amount).toFixed(2) : '—';
+  var tenantChg   = row.financials && row.financials.tenant_total_charge != null ? '$' + Number(row.financials.tenant_total_charge).toFixed(2) : '—';
+  var maintLimit  = row.financials && row.financials.maintenance_limit != null ? '$' + Number(row.financials.maintenance_limit).toFixed(2) : '—';
+  var created     = (row.dates && row.dates.created_at) || '—';
+  var completed   = (row.dates && row.dates.completed_on) || '—';
+  var lastBilled  = (row.dates && row.dates.last_billed_on) || '—';
+  var afLink = woNum ? 'https://flraz.appfolio.com/maintenance/work_orders?wo_number=' + encodeURIComponent(woNum) : '';
+
+  var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 20px;font-size:13px">' +
+    '<div><span class="u-label-muted">Billing ID</span><div class="u-mono-sm">' + escHtml(row.billing_id||'') + '</div></div>' +
+    '<div><span class="u-label-muted">WO Number</span><div class="u-mono-sm">' + escHtml(woNum) + '</div></div>' +
+    '<div><span class="u-label-muted">Property</span><div>' + escHtml(prop) + '</div></div>' +
+    '<div><span class="u-label-muted">Address</span><div>' + escHtml(addr) + '</div></div>' +
+    '<div><span class="u-label-muted">Vendor</span><div>' + escHtml(vendor) + '</div></div>' +
+    '<div><span class="u-label-muted">WO Type</span><div>' + escHtml(woType) + '</div></div>' +
+    '<div><span class="u-label-muted">WO Status</span><div>' + escHtml(woStatus) + '</div></div>' +
+    '<div><span class="u-label-muted">Amount Total</span><div>' + escHtml(amt) + '</div></div>' +
+    '<div><span class="u-label-muted">Vendor Bill</span><div>' + escHtml(vendorBill) + '</div></div>' +
+    '<div><span class="u-label-muted">Tenant Charge</span><div>' + escHtml(tenantChg) + '</div></div>' +
+    '<div><span class="u-label-muted">Maintenance Limit</span><div>' + escHtml(maintLimit) + '</div></div>' +
+    '<div><span class="u-label-muted">Created</span><div>' + escHtml(created) + '</div></div>' +
+    '<div><span class="u-label-muted">Completed</span><div>' + escHtml(completed) + '</div></div>' +
+    '<div><span class="u-label-muted">Last Billed</span><div>' + escHtml(lastBilled) + '</div></div>' +
+    '</div>' +
+    '<div style="margin-top:14px">' +
+    '<span class="u-label-muted">WO Description</span>' +
+    '<div style="margin-top:4px;line-height:1.5;color:var(--text-primary)">' + escHtml(woDesc) + '</div>' +
+    '</div>';
+  if (afLink) {
+    html += '<div style="margin-top:16px;text-align:right">' +
+      '<a href="' + escHtml(afLink) + '" target="_blank" rel="noopener" class="action-btn u-action-btn-sm"><i class="fas fa-external-link-alt"></i> View in AppFolio</a></div>';
   }
-  if (currentBillingSubtab === 'bill-detail') {
-    renderBillDetailSection(opts);
-    return;
-  }
-  if (currentBillingSubtab === 'history') {
-    if (opts && opts.forceRefresh) runBillHistorySearch();
-    return;
-  }
-  renderBillsSection();
+  var _bmo = document.createElement('div');
+  _bmo.className = 'modal-overlay show hm-modal-critical';
+  _bmo.innerHTML = '<div class="modal" style="max-width:680px;width:95vw">' +
+    '<div class="modal-head"><h3>' + escHtml('Billing Detail — ' + (row.billing_id || '')) + '</h3></div>' +
+    '<div class="modal-body" style="max-height:70vh;overflow-y:auto;padding:16px">' + html + '</div>' +
+    '<div class="modal-footer"><button class="hm-modal-btn hm-modal-btn-cancel">Close</button></div>' +
+    '</div>';
+  document.body.appendChild(_bmo);
+  _bmo.querySelector('.hm-modal-btn-cancel').addEventListener('click', function() { _bmo.remove(); });
+  _bmo.addEventListener('click', function(e) { if (e.target === _bmo) _bmo.remove(); });
 }
 
 function monthInputValue(dateLike) {
@@ -11612,7 +11801,7 @@ function syncPropertiesToolbarForSubtab() {
 }
 
 function setPropertiesSubtab(tab) {
-  var allowed = { directory: true, renewals: true, bulk: true };
+  var allowed = { directory: true, performance: true, vacancies: true, renewals: true, bulk: true };
   var target = allowed[tab] ? tab : 'directory';
   currentPropertiesSubtab = target;
 
@@ -11620,7 +11809,7 @@ function setPropertiesSubtab(tab) {
     btn.classList.toggle('active', btn.getAttribute('data-properties-subtab') === target);
   });
 
-  ['directory', 'renewals', 'bulk'].forEach(function(name) {
+  ['directory', 'performance', 'vacancies', 'renewals', 'bulk'].forEach(function(name) {
     var panel = $('#properties-subpanel-' + name);
     if (!panel) return;
     var isActive = name === target;
@@ -11634,6 +11823,8 @@ function setPropertiesSubtab(tab) {
     renderPropertiesSection();
     return;
   }
+  if (target === 'performance') { loadPropertyPerformance(); return; }
+  if (target === 'vacancies')   { loadPropertyVacancies();   return; }
   var scopeEl = $('#propertiesBulkScopeText');
   if (scopeEl) {
     var scope = getPropertiesScope();
@@ -11641,6 +11832,107 @@ function setPropertiesSubtab(tab) {
     scopeEl.textContent = 'Current scope: ' + grp + '. Use "Open Bulk Note Composer" to apply the same note across scoped properties.';
   }
   syncSubtabDock();
+}
+
+/* ─── Property Performance & Vacancies (v2 reports) ─────────────── */
+async function loadPropertyPerformance() {
+  var body = $('#propPerfBody');
+  if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
+  try {
+    var data = await proxyAction('v2_report', { report: 'property_performance' });
+    var rows = (data && data.results) ? data.results : [];
+    if (!rows.length) { if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell">No performance data returned</td></tr>'; return; }
+    var html = '';
+    rows.forEach(function(r) {
+      html += '<tr><td>' + escHtml(r.property_name||'\u2014') + '</td><td>' + escHtml(r.property_group||'\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (r.total_units||'\u2014') + '</td><td class="u-num-cell">' + (r.occupied_units||'\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (r.vacant_units||'\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (r.occupancy_rate != null ? (Number(r.occupancy_rate)*100).toFixed(1)+'%' : '\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (r.avg_rent != null ? '$'+Number(r.avg_rent).toFixed(2) : '\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (r.total_rent != null ? '$'+Number(r.total_rent).toFixed(2) : '\u2014') + '</td></tr>';
+    });
+    if (body) body.innerHTML = html;
+  } catch(e) {
+    if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell u-text-danger">Error: ' + escHtml(String(e&&e.message||e)) + '</td></tr>';
+  }
+}
+
+async function loadPropertyVacancies() {
+  var body = $('#propVacBody');
+  if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
+  try {
+    var data = await proxyAction('v2_report', { report: 'unit_vacancy' });
+    var rows = (data && data.results) ? data.results : [];
+    if (!rows.length) { if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell">No vacancy data returned</td></tr>'; return; }
+    var html = '';
+    rows.forEach(function(r) {
+      html += '<tr><td>' + escHtml(r.property_name||'\u2014') + '</td>' +
+        '<td>' + escHtml(r.unit||r.unit_number||'\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (r.bedrooms||'\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (r.bathrooms||'\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (r.square_feet||'\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (r.market_rent != null ? '$'+Number(r.market_rent).toFixed(2) : '\u2014') + '</td>' +
+        '<td class="u-date-cell">' + escHtml(r.vacant_from||r.vacated_on||'\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (r.days_vacant||'\u2014') + '</td></tr>';
+    });
+    if (body) body.innerHTML = html;
+  } catch(e) {
+    if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell u-text-danger">Error: ' + escHtml(String(e&&e.message||e)) + '</td></tr>';
+  }
+}
+
+/* ─── Occupancy section ──────────────────────────────────────────── */
+function setOccupancySubtab(tab) {
+  var tabs = ['tenant-transactions','tenant-directory','delinquency','applications','showings','guest-cards'];
+  var target = tabs.indexOf(tab) !== -1 ? tab : 'tenant-transactions';
+  currentOccupancySubtab = target;
+  $$('[data-occupancy-subtab]').forEach(function(btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-occupancy-subtab') === target);
+  });
+  tabs.forEach(function(name) {
+    var panel = $('#occupancy-subpanel-' + name);
+    if (!panel) return;
+    panel.classList.toggle('active', name === target);
+    panel.style.display = name === target ? '' : 'none';
+  });
+  syncSubtabDock();
+}
+
+var _occupancyReportMap = {
+  'tenant-transactions': { action: 'v2_report', report: 'tenant_transactions_summary', bodyId: 'tenantTxBody', cols: 6,
+    render: function(r){ return '<tr><td>' + escHtml(r.tenant_name||'\u2014') + '</td><td>' + escHtml((r.property_name||'') + (r.unit ? ' / '+r.unit : '')) + '</td><td class="u-num-cell">' + (r.total_charges != null ? '$'+Number(r.total_charges).toFixed(2) : '\u2014') + '</td><td class="u-num-cell">' + (r.total_payments != null ? '$'+Number(r.total_payments).toFixed(2) : '\u2014') + '</td><td class="u-num-cell">' + (r.balance != null ? '$'+Number(r.balance).toFixed(2) : '\u2014') + '</td><td class="u-date-cell">' + escHtml(r.last_activity_date||'\u2014') + '</td></tr>'; }
+  },
+  'tenant-directory': { action: 'v2_report', report: 'tenant_directory', bodyId: 'tenantDirBody', cols: 7,
+    render: function(r){ return '<tr><td>' + escHtml(r.tenant_name||'\u2014') + '</td><td>' + escHtml((r.property_name||'') + (r.unit ? ' / '+r.unit : '')) + '</td><td>' + escHtml(r.email||'\u2014') + '</td><td>' + escHtml(r.phone||'\u2014') + '</td><td class="u-date-cell">' + escHtml(r.lease_start||'\u2014') + '</td><td class="u-date-cell">' + escHtml(r.lease_end||'\u2014') + '</td><td class="u-date-cell">' + escHtml(r.move_in||'\u2014') + '</td></tr>'; }
+  },
+  'delinquency': { action: 'v2_report', report: 'delinquency', bodyId: 'delinquencyBody', cols: 6,
+    render: function(r){ return '<tr><td>' + escHtml(r.tenant_name||'\u2014') + '</td><td>' + escHtml((r.property_name||'') + (r.unit ? ' / '+r.unit : '')) + '</td><td class="u-num-cell">' + (r.balance_due != null ? '$'+Number(r.balance_due).toFixed(2) : '\u2014') + '</td><td class="u-num-cell">' + escHtml(String(r.days_past_due||'\u2014')) + '</td><td class="u-date-cell">' + escHtml(r.last_payment_date||'\u2014') + '</td><td>' + escHtml(r.status||'\u2014') + '</td></tr>'; }
+  },
+  'applications': { action: 'v2_report', report: 'rental_applications', bodyId: 'applicationsBody', cols: 6,
+    render: function(r){ return '<tr><td>' + escHtml(r.applicant_name||'\u2014') + '</td><td>' + escHtml((r.property_name||'') + (r.unit ? ' / '+r.unit : '')) + '</td><td>' + escHtml(r.status||'\u2014') + '</td><td class="u-date-cell">' + escHtml(r.applied_on||'\u2014') + '</td><td>' + escHtml(r.decision||'\u2014') + '</td><td>' + escHtml(r.agent||'\u2014') + '</td></tr>'; }
+  },
+  'showings': { action: 'v2_report', report: 'showings', bodyId: 'showingsBody', cols: 6,
+    render: function(r){ return '<tr><td>' + escHtml(r.prospect_name||'\u2014') + '</td><td>' + escHtml((r.property_name||'') + (r.unit ? ' / '+r.unit : '')) + '</td><td class="u-date-cell">' + escHtml(r.scheduled_at||'\u2014') + '</td><td>' + escHtml(r.status||'\u2014') + '</td><td>' + escHtml(r.agent||'\u2014') + '</td><td>' + escHtml(r.notes||'\u2014') + '</td></tr>'; }
+  },
+  'guest-cards': { action: 'v2_report', report: 'guest_cards', bodyId: 'guestCardsBody', cols: 6,
+    render: function(r){ return '<tr><td>' + escHtml(r.prospect_name||'\u2014') + '</td><td>' + escHtml(r.property_name||'\u2014') + '</td><td>' + escHtml(r.interested_in||'\u2014') + '</td><td>' + escHtml(r.source||'\u2014') + '</td><td class="u-date-cell">' + escHtml(r.created_at||'\u2014') + '</td><td>' + escHtml(r.status||'\u2014') + '</td></tr>'; }
+  }
+};
+
+async function loadOccupancySubtab(subtab) {
+  var cfg = _occupancyReportMap[subtab];
+  if (!cfg) return;
+  var body = $('#' + cfg.bodyId);
+  if (body) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
+  try {
+    var data = await proxyAction(cfg.action, { report: cfg.report });
+    var rows = (data && data.results) ? data.results : [];
+    if (!rows.length) { if (body) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell">No data returned</td></tr>'; return; }
+    var html = rows.map(cfg.render).join('');
+    if (body) body.innerHTML = html;
+  } catch(e) {
+    if (body) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell u-text-danger">Error: ' + escHtml(String(e&&e.message||e)) + '</td></tr>';
+  }
 }
 
 function getPropertiesScope(localValue) {
@@ -12174,8 +12466,10 @@ function renderWOCloseAssist() {
   var start = woCloseAssist.currentPage * woCloseAssist.pageSize;
   var pageItems = rows.slice(start, start + woCloseAssist.pageSize);
 
+  // Store page items for row-click modal lookup
+  renderWOCloseAssist._pageItems = pageItems;
   var html = '';
-  pageItems.forEach(function(r) {
+  pageItems.forEach(function(r, idx) {
     var wo = r.wo;
     var confColor = r.confidence === 'High' ? 'var(--danger)' : (r.confidence === 'Medium' ? 'var(--warning)' : 'var(--text-muted)');
     var leadBillId = r.billMatches.length > 0 ? String(r.billMatches[0].id || '').trim() : '';
@@ -12249,6 +12543,16 @@ function renderWOCloseAssist() {
       showBillDetailModal(billId);
     });
   });
+  // Row click → open modal (skip if click was on a button inside the row)
+  Array.prototype.forEach.call(body.querySelectorAll('tr[data-woca-idx]'), function(tr) {
+    tr.addEventListener('click', function(e) {
+      if (e.target.closest('button')) return;
+      var idx = parseInt(tr.getAttribute('data-woca-idx'), 10);
+      var items = renderWOCloseAssist._pageItems;
+      if (!items || !items[idx]) return;
+      showWOCloseAssistModal(items[idx]);
+    });
+  });
   var prevBtn = document.getElementById('woCloseAssistPrev');
   var nextBtn = document.getElementById('woCloseAssistNext');
   if (prevBtn) prevBtn.addEventListener('click', function() {
@@ -12263,6 +12567,81 @@ function renderWOCloseAssist() {
     renderWOCloseAssist();
     container.scrollTop = 0;
   });
+}
+
+function showWOCloseAssistModal(r) {
+    var wo = r.wo;
+    var assignee = wo.assignedUser || wo.vendorName || '—';
+    var desc = wo.description || wo.category || wo.workType || '—';
+    var prop = wo.propertyName || '—';
+    var unit = wo.unit || '—';
+    var woId = String(wo.id || '');
+    var confColor = r.confidence === 'High' ? 'var(--danger)' : (r.confidence === 'Medium' ? 'var(--warning)' : 'var(--text-muted)');
+
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9100;display:flex;align-items:center;justify-content:center;padding:16px';
+    overlay.innerHTML =
+      '<div style="background:var(--bg-primary);border:1px solid var(--border);border-radius:10px;width:100%;max-width:520px;box-shadow:0 8px 40px rgba(0,0,0,0.4);display:flex;flex-direction:column;overflow:hidden">' +
+        '<div class="modal-head" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)">' +
+          '<h3 style="margin:0;font-size:15px">WO #' + escapeHtml(woId) + ' — Closure Review</h3>' +
+          '<button id="wocaModalClose" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text-muted);padding:0 4px">✕</button>' +
+        '</div>' +
+        '<div style="padding:18px;display:grid;grid-template-columns:1fr 1fr;gap:10px 18px;font-size:13px">' +
+          '<div><span class="u-label-muted">WO Number</span><div class="u-mono-sm" style="margin-top:2px">#' + escapeHtml(woId) + '</div></div>' +
+          '<div><span class="u-label-muted">Age</span><div style="margin-top:2px">' + r.ageDays + ' days (' + escapeHtml(r.bucket) + ')</div></div>' +
+          '<div><span class="u-label-muted">Property</span><div style="margin-top:2px">' + escapeHtml(prop) + '</div></div>' +
+          '<div><span class="u-label-muted">Unit</span><div style="margin-top:2px">' + escapeHtml(unit) + '</div></div>' +
+          '<div style="grid-column:1/-1"><span class="u-label-muted">Description</span><div style="margin-top:2px">' + escapeHtml(desc) + '</div></div>' +
+          '<div><span class="u-label-muted">Assigned To</span><div style="margin-top:2px;font-weight:600">' + escapeHtml(assignee) + '</div></div>' +
+          '<div><span class="u-label-muted">Confidence</span><div style="margin-top:2px;font-weight:700;color:' + confColor + '">' + escapeHtml(r.confidence) + '</div></div>' +
+          '<div style="grid-column:1/-1"><span class="u-label-muted">Suggestion</span><div style="margin-top:2px;color:var(--accent)">' + escapeHtml(r.suggestion) + '</div></div>' +
+        '</div>' +
+        '<div style="padding:0 18px 16px">' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Pager notice message (editable):</div>' +
+          '<textarea id="wocaPagerMsg" rows="3" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);font-size:12px;resize:vertical"></textarea>' +
+        '</div>' +
+        '<div style="padding:0 18px 18px;display:flex;gap:10px;justify-content:flex-end">' +
+          '<button id="wocaModalCancel" class="action-btn">Cancel</button>' +
+          '<button id="wocaModalPager" class="action-btn primary"><i class="fas fa-bell"></i> Send Pager Notice</button>' +
+        '</div>' +
+        '<div id="wocaModalStatus" style="padding:0 18px 12px;font-size:12px;min-height:18px"></div>' +
+      '</div>';
+
+    document.body.appendChild(overlay);
+
+    // Pre-fill message
+    var msgEl = overlay.querySelector('#wocaPagerMsg');
+    if (msgEl) {
+      msgEl.value = 'Follow-up needed: WO #' + woId + ' (' + prop + (unit && unit !== '—' ? ', Unit ' + unit : '') + ') assigned to ' + assignee + ' has been open for ' + r.ageDays + ' days. Please update or close this work order.';
+    }
+
+    function closeModal() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+
+    overlay.addEventListener('mousedown', function(e) { if (e.target === overlay) closeModal(); });
+    var closeBtn = overlay.querySelector('#wocaModalClose');
+    var cancelBtn = overlay.querySelector('#wocaModalCancel');
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+
+    var pagerBtn = overlay.querySelector('#wocaModalPager');
+    if (pagerBtn) {
+      pagerBtn.addEventListener('click', async function() {
+        var statusEl = overlay.querySelector('#wocaModalStatus');
+        var message = (msgEl ? msgEl.value : '').trim();
+        if (!message) { if (statusEl) statusEl.textContent = 'Message cannot be empty.'; return; }
+        pagerBtn.disabled = true;
+        if (statusEl) statusEl.textContent = 'Sending…';
+        try {
+          await proxyPost('pm_notifications_post', { message: message });
+          if (statusEl) { statusEl.style.color = 'var(--success)'; statusEl.textContent = 'Pager notice sent successfully.'; }
+          pagerBtn.textContent = '✓ Sent';
+          setTimeout(closeModal, 1800);
+        } catch (err) {
+          if (statusEl) { statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Error: ' + (err && err.message || String(err)); }
+          pagerBtn.disabled = false;
+        }
+      });
+    }
 }
 
 function renderWOFollowupQueue() {
@@ -12339,6 +12718,7 @@ function renderWOFollowupQueue() {
     });
   });
 }
+
 
 function showWODetail(id) {
   var ref = String(id || '').trim().replace(/^#/, '');
@@ -12638,6 +13018,7 @@ async function fetchUnitTurnHistory() {
     console.warn('fetchUnitTurnHistory failed (non-fatal):', err.message || err);
   }
 }
+
 
 function renderTurnHistoryPanel() {
   var body = document.getElementById('turnHistoryBody');
@@ -16745,7 +17126,43 @@ function wireUpUI() {
       setBillingSubtab(btn.getAttribute('data-billing-subtab'));
     });
   });
-  setBillingSubtab(currentBillingSubtab || 'queue');
+  setBillingSubtab(currentBillingSubtab || 'main');
+
+  // Billing: More Reports dropdown toggle
+  var moreBillBtn = $('#btnMoreBillReports');
+  var moreBillDd  = $('#billingMoreDropdown');
+  if (moreBillBtn && moreBillDd) {
+    moreBillBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      moreBillDd.style.display = moreBillDd.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', function() { moreBillDd.style.display = 'none'; });
+  }
+
+  // Billing: Refresh button
+  var btnRefreshBilling = $('#btnRefreshBilling');
+  if (btnRefreshBilling) btnRefreshBilling.addEventListener('click', function() { loadBillingMain(); });
+
+  // Billing: Main panel controls
+  var billingMainSearch = $('#billingMainSearch');
+  var billingMainFrom   = $('#billingMainFrom');
+  var billingMainTo     = $('#billingMainTo');
+  var billingMainStatus = $('#billingMainStatus');
+  var _billingMainDebounce;
+  function _debounceBillingFilter() { clearTimeout(_billingMainDebounce); _billingMainDebounce = setTimeout(applyBillingMainFilters, 280); }
+  if (billingMainSearch) billingMainSearch.addEventListener('input', _debounceBillingFilter);
+  if (billingMainFrom)   billingMainFrom.addEventListener('change', applyBillingMainFilters);
+  if (billingMainTo)     billingMainTo.addEventListener('change', applyBillingMainFilters);
+  if (billingMainStatus) billingMainStatus.addEventListener('change', applyBillingMainFilters);
+
+  // Billing: Pagination
+  var billingMainPrev = $('#billingMainPrev');
+  var billingMainNext = $('#billingMainNext');
+  if (billingMainPrev) billingMainPrev.addEventListener('click', function() { if (_billingMainPage > 1) { _billingMainPage--; renderBillingMainTable(); } });
+  if (billingMainNext) billingMainNext.addEventListener('click', function() {
+    var pc = Math.max(1, Math.ceil(_billingMainFiltered.length / _billingMainPageSize));
+    if (_billingMainPage < pc) { _billingMainPage++; renderBillingMainTable(); }
+  });
 
   // Properties sub-tabs
   $$('[data-properties-subtab]').forEach(function(btn) {
@@ -16754,6 +17171,24 @@ function wireUpUI() {
     });
   });
   setPropertiesSubtab(currentPropertiesSubtab || 'directory');
+
+  // Occupancy sub-tabs
+  $$('[data-occupancy-subtab]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      setOccupancySubtab(btn.getAttribute('data-occupancy-subtab'));
+    });
+  });
+  setOccupancySubtab(currentOccupancySubtab || 'tenant-transactions');
+
+  // Occupancy: Refresh button
+  var btnRefreshOccupancy = $('#btnRefreshOccupancy');
+  if (btnRefreshOccupancy) btnRefreshOccupancy.addEventListener('click', function() { loadOccupancySubtab(currentOccupancySubtab); });
+
+  // Properties: new subtab data load
+  var btnRefreshPropPerf = $('#btnRefreshPropPerf');
+  var btnRefreshPropVac  = $('#btnRefreshPropVac');
+  if (btnRefreshPropPerf) btnRefreshPropPerf.addEventListener('click', function() { loadPropertyPerformance(); });
+  if (btnRefreshPropVac)  btnRefreshPropVac.addEventListener('click', function() { loadPropertyVacancies(); });
 
   // Keep active section subtabs in the global top dock above group filter.
   syncSubtabDock();
@@ -17955,8 +18390,7 @@ async function initApp() {
   await loadVendorOverrides();
   loadWOAgeThresholds();
 
-  // Show skeleton loading states
-  setDashboardKpiSkeleton(true);
+  // Show loading states (no skeleton shimmer on KPI cards — values update in-place)
   if ($('#kanbanBoard')) $('#kanbanBoard').innerHTML = loadingHtml('Checking cache\u2026');
   if ($('#vendorGrid')) $('#vendorGrid').innerHTML = loadingHtml('Checking cache\u2026');
   if ($('#turnPipeline')) $('#turnPipeline').innerHTML = loadingHtml('Checking cache\u2026');
