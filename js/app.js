@@ -36,15 +36,31 @@ function updateThemeIcon() {
 // ---- Helpers ----
 function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
+function resetAppScrollToTop() {
+  var main = document.querySelector('.main-content');
+  if (main && typeof main.scrollTo === 'function') {
+    main.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  } else if (main) {
+    main.scrollTop = 0;
+    main.scrollLeft = 0;
+  }
+  if (typeof window.scrollTo === 'function') {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }
+}
 
-var BRAND_NAME_DEFAULT = 'Fort Lowell Realty';
+var BRAND_NAME_DEFAULT = 'Fort Lowell Realty & Maintenance';
 var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
-var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty Tech Dispatch';
+var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.6.9';
+var APP_VERSION = 'v9.7.1';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
+var DASHBOARD_KPI_HISTORY = [];
+var DASHBOARD_KPI_HISTORY_MAX = 16;
+var DASHBOARD_KPI_CHART_MODE = false;
+var DASHBOARD_KPI_ROTATE_TIMER = null;
 
 function compareVersions(v1, v2) {
   var p1 = String(v1).toLowerCase().replace(/^v/, '').split(/[\.\-]/);
@@ -300,18 +316,17 @@ function escapeHtml(s) { var d = document.createElement('div'); d.textContent = 
 function hmConfirm(msg, opts) {
   var o = opts || {};
   var okLabel = o.okLabel || 'Confirm';
-  var okClass = o.danger ? 'background:var(--danger);color:#fff;border:1px solid var(--danger)' : 'background:var(--accent);color:#fff;border:1px solid var(--accent)';
+  var okToneClass = o.danger ? 'hm-modal-ok-danger' : 'hm-modal-ok-primary';
   return new Promise(function(resolve) {
     var overlay = document.createElement('div');
-    overlay.className = 'modal-overlay show';
-    overlay.style.zIndex = 'var(--z-layer-modal-critical)';
+    overlay.className = 'modal-overlay show hm-modal-critical';
     overlay.innerHTML =
-      '<div class="modal" style="max-width:420px">' +
+      '<div class="modal hm-modal-sm">' +
         '<div class="modal-head"><h3>' + escapeHtml(o.title || 'Confirm') + '</h3></div>' +
-        '<div class="modal-body"><p style="margin:0;line-height:1.6;white-space:pre-wrap">' + escapeHtml(msg) + '</p></div>' +
+        '<div class="modal-body"><p class="hm-modal-copy">' + escapeHtml(msg) + '</p></div>' +
         '<div class="modal-footer">' +
-          '<button class="hm-modal-cancel" style="background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">Cancel</button>' +
-          '<button class="hm-modal-ok" style="' + okClass + ';border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">' + escapeHtml(okLabel) + '</button>' +
+          '<button class="hm-modal-cancel hm-modal-btn hm-modal-btn-cancel">Cancel</button>' +
+          '<button class="hm-modal-ok hm-modal-btn ' + okToneClass + '">' + escapeHtml(okLabel) + '</button>' +
         '</div>' +
       '</div>';
     document.body.appendChild(overlay);
@@ -327,18 +342,17 @@ function hmPrompt(msg, defaultVal, opts) {
   var o = opts || {};
   return new Promise(function(resolve) {
     var overlay = document.createElement('div');
-    overlay.className = 'modal-overlay show';
-    overlay.style.zIndex = 'var(--z-layer-modal-critical)';
+    overlay.className = 'modal-overlay show hm-modal-critical';
     overlay.innerHTML =
-      '<div class="modal" style="max-width:420px">' +
+      '<div class="modal hm-modal-sm">' +
         '<div class="modal-head"><h3>' + escapeHtml(o.title || 'Input') + '</h3></div>' +
         '<div class="modal-body">' +
-          '<p style="margin:0 0 12px;line-height:1.6">' + escapeHtml(msg) + '</p>' +
-          '<input class="hm-modal-input" type="text" style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text-primary);font-family:var(--font-mono);font-size:12px;box-sizing:border-box">' +
+          '<p class="hm-modal-copy hm-modal-copy-gap">' + escapeHtml(msg) + '</p>' +
+          '<input class="hm-modal-input hm-modal-input-text" type="text">' +
         '</div>' +
         '<div class="modal-footer">' +
-          '<button class="hm-modal-cancel" style="background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">Cancel</button>' +
-          '<button class="hm-modal-ok" style="background:var(--accent);color:#fff;border:1px solid var(--accent);border-radius:var(--radius);padding:7px 16px;cursor:pointer;font-family:var(--font-mono);font-size:12px">OK</button>' +
+          '<button class="hm-modal-cancel hm-modal-btn hm-modal-btn-cancel">Cancel</button>' +
+          '<button class="hm-modal-ok hm-modal-btn hm-modal-ok-primary">OK</button>' +
         '</div>' +
       '</div>';
     document.body.appendChild(overlay);
@@ -618,6 +632,92 @@ function setDashboardKpiSkeleton(active) {
   $$('#sec-dashboard .kpi-card').forEach(function(card) {
     card.classList.toggle('kpi-skeleton', !!active);
   });
+}
+
+function normalizeKpiNumber(value) {
+  var num = Number(value);
+  if (!isFinite(num)) return 0;
+  return num;
+}
+
+function pushDashboardKpiSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  var rec = {
+    ts: Date.now(),
+    open: normalizeKpiNumber(snapshot.open),
+    urgent: normalizeKpiNumber(snapshot.urgent),
+    turns: normalizeKpiNumber(snapshot.turns),
+    moveouts: normalizeKpiNumber(snapshot.moveouts),
+    flagged: normalizeKpiNumber(snapshot.flagged),
+    pendingBills: normalizeKpiNumber(snapshot.pendingBills),
+    avgTurnCompletion: normalizeKpiNumber(snapshot.avgTurnCompletion),
+    avgInspectionAge: normalizeKpiNumber(snapshot.avgInspectionAge),
+    avgWOCompletion: normalizeKpiNumber(snapshot.avgWOCompletion),
+    completedTurns: normalizeKpiNumber(snapshot.completedTurns),
+    vacancies: normalizeKpiNumber(snapshot.vacancies)
+  };
+  DASHBOARD_KPI_HISTORY.push(rec);
+  if (DASHBOARD_KPI_HISTORY.length > DASHBOARD_KPI_HISTORY_MAX) {
+    DASHBOARD_KPI_HISTORY = DASHBOARD_KPI_HISTORY.slice(-DASHBOARD_KPI_HISTORY_MAX);
+  }
+}
+
+function ensureDashboardKpiTrendHost(valueId) {
+  var valueEl = document.getElementById(valueId);
+  if (!valueEl) return null;
+  var card = valueEl.closest('.kpi-card');
+  if (!card) return null;
+  card.classList.add('kpi-card--dynamic');
+  var host = card.querySelector('.kpi-trend-wrap');
+  if (!host) {
+    host = document.createElement('div');
+    host.className = 'kpi-trend-wrap';
+    card.appendChild(host);
+  }
+  return host;
+}
+
+function renderDashboardKpiTrends() {
+  if (!Array.isArray(DASHBOARD_KPI_HISTORY) || DASHBOARD_KPI_HISTORY.length < 2) return;
+  var keyByValueId = {
+    kpiOpen: 'open',
+    kpiUrgent: 'urgent',
+    kpiTurns: 'turns',
+    kpiMoveOuts: 'moveouts',
+    kpiFlagged: 'flagged',
+    kpiPendingBills: 'pendingBills',
+    kpiMgrAvgTurnCompletion: 'avgTurnCompletion',
+    kpiMgrAvgInspectionAge: 'avgInspectionAge',
+    kpiMgrAvgWOCompletion: 'avgWOCompletion',
+    kpiMgrCompletedTurns: 'completedTurns',
+    kpiVacancyGroups: 'vacancies'
+  };
+
+  Object.keys(keyByValueId).forEach(function(valueId) {
+    var key = keyByValueId[valueId];
+    var host = ensureDashboardKpiTrendHost(valueId);
+    if (!host) return;
+    var points = DASHBOARD_KPI_HISTORY.map(function(row) { return normalizeKpiNumber(row[key]); });
+    var max = Math.max.apply(null, points.concat([1]));
+    host.innerHTML = points.map(function(v) {
+      var h = Math.max(7, Math.round((v / max) * 42));
+      return '<span class="kpi-trend-bar" style="height:' + h + 'px" title="' + escapeHtml(String(v)) + '"></span>';
+    }).join('');
+  });
+}
+
+function setDashboardKpiMode(chartMode) {
+  DASHBOARD_KPI_CHART_MODE = !!chartMode;
+  var sec = document.getElementById('sec-dashboard');
+  if (!sec) return;
+  sec.classList.toggle('kpi-mode-chart', DASHBOARD_KPI_CHART_MODE);
+}
+
+function ensureDashboardKpiModeRotation() {
+  if (DASHBOARD_KPI_ROTATE_TIMER) return;
+  DASHBOARD_KPI_ROTATE_TIMER = setInterval(function() {
+    setDashboardKpiMode(!DASHBOARD_KPI_CHART_MODE);
+  }, 9000);
 }
 function parseWebhookTs(dateStr) {
   var s = String(dateStr || '').trim();
@@ -1284,13 +1384,24 @@ function syncMobileNavForViewport() {
   setMobileNavLabelFromActiveTab();
 }
 
+function setActiveMainSection(tabName) {
+  var targetId = 'sec-' + String(tabName || 'dashboard');
+  $$('.section').forEach(function(section) {
+    var isActive = section.id === targetId;
+    section.classList.toggle('active', isActive);
+    if (isActive) {
+      section.style.display = section.classList.contains('hm-neo-dashboard') ? 'flex' : 'block';
+    } else {
+      section.style.display = 'none';
+    }
+  });
+}
+
 function forceActiveTab(tabName) {
   $$('.nav-tab').forEach(function(t) {
     t.classList.toggle('active', t.getAttribute('data-tab') === tabName);
   });
-  $$('.section').forEach(function(s) {
-    s.classList.toggle('active', s.id === 'sec-' + tabName);
-  });
+  setActiveMainSection(tabName);
   setMobileNavLabelFromActiveTab();
   closeMobileNav();
   syncSubtabDock();
@@ -2165,9 +2276,26 @@ var rateLimiter = {
         fabBadge.style.display = n > 0 ? '' : 'none';
       }
 
+      function renderAlertsSection() {
+        var operAlerts = generateOperationalAlerts();
+        if (!operAlerts.length) return '';
+        var html = '<div class="pager-alert-inline">';
+        html += '<div class="pager-alert-inline__label">🚨 Operational Alerts</div>';
+        operAlerts.forEach(function(alert) {
+          var tone = alert.type === 'danger' ? 'danger' : (alert.type === 'warning' ? 'warning' : 'info');
+          html += '<div class="alert-item alert-item--' + tone + '" data-alert-tab="' + escapeHtml(alert.actionTab || '') + '">';
+          html += '<div class="alert-item__title"><i class="fas ' + escapeHtml(alert.icon) + '"></i> ' + escapeHtml(alert.title) + '</div>';
+          html += '<div class="alert-item__body">' + escapeHtml(alert.message) + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+        return html;
+      }
+
       function renderRows() {
+        var alertsHtml = renderAlertsSection();
         if (!_rows.length) {
-          items.innerHTML = '<p class="feed-empty">No inbox notices yet.</p>';
+          items.innerHTML = alertsHtml + '<p class="feed-empty">No inbox notices yet.</p>';
           return;
         }
 
@@ -2177,21 +2305,21 @@ var rateLimiter = {
           var ts = String(row.created_at || '').trim();
           var scope = String(row.scope_group_uuid || '').trim();
           var canAck = !row.read_by_me;
-          html += '<div class="feed-item" style="border-left:3px solid ' + (row.read_by_me ? 'var(--success)' : 'var(--warning)') + '">';
+          html += '<div class="feed-item pager-message ' + (row.read_by_me ? 'pager-message--acked' : 'pager-message--unread') + '">';
           html += '<div class="feed-item-header">';
-          html += '<span style="color:' + (row.read_by_me ? 'var(--success)' : 'var(--warning)') + ';font-size:.9rem;flex-shrink:0;width:16px;text-align:center"><i class="fas ' + (row.read_by_me ? 'fa-check-circle' : 'fa-bell') + '"></i></span>';
+          html += '<span class="pager-message__icon"><i class="fas ' + (row.read_by_me ? 'fa-check-circle' : 'fa-bell') + '"></i></span>';
           html += '<span class="feed-item-title">' + escapeHtml(by) + (scope ? ' · Scoped' : ' · Global') + '</span>';
           html += '<span class="feed-item-time">' + (ts ? timeAgo(ts) : '') + '</span>';
           html += '</div>';
           html += '<div class="feed-item-body">' + escapeHtml(String(row.message || '').substring(0, 600)) + '</div>';
           if (canAck) {
-            html += '<div style="margin-top:6px"><button class="action-btn" data-pm-ack="' + escapeHtml(String(row.uuid || '')) + '" style="font-size:10px;padding:2px 8px"><i class="fas fa-check" style="margin-right:4px"></i>Acknowledge</button></div>';
+            html += '<div class="pager-message__actions"><button class="action-btn pager-message__ack" data-pm-ack="' + escapeHtml(String(row.uuid || '')) + '"><i class="fas fa-check"></i>Acknowledge</button></div>';
           } else {
-            html += '<div style="margin-top:6px;font-size:10px;color:var(--success)"><i class="fas fa-check" style="margin-right:4px"></i>Read' + (row.read_at ? ' · ' + escapeHtml(timeAgo(row.read_at)) : '') + '</div>';
+            html += '<div class="pager-message__read"><i class="fas fa-check"></i>Read' + (row.read_at ? ' · ' + escapeHtml(timeAgo(row.read_at)) : '') + '</div>';
           }
           html += '</div>';
         });
-        items.innerHTML = html;
+        items.innerHTML = alertsHtml + html;
       }
 
       function populateScopeOptions() {
@@ -2303,9 +2431,22 @@ var rateLimiter = {
       if (items) {
         items.addEventListener('click', function(e) {
           var btn = e.target.closest('[data-pm-ack]');
-          if (!btn) return;
-          var id = String(btn.getAttribute('data-pm-ack') || '').trim();
-          ackNotification(id);
+          if (btn) {
+            var id = String(btn.getAttribute('data-pm-ack') || '').trim();
+            ackNotification(id);
+            return;
+          }
+          var alertItem = e.target.closest('[data-alert-tab]');
+          if (alertItem) {
+            var tabName = String(alertItem.getAttribute('data-alert-tab') || '').trim();
+            if (tabName) {
+              drawer.classList.remove('open');
+              setTimeout(function() {
+                var tabBtn = document.querySelector('.nav-tab[data-tab="' + escapeHtml(tabName) + '"]');
+                if (tabBtn) tabBtn.click();
+              }, 100);
+            }
+          }
         });
       }
 
@@ -2313,11 +2454,13 @@ var rateLimiter = {
         refresh: refreshInbox,
         clearUnseen: function() { refreshInbox(); },
         applyVisibility: applyVisibility,
+        updateAlerts: updateMessagesAlerts,
       };
 
       function boot() {
         applyVisibility();
         refreshInbox();
+        updateMessagesAlerts();
       }
 
       document.addEventListener('visibilitychange', function() {
@@ -2345,6 +2488,169 @@ function updateRateBadge() {
     el.textContent = (rateLimiter.maxPerSec - rateLimiter.inFlight) + '/' + rateLimiter.maxPerSec + ' req/s';
     el.style.color = '';
   }
+}
+
+// Operational Alerts Engine
+function generateOperationalAlerts() {
+  var alerts = [];
+  var now = new Date();
+  // Work orders over 180 days old
+  if (WORK_ORDERS && Array.isArray(WORK_ORDERS)) {
+    var oldWoCount = 0;
+    WORK_ORDERS.forEach(function(wo) {
+      if (!wo.created_at) return;
+      var ageDays = Math.floor((now - new Date(wo.created_at)) / (1000*60*60*24));
+      if (ageDays > 180) oldWoCount++;
+    });
+    if (oldWoCount > 0) {
+      alerts.push({
+        id: 'wo-aging',
+        type: 'danger',
+        icon: 'fa-clock',
+        title: 'Work Orders Aging',
+        message: 'You have ' + oldWoCount + ' work order' + (oldWoCount===1 ? '' : 's') + ' over 180 days!',
+        actionTab: 'workorders'
+      });
+    }
+  }
+  // Missing inspections
+  if (INSPECTIONS && Array.isArray(INSPECTIONS)) {
+    var missingCount = INSPECTIONS.filter(function(i) { return String(i.status || '').toLowerCase() === 'pending'; }).length;
+    if (missingCount > 0) {
+      alerts.push({
+        id: 'missing-insp',
+        type: 'warning',
+        icon: 'fa-clipboard-check',
+        title: 'Pending Inspections',
+        message: 'You are missing ' + missingCount + ' inspection' + (missingCount===1 ? '' : 's') + '!',
+        actionTab: 'inspections'
+      });
+    }
+  }
+  // Guest card inquiries
+  if (TURN_BOARD && Array.isArray(TURN_BOARD)) {
+    var guestCount = TURN_BOARD.filter(function(t) { return String(t.type || '').toLowerCase() === 'guest' && String(t.status || '').toLowerCase() === 'pending'; }).length;
+    if (guestCount > 0) {
+      alerts.push({
+        id: 'guest-inquiries',
+        type: 'info',
+        icon: 'fa-user-plus',
+        title: 'Guest Card Inquiries',
+        message: 'You have ' + guestCount + ' new guest card inquiry!',
+        actionTab: 'turnboard'
+      });
+    }
+  }
+  // Vendor compliance
+  if (VENDORS && Array.isArray(VENDORS)) {
+    var complianceCount = VENDORS.filter(function(v) {
+      if (v.insurance_expiry && new Date(v.insurance_expiry) < now) return true;
+      if (v.license_expiry && new Date(v.license_expiry) < now) return true;
+      return false;
+    }).length;
+    if (complianceCount > 0) {
+      alerts.push({
+        id: 'compliance',
+        type: 'danger',
+        icon: 'fa-exclamation-circle',
+        title: 'Vendor Compliance',
+        message: complianceCount + ' vendor' + (complianceCount===1 ? '' : 's') + ' have expired documents!',
+        actionTab: 'vendors'
+      });
+    }
+  }
+  return alerts;
+}
+
+function renderDashboardSignalPanel() {
+  var headline = document.getElementById('dashSignalHeadline');
+  var meta = document.getElementById('dashSignalMeta');
+  var chips = document.getElementById('dashSignalChips');
+  if (!headline || !meta || !chips) return;
+
+  var urgentOpen = (WORK_ORDERS || []).filter(function(wo) {
+    return (wo.priority === 'Urgent' || wo.priority === 'Emergency') && wo.status !== 'Completed' && wo.status !== 'Canceled';
+  }).length;
+  var pendingInspections = (INSPECTIONS || []).filter(function(i) {
+    return String(i.status || '').toLowerCase() === 'pending';
+  }).length;
+  var pendingBills = (BILLS || []).filter(function(b) {
+    return getBillStatusKey(b) === 'pending_approval';
+  }).length;
+  var unreadAlerts = generateOperationalAlerts().length;
+
+  headline.textContent = urgentOpen > 0
+    ? urgentOpen + ' urgent work order' + (urgentOpen === 1 ? '' : 's') + ' need eyes now.'
+    : 'Operations are steady. Nothing screaming for immediate intervention.';
+  meta.textContent = 'The dashboard is prioritizing urgent work, pending inspections, approvals, and active follow-up signals.';
+  chips.innerHTML = [
+    { label: 'Urgent WOs', value: urgentOpen },
+    { label: 'Pending Insp', value: pendingInspections },
+    { label: 'Bill Queue', value: pendingBills },
+    { label: 'Alert Load', value: unreadAlerts }
+  ].map(function(item) {
+    return '<div class="signal-chip">' +
+      '<div class="signal-chip__label">' + escapeHtml(item.label) + '</div>' +
+      '<div class="signal-chip__value">' + escapeHtml(String(item.value || 0)) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderDashboardFollowupQueue() {
+  var list = document.getElementById('staleDataList');
+  if (!list) return;
+  var alerts = generateOperationalAlerts();
+  if (!alerts.length) {
+    list.innerHTML = '<div class="u-empty-state">No stale follow-up items. The old-data queue is clear.</div>';
+    return;
+  }
+  list.innerHTML = alerts.map(function(alert) {
+    var tone = alert.type === 'danger' ? 'critical' : (alert.type === 'warning' ? 'warning' : 'info');
+    return '<div class="stale-data-item stale-data-item--' + tone + '">' +
+      '<div class="stale-data-item__head">' +
+        '<div class="stale-data-item__title"><i class="fas ' + escapeHtml(alert.icon) + '"></i> ' + escapeHtml(alert.title) + '</div>' +
+        '<div class="stale-data-item__age">Follow-up</div>' +
+      '</div>' +
+      '<div class="stale-data-item__body">' + escapeHtml(alert.message) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderPagerPreviewPanel() {
+  var list = document.getElementById('pagerPreviewList');
+  if (!list) return;
+  var alerts = generateOperationalAlerts().slice(0, 3);
+  if (!alerts.length) {
+    list.innerHTML = '<div class="u-empty-state">No active pager items. Messages and alerts will land here.</div>';
+    return;
+  }
+  list.innerHTML = alerts.map(function(alert) {
+    var tone = alert.type === 'danger' ? 'critical' : (alert.type === 'warning' ? 'warning' : 'info');
+    return '<div class="pager-preview__item pager-preview__item--' + tone + '">' +
+      '<div class="pager-preview__head">' +
+        '<div class="pager-preview__title">' + escapeHtml(alert.title) + '</div>' +
+        '<div class="pager-preview__meta">Live alert</div>' +
+      '</div>' +
+      '<div class="pager-preview__body">' + escapeHtml(alert.message) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function refreshDashboardNeoPanels() {
+  renderDashboardSignalPanel();
+  renderDashboardFollowupQueue();
+  renderPagerPreviewPanel();
+}
+
+function updateMessagesAlerts() {
+  var badges = document.querySelectorAll('#messagesBadge, #pm-inbox-badge');
+  if (!badges.length) return;
+  var count = generateOperationalAlerts().length;
+  badges.forEach(function(b) {
+    b.textContent = count;
+    b.style.display = count > 0 ? '' : 'none';
+  });
+  refreshDashboardNeoPanels();
 }
 
 // Core fetch wrapper with auth, retries, and error logging
@@ -2659,6 +2965,11 @@ var SYSTEM_HEALTH_STATE = {
   data: null,
   lastError: '',
 };
+var IP_RATE_LIMITS_STATE = {
+  loading: false,
+  rows: [],
+  lastError: '',
+};
 var _systemHealthAutoRunDone = false;
 var EMAIL_DELIVERY_ERROR_ROWS = [];
 var EMAIL_DELIVERY_VISIBLE_ROWS = [];
@@ -2680,6 +2991,135 @@ function canRunSystemHealthChecker() {
   return _accessRole === 'full' || _accessRole === 'manager';
 }
 
+function canManageIpRateLimits() {
+  return canRunSystemHealthChecker();
+}
+
+function getIpRateLimitsAdminKey() {
+  var el = document.getElementById('ipRateLimitAdminKey');
+  var fromInput = el ? String(el.value || '').trim() : '';
+  if (fromInput) {
+    try { localStorage.setItem('hm_proxy_admin_key', fromInput); } catch (_) { /* */ }
+    return fromInput;
+  }
+  try {
+    return String(localStorage.getItem('hm_proxy_admin_key') || '').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function renderIpRateLimitsPanel() {
+  var panel = document.getElementById('ipRateLimitsPanel');
+  var body = document.getElementById('ipRateLimitsBody');
+  var summary = document.getElementById('ipRateLimitSummary');
+  if (!panel || !body) return;
+
+  if (!canManageIpRateLimits()) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = '';
+
+  if (IP_RATE_LIMITS_STATE.loading) {
+    body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">' + loadingHtml('Loading rate limits…') + '</td></tr>';
+    if (summary) summary.textContent = 'Loading…';
+    return;
+  }
+
+  if (IP_RATE_LIMITS_STATE.lastError) {
+    body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--danger)">' + escapeHtml(IP_RATE_LIMITS_STATE.lastError) + '</td></tr>';
+    if (summary) summary.textContent = 'Failed to load rate limits';
+    return;
+  }
+
+  var rows = Array.isArray(IP_RATE_LIMITS_STATE.rows) ? IP_RATE_LIMITS_STATE.rows : [];
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">No active or recent rate-limit entries.</td></tr>';
+    if (summary) summary.textContent = '0 entries';
+    return;
+  }
+
+  body.innerHTML = rows.map(function(row, idx) {
+    var ip = String(row.ip_address || '').trim();
+    return '<tr data-ip-rate-index="' + idx + '">' +
+      '<td style="font-family:var(--font-mono)">' + escapeHtml(ip || '—') + '</td>' +
+      '<td>' + escapeHtml(String(row.failed_attempts == null ? '0' : row.failed_attempts)) + '</td>' +
+      '<td>' + escapeHtml(row.last_attempt_at ? formatDate(row.last_attempt_at) : '—') + '</td>' +
+      '<td>' + escapeHtml(row.blocked_until ? formatDate(row.blocked_until) : '—') + '</td>' +
+      '<td><button class="action-btn" data-ip-unblock="' + escapeHtml(ip) + '" style="padding:2px 8px;font-size:11px"><i class="fas fa-unlock"></i> Unblock</button></td>' +
+      '</tr>';
+  }).join('');
+
+  if (summary) summary.textContent = rows.length + ' entries';
+}
+
+async function fetchIpRateLimits() {
+  var key = getIpRateLimitsAdminKey();
+  if (!key) {
+    IP_RATE_LIMITS_STATE.lastError = 'Enter PROXY_ADMIN_KEY to load rate limits.';
+    IP_RATE_LIMITS_STATE.rows = [];
+    renderIpRateLimitsPanel();
+    return;
+  }
+  IP_RATE_LIMITS_STATE.loading = true;
+  IP_RATE_LIMITS_STATE.lastError = '';
+  renderIpRateLimitsPanel();
+  try {
+    var data = await proxyPost('admin_rate_limits', { key: key, list: true });
+    if (!data || !data.ok) {
+      throw new Error((data && data.error) || 'Failed to load IP rate limits');
+    }
+    IP_RATE_LIMITS_STATE.rows = Array.isArray(data.data) ? data.data : [];
+  } catch (err) {
+    IP_RATE_LIMITS_STATE.rows = [];
+    IP_RATE_LIMITS_STATE.lastError = String((err && err.message) || err || 'Unknown error');
+    showToast('Rate limit load failed: ' + IP_RATE_LIMITS_STATE.lastError, { kind: 'warning' });
+  } finally {
+    IP_RATE_LIMITS_STATE.loading = false;
+    renderIpRateLimitsPanel();
+  }
+}
+
+async function unblockIpRateLimit(ipAddress) {
+  var ip = String(ipAddress || '').trim();
+  if (!ip) {
+    showToast('Enter an IP address to unblock', { kind: 'warning' });
+    return;
+  }
+  var key = getIpRateLimitsAdminKey();
+  if (!key) {
+    showToast('PROXY_ADMIN_KEY is required', { kind: 'warning' });
+    return;
+  }
+  try {
+    var data = await proxyPost('admin_rate_limits', { key: key, ip_address: ip });
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Failed to unblock IP');
+    showToast(data.message || ('Unblocked ' + ip), { kind: 'success' });
+    var input = document.getElementById('ipRateLimitUnblockIp');
+    if (input) input.value = '';
+    await fetchIpRateLimits();
+  } catch (err) {
+    showToast('Unblock failed: ' + ((err && err.message) || err), { kind: 'warning' });
+  }
+}
+
+async function clearAllIpRateLimits() {
+  var key = getIpRateLimitsAdminKey();
+  if (!key) {
+    showToast('PROXY_ADMIN_KEY is required', { kind: 'warning' });
+    return;
+  }
+  try {
+    var data = await proxyPost('admin_rate_limits', { key: key, clear_all: true });
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Failed to clear all');
+    showToast(data.message || 'Cleared all IP rate limits', { kind: 'success' });
+    await fetchIpRateLimits();
+  } catch (err) {
+    showToast('Clear all failed: ' + ((err && err.message) || err), { kind: 'warning' });
+  }
+}
+
 function getSystemHealthStatusLabel(status) {
   var value = String(status || '').toLowerCase();
   if (value === 'green') return 'Verified Working';
@@ -2696,9 +3136,9 @@ function getSystemHealthStatusClass(status) {
 
 function getSystemHealthBadgeHtml(status) {
   var statusClass = getSystemHealthStatusClass(status);
-  return '<span class="systems-health-badge ' + statusClass + '">' +
+  return '<span class="systems-health-badge ' + statusClass + '" aria-label="' +
+    escapeHtml(getSystemHealthStatusLabel(status)) + '">' +
     '<span class="systems-health-badge-dot ' + statusClass + '"></span>' +
-    '<span class="systems-health-badge-label">' + escapeHtml(getSystemHealthStatusLabel(status)) + '</span>' +
   '</span>';
 }
 
@@ -3186,8 +3626,8 @@ function getNormalizedBillDisplayNumber(billLike) {
   var b = billLike && typeof billLike === 'object' ? billLike : {};
   var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
   var preferred = String(
-    b.billNumber || b.bill_number || b.reference ||
-    raw.InvoiceNumber || raw.invoice_number || raw.Reference || raw.reference || ''
+    b.billNumber || b.bill_number || b.reference || b.reference_number ||
+    raw.InvoiceNumber || raw.invoice_number || raw.Reference || raw.reference || raw.reference_number || ''
   ).trim();
 
   if (preferred && !isUuidString(preferred)) return preferred;
@@ -3211,10 +3651,14 @@ function getNormalizedBillDetailId(billLike) {
     b.id,
     b.bill_id,
     b.BillId,
+    b.txn_id,
+    b.payable_invoice_detail_id,
     raw.BillId,
     raw.bill_id,
     raw.Id,
     raw.id,
+    raw.txn_id,
+    raw.payable_invoice_detail_id,
   ];
   for (var i = 0; i < candidates.length; i++) {
     var value = String(candidates[i] || '').trim();
@@ -3226,14 +3670,22 @@ function getNormalizedBillDetailId(billLike) {
 function resolveBillAmountValue(billLike) {
   var b = billLike && typeof billLike === 'object' ? billLike : {};
   var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
+  var paidAmount = amountToNumber(raw.Paid != null ? raw.Paid : raw.paid);
+  var unpaidAmount = amountToNumber(raw.Unpaid != null ? raw.Unpaid : raw.unpaid);
+  if (paidAmount !== 0 || unpaidAmount !== 0) {
+    var derivedTotal = paidAmount + unpaidAmount;
+    if (derivedTotal !== 0) return derivedTotal;
+  }
   var candidates = [
     b.amount,
+    b.bill_total_amount,
     b.total_amount,
     b.totalAmount,
     b.net_amount,
     b.netAmount,
     b.amount_due,
     b.amountDue,
+    raw.bill_total_amount,
     raw.TotalAmount,
     raw.total_amount,
     raw.Amount,
@@ -4675,8 +5127,7 @@ async function fetchBills(days, opts) {
         };
 
         if (routeAction === 'bills_list') {
-          if (!groupUuid) throw new Error('Missing group UUID for bills_list');
-          routeParams.group_id = groupUuid;
+          if (groupUuid) routeParams.group_id = groupUuid;
         } else if (routeAction === 'bills_by_vendor') {
           routeParams.vendor_id = filterValue;
           if (groupUuid) routeParams.group_id = groupUuid;
@@ -4783,7 +5234,7 @@ async function fetchBills(days, opts) {
       var unitId = extractBillUnitId(raw, lineItems);
       var propertyMeta = resolvePropertyMetaFromMaps(
         propertyId,
-        b.property_name || raw.PropertyName || raw.property_name || raw.Property || raw.property || '',
+        b.property_name || b.propertyName || raw.PropertyName || raw.property_name || raw.property_name || raw.Property || raw.property || '',
         b.property_group_id || b.property_group_uuid || raw.property_group_id || raw.property_group_uuid || raw.PropertyGroupId || raw.PropertyGroupUuid || nestedProperty.property_group_id || nestedProperty.property_group_uuid || nestedProperty.PropertyGroupId || nestedProperty.PropertyGroupUuid || ''
       );
       var vendorId = b.vendor_id || raw.VendorId || raw.vendor_id || raw.PayeeId || raw.payee_id || raw.PayeeUuid || raw.payee_uuid || '';
@@ -4792,8 +5243,8 @@ async function fetchBills(days, opts) {
         b.vendor_name || raw.VendorName || raw.vendor_name || raw.PayeeName || raw.payee_name || raw.Name || raw.name || ''
       );
       return {
-        id: b.id || b.Id || raw.Id || raw.id || raw.BillId || '',
-        billNumber: b.bill_number || b.reference || raw.Reference || raw.reference || b.id || raw.Id || '',
+        id: b.id || b.bill_id || b.BillId || b.txn_id || b.payable_invoice_detail_id || b.Id || raw.BillId || raw.bill_id || raw.txn_id || raw.payable_invoice_detail_id || raw.Id || raw.id || '',
+        billNumber: b.bill_number || b.reference || b.reference_number || raw.Reference || raw.reference || raw.reference_number || raw.InvoiceNumber || raw.invoice_number || b.id || raw.Id || raw.txn_id || '',
         vendorId: vendorId,
         vendorUuid: b.vendor_uuid || raw.VendorUuid || raw.vendor_uuid || raw.VendorId || raw.vendor_id || raw.PayeeUuid || raw.payee_uuid || '',
         payeeUuid: b.payee_uuid || raw.PayeeUuid || raw.payee_uuid || raw.PayeeId || raw.payee_id || raw.VendorId || raw.vendor_id || '',
@@ -4804,12 +5255,13 @@ async function fetchBills(days, opts) {
         propertyGroup: propertyMeta.groupName || b.property_group || raw.property_group || raw.PropertyGroup || '',
         propertyGroupId: propertyMeta.groupId,
         propertyManager: propertyMeta.siteManager || b.property_manager || raw.property_manager || raw.PropertyManager || '',
-        workOrderId: b.work_order_number || b.workOrderNumber || b.work_order_id || raw.WorkOrderNumber || raw.work_order_number || raw.WorkOrderId || raw.work_order_id || raw.WorkOrder || raw.work_order || raw.work_order_uuid || raw.WorkOrderUuid || '',
+        workOrderId: b.work_order_number || b.workOrderNumber || b.work_order_id || raw.WorkOrderNumber || raw.work_order_number || raw.WorkOrderId || raw.work_order_id || raw.WorkOrder || raw.work_order || raw.work_order_uuid || raw.WorkOrderUuid || raw.work_order_id || '',
         amount: amountNum,
-          date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || b.due_date || raw.DueDate || raw.due_date || raw.BillDate || raw.bill_date || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
+          bill_total_amount: amountNum,
+          date: b.invoice_date || raw.InvoiceDate || raw.invoice_date || raw.bill_date || raw.BillDate || b.due_date || raw.DueDate || raw.due_date || raw.payment_date || raw.PaymentDate || raw.PaidOn || raw.paid_on || raw.CreatedAt || raw.created_at || raw.LastUpdatedAt || raw.last_updated_at || '',
           lastUpdatedAt: b.last_updated_at || b.lastUpdatedAt || raw.LastUpdatedAt || raw.last_updated_at || raw.UpdatedAt || raw.updated_at || '',
           status: status,
-          statusLabel: b.status_label || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || (status ? status.replace(/_/g, ' ') : '—'),
+          statusLabel: b.status_label || raw.ApprovalStatus || raw.approval_status || raw.Status || raw.status || raw.days_pending_approval || (status ? status.replace(/_/g, ' ') : '—'),
           lineItems: lineItems,
           raw: raw
       };
@@ -6392,10 +6844,10 @@ async function loadWebhookData() {
   var body = $('#whDataBody');
   if (!body) return;
   if (!isProxySessionReady()) {
-    body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)">Sign in to load webhook events</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="row-state-cell muted">Sign in to load webhook events</td></tr>';
     return;
   }
-  body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fas fa-circle-notch fa-spin"></i> Loading webhook data\u2026</td></tr>';
+  body.innerHTML = '<tr><td colspan="7" class="row-state-cell muted"><i class="fas fa-circle-notch fa-spin"></i> Loading webhook data\u2026</td></tr>';
   try {
     var params = {
       limit: _whPageSize,
@@ -6476,7 +6928,7 @@ async function loadWebhookData() {
       renderWebhookDataTable(events);
     })();
   } catch (err) {
-    body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--danger)">Failed to load: ' + escapeHtml(err.message || String(err)) + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="row-state-cell danger">Failed to load: ' + escapeHtml(err.message || String(err)) + '</td></tr>';
   }
 }
 
@@ -6484,7 +6936,7 @@ function renderWebhookDataTable(events) {
   var body = $('#whDataBody');
   if (!body) return;
   if (events.length === 0) {
-    body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)">No webhook events found</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="row-state-cell muted">No webhook events found</td></tr>';
     return;
   }
   var html = '';
@@ -6498,9 +6950,9 @@ function renderWebhookDataTable(events) {
     var isPri = e.priority === 'urgent' || e.priority === 'high';
     var priClass = isPri ? 'color:var(--danger);font-weight:600' : 'color:var(--text-secondary)';
     var rowNum = _whPage * _whPageSize + idx + 1;
-    html += '<tr class="wh-data-row" data-whid="' + (e.id || idx) + '" style="cursor:pointer">';
-    html += '<td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">' + rowNum + '</td>';
-    html += '<td style="font-family:var(--font-mono);font-size:11px;white-space:nowrap">' + escapeHtml(e.ts ? timeAgo(e.ts) : '\u2014') + '</td>';
+    html += '<tr class="wh-data-row clickable-row" data-whid="' + (e.id || idx) + '">';
+    html += '<td class="mono-cell-sm cell-inline-muted">' + rowNum + '</td>';
+    html += '<td class="mono-cell-sm">' + escapeHtml(e.ts ? timeAgo(e.ts) : '\u2014') + '</td>';
     html += '<td><span class="tag wh-type-' + escapeHtml(String(e.type || 'webhook').replace(/[^a-z0-9_-]/gi, '')) + '">' + escapeHtml(e.type || 'webhook') + '</span></td>';
     html += '<td style="max-width:300px">';
     html += '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(displayTitle || '\u2014') + '</div>';
@@ -6557,7 +7009,7 @@ function renderWebhookDataTable(events) {
     html += '<strong>Body:</strong> ' + escapeHtml(e.body || '(empty)') + '<br>';
     if (e.raw) {
       var rawStr = typeof e.raw === 'string' ? e.raw : JSON.stringify(e.raw);
-      html += '<strong>Raw JSON:</strong><pre style="margin:4px 0;padding:6px;background:var(--bg-tertiary);border-radius:4px;overflow-x:auto;max-height:120px;font-size:10px">' + escapeHtml(rawStr) + '</pre>';
+      html += '<strong>Raw JSON:</strong><pre class="webhook-raw-json">' + escapeHtml(rawStr) + '</pre>';
     }
     html += '</div></td></tr>';
   });
@@ -6617,26 +7069,26 @@ async function loadWebhookStats() {
   content.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Loading stats\u2026';
   try {
     var data = await proxyAction('webhook_stats');
-    var html = '<div style="display:flex;gap:20px;flex-wrap:wrap">';
-    html += '<div><strong style="font-size:18px;color:var(--accent)">' + (data.total || 0) + '</strong><div style="color:var(--text-muted)">Total Events</div></div>';
+    var html = '<div class="wh-stats-grid">';
+    html += '<div><strong class="wh-stat-value accent">' + (data.total || 0) + '</strong><div class="wh-stat-label">Total Events</div></div>';
     // v8: show has_data vs empty_body counts
     if (data.has_data !== undefined) {
-      html += '<div><strong style="font-size:18px;color:var(--success)">' + (data.has_data || 0) + '</strong><div style="color:var(--text-muted)">With Data</div></div>';
-      html += '<div><strong style="font-size:18px;color:var(--warning)">' + (data.empty_body || 0) + '</strong><div style="color:var(--text-muted)">Empty (pre-v8)</div></div>';
+      html += '<div><strong class="wh-stat-value success">' + (data.has_data || 0) + '</strong><div class="wh-stat-label">With Data</div></div>';
+      html += '<div><strong class="wh-stat-value warning">' + (data.empty_body || 0) + '</strong><div class="wh-stat-label">Empty (pre-v8)</div></div>';
     }
     // By type
     if (data.by_type && data.by_type.length > 0) {
-      html += '<div><strong>By Type:</strong><div style="margin-top:4px">';
+      html += '<div><strong>By Type:</strong><div class="wh-tag-wrap">';
       data.by_type.forEach(function(t) {
-        html += '<span class="tag" style="margin:2px">' + escapeHtml(t.type) + ' <strong>' + t.count + '</strong></span> ';
+        html += '<span class="tag wh-tag">' + escapeHtml(t.type) + ' <strong>' + t.count + '</strong></span> ';
       });
       html += '</div></div>';
     }
     // By source
     if (data.by_source && data.by_source.length > 0) {
-      html += '<div><strong>By Source:</strong><div style="margin-top:4px">';
+      html += '<div><strong>By Source:</strong><div class="wh-tag-wrap">';
       data.by_source.forEach(function(s) {
-        html += '<span class="tag" style="margin:2px">' + escapeHtml(s.source) + ' <strong>' + s.count + '</strong></span> ';
+        html += '<span class="tag wh-tag">' + escapeHtml(s.source) + ' <strong>' + s.count + '</strong></span> ';
       });
       html += '</div></div>';
     }
@@ -6644,49 +7096,49 @@ async function loadWebhookStats() {
     // By day (mini chart using bar divs)
     if (data.by_day && data.by_day.length > 0) {
       var maxCount = Math.max.apply(null, data.by_day.map(function(d) { return d.count; }));
-      html += '<div style="margin-top:10px"><strong>Last 30 Days:</strong>';
-      html += '<div style="display:flex;align-items:flex-end;gap:2px;height:60px;margin-top:6px">';
+      html += '<div class="wh-day-wrap"><strong>Last 30 Days:</strong>';
+      html += '<div class="wh-day-bars">';
       data.by_day.slice().reverse().forEach(function(d) {
         var pct = maxCount > 0 ? Math.max(4, (d.count / maxCount) * 100) : 4;
-        html += '<div style="flex:1;background:var(--accent);border-radius:2px 2px 0 0;height:' + pct + '%;min-width:4px;opacity:0.8" title="' + escapeHtml(d.day) + ': ' + d.count + '"></div>';
+        html += '<div class="wh-day-bar" style="height:' + pct + '%" title="' + escapeHtml(d.day) + ': ' + d.count + '"></div>';
       });
       html += '</div></div>';
     }
     // v8+: append server-side cache stats
     if (supportsServerCacheOps()) {
-      html += '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">';
-      html += '<strong style="color:var(--accent)"><i class="fas fa-database"></i> Server Cache (' + _proxyVersion + ')</strong>';
+      html += '<div class="wh-cache-wrap">';
+      html += '<strong class="wh-cache-title"><i class="fas fa-database"></i> Server Cache (' + _proxyVersion + ')</strong>';
       try {
         var cStats = await proxyAction('cache_stats');
         if (cStats.cache && cStats.cache.length > 0) {
-          html += '<table style="width:100%;margin-top:6px;font-size:12px;border-collapse:collapse">';
-          html += '<tr style="color:var(--text-muted);text-align:left"><th style="padding:3px 6px">Entity</th><th style="padding:3px 6px">Entries</th><th style="padding:3px 6px">Records</th><th style="padding:3px 6px">Last Cached</th></tr>';
+          html += '<table class="wh-cache-table">';
+          html += '<tr class="wh-cache-head"><th class="wh-cache-cell">Entity</th><th class="wh-cache-cell">Entries</th><th class="wh-cache-cell">Records</th><th class="wh-cache-cell">Last Cached</th></tr>';
           cStats.cache.forEach(function(c) {
-            html += '<tr style="border-top:1px solid var(--border)">';
-            html += '<td style="padding:3px 6px;font-family:var(--font-mono)">' + escapeHtml(c.entity_type) + '</td>';
-            html += '<td style="padding:3px 6px">' + (c.entries || 0) + '</td>';
-            html += '<td style="padding:3px 6px">' + (c.total_records || 0) + '</td>';
-            html += '<td style="padding:3px 6px;color:var(--text-muted)">' + (c.last_cached ? timeAgo(c.last_cached) : '\u2014') + '</td>';
+            html += '<tr class="wh-cache-row">';
+            html += '<td class="wh-cache-cell mono">' + escapeHtml(c.entity_type) + '</td>';
+            html += '<td class="wh-cache-cell">' + (c.entries || 0) + '</td>';
+            html += '<td class="wh-cache-cell">' + (c.total_records || 0) + '</td>';
+            html += '<td class="wh-cache-cell muted">' + (c.last_cached ? timeAgo(c.last_cached) : '\u2014') + '</td>';
             html += '</tr>';
           });
           html += '</table>';
         } else {
-          html += '<div style="margin-top:4px;color:var(--text-muted)">No cached data yet</div>';
+          html += '<div class="wh-msg-muted">No cached data yet</div>';
         }
         if (cStats.webhooks) {
-          html += '<div style="margin-top:6px;font-size:11px;color:var(--text-muted)">';
+          html += '<div class="wh-cache-meta">';
           html += 'Webhooks: ' + (cStats.webhooks.total || 0) + ' total, ' + (cStats.webhooks.pending || 0) + ' pending';
           if (cStats.turn_records !== undefined) html += ' | Turn records: ' + cStats.turn_records;
           html += '</div>';
         }
       } catch (csErr) {
-        html += '<div style="margin-top:4px;color:var(--warning)">Cache stats unavailable: ' + escapeHtml(csErr.message || String(csErr)) + '</div>';
+        html += '<div class="wh-msg-warning">Cache stats unavailable: ' + escapeHtml(csErr.message || String(csErr)) + '</div>';
       }
       html += '</div>';
     }
     content.innerHTML = html;
   } catch (err) {
-    content.innerHTML = '<span style="color:var(--danger)">Failed: ' + escapeHtml(err.message || String(err)) + '</span>';
+    content.innerHTML = '<span class="wh-msg-danger">Failed: ' + escapeHtml(err.message || String(err)) + '</span>';
   }
 }
 
@@ -7947,9 +8399,14 @@ function renderBillingPaginationControls(footer, rowsCount) {
 }
 
 function renderBillsSection(preFilteredData) {
+  if (_billingUseAioGrid && currentBillingSubtab === 'queue') {
+    _billingUseAioGrid = false;
+    setBillingQueueRenderMode('legacy');
+  }
   var tbody = $('#billBody');
   var footer = $('#billFooter');
   if (!tbody) return;
+  setBillingQueueRenderMode('legacy');
 
   var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
   var groupUuid = grp ? (forcedPropertyGroupUuid || resolveGroupUuidFromName(grp)) : '';
@@ -8094,7 +8551,7 @@ function renderBillsSection(preFilteredData) {
     var linkageHtml = linkBits.length
       ? ('<div style="margin-top:2px;font-size:10px;font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(linkBits.join(' | ')) + '">' + escapeHtml(linkBits.join(' | ')) + '</div>')
       : '';
-    return '<tr class="bill-row clickable-row" data-billdetail="' + escapeHtml(detailId) + '" tabindex="0" role="button" aria-label="Open bill ' + escapeHtml(billNum) + '">' +
+    return '<tr class="bill-row bill-row-item clickable-row" data-bill-id="' + escapeHtml(detailId) + '" data-billdetail="' + escapeHtml(detailId) + '" tabindex="0" role="button" aria-label="Open bill ' + escapeHtml(billNum) + '">' +
       '<td style="font-family:var(--font-mono);font-size:11px;line-height:1.3">' +
         '<div style="font-weight:700;color:var(--accent)">' + escapeHtml(billNum) + '</div>' +
         '<div style="font-size:10px;color:var(--text-muted)">ID ' + escapeHtml(String(detailId || '').slice(0, 12) || '—') + '</div>' +
@@ -8109,21 +8566,6 @@ function renderBillsSection(preFilteredData) {
       '</tr>';
   });
   tbody.innerHTML = rows.join('');
-
-  Array.prototype.forEach.call(tbody.querySelectorAll('tr[data-billdetail]'), function(row) {
-    row.addEventListener('click', function() {
-      var billId = row.getAttribute('data-billdetail');
-      if (!billId) return;
-      openBillKanbanCard(billId);
-    });
-    row.addEventListener('keydown', function(evt) {
-      if (evt.key !== 'Enter' && evt.key !== ' ') return;
-      evt.preventDefault();
-      var billId = row.getAttribute('data-billdetail');
-      if (!billId) return;
-      openBillKanbanCard(billId);
-    });
-  });
 
   renderBillingPaginationControls(footer, filtered.length);
 }
@@ -8146,6 +8588,306 @@ function openBillKanbanCard(billId) {
   showBillDetailModal(getNormalizedBillDetailId(bill) || billId, bill);
 }
 
+function ensureBillingAioGridHost() {
+  var queuePanel = document.getElementById('billing-subpanel-queue');
+  if (!queuePanel) return null;
+  var host = document.getElementById('billAioGridHost');
+  if (host) return host;
+  var tableScroll = queuePanel.querySelector('.table-scroll');
+  if (!tableScroll || !tableScroll.parentNode) return null;
+  host = document.createElement('div');
+  host.id = 'billAioGridHost';
+  host.className = 'kanban-board layout-list';
+  host.style.display = 'none';
+  host.style.margin = '10px 14px';
+  tableScroll.parentNode.insertBefore(host, tableScroll);
+  return host;
+}
+
+var _billingUseAioGrid = false;
+
+function setBillingQueueRenderMode(mode) {
+  var queuePanel = document.getElementById('billing-subpanel-queue');
+  if (!queuePanel) return;
+  var host = ensureBillingAioGridHost();
+  var tableScroll = queuePanel.querySelector('.table-scroll');
+  var footer = document.getElementById('billFooter');
+  var useAio = mode === 'aio';
+  if (host) host.style.display = useAio ? '' : 'none';
+  if (tableScroll) tableScroll.style.display = useAio ? 'none' : '';
+  if (footer && useAio) footer.style.display = 'none';
+}
+
+function buildAioFilterQueryText(rawQuery) {
+  return String(rawQuery || '').trim().toLowerCase();
+}
+
+function matchAioBillQuery(row, queryText) {
+  var q = buildAioFilterQueryText(queryText);
+  if (!q) return true;
+  var amountRaw = amountToNumber(row.amount || row.bill_total_amount || 0);
+  var amountFixed = amountRaw.toFixed(2);
+  var hay = [
+    row.id,
+    row.billNumber,
+    row.invoiceNumber,
+    row.vendorName,
+    row.vendorId,
+    row.payeeUuid,
+    row.propertyName,
+    row.propertyId,
+    row.unitId,
+    row.propertyGroup,
+    row.propertyManager,
+    row.workOrderId,
+    row.status,
+    row.date,
+    String(amountRaw),
+    amountFixed,
+  ].join(' ').toLowerCase();
+  return hay.indexOf(q) !== -1;
+}
+
+function normalizeAioBillRowForGrid(row) {
+  var src = row && typeof row === 'object' ? row : {};
+  var billId = String(src.id || src.bill_id || src.BillId || src.invoice_number || src.bill_number || '').trim();
+  var amount = amountToNumber(src.amount || src.bill_total_amount || src.total_amount || 0);
+  var status = String(src.status || src.payment_status || src.status_label || 'Unknown');
+  return {
+    id: billId,
+    billNumber: String(src.bill_number || src.invoice_number || billId || '—'),
+    invoiceNumber: String(src.invoice_number || src.bill_number || ''),
+    vendorName: String(src.vendor_name || src.vendorName || 'Unknown'),
+    vendorId: String(src.vendor_id || src.vendorId || src.raw_vendor_id || src.payee_uuid || ''),
+    payeeUuid: String(src.raw_vendor_id || src.payee_uuid || ''),
+    propertyName: String(src.property_name || src.propertyName || 'Multiple/Split'),
+    propertyId: String(src.property_id || src.propertyId || ''),
+    unitId: String(src.unit_id || src.unitId || ''),
+    propertyGroup: String(src.property_group || src.propertyGroup || ''),
+    propertyManager: String(src.property_manager || src.pm_name || src.propertyManager || ''),
+    workOrderId: String(src.work_order_id || src.work_order_ref || src.work_order_number || ''),
+    amount: amount,
+    bill_total_amount: amount,
+    date: String(src.bill_date || src.invoice_date || src.date || '').slice(0, 10),
+    invoice_date: String(src.bill_date || src.invoice_date || src.date || '').slice(0, 10),
+    status: status,
+    statusLabel: status,
+    _sourceEndpoint: String(src.source_endpoint || src.sourceEndpoint || ''),
+  };
+}
+
+function renderBillGrid(data) {
+  var container = ensureBillingAioGridHost();
+  if (!container) return;
+
+  var rows = Array.isArray(data) ? data.map(normalizeAioBillRowForGrid) : [];
+  window._billingPageRows = rows;
+  window._currentBillsCache = rows.slice();
+  _billingServerTotal = rows.length;
+  _billingServerTotalPages = Math.max(1, Math.ceil(rows.length / BILLS_PAGE_SIZE));
+  _billingServerPage = 1;
+  _billsPage = 0;
+  _billingUseAioGrid = true;
+  setBillingQueueRenderMode('aio');
+
+  if (!rows.length) {
+    container.classList.add('layout-list');
+    container.innerHTML =
+      '<div class="empty-state bill-grid-empty">' +
+      '<i class="fas fa-file-invoice bill-grid-empty-icon"></i>' +
+      '<h3 class="bill-grid-empty-title">No bills found</h3>' +
+      '<p class="bill-grid-empty-copy">Try adjusting your search filters.</p>' +
+      '</div>';
+    return;
+  }
+
+  container.classList.add('layout-list');
+  var html = '<div class="bills-grid-wrapper">';
+
+  rows.forEach(function(bill) {
+    var statusClass = String(bill.status || 'unknown').toLowerCase().replace(/\s+/g, '-');
+    html +=
+      '<div class="kanban-card bill-row-item bill-grid-card" data-bill-id="' + escapeHtml(bill.id) + '">' +
+      '<div class="grid-col-main bill-grid-main">' +
+      '<strong class="bill-grid-vendor">' + escapeHtml(bill.vendorName || 'Unknown') + '</strong>' +
+      '<span class="bill-grid-property"><i class="fas fa-building"></i> ' + escapeHtml(bill.propertyName || 'Multiple/Split') + '</span>' +
+      '</div>' +
+      '<div class="grid-col-meta bill-grid-meta">' +
+      '<span class="bill-grid-date"><i class="fas fa-calendar-alt"></i> ' + escapeHtml(formatDate(bill.date || bill.invoice_date || '')) + '</span>' +
+      '<span class="status-badge bill-grid-status status-' + escapeHtml(statusClass) + '">' + escapeHtml(bill.status || 'Unknown') + '</span>' +
+      '</div>' +
+      '<div class="grid-col-amount bill-grid-amount">' +
+      '<strong class="bill-grid-total">' + escapeHtml(currency(bill.amount, 2)) + '</strong>' +
+      '</div>' +
+      '<div class="grid-col-action bill-grid-action">' +
+      '<i class="fas fa-chevron-right"></i>' +
+      '</div>' +
+      '</div>';
+  });
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function renderBillDetailHTML(data) {
+  var bill = data && typeof data === 'object' ? data : {};
+  var vendor = bill.payee || bill.vendor || {};
+  var property = bill.property || {};
+  var amount = amountToNumber(bill.total_amount || bill.amount || bill.bill_total_amount || 0);
+  var attachments = Array.isArray(bill.attachments) ? bill.attachments : [];
+  var glLines = Array.isArray(bill.gl_lines)
+    ? bill.gl_lines
+    : (Array.isArray(bill.lines) ? bill.lines : []);
+
+  var html =
+    '<div class="vdm-header bill-detail-head">' +
+    '<h2 class="bill-detail-title">' + escapeHtml(vendor.name || vendor.vendor_name || 'Unknown Vendor') + '</h2>' +
+    '<div class="bill-detail-head-row">' +
+    '<span class="bill-detail-property"><i class="fas fa-map-marker-alt"></i> ' + escapeHtml(property.name || bill.property_name || 'Multiple / Split Distribution') + '</span>' +
+    '<strong class="bill-detail-amount">' + escapeHtml(currency(amount, 2)) + '</strong>' +
+    '</div>' +
+    '</div>';
+
+  if (glLines.length) {
+    html +=
+      '<div class="vdm-section">' +
+      '<h4 class="bill-detail-subhead">GL Distributions</h4>' +
+      '<div class="bill-detail-panel">';
+    glLines.forEach(function(line) {
+      var acc = (line.gl_account && line.gl_account.name) || line.gl_account_name || 'Unknown Account';
+      html +=
+        '<div class="bill-detail-line">' +
+        '<span>' + escapeHtml(acc) + '</span>' +
+        '<strong>' + escapeHtml(currency(line.amount || 0, 2)) + '</strong>' +
+        '</div>';
+    });
+    html += '</div></div>';
+  }
+
+  if (attachments.length) {
+    html +=
+      '<div class="vdm-section bill-detail-section-gap">' +
+      '<h4 class="bill-detail-subhead">Attachments</h4>' +
+      '<div class="bill-detail-stack">';
+    attachments.forEach(function(att) {
+      var fileName = att.file_name || att.name || 'Attached File';
+      var rawUrl = String(att.url || att.download_url || '#').trim();
+      var safeUrl = rawUrl && /^https?:\/\//i.test(rawUrl)
+        ? rawUrl.replace(/"/g, '%22')
+        : '#';
+      html +=
+        '<a href="' + safeUrl + '" target="_blank" rel="noopener noreferrer" class="bill-detail-attachment">' +
+        '<i class="fas fa-file-pdf bill-detail-attachment-icon"></i>' +
+        '<span class="bill-detail-attachment-name">' + escapeHtml(fileName) + '</span>' +
+        '<i class="fas fa-external-link-alt bill-detail-attachment-ext"></i>' +
+        '</a>';
+    });
+    html += '</div></div>';
+  } else {
+    html += '<div class="bill-detail-empty"><i class="fas fa-paperclip"></i> No attachments found for this bill.</div>';
+  }
+
+  var afUrl = String(bill.appfolio_url || bill.url || '').trim();
+  if (/^https?:\/\//i.test(afUrl)) {
+    html +=
+      '<div class="bill-detail-cta-wrap">' +
+      '<a href="' + afUrl.replace(/"/g, '%22') + '" target="_blank" class="action-btn bill-detail-cta">' +
+      '<i class="fas fa-external-link-alt"></i> View inside AppFolio</a></div>';
+  }
+
+  return html;
+}
+
+async function fetchAioBills(payload) {
+  var body = payload && typeof payload === 'object' ? payload : {};
+  var host = ensureBillingAioGridHost();
+  if (host) {
+    setBillingQueueRenderMode('aio');
+    host.innerHTML = '<div class="bill-grid-loading">' + loadingHtml('Searching bills…') + '</div>';
+  }
+  var res = await proxyPost('aio_bills', body);
+  if (!res || !res.ok) {
+    throw new Error((res && (res.error || res.message)) || 'AIO bills search failed');
+  }
+  var rows = Array.isArray(res.data) ? res.data : [];
+  var queryText = String(body.search || '').trim();
+  if (queryText) {
+    rows = rows.filter(function(row) {
+      return matchAioBillQuery(normalizeAioBillRowForGrid(row), queryText);
+    });
+  }
+  renderBillGrid(rows);
+  return res;
+}
+
+async function loadBillDetailModal(billId) {
+  var target = String(billId || '').trim();
+  if (!target) return;
+  var cachedRows = window._currentBillsCache || window._billingPageRows || [];
+  var cachedBill = Array.isArray(cachedRows)
+    ? (cachedRows.find(function(row) { return getNormalizedBillDetailId(row) === target; }) || null)
+    : null;
+  if (cachedBill) {
+    return showBillDetailModal(target, cachedBill);
+  }
+  try {
+    var detail = await proxyAction('bill_detail_v0', { bill_id: target });
+    var v0 = detail && (detail.data || detail.result || detail.bill || detail);
+    if (v0 && typeof v0 === 'object') {
+      showItemDetail('Bill Detail — ' + target, [
+        { section: 'Overview', icon: 'fa-file-invoice-dollar' },
+        { label: 'Deep Detail', html: renderBillDetailHTML(v0) }
+      ], String(v0.appfolio_url || v0.url || ''));
+      return;
+    }
+  } catch (_) {
+    // Fall back to existing detail modal behavior if v0 fetch fails.
+  }
+  return showBillDetailModal(target);
+}
+
+function initBillingEventDelegation() {
+  if (document.body && document.body.dataset.billingDelegationWired === '1') return;
+  if (document.body) document.body.dataset.billingDelegationWired = '1';
+
+  document.addEventListener('click', function(e) {
+    var billingTabBtn = e.target.closest('[data-tab="billing"], #vdmBtnBills');
+    if (billingTabBtn) {
+      var tab = document.querySelector('.nav-tab[data-tab="billing"]');
+      if (tab && !tab.classList.contains('active')) {
+        tab.click();
+      }
+    }
+
+    var billTarget = e.target.closest('.bill-row-item[data-bill-id], button[data-billdetail], tr[data-billdetail]');
+    if (billTarget) {
+      var billId = billTarget.getAttribute('data-bill-id') || billTarget.getAttribute('data-billdetail');
+      if (billId) {
+        e.preventDefault();
+        loadBillDetailModal(billId);
+      }
+    }
+
+    var closeVendorModalBtn = e.target.closest('#vendorDetailModalCloseBtn');
+    if (closeVendorModalBtn) {
+      var modal = document.getElementById('vendorDetailModal');
+      if (modal) modal.style.display = 'none';
+    }
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var billTarget = e.target && e.target.closest
+      ? e.target.closest('.bill-row-item[data-bill-id], tr[data-billdetail]')
+      : null;
+    if (!billTarget) return;
+    var billId = billTarget.getAttribute('data-bill-id') || billTarget.getAttribute('data-billdetail');
+    if (!billId) return;
+    e.preventDefault();
+    loadBillDetailModal(billId);
+  });
+}
+
 function renderBillingPropertyScopeChip(propertyId, propertyName, unitId, unitName) {
   var chipHost = $('#billingPropertyScope');
   if (!chipHost) return;
@@ -8158,11 +8900,11 @@ function renderBillingPropertyScopeChip(propertyId, propertyName, unitId, unitNa
   if (unitId) {
     // Property + unit scope chip
     chipHost.innerHTML =
-      '<span class="tag blue" style="display:inline-flex;align-items:center;gap:8px;">' +
+      '<span class="tag blue bill-scope-chip">' +
         '<i class="fas fa-door-open"></i> ' +
         escapeHtml(propertyName || propertyId) + ' › ' + escapeHtml(unitName || unitId) +
-        ' <button id="clearBillUnitScope" class="action-btn" style="padding:2px 8px;font-size:10px;">Clear Unit</button>' +
-        ' <button id="clearBillPropertyScope" class="action-btn" style="padding:2px 8px;font-size:10px;">Clear All</button>' +
+        ' <button id="clearBillUnitScope" class="action-btn bill-scope-btn">Clear Unit</button>' +
+        ' <button id="clearBillPropertyScope" class="action-btn bill-scope-btn">Clear All</button>' +
       '</span>';
     var clearUnitBtn = $('#clearBillUnitScope');
     if (clearUnitBtn) {
@@ -8175,9 +8917,9 @@ function renderBillingPropertyScopeChip(propertyId, propertyName, unitId, unitNa
   } else {
     // Property-only scope chip
     chipHost.innerHTML =
-      '<span class="tag blue" style="display:inline-flex;align-items:center;gap:8px;">' +
+      '<span class="tag blue bill-scope-chip">' +
         '<i class="fas fa-building"></i> Property: ' + escapeHtml(propertyName || propertyId) +
-        ' <button id="clearBillPropertyScope" class="action-btn" style="padding:2px 8px;font-size:10px;">Clear</button>' +
+        ' <button id="clearBillPropertyScope" class="action-btn bill-scope-btn">Clear</button>' +
       '</span>';
   }
   var clearBtn = $('#clearBillPropertyScope');
@@ -8245,6 +8987,39 @@ function wireBillingFilters() {
     var status = String((document.getElementById('billing-status-filter') || {}).value || '').trim();
     var from = String((document.getElementById('billing-due-from') || {}).value || '').trim();
     var to = String((document.getElementById('billing-due-to') || {}).value || '').trim();
+    var updatedFrom = String((document.getElementById('billUpdatedFrom') || {}).value || '').trim();
+    var updatedTo = String((document.getElementById('billUpdatedTo') || {}).value || '').trim();
+    var quickSearch = String((document.getElementById('billSearch') || {}).value || '').trim();
+    var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
+    var globalGroupUuid = String(getEffectiveGroupUuid(grp) || '').trim();
+
+    var payload = {
+      limit: Math.max(50, Math.min(200, BILLS_PAGE_SIZE || 50)),
+      page: 1,
+      status: status || 'All',
+    };
+
+    if (globalGroupUuid) payload.property_group_uuid = globalGroupUuid;
+    if (updatedFrom) payload.date_from = updatedFrom;
+    if (updatedTo) payload.date_to = updatedTo;
+
+    if (type === 'bills_due_range' && from && to) {
+      payload.date_from = from;
+      payload.date_to = to;
+    }
+    if (type === 'bills_by_vendor' && value) payload.vendor_id = value;
+    if (type === 'bills_by_property' && value) {
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+        payload.property_group_uuid = value;
+      } else {
+        payload.search = value;
+      }
+    }
+    if (['bills_by_wo', 'bills_by_wo_number', 'bills_by_invoice'].indexOf(type) !== -1 && value) {
+      payload.search = value;
+    }
+    if (type === 'bills_list' && value) payload.search = value;
+    if (quickSearch) payload.search = payload.search ? (payload.search + ' ' + quickSearch) : quickSearch;
 
     _billingRouteAction = type || 'bills_list';
     _billingRouteFilterValue = value;
@@ -8256,9 +9031,21 @@ function wireBillingFilters() {
     var originalText = applyBtn.innerHTML;
     applyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying…';
     try {
-      await loadBillingPage({ resetPage: true });
+      _billingUseAioGrid = false;
+      setBillingQueueRenderMode('legacy');
+      _billingListCacheRows = [];
+      _billingListCacheKey = '';
+      window._billingPageRows = [];
+      _billingServerTotal = 0;
+      _billingServerTotalPages = 1;
+      _billingServerPage = 1;
+      _billsPage = 0;
+      await loadBillingPage({ resetPage: true, forceRefresh: true });
     } catch (err) {
       showToast('Billing filter failed: ' + (err.message || err), { kind: 'warning' });
+      _billingUseAioGrid = false;
+      setBillingQueueRenderMode('legacy');
+      await loadBillingPage({ resetPage: true });
     } finally {
       applyBtn.disabled = false;
       applyBtn.innerHTML = originalText;
@@ -8318,7 +9105,7 @@ function wireBillingFilters() {
         _billingServerTotalPages = 1;
         _billingServerPage = 1;
         _billsPage = 0;
-        loadBillingPage({ resetPage: true, forceRefresh: true });
+        applyBillingFilter();
       }, 600);
     }
     if (updFromEl) updFromEl.addEventListener('change', scheduleReloadOnDateChange);
@@ -8355,6 +9142,8 @@ function wireBillingFilters() {
       renderBillingSection({ forceRefresh: true });
       return;
     }
+    applyBillingFilter();
+    return;
     // Apply client-side group filter to cached bills instantly
     if (__CACHED_BILLS.length > 0) {
       var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
@@ -8412,7 +9201,7 @@ function wireBillingFilters() {
     _billingServerTotalPages = 1;
     _billingServerPage = 1;
     _billsPage = 0;
-    loadBillingPage({ resetPage: true, forceRefresh: true });
+    applyBillingFilter();
   }
   Array.prototype.forEach.call(periodBtns, function(btn) {
     btn.addEventListener('click', function() {
@@ -8437,7 +9226,7 @@ function wireBillingFilters() {
       _billingServerTotalPages = 1;
       _billingServerPage = 1;
       _billsPage = 0;
-      loadBillingPage({ resetPage: true, forceRefresh: true });
+      applyBillingFilter();
     }, 600);
   }
   if (periodFrom2) periodFrom2.addEventListener('change', onCustomDateChange);
@@ -8592,7 +9381,7 @@ async function showBillDetailModal(billId) {
       b = cachedRows.find(function(r) { return getNormalizedBillDetailId(r) === String(billId || '').trim(); }) || null;
     }
     var hasRichDetail = !!(b && b.raw && (b.raw.LineItems || b.raw.line_items || b.raw.Remarks || b.raw.remarks || b.raw.CheckMemo));
-    if (!b || !hasRichDetail) {
+    if (!b) {
       try {
         var data = await proxyAction('bill_detail', { bill_id: String(billId) });
         var detailed = data.result || data.bill || null;
@@ -8742,6 +9531,29 @@ async function showBillDetailModal(billId) {
       }
     });
   } catch (e) {
+    var fallbackBill = b || null;
+    if (!fallbackBill) {
+      var fallbackRows = window._currentBillsCache || window._billingPageRows || [];
+      fallbackBill = fallbackRows.find(function(row) {
+        return getNormalizedBillDetailId(row) === String(billId || '').trim();
+      }) || null;
+    }
+    if (fallbackBill) {
+      try {
+        showItemDetail('Bill — ' + String(fallbackBill.bill_number || fallbackBill.reference_number || fallbackBill.id || billId), [
+          { section: 'Overview', icon: 'fa-file-invoice-dollar' },
+          { label: 'Bill ID', value: String(fallbackBill.id || fallbackBill.txn_id || billId || '—') },
+          { label: 'Invoice #', value: String(fallbackBill.bill_number || fallbackBill.reference_number || fallbackBill.reference || '—') },
+          { label: 'Vendor / Payee', value: String(fallbackBill.vendor_name || fallbackBill.payee_name || '—') },
+          { label: 'Property', value: String(fallbackBill.property_name || fallbackBill.property || '—') },
+          { label: 'Status', value: String(fallbackBill.status_label || fallbackBill.approval_status || fallbackBill.status || '—') },
+          { label: 'Amount', value: currency(resolveBillAmountValue(fallbackBill), 2) },
+          { label: 'Date', value: fallbackBill.date ? formatDate(fallbackBill.date) : '—' }
+        ], '');
+      } catch (_) {
+        // Preserve the original warning below if fallback rendering also fails.
+      }
+    }
     showToast('Bill detail failed: ' + (e.message || e), { kind: 'warning' });
   }
 }
@@ -8758,7 +9570,7 @@ function renderBillHistoryPage(dateFrom, dateTo) {
   if (!body || !footer) return;
 
   if (!Array.isArray(BILL_HISTORY_ROWS) || BILL_HISTORY_ROWS.length === 0) {
-    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No historical bills found for selected criteria</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" class="row-state-cell muted">No historical bills found for selected criteria</td></tr>';
     footer.style.display = 'none';
     return;
   }
@@ -8820,26 +9632,26 @@ function renderBillHistoryPage(dateFrom, dateTo) {
     }
 
     return '<tr' + rowAttrs + '>' +
-      '<td style="font-family:var(--font-mono);font-size:11px">' + (billId ? ('<button class="action-btn" data-billdetail="' + escapeHtml(billId) + '" style="padding:2px 8px">' + escapeHtml(getNormalizedBillDisplayNumber(r)) + '</button>') : escapeHtml(getNormalizedBillDisplayNumber(r))) + '</td>' +
+      '<td class="mono-cell-sm">' + (billId ? ('<button class="action-btn pager-chip-btn" data-billdetail="' + escapeHtml(billId) + '">' + escapeHtml(getNormalizedBillDisplayNumber(r)) + '</button>') : escapeHtml(getNormalizedBillDisplayNumber(r))) + '</td>' +
       '<td>' + escapeHtml(vendorName) + '</td>' +
       '<td>' + escapeHtml(propertyName) + '</td>' +
       '<td>' + escapeHtml(grpResolved || '—') + '</td>' +
       '<td>' + escapeHtml(pmResolved || '—') + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + currency(r.amount || r.total_amount || r.TotalAmount || r.Paid || r.Unpaid || 0, 2) + '</td>' +
+      '<td class="mono-cell">' + currency(r.amount || r.total_amount || r.TotalAmount || r.Paid || r.Unpaid || 0, 2) + '</td>' +
       '<td>' + escapeHtml((r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) ? formatDate(r.invoice_date || r.InvoiceDate || r.due_date || r.DueDate) : '—') + '</td>' +
       '<td>' + escapeHtml(String(r.status_label || r.status || r.ApprovalStatus || '—')) + '</td>' +
-        '<td>' + (wo ? ('<button class="action-btn" data-wojump="' + escapeHtml(wo) + '" style="padding:2px 8px">#' + escapeHtml(wo) + '</button>') : '<span style="color:var(--text-muted)">—</span>') + '</td>' +
+        '<td>' + (wo ? ('<button class="action-btn pager-chip-btn" data-wojump="' + escapeHtml(wo) + '">#' + escapeHtml(wo) + '</button>') : '<span class="cell-inline-muted">—</span>') + '</td>' +
       '</tr>';
   }).join('');
 
   footer.style.display = '';
   footer.innerHTML =
-    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+    '<div class="report-footer">' +
       '<span>History search returned ' + totalRows + ' bill(s) from ' + escapeHtml(dateFrom) + ' to ' + escapeHtml(dateTo) + '.</span>' +
-      '<span style="display:inline-flex;align-items:center;gap:8px">' +
-        '<button class="action-btn" id="billHistPrevPage" style="padding:3px 8px"' + (BILL_HISTORY_PAGE <= 0 ? ' disabled' : '') + '>Prev</button>' +
-        '<span style="font-family:var(--font-mono);font-size:11px">Page ' + (BILL_HISTORY_PAGE + 1) + ' / ' + totalPages + '</span>' +
-        '<button class="action-btn" id="billHistNextPage" style="padding:3px 8px"' + (BILL_HISTORY_PAGE >= (totalPages - 1) ? ' disabled' : '') + '>Next</button>' +
+      '<span class="report-footer-controls">' +
+        '<button class="action-btn report-footer-btn" id="billHistPrevPage"' + (BILL_HISTORY_PAGE <= 0 ? ' disabled' : '') + '>Prev</button>' +
+        '<span class="report-footer-page">Page ' + (BILL_HISTORY_PAGE + 1) + ' / ' + totalPages + '</span>' +
+        '<button class="action-btn report-footer-btn" id="billHistNextPage"' + (BILL_HISTORY_PAGE >= (totalPages - 1) ? ' disabled' : '') + '>Next</button>' +
       '</span>' +
     '</div>';
 
@@ -8927,7 +9739,7 @@ async function runBillHistorySearch() {
     return;
   }
 
-  body.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">' + loadingHtml('Searching history…') + '</td></tr>';
+  body.innerHTML = '<tr><td colspan="9" class="row-state-cell">' + loadingHtml('Searching history…') + '</td></tr>';
   footer.style.display = 'none';
 
   try {
@@ -9022,7 +9834,7 @@ async function runBillHistorySearch() {
     if (!rows.length) {
       BILL_HISTORY_ROWS = [];
       BILL_HISTORY_PAGE = 0;
-      body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No historical bills found for selected criteria</td></tr>';
+      body.innerHTML = '<tr><td colspan="9" class="row-state-cell muted">No historical bills found for selected criteria</td></tr>';
       footer.style.display = 'none';
       return;
     }
@@ -9035,7 +9847,7 @@ async function runBillHistorySearch() {
   } catch (e) {
     BILL_HISTORY_ROWS = [];
     BILL_HISTORY_PAGE = 0;
-    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:20px">History search failed: ' + escapeHtml(String(e.message || e)) + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" class="row-state-cell danger">History search failed: ' + escapeHtml(String(e.message || e)) + '</td></tr>';
     footer.style.display = 'none';
   }
 }
@@ -9321,6 +10133,22 @@ function renderDashboardKPIs() {
     vacancyCard.onclick = openVacancies;
     vacancyCard.onkeydown = openVacancies;
   }
+
+  pushDashboardKpiSnapshot({
+    open: openWOs.length,
+    urgent: urgentWOs.length,
+    turns: activeTurns.length,
+    moveouts: moveOuts.length,
+    flagged: flaggedCount,
+    pendingBills: pendingBillApprovals.length,
+    avgTurnCompletion: avgTurnCompletion !== null ? avgTurnCompletion : 0,
+    avgInspectionAge: avgInspectionAge !== null ? avgInspectionAge : 0,
+    avgWOCompletion: avgWOCompletion !== null ? avgWOCompletion : 0,
+    completedTurns: completedTurns.length,
+    vacancies: vacancyTotal
+  });
+  renderDashboardKpiTrends();
+  ensureDashboardKpiModeRotation();
 
   $('#woBadge').textContent = openWOs.length || '0';
   $('#turnBadge').textContent = activeTurns.length || '0';
@@ -9953,13 +10781,13 @@ function renderPayablesPaginationControls(totalRows) {
 
   footer.style.display = '';
   footer.innerHTML =
-    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+    '<div class="report-footer">' +
       '<span>Showing ' + start + '–' + end + ' of ' + totalRows + ' payables</span>' +
-      '<span style="display:inline-flex;align-items:center;gap:8px">' +
-        '<button class="action-btn" id="payablesPagePrev" style="padding:3px 8px"' + prevDisabled + '>Prev</button>' +
-        '<span style="font-family:var(--font-mono);font-size:11px">Page ' + (_payablesPage + 1) + ' / ' + totalPages + '</span>' +
-        '<button class="action-btn" id="payablesPageNext" style="padding:3px 8px"' + nextDisabled + '>Next</button>' +
-        '<select id="payablesPageSize" style="font-family:var(--font-mono);font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">' +
+      '<span class="report-footer-controls">' +
+        '<button class="action-btn report-footer-btn" id="payablesPagePrev"' + prevDisabled + '>Prev</button>' +
+        '<span class="report-footer-page">Page ' + (_payablesPage + 1) + ' / ' + totalPages + '</span>' +
+        '<button class="action-btn report-footer-btn" id="payablesPageNext"' + nextDisabled + '>Next</button>' +
+        '<select id="payablesPageSize" class="report-footer-size">' +
           '<option value="25"' + (_payablesPageSize === 25 ? ' selected' : '') + '>25</option>' +
           '<option value="50"' + (_payablesPageSize === 50 ? ' selected' : '') + '>50</option>' +
           '<option value="100"' + (_payablesPageSize === 100 ? ' selected' : '') + '>100</option>' +
@@ -10001,13 +10829,13 @@ function renderPayablesTable() {
   ensurePayablesAsOfDate();
 
   if (_payablesLoading) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px">' + loadingHtml('Loading payables…') + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="row-state-cell">' + loadingHtml('Loading payables…') + '</td></tr>';
     renderPayablesPaginationControls(0);
     return;
   }
 
   if (_payablesLastError) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--danger);">' + escapeHtml(_payablesLastError) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="row-state-cell danger">' + escapeHtml(_payablesLastError) + '</td></tr>';
     renderPayablesPaginationControls(0);
     return;
   }
@@ -10059,7 +10887,7 @@ function renderPayablesTable() {
   }
 
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--text-muted);">No payables match the current scope and filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="row-state-cell muted">No payables match the current scope and filters.</td></tr>';
     renderPayablesPaginationControls(0);
     return;
   }
@@ -10077,17 +10905,17 @@ function renderPayablesTable() {
     if (row.party_id) payeeMeta.push('PAYEE ' + String(row.party_id));
     if (row.party_type) payeeMeta.push(String(row.party_type));
     return '<tr>' +
-      '<td><div style="font-weight:600">' + escapeHtml(String(row.payee_name || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(payeeMeta.join(' • ')) + '</div></td>' +
-      '<td><div style="font-weight:600">' + escapeHtml(propertyLabel) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(propertyMeta.join(' • ') || String(row.property_address || '')) + '</div></td>' +
+      '<td><div class="cell-stack-title">' + escapeHtml(String(row.payee_name || '—')) + '</div><div class="cell-stack-sub">' + escapeHtml(payeeMeta.join(' • ')) + '</div></td>' +
+      '<td><div class="cell-stack-title">' + escapeHtml(propertyLabel) + '</div><div class="cell-stack-sub">' + escapeHtml(propertyMeta.join(' • ') || String(row.property_address || '')) + '</div></td>' +
       '<td>' + escapeHtml(String(row.party_type || '—')) + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row.amount_payable)) + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row.not_yet_due)) + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['0_to30'])) + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['30_to60'])) + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['60_to90'])) + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['90_plus'])) + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['30_plus'])) + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row['60_plus'])) + '</td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(row.amount_payable)) + '</td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(row.not_yet_due)) + '</td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(row['0_to30'])) + '</td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(row['30_to60'])) + '</td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(row['60_to90'])) + '</td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(row['90_plus'])) + '</td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(row['30_plus'])) + '</td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(row['60_plus'])) + '</td>' +
     '</tr>';
   }).join('');
 
@@ -10164,11 +10992,11 @@ function openChargeDetailModal(row) {
     : '';
   var propertyButtons = '';
   if (propertyId) {
-    propertyButtons += '<button class="action-btn" id="chargeDetailOpenProperty" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-building"></i> Property</button>';
-    propertyButtons += '<button class="action-btn" id="chargeDetailGoBills" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-filter"></i> Bills</button>';
+    propertyButtons += '<button class="action-btn pager-chip-btn" id="chargeDetailOpenProperty"><i class="fas fa-building"></i> Property</button>';
+    propertyButtons += '<button class="action-btn pager-chip-btn" id="chargeDetailGoBills"><i class="fas fa-filter"></i> Bills</button>';
   }
   if (unitId) {
-    propertyButtons += '<button class="action-btn" id="chargeDetailGoUnitBills" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-door-open"></i> Unit Bills</button>';
+    propertyButtons += '<button class="action-btn pager-chip-btn" id="chargeDetailGoUnitBills"><i class="fas fa-door-open"></i> Unit Bills</button>';
   }
   showItemDetail('Charge Detail — ' + String(row.txn_id || row.receivable_invoice_detail_id || 'Record'), [
     { section: 'Charge', icon: 'fa-receipt' },
@@ -10187,7 +11015,7 @@ function openChargeDetailModal(row) {
     { label: 'Receipt Reference', value: String(row.receipt_reference || '—') },
     { label: 'Receipt Info', value: String(row.receipt_info || '—') },
     { section: 'Associations', icon: 'fa-link' },
-    { label: 'Property / Unit', html: '<span>' + escapeHtml(propertyName || '—') + (propertyId ? ' <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">(' + escapeHtml(propertyId) + ')</span>' : '') + (unitName ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">' + escapeHtml(unitName) + (unitId ? ' (' + escapeHtml(unitId) + ')' : '') + '</div>' : '') + '</span>' + propertyButtons },
+    { label: 'Property / Unit', html: '<span>' + escapeHtml(propertyName || '—') + (propertyId ? ' <span class="mono-cell-sm cell-inline-muted">(' + escapeHtml(propertyId) + ')</span>' : '') + (unitName ? '<div class="cell-stack-sub">' + escapeHtml(unitName) + (unitId ? ' (' + escapeHtml(unitId) + ')' : '') + '</div>' : '') + '</span>' + propertyButtons },
     { label: 'Party', value: String((row.received_from || '—') + ((row.party_id || row.party_type) ? (' (' + [row.party_type, row.party_id].filter(Boolean).join(' • ') + ')') : '')) },
     { label: 'Owners', value: String(row.owners || '—') },
     { label: 'Owner Contact', value: String(row.owners_phone_number_email || '—') },
@@ -10219,13 +11047,13 @@ function openBillDetailReportModal(row) {
   var afLink = API_VHOST && row.txn_id
     ? ('https://' + API_VHOST + '.appfolio.com/bills/' + encodeURIComponent(String(row.txn_id)))
     : '';
-  var assocHtml = '<span>' + escapeHtml(propertyName || '—') + (propertyId ? ' <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">(' + escapeHtml(propertyId) + ')</span>' : '') + '</span>' +
-    (unitName ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">' + escapeHtml(unitName) + (unitId ? ' (' + escapeHtml(unitId) + ')' : '') + '</div>' : '') +
-    (propertyId ? ' <button class="action-btn" id="billDetailReportGoBills" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-filter"></i> Bills</button>' : '') +
-    (unitId ? ' <button class="action-btn" id="billDetailReportGoUnitBills" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-door-open"></i> Unit Bills</button>' : '') +
-    (propertyId ? ' <button class="action-btn" id="billDetailReportOpenProperty" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-building"></i> Property</button>' : '');
-  var payeeHtml = '<span>' + escapeHtml(vendorName || '—') + (vendorId ? ' <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">(' + escapeHtml(vendorId) + ')</span>' : '') + '</span>' +
-    (vendorId ? ' <button class="action-btn" id="billDetailReportOpenVendor" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-store"></i> Vendor</button>' : '');
+  var assocHtml = '<span>' + escapeHtml(propertyName || '—') + (propertyId ? ' <span class="mono-cell-sm cell-inline-muted">(' + escapeHtml(propertyId) + ')</span>' : '') + '</span>' +
+    (unitName ? '<div class="cell-stack-sub">' + escapeHtml(unitName) + (unitId ? ' (' + escapeHtml(unitId) + ')' : '') + '</div>' : '') +
+    (propertyId ? ' <button class="action-btn pager-chip-btn" id="billDetailReportGoBills"><i class="fas fa-filter"></i> Bills</button>' : '') +
+    (unitId ? ' <button class="action-btn pager-chip-btn" id="billDetailReportGoUnitBills"><i class="fas fa-door-open"></i> Unit Bills</button>' : '') +
+    (propertyId ? ' <button class="action-btn pager-chip-btn" id="billDetailReportOpenProperty"><i class="fas fa-building"></i> Property</button>' : '');
+  var payeeHtml = '<span>' + escapeHtml(vendorName || '—') + (vendorId ? ' <span class="mono-cell-sm cell-inline-muted">(' + escapeHtml(vendorId) + ')</span>' : '') + '</span>' +
+    (vendorId ? ' <button class="action-btn pager-chip-btn" id="billDetailReportOpenVendor"><i class="fas fa-store"></i> Vendor</button>' : '');
   showItemDetail('Bill Detail — ' + String(row.txn_id || row.payable_invoice_detail_id || 'Record'), [
     { section: 'Bill', icon: 'fa-file-lines' },
     { label: 'Txn ID', value: String(row.txn_id || '—') },
@@ -10281,13 +11109,13 @@ function renderSimpleReportFooter(footerId, page, pageSize, totalRows, baseId, o
   var prevDisabled = safePage <= 0 ? ' disabled' : '';
   var nextDisabled = safePage >= totalPages - 1 ? ' disabled' : '';
   footer.style.display = '';
-  footer.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+  footer.innerHTML = '<div class="report-footer">' +
     '<span>Showing ' + start + '–' + end + ' of ' + totalRows + ' rows</span>' +
-    '<span style="display:inline-flex;align-items:center;gap:8px">' +
-      '<button class="action-btn" id="' + baseId + 'Prev" style="padding:3px 8px"' + prevDisabled + '>Prev</button>' +
-      '<span style="font-family:var(--font-mono);font-size:11px">Page ' + (safePage + 1) + ' / ' + totalPages + '</span>' +
-      '<button class="action-btn" id="' + baseId + 'Next" style="padding:3px 8px"' + nextDisabled + '>Next</button>' +
-      '<select id="' + baseId + 'Size" style="font-family:var(--font-mono);font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">' +
+    '<span class="report-footer-controls">' +
+      '<button class="action-btn report-footer-btn" id="' + baseId + 'Prev"' + prevDisabled + '>Prev</button>' +
+      '<span class="report-footer-page">Page ' + (safePage + 1) + ' / ' + totalPages + '</span>' +
+      '<button class="action-btn report-footer-btn" id="' + baseId + 'Next"' + nextDisabled + '>Next</button>' +
+      '<select id="' + baseId + 'Size" class="report-footer-size">' +
         '<option value="25"' + (pageSize === 25 ? ' selected' : '') + '>25</option>' +
         '<option value="50"' + (pageSize === 50 ? ' selected' : '') + '>50</option>' +
         '<option value="100"' + (pageSize === 100 ? ' selected' : '') + '>100</option>' +
@@ -10310,12 +11138,12 @@ function renderChargeDetailTable() {
   if (!tbody) return;
   ensureChargeDetailDateRange();
   if (_chargeDetailLoading) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">' + loadingHtml('Loading charge detail…') + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell">' + loadingHtml('Loading charge detail…') + '</td></tr>';
     renderSimpleReportFooter('#chargeDetailFooter', 0, _chargeDetailPageSize, 0, 'chargeDetailPage', function() {});
     return;
   }
   if (_chargeDetailLastError) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--danger);">' + escapeHtml(_chargeDetailLastError) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell danger">' + escapeHtml(_chargeDetailLastError) + '</td></tr>';
     renderSimpleReportFooter('#chargeDetailFooter', 0, _chargeDetailPageSize, 0, 'chargeDetailPage', function() {});
     return;
   }
@@ -10339,7 +11167,7 @@ function renderChargeDetailTable() {
     summaryEl.textContent = rows.length + ' charge rows • ' + formatPayablesCurrency(totalCharge) + ' charged • ' + formatPayablesCurrency(totalPaid) + ' paid';
   }
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text-muted);">No charge detail rows match the current filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell muted">No charge detail rows match the current filters.</td></tr>';
     renderSimpleReportFooter('#chargeDetailFooter', 0, _chargeDetailPageSize, 0, 'chargeDetailPage', function() {});
     return;
   }
@@ -10351,13 +11179,13 @@ function renderChargeDetailTable() {
     var balance = charge - paid;
     return '<tr class="clickable-row" data-charge-detail-id="' + escapeHtml(String(row.txn_id || row.receivable_invoice_detail_id || '')) + '" tabindex="0" role="button" aria-label="Open charge detail">' +
       '<td>' + escapeHtml(row.charge_date ? formatDate(row.charge_date) : '—') + '</td>' +
-      '<td><div style="font-weight:600">' + escapeHtml(String(row.received_from || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml([row.party_type, row.party_id].filter(Boolean).join(' • ')) + '</div></td>' +
-      '<td><div style="font-weight:600">' + escapeHtml(String(row.property_name || row.property || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml([row.unit || row.unit_address, row.property_id ? 'PID ' + row.property_id : '', row.unit_id ? 'UNIT ' + row.unit_id : ''].filter(Boolean).join(' • ')) + '</div></td>' +
-      '<td><div style="font-family:var(--font-mono)">' + escapeHtml(String(row.account_number || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(String(row.account_name || '—')) + '</div></td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(charge)) + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(paid)) + '</td>' +
-      '<td style="font-family:var(--font-mono);color:' + (balance > 0 ? 'var(--danger)' : 'var(--success)') + '">' + escapeHtml(formatPayablesCurrency(balance)) + '</td>' +
-      '<td><div>' + escapeHtml(String(row.receipt_type || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(String(row.receipt_reference || row.receipt_info || '—')) + '</div></td>' +
+      '<td><div class="cell-stack-title">' + escapeHtml(String(row.received_from || '—')) + '</div><div class="cell-stack-sub">' + escapeHtml([row.party_type, row.party_id].filter(Boolean).join(' • ')) + '</div></td>' +
+      '<td><div class="cell-stack-title">' + escapeHtml(String(row.property_name || row.property || '—')) + '</div><div class="cell-stack-sub">' + escapeHtml([row.unit || row.unit_address, row.property_id ? 'PID ' + row.property_id : '', row.unit_id ? 'UNIT ' + row.unit_id : ''].filter(Boolean).join(' • ')) + '</div></td>' +
+      '<td><div class="mono-cell">' + escapeHtml(String(row.account_number || '—')) + '</div><div class="cell-stack-sub">' + escapeHtml(String(row.account_name || '—')) + '</div></td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(charge)) + '</td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(paid)) + '</td>' +
+      '<td class="mono-cell ' + (balance > 0 ? 'balance-negative' : 'balance-positive') + '">' + escapeHtml(formatPayablesCurrency(balance)) + '</td>' +
+      '<td><div>' + escapeHtml(String(row.receipt_type || '—')) + '</div><div class="cell-stack-sub">' + escapeHtml(String(row.receipt_reference || row.receipt_info || '—')) + '</div></td>' +
       '<td>' + escapeHtml(String(row.party_type || '—')) + '</td>' +
     '</tr>';
   }).join('');
@@ -10382,12 +11210,12 @@ function renderBillDetailTable() {
   if (!tbody) return;
   ensureBillDetailDateRange();
   if (_billDetailLoading) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">' + loadingHtml('Loading bill detail…') + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell">' + loadingHtml('Loading bill detail…') + '</td></tr>';
     renderSimpleReportFooter('#billDetailFooter', 0, _billDetailPageSize, 0, 'billDetailPage', function() {});
     return;
   }
   if (_billDetailLastError) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--danger);">' + escapeHtml(_billDetailLastError) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell danger">' + escapeHtml(_billDetailLastError) + '</td></tr>';
     renderSimpleReportFooter('#billDetailFooter', 0, _billDetailPageSize, 0, 'billDetailPage', function() {});
     return;
   }
@@ -10415,7 +11243,7 @@ function renderBillDetailTable() {
     summaryEl.textContent = rows.length + ' bill rows • ' + formatPayablesCurrency(totalPaid) + ' paid • ' + formatPayablesCurrency(totalUnpaid) + ' unpaid';
   }
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text-muted);">No bill detail rows match the current filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell muted">No bill detail rows match the current filters.</td></tr>';
     renderSimpleReportFooter('#billDetailFooter', 0, _billDetailPageSize, 0, 'billDetailPage', function() {});
     return;
   }
@@ -10423,14 +11251,14 @@ function renderBillDetailTable() {
   var pageRows = rows.slice(start, start + _billDetailPageSize);
   tbody.innerHTML = pageRows.map(function(row) {
     return '<tr class="clickable-row" data-bill-detail-report-id="' + escapeHtml(String(row.txn_id || row.payable_invoice_detail_id || '')) + '" tabindex="0" role="button" aria-label="Open bill detail row">' +
-      '<td>' + escapeHtml(row.bill_date ? formatDate(row.bill_date) : '—') + '<div style="font-size:11px;color:var(--text-muted)">Due ' + escapeHtml(row.due_date ? formatDate(row.due_date) : '—') + '</div></td>' +
-      '<td><div style="font-weight:600">' + escapeHtml(String(row.payee_name || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml([row.party_type, row.party_id || row.vendor_id].filter(Boolean).join(' • ')) + '</div></td>' +
-      '<td><div style="font-weight:600">' + escapeHtml(String(row.property_name || row.property || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml([row.unit, row.property_id ? 'PID ' + row.property_id : '', row.unit_id ? 'UNIT ' + row.unit_id : ''].filter(Boolean).join(' • ')) + '</div></td>' +
-      '<td><div style="font-family:var(--font-mono)">' + escapeHtml(String(row.account_number || '—')) + '</div><div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(String(row.account_name || '—')) + '</div></td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row.paid)) + '</td>' +
-      '<td style="font-family:var(--font-mono)">' + escapeHtml(formatPayablesCurrency(row.unpaid)) + '</td>' +
-      '<td>' + escapeHtml(String(row.approval_status || '—')) + '<div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(String(row.approved_by || row.created_by || '—')) + '</div></td>' +
-      '<td>' + escapeHtml(String(row.check_number || '—')) + '<div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(row.payment_date ? formatDate(row.payment_date) : '—') + '</div></td>' +
+      '<td>' + escapeHtml(row.bill_date ? formatDate(row.bill_date) : '—') + '<div class="cell-stack-sub">Due ' + escapeHtml(row.due_date ? formatDate(row.due_date) : '—') + '</div></td>' +
+      '<td><div class="cell-stack-title">' + escapeHtml(String(row.payee_name || '—')) + '</div><div class="cell-stack-sub">' + escapeHtml([row.party_type, row.party_id || row.vendor_id].filter(Boolean).join(' • ')) + '</div></td>' +
+      '<td><div class="cell-stack-title">' + escapeHtml(String(row.property_name || row.property || '—')) + '</div><div class="cell-stack-sub">' + escapeHtml([row.unit, row.property_id ? 'PID ' + row.property_id : '', row.unit_id ? 'UNIT ' + row.unit_id : ''].filter(Boolean).join(' • ')) + '</div></td>' +
+      '<td><div class="mono-cell">' + escapeHtml(String(row.account_number || '—')) + '</div><div class="cell-stack-sub">' + escapeHtml(String(row.account_name || '—')) + '</div></td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(row.paid)) + '</td>' +
+      '<td class="mono-cell">' + escapeHtml(formatPayablesCurrency(row.unpaid)) + '</td>' +
+      '<td>' + escapeHtml(String(row.approval_status || '—')) + '<div class="cell-stack-sub">' + escapeHtml(String(row.approved_by || row.created_by || '—')) + '</div></td>' +
+      '<td>' + escapeHtml(String(row.check_number || '—')) + '<div class="cell-stack-sub">' + escapeHtml(row.payment_date ? formatDate(row.payment_date) : '—') + '</div></td>' +
       '<td>' + escapeHtml(String(row.party_type || '—')) + '</td>' +
     '</tr>';
   }).join('');
@@ -10983,7 +11811,7 @@ function renderCompletedWOHistorySection() {
     return;
   }
   if (completedWOHistoryLoading) {
-    mount.innerHTML = '<div class="table-wrapper" style="margin-top:12px"><div class="table-header"><div class="table-title"><i class="fas fa-history" style="color:var(--info)"></i> Completed Work Order History</div></div><div class="wo-history-scroll" style="padding:24px;text-align:center;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> Loading completed history...</div></div>';
+    mount.innerHTML = '<div class="table-wrapper table-wrapper-spaced"><div class="table-header"><div class="table-title"><i class="fas fa-history icon-info"></i> Completed Work Order History</div></div><div class="wo-history-scroll wo-history-loading"><i class="fas fa-spinner fa-spin"></i> Loading completed history...</div></div>';
     return;
   }
 
@@ -10995,7 +11823,7 @@ function renderCompletedWOHistorySection() {
   var pageRows = rows.slice(start, start + completedWOHistoryPageSize);
   var bodyHtml = '';
   if (!rows.length) {
-    bodyHtml = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">No completed work orders match the current filters.</td></tr>';
+    bodyHtml = '<tr><td colspan="9" class="row-state-cell tight muted">No completed work orders match the current filters.</td></tr>';
   } else {
     pageRows.forEach(function(wo) {
       bodyHtml += '<tr>' +
@@ -11007,13 +11835,13 @@ function renderCompletedWOHistorySection() {
         '<td>' + escapeHtml(formatDate(wo.completedOn)) + '</td>' +
         '<td>' + escapeHtml(wo.amountBilled ? currency(wo.amountBilled) : '—') + '</td>' +
         '<td>' + escapeHtml(String(wo.type || '—')) + '</td>' +
-        '<td style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(String(wo.description || '')) + '">' + escapeHtml(String(wo.description || '—')) + '</td>' +
+        '<td class="ellipsis-cell" title="' + escapeHtml(String(wo.description || '')) + '">' + escapeHtml(String(wo.description || '—')) + '</td>' +
       '</tr>';
     });
   }
 
-  mount.innerHTML = '<div class="table-wrapper" style="margin-top:12px">' +
-    '<div class="table-header"><div class="table-title"><i class="fas fa-history" style="color:var(--info)"></i> Completed Work Order History</div><div class="section-subtitle">Terminal statuses only • read-only</div></div>' +
+  mount.innerHTML = '<div class="table-wrapper table-wrapper-spaced">' +
+    '<div class="table-header"><div class="table-title"><i class="fas fa-history icon-info"></i> Completed Work Order History</div><div class="section-subtitle">Terminal statuses only • read-only</div></div>' +
     '<div class="wo-history-scroll" id="woHistoryScroll"><table class="data-table"><thead><tr><th>WO #</th><th>Unit</th><th>Property</th><th>Vendor</th><th>Status</th><th>Completed Date</th><th>Amount Billed</th><th>Type</th><th>Description</th></tr></thead><tbody>' + bodyHtml + '</tbody></table></div>' +
     '<div class="wo-history-pagination"><button class="action-btn" id="woHistoryPrev"' + (completedWOHistoryPage === 0 ? ' disabled' : '') + '>← Prev</button><span class="page-label">Page ' + (completedWOHistoryPage + 1) + ' of ' + totalPages + '</span><button class="action-btn" id="woHistoryNext"' + (completedWOHistoryPage >= totalPages - 1 ? ' disabled' : '') + '>Next →</button></div>' +
   '</div>';
@@ -13325,10 +14153,10 @@ function renderTurnPipelineUI() {
 
     // Webhook events
     if (p.webhookEvents.length > 0) {
-      html += '<div class="detail-section-title" style="margin-top:12px"><i class="fas fa-plug"></i> Webhook Events (' + p.webhookEvents.length + ')</div>';
+      html += '<div class="detail-section-title detail-section-spaced"><i class="fas fa-plug"></i> Webhook Events (' + p.webhookEvents.length + ')</div>';
       p.webhookEvents.slice(0, 5).forEach(function(wh) {
-        html += '<div style="font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)">';
-        html += '<span style="color:var(--text-muted)">' + timeAgo(wh.ts) + '</span> ';
+        html += '<div class="webhook-mini-row">';
+        html += '<span class="cell-inline-muted">' + timeAgo(wh.ts) + '</span> ';
         html += '<strong>' + escapeHtml(wh.title) + '</strong>';
         if (wh.body) html += ' — ' + escapeHtml(wh.body.substring(0, 80));
         html += '</div>';
@@ -15359,6 +16187,12 @@ async function renderEmailDeliveryErrorsSection(opts) {
 }
 
 function renderErrorsSection(opts) {
+  renderIpRateLimitsPanel();
+  if (currentErrorsSubtab === 'log' && canManageIpRateLimits()) {
+    if (!IP_RATE_LIMITS_STATE.rows.length && !IP_RATE_LIMITS_STATE.loading && !IP_RATE_LIMITS_STATE.lastError) {
+      fetchIpRateLimits().catch(function() {});
+    }
+  }
   if (currentErrorsSubtab === 'email-delivery') {
     renderEmailDeliveryErrorsSection(opts);
     return;
@@ -15427,6 +16261,7 @@ var _uiWired = false;
 function wireUpUI() {
   if (_uiWired) return;
   _uiWired = true;
+  initBillingEventDelegation();
 
   /* =================================================================
      EVENT DELEGATION — Single listeners on parent containers
@@ -15728,9 +16563,8 @@ function wireUpUI() {
       tab.classList.add('active');
       closeMobileNav();
       setMobileNavLabelFromActiveTab();
-      $$('.section').forEach(function(s) { s.classList.remove('active'); });
-      var sec = document.getElementById('sec-' + tabName);
-      if (sec) sec.classList.add('active');
+      setActiveMainSection(tabName);
+      resetAppScrollToTop();
       if (document.body && document.body.classList.contains('tv-mode') && tabName !== 'dashboard') {
         applyTvMode(false);
       }
@@ -16068,6 +16902,16 @@ function wireUpUI() {
       renderTurnDashboardStrip();
     });
   }
+  if ($('#dashOpenPager')) {
+    $('#dashOpenPager').addEventListener('click', function() {
+      var drawer = document.getElementById('pm-inbox-drawer');
+      if (!drawer) return;
+      drawer.classList.add('open');
+      if (window.PmInbox && typeof window.PmInbox.refresh === 'function') {
+        window.PmInbox.refresh();
+      }
+    });
+  }
   if ($('#dashTvMode')) {
     $('#dashTvMode').addEventListener('click', function() {
       var isEnabled = document.body && document.body.classList.contains('tv-mode');
@@ -16123,9 +16967,8 @@ function wireUpUI() {
         $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
         var woTab = document.querySelector('[data-tab="workorders"]');
         if (woTab) woTab.classList.add('active');
-        $$('.section').forEach(function(s) { s.classList.remove('active'); });
-        var woSec = document.getElementById('sec-workorders');
-        if (woSec) woSec.classList.add('active');
+        setActiveMainSection('workorders');
+        resetAppScrollToTop();
         if (kpi === 'urgent') {
           currentWOPriority = 'Urgent';
           if ($('#woPriorityFilter')) $('#woPriorityFilter').value = 'Urgent';
@@ -16140,9 +16983,8 @@ function wireUpUI() {
         $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
         var tTab = document.querySelector('[data-tab="turnboard"]');
         if (tTab) tTab.classList.add('active');
-        $$('.section').forEach(function(s) { s.classList.remove('active'); });
-        var tSec = document.getElementById('sec-turnboard');
-        if (tSec) tSec.classList.add('active');
+        setActiveMainSection('turnboard');
+        resetAppScrollToTop();
       } else if (kpi === 'moveouts') {
         // Scroll to move-out section on dashboard
         var moSec = document.getElementById('moveOutSection');
@@ -16235,6 +17077,45 @@ function wireUpUI() {
       sendSystemHealthDebugEmail();
     });
   }
+  if ($('#ipRateLimitAdminKey')) {
+    try {
+      $('#ipRateLimitAdminKey').value = localStorage.getItem('hm_proxy_admin_key') || '';
+    } catch (_) { /* */ }
+    $('#ipRateLimitAdminKey').addEventListener('change', function() {
+      try { localStorage.setItem('hm_proxy_admin_key', String(this.value || '').trim()); } catch (_) { /* */ }
+    });
+  }
+  if ($('#btnRefreshIpRateLimits')) {
+    $('#btnRefreshIpRateLimits').addEventListener('click', function() {
+      fetchIpRateLimits();
+    });
+  }
+  if ($('#btnUnblockIpRateLimit')) {
+    $('#btnUnblockIpRateLimit').addEventListener('click', function() {
+      unblockIpRateLimit($('#ipRateLimitUnblockIp') ? $('#ipRateLimitUnblockIp').value : '');
+    });
+  }
+  if ($('#btnClearAllIpRateLimits')) {
+    $('#btnClearAllIpRateLimits').addEventListener('click', function() {
+      clearAllIpRateLimits();
+    });
+  }
+  if ($('#ipRateLimitsBody')) {
+    $('#ipRateLimitsBody').addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-ip-unblock]');
+      if (!btn) return;
+      e.preventDefault();
+      unblockIpRateLimit(btn.getAttribute('data-ip-unblock'));
+    });
+  }
+  if ($('#ipRateLimitUnblockIp')) {
+    $('#ipRateLimitUnblockIp').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        unblockIpRateLimit(this.value);
+      }
+    });
+  }
   var emailErrorsFrom = $('#emailErrorsFrom');
   if (emailErrorsFrom) {
     emailErrorsFrom.addEventListener('change', function() {
@@ -16320,6 +17201,21 @@ function wireUpUI() {
 
   // Refresh button — force full reload from API
   $('#refreshBtn').addEventListener('click', function() { refreshData(); });
+
+  // Messages button — toggle alerts drawer
+  var messagesBtn = $('#messagesBtn');
+  if (messagesBtn) {
+    messagesBtn.addEventListener('click', function() {
+      var drawer = document.getElementById('pm-inbox-drawer');
+      if (drawer) {
+        drawer.classList.toggle('open');
+        updateMessagesAlerts();
+        if (window.PmInbox && typeof window.PmInbox.refresh === 'function') {
+          window.PmInbox.refresh();
+        }
+      }
+    });
+  }
 
   // Progress dock close
   $('#progClose').addEventListener('click', function() { $('#progressDock').classList.add('hidden'); });
@@ -17372,7 +18268,7 @@ async function refreshData() {
   if (btn.disabled) return;
   btn.disabled = true;
   btn.classList.add('spinning');
-  btn.innerHTML = '<i class="fas fa-sync-alt"></i> Syncing\u2026';
+  btn.innerHTML = '<i class="fas fa-sync-alt"></i> Syncing…';
 
   try {
     // v8+: invalidate all server-side caches before re-fetching
@@ -17385,7 +18281,8 @@ async function refreshData() {
       }
     }
     await fetchAllLive();
-    showToast('Data refreshed \u2014 ' + WORK_ORDERS.length + ' work orders loaded');
+    updateMessagesAlerts();
+    showToast('Data refreshed — ' + WORK_ORDERS.length + ' work orders loaded');
   } catch (err) {
     showToast('Refresh failed: ' + (err.message || err));
   } finally {
@@ -17418,21 +18315,21 @@ function renderAttentionPanel() {
       return p.isConfirmed && p.sla && p.sla.overdue && !p.isCompleted;
     });
     if (stalled.length === 0 && depositOverdue.length === 0) {
-      stalledEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> No stalled turns</div>';
+      stalledEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> No stalled turns</div>';
     } else {
       var stalledHtml = '';
       if (depositOverdue.length > 0) {
-        stalledHtml += '<div class="attn-count" style="color:var(--danger)">' + depositOverdue.length + ' turn' + (depositOverdue.length > 1 ? 's' : '') + ' past deposit deadline</div>';
+        stalledHtml += '<div class="attn-count u-danger">' + depositOverdue.length + ' turn' + (depositOverdue.length > 1 ? 's' : '') + ' past deposit deadline</div>';
         depositOverdue.slice(0, 3).forEach(function(p) {
-          stalledHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(p.unit) + ' — ' + escapeHtml(p.property) + '</span><span class="attn-value" style="color:var(--danger)">' + Math.abs(p.sla.calendarDaysLeft) + 'd over</span></div>';
+          stalledHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(p.unit) + ' — ' + escapeHtml(p.property) + '</span><span class="attn-value u-danger">' + Math.abs(p.sla.calendarDaysLeft) + 'd over</span></div>';
         });
       }
       if (stalled.length > 0) {
-        stalledHtml += '<div style="margin-top:' + (depositOverdue.length > 0 ? '6' : '0') + 'px;font-weight:600;font-size:11px;color:var(--warning)">' + stalled.length + ' stalled (' + CONFIG.TURN_STALLED_DAYS + 'd+ no progress)</div>';
+        stalledHtml += '<div class="attn-section-label u-warning" style="margin-top:' + (depositOverdue.length > 0 ? '6' : '0') + 'px">' + stalled.length + ' stalled (' + CONFIG.TURN_STALLED_DAYS + 'd+ no progress)</div>';
         stalled.slice(0, 3).forEach(function(p) {
-          stalledHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(p.unit) + ' — ' + escapeHtml(p.property) + '</span><span class="attn-value" style="color:var(--warning)">' + p.elapsed + 'd</span></div>';
+          stalledHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(p.unit) + ' — ' + escapeHtml(p.property) + '</span><span class="attn-value u-warning">' + p.elapsed + 'd</span></div>';
         });
-        if (stalled.length > 3) stalledHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:4px">+' + (stalled.length - 3) + ' more</div>';
+        if (stalled.length > 3) stalledHtml += '<div class="attn-more">+' + (stalled.length - 3) + ' more</div>';
       }
       stalledEl.innerHTML = stalledHtml;
     }
@@ -17452,17 +18349,17 @@ function renderAttentionPanel() {
     var compliant = totalInsp - overdue.length;
     var compPct = totalInsp > 0 ? Math.round((compliant / totalInsp) * 100) : 100;
     if (overdue.length === 0) {
-      overdueEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> All inspections current (' + compPct + '% compliant)</div>';
+      overdueEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> All inspections current (' + compPct + '% compliant)</div>';
     } else {
-      var overdueHtml = '<div class="attn-count">' + overdue.length + ' overdue <span style="font-size:10px;font-weight:400;color:var(--text-muted)">(' + compPct + '% compliant)</span></div>';
+      var overdueHtml = '<div class="attn-count">' + overdue.length + ' overdue <span class="attn-inline-meta">(' + compPct + '% compliant)</span></div>';
       overdue.slice(0, 5).forEach(function(r) {
         var state = getInspectionCompliance(r, attnToday);
         var ago = state.missingMoveInInspection
           ? 'Missing move-in inspection'
           : (state.anchorDate ? state.daysSince + 'd ago' : 'Never');
-        overdueHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(r.unit || '') + ' — ' + escapeHtml(r.propertyName || '') + '</span><span class="attn-value" style="color:var(--danger)">' + ago + '</span></div>';
+        overdueHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(r.unit || '') + ' — ' + escapeHtml(r.propertyName || '') + '</span><span class="attn-value u-danger">' + ago + '</span></div>';
       });
-      if (overdue.length > 5) overdueHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:4px">+' + (overdue.length - 5) + ' more</div>';
+      if (overdue.length > 5) overdueHtml += '<div class="attn-more">+' + (overdue.length - 5) + ' more</div>';
       overdueEl.innerHTML = overdueHtml;
     }
   }
@@ -17491,22 +18388,22 @@ function renderAttentionPanel() {
       return daysBetween(attnToday, ed) <= CONFIG.VENDOR_EXPIRY_ALERT_DAYS;
     });
     if (vAlerts.length === 0 && expiringSoon.length === 0) {
-      vendorEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> All vendors compliant</div>';
+      vendorEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> All vendors compliant</div>';
     } else {
       var vendorHtml = '';
       if (vAlerts.length > 0) {
-        vendorHtml += '<div class="attn-count" style="color:var(--danger)">' + vAlerts.length + ' expired</div>';
+        vendorHtml += '<div class="attn-count u-danger">' + vAlerts.length + ' expired</div>';
         vAlerts.slice(0, 3).forEach(function(v) {
-          vendorHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(v.name) + '</span><span class="attn-value" style="color:var(--danger)">Expired</span></div>';
+          vendorHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(v.name) + '</span><span class="attn-value u-danger">Expired</span></div>';
         });
-        if (vAlerts.length > 3) vendorHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:2px">+' + (vAlerts.length - 3) + ' more</div>';
+        if (vAlerts.length > 3) vendorHtml += '<div class="attn-more">+' + (vAlerts.length - 3) + ' more</div>';
       }
       if (expiringSoon.length > 0) {
-        vendorHtml += '<div style="margin-top:6px;font-weight:600;font-size:11px;color:var(--warning)">' + expiringSoon.length + ' expiring within ' + CONFIG.VENDOR_EXPIRY_ALERT_DAYS + ' days</div>';
+        vendorHtml += '<div class="attn-section-label u-warning" style="margin-top:6px">' + expiringSoon.length + ' expiring within ' + CONFIG.VENDOR_EXPIRY_ALERT_DAYS + ' days</div>';
         expiringSoon.slice(0, 3).forEach(function(v) {
           var ed = new Date(v.insurance);
           var daysLeft = daysBetween(attnToday, ed);
-          vendorHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(v.name) + '</span><span class="attn-value" style="color:var(--warning)">' + daysLeft + 'd</span></div>';
+          vendorHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(v.name) + '</span><span class="attn-value u-warning">' + daysLeft + 'd</span></div>';
         });
       }
       vendorEl.innerHTML = vendorHtml;
@@ -17522,20 +18419,20 @@ function renderAttentionPanel() {
     });
     var unassigned = urgentOpen.filter(function(w) { return !w.vendorName && !w.vendor; });
     if (urgentOpen.length === 0) {
-      urgentEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> No urgent work orders</div>';
+      urgentEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> No urgent work orders</div>';
     } else {
       var urgentHtml = '<div class="attn-count">' + urgentOpen.length + ' urgent</div>';
       if (unassigned.length > 0) {
-        urgentHtml += '<div style="font-weight:600;font-size:11px;color:var(--danger);margin-bottom:4px">' + unassigned.length + ' unassigned!</div>';
+        urgentHtml += '<div class="attn-section-label u-danger">' + unassigned.length + ' unassigned!</div>';
         unassigned.slice(0, 3).forEach(function(w) {
-          urgentHtml += '<div class="attn-item"><span class="attn-label">#' + escapeHtml(String(w.id)) + ' — ' + escapeHtml((w.description || '').substring(0, 40)) + '</span><span class="attn-value" style="color:var(--danger)">No vendor</span></div>';
+          urgentHtml += '<div class="attn-item"><span class="attn-label">#' + escapeHtml(String(w.id)) + ' — ' + escapeHtml((w.description || '').substring(0, 40)) + '</span><span class="attn-value u-danger">No vendor</span></div>';
         });
       } else {
         urgentOpen.slice(0, 3).forEach(function(w) {
           urgentHtml += '<div class="attn-item"><span class="attn-label">#' + escapeHtml(String(w.id)) + ' — ' + escapeHtml((w.description || '').substring(0, 40)) + '</span><span class="attn-value">' + escapeHtml(w.vendorName || w.vendor || '') + '</span></div>';
         });
       }
-      if (urgentOpen.length > 3) urgentHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:4px">+' + (urgentOpen.length - 3) + ' more</div>';
+      if (urgentOpen.length > 3) urgentHtml += '<div class="attn-more">+' + (urgentOpen.length - 3) + ' more</div>';
       urgentEl.innerHTML = urgentHtml;
     }
   }
@@ -17549,7 +18446,7 @@ function renderAttentionPanel() {
     });
 
     if (!pendingBills.length) {
-      pendingBillsEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle" style="color:var(--success)"></i> No pending bill approvals</div>';
+      pendingBillsEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> No pending bill approvals</div>';
     } else {
       var pbHtml = '<div class="attn-count">' + pendingBills.length + ' pending approval</div>';
       pendingBills.slice(0, 5).forEach(function(b) {
@@ -17557,10 +18454,12 @@ function renderAttentionPanel() {
           escapeHtml(String(b.propertyName || 'Unknown')) + '</span><span class="attn-value">' +
           escapeHtml(currency(b.amount || 0)) + '</span></div>';
       });
-      if (pendingBills.length > 5) pbHtml += '<div style="text-align:center;color:var(--text-muted);font-size:10px;margin-top:4px">+' + (pendingBills.length - 5) + ' more</div>';
+      if (pendingBills.length > 5) pbHtml += '<div class="attn-more">+' + (pendingBills.length - 5) + ' more</div>';
       pendingBillsEl.innerHTML = pbHtml;
     }
   }
+
+  refreshDashboardNeoPanels();
 }
 
 // Patch renderAll to include attention panel
@@ -17630,7 +18529,7 @@ renderDashboardKPIs = function() {
 
   function setStatus(cls, text) {
     connStatus.className = 'dbadmin-status ' + cls;
-    connStatus.innerHTML = '<i class="fas fa-circle" style="font-size:6px"></i> ' + text;
+    connStatus.innerHTML = '<i class="fas fa-circle tiny-dot"></i> ' + text;
   }
 
   function addHistory(sql) {
@@ -17644,7 +18543,7 @@ renderDashboardKPIs = function() {
     if (!histList) return;
     histList.innerHTML = _dbHistory.map(function(sql) {
       return '<div class="dbadmin-history-item" title="' + escapeHtml(sql) + '">' + escapeHtml(sql.length > 80 ? sql.substring(0, 80) + '\u2026' : sql) + '</div>';
-    }).join('') || '<div style="padding:8px;color:var(--text-muted);font-size:11px">No history yet</div>';
+    }).join('') || '<div class="dbadmin-history-empty">No history yet</div>';
   }
 
   // History click → populate editor
@@ -18345,10 +19244,8 @@ renderDashboardKPIs = function() {
     dbTab.addEventListener('click', function() {
       if (!isTabAllowedForRole('dbadmin')) return;
       // Navigate to sec-dbadmin like other tabs
-      document.querySelectorAll('.section').forEach(function(s) { s.classList.remove('active'); });
       document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
-      var sec = document.getElementById('sec-dbadmin');
-      if (sec) sec.classList.add('active');
+      setActiveMainSection('dbadmin');
       dbTab.classList.add('active');
     });
   }
