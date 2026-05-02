@@ -261,7 +261,10 @@ function registerOfflineServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   if (!window.isSecureContext && location.hostname !== 'localhost') return;
 
-  navigator.serviceWorker.register('/sw.js')
+  var basePath = String(location.pathname || '/').replace(/[^/]*$/, '');
+  var swUrl = basePath + 'sw.js';
+
+  navigator.serviceWorker.register(swUrl)
     .then(function(reg) {
       if (reg && reg.waiting) {
         showToast('Offline mode ready', { kind: 'info', duration: 1800, iconClass: 'fa-wifi' });
@@ -310,6 +313,128 @@ function closeModal(id) { document.getElementById(id).classList.remove('show'); 
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 var escHtml = escapeHtml;
+var SESSION_IDLE_TIMEOUT_MS = 3 * 60 * 60 * 1000;
+var _pendingResumeSession = null;
+var _sessionActivityBound = false;
+
+function readLastActivityTimestamp() {
+  try {
+    return Number(localStorage.getItem('hm_last_activity') || 0) || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function markSessionActivity() {
+  try { localStorage.setItem('hm_last_activity', String(Date.now())); } catch (e) { /* */ }
+}
+
+function startSessionActivityTracking() {
+  if (_sessionActivityBound) return;
+  _sessionActivityBound = true;
+  var events = ['click', 'keydown', 'mousemove', 'touchstart', 'scroll', 'focus'];
+  var lastWrite = 0;
+  var onActivity = function() {
+    var now = Date.now();
+    if (now - lastWrite < 10000) return;
+    lastWrite = now;
+    markSessionActivity();
+  };
+  events.forEach(function(evtName) {
+    window.addEventListener(evtName, onActivity, { passive: true });
+  });
+}
+
+function setResumeSessionState(sessionPayload) {
+  _pendingResumeSession = sessionPayload || null;
+  var resumeBtn = $('#vaultResumeBtn');
+  var hint = $('#vaultUserHint');
+  if (!resumeBtn || !hint) return;
+
+  if (!_pendingResumeSession) {
+    resumeBtn.style.display = 'none';
+    hint.style.display = 'none';
+    hint.textContent = '';
+    return;
+  }
+
+  var roleLabel = String(_pendingResumeSession.role || 'session');
+  hint.textContent = 'Verified ' + roleLabel + ' session found. Click Resume Session to continue.';
+  hint.style.display = '';
+  resumeBtn.style.display = '';
+}
+
+async function resumeFromPendingSession() {
+  if (!_pendingResumeSession) return;
+
+  // Re-check inactivity at click time — timeout may have elapsed since page load
+  var lastActivityTs = readLastActivityTimestamp();
+  if (lastActivityTs && (Date.now() - lastActivityTs > SESSION_IDLE_TIMEOUT_MS)) {
+    setResumeSessionState(null);
+    setVaultFeedback('Session timed out after 3 hours of inactivity. Please sign in again.', 'info');
+    return;
+  }
+
+  // Always re-validate the token fresh on click — never trust cached pending state alone.
+  // This catches STALE tokens that became invalid between page load and the button click.
+  var token = _pendingResumeSession.token;
+  var proxyUrl = _pendingResumeSession.proxyUrl;
+  var vhost = _pendingResumeSession.vhost;
+  setVaultFeedback('Verifying session\u2026', 'info');
+  var freshSession;
+  try {
+    var sep = proxyUrl.indexOf('?') !== -1 ? '&' : '?';
+    var siRes = await fetchWithTimeout(proxyUrl + sep + 'action=session_info', {
+      headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + token }
+    }, 15000);
+    if (!siRes.ok) throw new Error('HTTP ' + siRes.status);
+    var siJson = await siRes.json();
+    if (!siJson || !siJson.ok || !siJson.authenticated || !siJson.session) {
+      throw new Error('Session invalid or stale');
+    }
+    freshSession = siJson.session;
+  } catch (err) {
+    clearStoredProxySessionTokens();
+    setResumeSessionState(null);
+    setVaultFeedback('Session expired or token is stale. Please sign in again.', '');
+    return;
+  }
+
+  // Token fresh-validated — proceed to unlock using authoritative server data
+  var prevRole = getStoredAccessRole();
+  _sessionExpiryHandled = false;
+  beginProxySessionStartupGrace(60000);
+  API_PROXY = proxyUrl;
+  API_VHOST = vhost;
+  API_CREDS = { p: token };
+  _accessRole = normalizeAccessRole(freshSession.role || prevRole);
+  if (freshSession.property_group_uuid) {
+    forcedPropertyGroupUuid = String(freshSession.property_group_uuid);
+    try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (e) { /* */ }
+  }
+  if (freshSession.login_email) {
+    _pmScopeEmail = String(freshSession.login_email);
+    try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (e) { /* */ }
+  }
+  markProxySessionHealthy();
+  persistAccessRole(_accessRole);
+  await enforceSessionTypeTransitionReset(prevRole, _accessRole);
+  setVaultFeedback('', '');
+  setResumeSessionState(null);
+  $('#vaultScreen').style.display = 'none';
+  $('#appShell').classList.add('unlocked');
+  applyAccessRole();
+  await initApp();
+  maybeAutoRunSystemHealthCheck();
+  if (_accessRole === 'pm_readonly') {
+    try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (e) { /* */ }
+    enforceScopedPropertyGroup();
+  }
+  applyAccessRole();
+  startAutoSync();
+  startSessionActivityTracking();
+  markSessionActivity();
+}
 
 // ── hmConfirm / hmPrompt ──────────────────────────────────────────────────────
 // Promise-based modal replacements for native confirm() and prompt().
@@ -2540,8 +2665,8 @@ function generateOperationalAlerts() {
     }
   }
   // Guest card inquiries
-  if (TURN_BOARD && Array.isArray(TURN_BOARD)) {
-    var guestCount = TURN_BOARD.filter(function(t) { return String(t.type || '').toLowerCase() === 'guest' && String(t.status || '').toLowerCase() === 'pending'; }).length;
+  if (TURNS && Array.isArray(TURNS)) {
+    var guestCount = TURNS.filter(function(t) { return String(t.type || '').toLowerCase() === 'guest' && String(t.status || '').toLowerCase() === 'pending'; }).length;
     if (guestCount > 0) {
       alerts.push({
         id: 'guest-inquiries',
@@ -4472,6 +4597,8 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   }
   applyAccessRole();
   startAutoSync();
+  startSessionActivityTracking();
+  markSessionActivity();
   showToast('Connected — ' + vhost + '.appfolio.com via verified device');
 }
 
@@ -4497,8 +4624,9 @@ if ($('#vhostPreviewPm')) {
 setVaultPanel('main');
 
 // ── Session hydration on page load ─────────────────────────────────────────
-// If the browser has a stored token + saved proxy config, silently re-validate
-// the session against the proxy and bypass the vault screen entirely.
+// If the browser has a stored token + saved proxy config, validate it and
+// expose an explicit "Resume Session" action. Auto-unlock is intentionally
+// disabled for safer shared-device behavior.
 (async function _tryResumeSession() {
   var _token = '';
   try {
@@ -4520,7 +4648,14 @@ setVaultPanel('main');
   } catch (e) { /* */ }
   if (!_proxyUrl) return;
 
-  setVaultFeedback('Resuming session\u2026', 'info');
+  var lastActivityTs = readLastActivityTimestamp();
+  if (lastActivityTs && (Date.now() - lastActivityTs > SESSION_IDLE_TIMEOUT_MS)) {
+    setVaultFeedback('Session timed out after 3 hours of inactivity. Enter password to continue.', 'info');
+    setResumeSessionState(null);
+    return;
+  }
+
+  setVaultFeedback('Checking stored session\u2026', 'info');
   try {
     var _sep = _proxyUrl.indexOf('?') !== -1 ? '&' : '?';
     var _siUrl = _proxyUrl + _sep + 'action=session_info';
@@ -4532,45 +4667,35 @@ setVaultPanel('main');
     if (!_siData || !_siData.ok || !_siData.authenticated || !_siData.session) {
       throw new Error('Session invalid');
     }
-    // Valid — restore state and unlock vault
-    var _prevRole = getStoredAccessRole();
-    _sessionExpiryHandled = false;
-    beginProxySessionStartupGrace(60000);
-    API_PROXY = _proxyUrl;
-    API_VHOST = _vhost;
-    API_CREDS = { p: _token };
-    _accessRole = normalizeAccessRole(_siData.session.role || _prevRole);
-    if (_siData.session.property_group_uuid) {
-      forcedPropertyGroupUuid = String(_siData.session.property_group_uuid);
-      try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (e) { /* */ }
-    }
-    if (_siData.session.login_email) {
-      _pmScopeEmail = String(_siData.session.login_email);
-      try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (e) { /* */ }
-    }
-    markProxySessionHealthy();
-    persistAccessRole(_accessRole);
-    await enforceSessionTypeTransitionReset(_prevRole, _accessRole);
-    setVaultFeedback('', '');
-    $('#vaultScreen').style.display = 'none';
-    $('#appShell').classList.add('unlocked');
-    applyAccessRole();
-    await initApp();
-    maybeAutoRunSystemHealthCheck();
-    if (_accessRole === 'pm_readonly') {
-      try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (e) { /* */ }
-      enforceScopedPropertyGroup();
-    }
-    applyAccessRole();
-    startAutoSync();
+    setResumeSessionState({
+      token: _token,
+      proxyUrl: _proxyUrl,
+      vhost: _vhost,
+      role: _siData.session.role,
+      property_group_uuid: _siData.session.property_group_uuid,
+      login_email: _siData.session.login_email,
+    });
+    setVaultFeedback('Session verified. Click Resume Session.', 'info');
   } catch (err) {
     // Token expired or invalid — clean up and show vault
     API_CREDS = null;
     API_PROXY = '';
     clearStoredProxySessionTokens();
+    setResumeSessionState(null);
     setVaultFeedback('', '');
   }
 })();
+
+if ($('#vaultResumeBtn')) {
+  $('#vaultResumeBtn').addEventListener('click', async function() {
+    try {
+      await resumeFromPendingSession();
+    } catch (err) {
+      setVaultFeedback('Could not resume session. Please sign in again.', '');
+      setResumeSessionState(null);
+    }
+  });
+}
 
 $('#vaultUnlockBtn').addEventListener('click', async function() {
   var previousRole = getStoredAccessRole();
@@ -7742,7 +7867,7 @@ function renderMoveOuts() {
   var html = '';
   moves.forEach(function(m) {
     var urgClass = m.daysLeft <= 14 ? 'moveout-urgent' : m.daysLeft <= 30 ? 'moveout-soon' : 'moveout-normal';
-    html += '<tr>';
+    html += '<tr data-woca-idx="' + idx + '">';
     html += '<td>' + escapeHtml(m.property) + '</td>';
     html += '<td>' + escapeHtml(m.unit) + '</td>';
     html += '<td>' + escapeHtml(m.tenant || '\u2014') + '</td>';
@@ -10340,24 +10465,44 @@ function renderActivityFeed() {
     }
   }
 
-  activities = activities.slice(0, 30);
-
-  if (activities.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4">' + emptyHtml('fa-inbox', 'No activity to show') + '</td></tr>';
-    return;
-  }
-
-  var html = '';
-  activities.forEach(function(a) {
-    html += '<tr class="u-row-click" data-woca-idx="' + idx + '" title="Click row to view details & send pager notice">';
-    html += '<td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;"><i class="fas ' + a.icon + '" style="color:' + a.iconColor + ';margin-right:4px;font-size:10px"></i>' + a.time + '</td>';
-    html += '<td>' + a.event + '</td>';
-    html += '<td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">' + a.entity + '</td>';
-    html += '<td style="font-size:11px"><div style="color:var(--text-secondary)">' + a.detail + '</div>';
-    if (a.extra) { html += '<div style="margin-top:2px;font-size:10px">' + a.extra + '</div>'; }
-    html += '</td></tr>';
+  window._activityPageState = window._activityPageState || { page: 1, pageSize: 50 };
+  var activityView = buildUniversalTable([
+    { key: 'time', cellAttrs: 'style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;"', render: function(a) { return '<i class="fas ' + a.icon + '" style="color:' + a.iconColor + ';margin-right:4px;font-size:10px"></i>' + a.time; } },
+    { key: 'event', render: function(a) { return a.event; } },
+    { key: 'entity', cellAttrs: 'style="font-family:var(--font-mono);font-size:12px;color:var(--accent)"', render: function(a) { return a.entity; } },
+    { key: 'detail', cellAttrs: 'style="font-size:11px"', render: function(a) { return '<div style="color:var(--text-secondary)">' + a.detail + '</div>' + (a.extra ? '<div style="margin-top:2px;font-size:10px">' + a.extra + '</div>' : ''); } },
+  ], activities, window._activityPageState, {
+    getRowClass: function() { return 'u-row-click'; },
+    emptyRowHtml: '<tr><td colspan="4">' + emptyHtml('fa-inbox', 'No activity to show') + '</td></tr>'
   });
-  tbody.innerHTML = html;
+  tbody.innerHTML = activityView.html;
+
+  var activityTable = document.getElementById('activityTable');
+  var activityWrap = activityTable ? activityTable.closest('.table-wrapper') : null;
+  var footer = document.getElementById('activityFooter');
+  if (!footer && activityWrap) {
+    footer = document.createElement('div');
+    footer.id = 'activityFooter';
+    footer.className = 'u-table-footer-split';
+    activityWrap.appendChild(footer);
+  }
+  if (footer) {
+    if (activityView.total <= 0) {
+      footer.style.display = 'none';
+    } else {
+      footer.style.display = '';
+      footer.innerHTML = '<span>Showing ' + activityView.start + '–' + activityView.end + ' of ' + activityView.total + ' activity rows</span>' +
+        '<span class="u-pagination-row">' +
+        '<button class="action-btn u-action-btn-sm" id="activityPrev"' + (window._activityPageState.page <= 1 ? ' disabled' : '') + '>Prev</button>' +
+        '<span class="u-mono-sm">Page ' + window._activityPageState.page + ' / ' + activityView.totalPages + '</span>' +
+        '<button class="action-btn u-action-btn-sm" id="activityNext"' + (window._activityPageState.page >= activityView.totalPages ? ' disabled' : '') + '>Next</button>' +
+        '</span>';
+      var activityPrev = document.getElementById('activityPrev');
+      var activityNext = document.getElementById('activityNext');
+      if (activityPrev) activityPrev.onclick = function() { if (window._activityPageState.page > 1) { window._activityPageState.page -= 1; renderActivityFeed(); } };
+      if (activityNext) activityNext.onclick = function() { if (window._activityPageState.page < activityView.totalPages) { window._activityPageState.page += 1; renderActivityFeed(); } };
+    }
+  }
 }
 
 var currentWOFilter = 'all';
@@ -10376,7 +10521,7 @@ var currentOccupancySubtab = 'tenant-transactions'; // tenant-transactions | ten
 var _billingMainData = [];
 var _billingMainFiltered = [];
 var _billingMainPage = 1;
-var _billingMainPageSize = 25;
+var _billingMainPageSize = 50;
 var _billingMainLoading = false;
 var currentErrorsSubtab = 'log'; // log | email-delivery
 var currentActivityFilter = 'all';
@@ -10415,6 +10560,7 @@ function setWOView(viewType) {
   var listBtn  = $('#btnWOViewList');
   if (boardBtn) boardBtn.classList.toggle('active', currentWOView === 'board');
   if (listBtn)  listBtn.classList.toggle('active',  currentWOView === 'list');
+  renderWorkOrders();
 }
 
 function setWOSubtab(tab) {
@@ -11370,6 +11516,72 @@ function renderBillingSection(opts) {
   if (opts && opts.forceRefresh) loadBillingMain();
 }
 
+function getReportRows(payload, preferredKey) {
+  var data = payload || {};
+  if (preferredKey && Array.isArray(data[preferredKey])) return data[preferredKey];
+  if (Array.isArray(data.results)) return data.results;
+  if (Array.isArray(data.data)) return data.data;
+  if (Array.isArray(data.rows)) return data.rows;
+  if (preferredKey && data[preferredKey] && Array.isArray(data[preferredKey].results)) return data[preferredKey].results;
+  var keys = Object.keys(data);
+  for (var i = 0; i < keys.length; i++) {
+    var v = data[keys[i]];
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === 'object' && Array.isArray(v.results)) return v.results;
+  }
+  return [];
+}
+
+function buildUniversalTable(columns, rows, pageState, opts) {
+  var options = opts || {};
+  var state = pageState || {};
+  var pageSize = Math.max(1, Math.min(200, Number(state.pageSize || 50) || 50));
+  var page = Math.max(1, Number(state.page || 1) || 1);
+  var total = rows.length;
+  var totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (page > totalPages) page = totalPages;
+  var start = (page - 1) * pageSize;
+  var pageRows = rows.slice(start, start + pageSize);
+  state.page = page;
+  state.pageSize = pageSize;
+
+  if (!total) {
+    return {
+      html: options.emptyRowHtml || '',
+      pageRows: [],
+      total: 0,
+      totalPages: 1,
+      page: 1,
+      start: 0,
+      end: 0,
+    };
+  }
+
+  var html = '';
+  pageRows.forEach(function(row, i) {
+    var absIdx = start + i;
+    var attrs = options.getRowAttrs ? options.getRowAttrs(row, absIdx, i) : '';
+    var klass = options.getRowClass ? options.getRowClass(row, absIdx, i) : '';
+    html += '<tr' + (klass ? (' class="' + klass + '"') : '') + (attrs ? (' ' + attrs) : '') + '>';
+    columns.forEach(function(col) {
+      var cellAttrs = col.cellAttrs ? ' ' + col.cellAttrs : '';
+      var rendered = col.render ? col.render(row, absIdx, i) : escapeHtml(String(row[col.key] || ''));
+      html += '<td' + cellAttrs + '>' + rendered + '</td>';
+    });
+    html += '</tr>';
+  });
+
+  return {
+    html: html,
+    pageRows: pageRows,
+    total: total,
+    totalPages: totalPages,
+    page: page,
+    start: start + 1,
+    end: Math.min(total, start + pageSize),
+  };
+}
+
 /* ─── Billing Main: saved report ──────────────────────────────────────────── */
 async function loadBillingMain() {
   if (_billingMainLoading) return;
@@ -11379,7 +11591,7 @@ async function loadBillingMain() {
   setSectionBusy('sec-billing', true, 'Loading billing records…');
   try {
     var data = await proxyAction('billing_saved_report');
-    var rows = (data && data.billing_search_results) ? data.billing_search_results : [];
+    var rows = getReportRows(data, 'billing_search_results');
     _billingMainData = rows;
     applyBillingMainFilters();
   } catch(e) {
@@ -11428,15 +11640,36 @@ function renderBillingMainTable() {
   var pageMeta = $('#billingMainPageMeta');
   if (!body) return;
   var rows = _billingMainFiltered;
-  var total = rows.length;
-  var pageCount = Math.max(1, Math.ceil(total / _billingMainPageSize));
-  _billingMainPage = Math.min(_billingMainPage, pageCount);
-  var start = (_billingMainPage - 1) * _billingMainPageSize;
-  var pageRows = rows.slice(start, start + _billingMainPageSize);
+  var state = { page: _billingMainPage, pageSize: _billingMainPageSize };
+  var view = buildUniversalTable([
+    { key: 'billing_id', render: function(row) { return '<span class="u-mono-sm">' + escHtml(row.billing_id || '—') + '</span>'; } },
+    { key: 'property', render: function(row) { return escHtml((row.property_context && row.property_context.property_name) || '—'); } },
+    { key: 'wo_desc', render: function(row) { return escHtml((row.work_order && row.work_order.description) || '—'); } },
+    { key: 'vendor', render: function(row) { return escHtml((row.vendor && row.vendor.vendor_name) || '—'); } },
+    { key: 'amount', cellAttrs: 'class="u-num-cell"', render: function(row) {
+      return row.financials && row.financials.amount_total != null
+        ? '$' + Number(row.financials.amount_total).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})
+        : '—';
+    } },
+    { key: 'status', render: function(row) {
+      var statusRaw = (row.work_order && row.work_order.status) || '—';
+      var statusEsc = escHtml(statusRaw);
+      var statusCls = statusRaw === 'Completed' ? 'badge-success' : statusRaw === 'In Progress' ? 'badge-warning' : statusRaw === 'Open' ? 'badge-info' : 'badge-muted';
+      return '<span class="badge ' + statusCls + '">' + statusEsc + '</span>';
+    } },
+    { key: 'created_at', cellAttrs: 'class="u-date-cell"', render: function(row) { return escHtml((row.dates && row.dates.created_at) || '—'); } },
+    { key: 'last_billed_on', cellAttrs: 'class="u-date-cell"', render: function(row) { return escHtml((row.dates && row.dates.last_billed_on) || '—'); } },
+  ], rows, state, {
+    getRowClass: function() { return 'u-row-click'; },
+    getRowAttrs: function(row) { return 'data-billing-id="' + escHtml(row.billing_id || '') + '"'; },
+    emptyRowHtml: '<tr><td colspan="8" class="u-table-empty-cell">No billing records match the current filters</td></tr>'
+  });
+  _billingMainPage = state.page;
+  _billingMainPageSize = state.pageSize;
 
   // KPI update
   var kpiCount = $('#billKpiPending'), kpiTotal = $('#billKpiTotal'), kpiPaid = $('#billKpiPaid'), kpiVendors = $('#billKpiVendors');
-  if (kpiCount) kpiCount.textContent = total.toLocaleString();
+  if (kpiCount) kpiCount.textContent = view.total.toLocaleString();
   var totalBilled = rows.reduce(function(s, r){ return s + (r.financials && r.financials.amount_total ? Number(r.financials.amount_total) : 0); }, 0);
   if (kpiTotal) kpiTotal.textContent = '$' + totalBilled.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
   var now = new Date(), thisMonth = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
@@ -11446,37 +11679,12 @@ function renderBillingMainTable() {
   rows.forEach(function(r){ if (r.vendor && r.vendor.vendor_id) vendorSet[r.vendor.vendor_id] = true; });
   if (kpiVendors) kpiVendors.textContent = Object.keys(vendorSet).length.toLocaleString();
 
-  if (total === 0) {
-    body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell">No billing records match the current filters</td></tr>';
+  if (view.total === 0) {
+    body.innerHTML = view.html;
     if (footer) footer.style.display = 'none';
     return;
   }
-
-  var html = '';
-  pageRows.forEach(function(row) {
-    var billingId = escHtml(row.billing_id || '—');
-    var propName  = escHtml((row.property_context && row.property_context.property_name) || '—');
-    var woDesc    = escHtml((row.work_order && row.work_order.description) || '—');
-    var vendor    = escHtml((row.vendor && row.vendor.vendor_name) || '—');
-    var amount    = row.financials && row.financials.amount_total != null
-                    ? '$' + Number(row.financials.amount_total).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})
-                    : '—';
-    var woStatus  = escHtml((row.work_order && row.work_order.status) || '—');
-    var created   = escHtml((row.dates && row.dates.created_at) || '—');
-    var lastBill  = escHtml((row.dates && row.dates.last_billed_on) || '—');
-    var statusCls = woStatus === 'Completed' ? 'badge-success' : woStatus === 'In Progress' ? 'badge-warning' : woStatus === 'Open' ? 'badge-info' : 'badge-muted';
-    html += '<tr class="u-row-click" data-billing-id="' + escHtml(row.billing_id || '') + '">' +
-      '<td><span class="u-mono-sm">' + billingId + '</span></td>' +
-      '<td>' + propName + '</td>' +
-      '<td>' + woDesc + '</td>' +
-      '<td>' + vendor + '</td>' +
-      '<td class="u-num-cell">' + amount + '</td>' +
-      '<td><span class="badge ' + statusCls + '">' + woStatus + '</span></td>' +
-      '<td class="u-date-cell">' + created + '</td>' +
-      '<td class="u-date-cell">' + lastBill + '</td>' +
-      '</tr>';
-  });
-  body.innerHTML = html;
+  body.innerHTML = view.html;
 
   body.querySelectorAll('.u-row-click').forEach(function(tr) {
     tr.addEventListener('click', function() {
@@ -11486,11 +11694,11 @@ function renderBillingMainTable() {
     });
   });
 
-  if (footer) footer.style.display = pageCount > 1 ? '' : 'none';
-  if (pageMeta) pageMeta.textContent = 'Page ' + _billingMainPage + ' of ' + pageCount + ' (' + total.toLocaleString() + ' records)';
+  if (footer) footer.style.display = view.totalPages > 1 ? '' : 'none';
+  if (pageMeta) pageMeta.textContent = 'Page ' + _billingMainPage + ' of ' + view.totalPages + ' (' + view.total.toLocaleString() + ' records)';
   var prev = $('#billingMainPrev'), next = $('#billingMainNext');
   if (prev) prev.disabled = _billingMainPage <= 1;
-  if (next) next.disabled = _billingMainPage >= pageCount;
+  if (next) next.disabled = _billingMainPage >= view.totalPages;
 }
 
 function showBillingMainModal(row) {
@@ -12187,6 +12395,55 @@ function renderWorkOrders() {
   if (!board) return;
   rebuildWOScopedFilters();
   var filtered = sortWorkOrders(getFilteredWOs());
+
+  // ── List view ──────────────────────────────────────────────────────────────
+  if (currentWOView === 'list') {
+    if (!window._woListPageState) window._woListPageState = { page: 1, pageSize: 50 };
+    var woListResult = buildUniversalTable([
+      { label: 'WO #',        render: function(wo) { return '<strong>#' + escapeHtml(String(wo.id || '')) + '</strong>'; } },
+      { label: 'Property',    render: function(wo) { return escapeHtml(wo.propertyName || '\u2014'); } },
+      { label: 'Unit',        render: function(wo) { return escapeHtml(wo.unit || '\u2014'); } },
+      { label: 'Description', render: function(wo) { return '<span style="font-size:12px">' + escapeHtml(wo.description || '\u2014') + '</span>'; } },
+      { label: 'Status',      render: function(wo) { return '<span class="tag">' + escapeHtml(wo.status || '\u2014') + '</span>'; } },
+      { label: 'Priority',    render: function(wo) { var pc = String(wo.priority || 'normal').toLowerCase(); return '<span class="tag ' + pc + '">' + escapeHtml(wo.priority || 'Normal') + '</span>'; } },
+      { label: 'Vendor',      render: function(wo) { return escapeHtml(wo.vendorName || '\u2014'); } },
+      { label: 'Age',         render: function(wo) { var m = getWOAgeMeta(wo); return m.days !== null ? '<span class="wo-age-pill ' + m.cls + '">' + escapeHtml(m.label) + '</span>' : '\u2014'; } },
+    ], filtered, window._woListPageState, {
+      getRowAttrs: function(wo) { return 'data-woid="' + escapeHtml(String(wo.id || '')) + '"'; },
+      getRowClass: function() { return 'u-row-click'; },
+      emptyRowHtml: '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted)">No work orders match the current filters.</td></tr>',
+    });
+    var thHtml = ['WO #', 'Property', 'Unit', 'Description', 'Status', 'Priority', 'Vendor', 'Age']
+      .map(function(h) { return '<th>' + h + '</th>'; }).join('');
+    board.innerHTML = '<div class="table-wrapper">' +
+      '<table class="data-table"><thead><tr>' + thHtml + '</tr></thead>' +
+      '<tbody>' + woListResult.html + '</tbody></table>' +
+      '<div class="u-table-footer-split" id="woListFooter"></div>' +
+      '</div>';
+    var woListFooter = document.getElementById('woListFooter');
+    if (woListFooter) {
+      if (woListResult.total <= 0) {
+        woListFooter.style.display = 'none';
+      } else {
+        woListFooter.innerHTML = '<span>Showing ' + woListResult.start + '\u2013' + woListResult.end + ' of ' + woListResult.total + ' work orders</span>' +
+          '<span class="u-pagination-row">' +
+          '<button class="action-btn u-action-btn-sm" id="woListPrev"' + (window._woListPageState.page <= 1 ? ' disabled' : '') + '>Prev</button>' +
+          '<span class="u-mono-sm">Page ' + window._woListPageState.page + ' / ' + woListResult.totalPages + '</span>' +
+          '<button class="action-btn u-action-btn-sm" id="woListNext"' + (window._woListPageState.page >= woListResult.totalPages ? ' disabled' : '') + '>Next</button>' +
+          '</span>';
+        var woListPrev = document.getElementById('woListPrev');
+        var woListNext = document.getElementById('woListNext');
+        if (woListPrev) woListPrev.onclick = function() { if (window._woListPageState.page > 1) { window._woListPageState.page -= 1; renderWorkOrders(); } };
+        if (woListNext) woListNext.onclick = function() { if (window._woListPageState.page < woListResult.totalPages) { window._woListPageState.page += 1; renderWorkOrders(); } };
+      }
+    }
+    $('#woBadge').textContent = filtered.length || '0';
+    renderWOCloseAssist();
+    renderWOFollowupQueue();
+    renderCompletedWOHistorySection();
+    return;
+  }
+  // ── End list view ──────────────────────────────────────────────────────────
 
   // Sync global group filter dropdown
   var grpSel = $('#globalGroupFilter');
@@ -14862,40 +15119,57 @@ function renderInspections(search) {
     if (th.getAttribute('data-inspsort') === sortCol) th.classList.add(_inspSortDir);
   });
 
-  if (filtered.length === 0) {
-    body.innerHTML = '<tr><td colspan="8">' + emptyHtml('fa-clipboard-check', INSPECTIONS.length === 0 ? 'No inspection data. Try refreshing.' : 'No inspections match filter') + '</td></tr>';
-    return;
-  }
-
-  var html = '';
-  filtered.forEach(function(c, idx) {
-    var r = c.r;
-    var statusTag = c.missingMoveInInspection
-      ? '<span class="tag non-compliant" title="Move-in exists but no inspection on/after move-in">Missing move-in inspection</span>'
-      : c.overdue
-      ? '<span class="tag non-compliant">Overdue</span>'
-      : c.dueSoon
-        ? '<span class="tag" style="background:var(--warning-dim);color:var(--warning)">Due soon</span>'
-        : '<span class="tag compliant">Current</span>';
-    var turnTag = c.linkedTurn
-      ? '<span class="tag assigned" title="Linked to active turn"><i class="fas fa-exchange-alt" style="font-size:8px"></i> ' + escapeHtml(c.linkedTurn.unit) + '</span>'
-      : '<span style="color:var(--text-muted)">\u2014</span>';
-    html += '<tr class="insp-row" data-inspidx="' + idx + '" style="cursor:pointer;' + (c.overdue ? 'background:var(--danger-dim)' : '') + '">';
-    html += '<td>' + escapeHtml(r.propertyName) + ' <i class="fas fa-external-link-alt" style="font-size:8px;opacity:0.4"></i></td>';
-    html += '<td>' + escapeHtml(r.unit) + '</td>';
-    html += '<td style="font-family:var(--font-mono)">' + (r.lastInspection ? formatDate(r.lastInspection) + ' <span style="color:var(--text-muted);font-size:10px">(' + c.daysSince + 'd ago)</span>' : '<span style="color:var(--danger)">Never</span>') + '</td>';
-    html += '<td>' + escapeHtml(r.tenant || '\u2014') + '</td>';
-    html += '<td style="font-family:var(--font-mono)">' + (r.moveIn ? formatDate(r.moveIn) : '\u2014') + '</td>';
-    html += '<td style="font-family:var(--font-mono)">' + (r.moveOut ? formatDate(r.moveOut) : '\u2014') + '</td>';
-    html += '<td>' + statusTag + '</td>';
-    html += '<td>' + turnTag + '</td>';
-    html += '</tr>';
+  window._inspPageState = window._inspPageState || { page: 1, pageSize: 50 };
+  var inspView = buildUniversalTable([
+    { key: 'property', render: function(c) { return escapeHtml(c.r.propertyName) + ' <i class="fas fa-external-link-alt" style="font-size:8px;opacity:0.4"></i>'; } },
+    { key: 'unit', render: function(c) { return escapeHtml(c.r.unit); } },
+    { key: 'lastInspection', cellAttrs: 'style="font-family:var(--font-mono)"', render: function(c) { return c.r.lastInspection ? formatDate(c.r.lastInspection) + ' <span style="color:var(--text-muted);font-size:10px">(' + c.daysSince + 'd ago)</span>' : '<span style="color:var(--danger)">Never</span>'; } },
+    { key: 'tenant', render: function(c) { return escapeHtml(c.r.tenant || '\u2014'); } },
+    { key: 'moveIn', cellAttrs: 'style="font-family:var(--font-mono)"', render: function(c) { return c.r.moveIn ? formatDate(c.r.moveIn) : '\u2014'; } },
+    { key: 'moveOut', cellAttrs: 'style="font-family:var(--font-mono)"', render: function(c) { return c.r.moveOut ? formatDate(c.r.moveOut) : '\u2014'; } },
+    { key: 'status', render: function(c) {
+      if (c.missingMoveInInspection) return '<span class="tag non-compliant" title="Move-in exists but no inspection on/after move-in">Missing move-in inspection</span>';
+      if (c.overdue) return '<span class="tag non-compliant">Overdue</span>';
+      if (c.dueSoon) return '<span class="tag" style="background:var(--warning-dim);color:var(--warning)">Due soon</span>';
+      return '<span class="tag compliant">Current</span>';
+    } },
+    { key: 'turnTag', render: function(c) { return c.linkedTurn ? '<span class="tag assigned" title="Linked to active turn"><i class="fas fa-exchange-alt" style="font-size:8px"></i> ' + escapeHtml(c.linkedTurn.unit) + '</span>' : '<span style="color:var(--text-muted)">\u2014</span>'; } },
+  ], filtered, window._inspPageState, {
+    getRowClass: function() { return 'insp-row u-row-click'; },
+    getRowAttrs: function(c, absIdx) { return 'data-inspidx="' + absIdx + '" style="cursor:pointer;' + (c.overdue ? 'background:var(--danger-dim)' : '') + '"'; },
+    emptyRowHtml: '<tr><td colspan="8">' + emptyHtml('fa-clipboard-check', INSPECTIONS.length === 0 ? 'No inspection data. Try refreshing.' : 'No inspections match filter') + '</td></tr>'
   });
-  body.innerHTML = html;
+  body.innerHTML = inspView.html;
   // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
 
   // Store filtered data for delegation handler to access
   body._filteredData = filtered;
+
+  var tableWrap = body.closest('.table-wrapper') || body.closest('.table-scroll') || body.parentElement;
+  var footer = document.getElementById('inspFooter');
+  if (!footer && tableWrap) {
+    footer = document.createElement('div');
+    footer.id = 'inspFooter';
+    footer.className = 'u-table-footer-split';
+    tableWrap.appendChild(footer);
+  }
+  if (footer) {
+    if (inspView.total <= 0) {
+      footer.style.display = 'none';
+    } else {
+      footer.style.display = '';
+      footer.innerHTML = '<span>Showing ' + inspView.start + '–' + inspView.end + ' of ' + inspView.total + ' inspections</span>' +
+        '<span class="u-pagination-row">' +
+        '<button class="action-btn u-action-btn-sm" id="inspPrev"' + (window._inspPageState.page <= 1 ? ' disabled' : '') + '>Prev</button>' +
+        '<span class="u-mono-sm">Page ' + window._inspPageState.page + ' / ' + inspView.totalPages + '</span>' +
+        '<button class="action-btn u-action-btn-sm" id="inspNext"' + (window._inspPageState.page >= inspView.totalPages ? ' disabled' : '') + '>Next</button>' +
+        '</span>';
+      var inspPrev = document.getElementById('inspPrev');
+      var inspNext = document.getElementById('inspNext');
+      if (inspPrev) inspPrev.onclick = function() { if (window._inspPageState.page > 1) { window._inspPageState.page -= 1; renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); } };
+      if (inspNext) inspNext.onclick = function() { if (window._inspPageState.page < inspView.totalPages) { window._inspPageState.page += 1; renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); } };
+    }
+  }
 
   var ib = $('#inspBadge');
   if (ib) ib.textContent = overdueCount;
