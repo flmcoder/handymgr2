@@ -8656,21 +8656,21 @@ function renderBillsSection(preFilteredData) {
     var billNum = getNormalizedBillDisplayNumber(b);
     var detailId = getNormalizedBillDetailId(b);
     var amountVal = resolveBillAmountValue(b);
-    var vendorText = b.vendorName || b.vendorId || '—';
-    var payeeText = b.payeeUuid || b.vendorUuid || b.vendorId || '';
-    if (b.vendorName && payeeText) vendorText += ' (' + payeeText + ')';
-    var propertyText = String(b.propertyName || '—');
-    var propertyIdText = String(b.propertyId || '').trim();
-    var unitIdText = String(b.unitId || '').trim();
-    var pmText = String(b.propertyManager || '').trim();
+    var vendorText = String(b.vendorName || b.vendor_name || b.vendorId || b.vendor_id || 'Unknown');
+    var payeeText = String(b.payeeUuid || b.vendorUuid || b.vendorId || b.vendor_id || '');
+    if ((b.vendorName || b.vendor_name) && payeeText && payeeText !== vendorText) vendorText += ' (' + payeeText + ')';
+    var propertyText = String(b.propertyName || b.property_name || 'Multiple/Split');
+    var propertyIdText = String(b.propertyId || b.property_id || '').trim();
+    var unitIdText = String(b.unitId || b.unit_id || '').trim();
+    var pmText = String(b.propertyManager || b.property_manager || 'Unknown PM').trim();
     var workOrderId = String(resolveBillWorkOrderRef(b) || '').trim();
     var woBadge = workOrderId
       ? ('<span title="Linked Work Order: ' + escapeHtml(workOrderId) + '"><i class="fas fa-wrench" style="color:var(--accent)"></i></span>')
       : '<span style="color:var(--text-muted)">—</span>';
-    var groupName = resolveBillGroupName(b);
-    var groupCell = groupName
+    var groupName = String(resolveBillGroupName(b) || b.propertyGroup || b.property_group || 'Unknown Group');
+    var groupCell = (groupName !== 'Unknown Group')
       ? '<span class="tag" style="font-size:10px;padding:1px 6px">' + escapeHtml(groupName) + '</span>'
-      : '<span style="color:var(--text-muted)">—</span>';
+      : '<span style="color:var(--text-muted)">' + escapeHtml(groupName) + '</span>';
     var linkBits = [];
     if (propertyIdText) linkBits.push('PID ' + propertyIdText);
     if (unitIdText) linkBits.push('UNIT ' + unitIdText);
@@ -8834,11 +8834,17 @@ function renderBillGrid(data) {
 
   rows.forEach(function(bill) {
     var statusClass = String(bill.status || 'unknown').toLowerCase().replace(/\s+/g, '-');
+    var refNumberHtml = '';
+    if (bill.invoiceNumber || bill.billNumber || bill.workOrderId) {
+      var refStr = bill.invoiceNumber || bill.billNumber || bill.workOrderId;
+      refNumberHtml = '<div style="margin-top:4px;font-size:11px;font-family:var(--font-mono);color:var(--accent)">#' + escapeHtml(refStr) + '</div>';
+    }
     html +=
-      '<div class="kanban-card bill-row-item bill-grid-card" data-bill-id="' + escapeHtml(bill.id) + '">' +
+      '<div class="kanban-card bill-row-item bill-grid-card" data-bill-id="' + escapeHtml(bill.id) + '" style="cursor:pointer">' +
       '<div class="grid-col-main bill-grid-main">' +
       '<strong class="bill-grid-vendor">' + escapeHtml(bill.vendorName || 'Unknown') + '</strong>' +
       '<span class="bill-grid-property"><i class="fas fa-building"></i> ' + escapeHtml(bill.propertyName || 'Multiple/Split') + '</span>' +
+      refNumberHtml +
       '</div>' +
       '<div class="grid-col-meta bill-grid-meta">' +
       '<span class="bill-grid-date"><i class="fas fa-calendar-alt"></i> ' + escapeHtml(formatDate(bill.date || bill.invoice_date || '')) + '</span>' +
@@ -8927,7 +8933,17 @@ function renderBillDetailHTML(data) {
 }
 
 async function fetchAioBills(payload) {
-  var body = payload && typeof payload === 'object' ? payload : {};
+  var body = payload && typeof payload === 'object' ? Object.assign({}, payload) : {};
+
+  // Auto-inject group scope so the proxy can enforce it server-side even if the
+  // frontend filter dropdown wasn't changed.
+  var grpName = normalizeGroupSelectionValue(getEffectiveGroupId());
+  var grpUuid = (typeof getEffectiveGroupUuid === 'function') ? getEffectiveGroupUuid(grpName) : '';
+  if (grpUuid && !body.group_uuid && !body.property_group_uuid) {
+    body.property_group_uuid = grpUuid;
+    body.group_uuid = grpUuid;
+  }
+
   var host = ensureBillingAioGridHost();
   if (host) {
     setBillingQueueRenderMode('aio');
@@ -8945,6 +8961,21 @@ async function fetchAioBills(payload) {
     });
   }
   renderBillGrid(rows);
+
+  // Update result count badge in the table title area
+  var titleEl = document.querySelector('#billing-subpanel-main .table-title');
+  if (titleEl) {
+    var existing = titleEl.querySelector('.aio-result-badge');
+    if (existing) existing.remove();
+    if (rows.length > 0) {
+      var badge = document.createElement('span');
+      badge.className = 'aio-result-badge';
+      badge.style.cssText = 'margin-left:10px;font-size:11px;font-weight:600;background:var(--accent);color:#fff;padding:2px 8px;border-radius:10px;vertical-align:middle';
+      badge.textContent = rows.length.toLocaleString() + ' results';
+      titleEl.appendChild(badge);
+    }
+  }
+
   return res;
 }
 
@@ -9542,13 +9573,13 @@ async function showBillDetailModal(billId) {
     // Resolve vendor info from local cache if missing
     var vendorIdResolved = String(b.vendor_id || b.vendorId || b.payee_uuid || b.payeeUuid || b.vendor_uuid || b.vendorUuid || '').trim();
     var vendorNameResolved = String(b.vendor_name || b.vendorName || '').trim() ||
-      (vendorIdResolved ? resolveVendorNameFromMaps(vendorIdResolved, vendorIdResolved) : '—') || '—';
+      (vendorIdResolved ? resolveVendorNameFromMaps(vendorIdResolved, vendorIdResolved) : 'Unknown') || 'Unknown';
 
     showItemDetail('Bill — ' + String(b.bill_number || b.id || billId), [
       { section: 'Core', icon: 'fa-file-invoice-dollar' },
       { label: 'Bill ID', value: String(b.id || billId) },
-      { label: 'Invoice #', value: String(b.bill_number || b.reference || '—') },
-      { label: 'Status', value: String(b.status_label || b.status || '—') },
+      { label: 'Invoice #', value: String(b.bill_number || b.reference || 'Unknown') },
+      { label: 'Status', value: String(b.status_label || b.status || 'Unknown') },
       { label: 'Amount', value: currency(b.amount || b.total_amount || 0, 2) },
       { label: 'Invoice Date', value: b.invoice_date ? formatDate(b.invoice_date) : '—' },
       { label: 'Due Date', value: b.due_date ? formatDate(b.due_date) : '—' },
@@ -9561,9 +9592,9 @@ async function showBillDetailModal(billId) {
             ? ' <button class="action-btn" id="billGoToVendor" style="padding:2px 8px;font-size:10px;margin-left:8px"><i class="fas fa-external-link-alt"></i> Go to Vendor</button>'
             : '')
       },
-      { label: 'Property', value: String((b.property_name || b.propertyName || '—') + ((b.property_id || b.propertyId) ? (' (' + (b.property_id || b.propertyId) + ')') : '')) },
-      { label: 'Property Group', value: String(b.property_group || b.property_group_name || b.propertyGroup || b._propertyGroup || '—') },
-      { label: 'Property Manager', value: String(b.pm_name || b.property_manager || raw.pm_name || raw.property_manager || raw.PropertyManager || '—') },
+      { label: 'Property', value: String((b.property_name || b.propertyName || 'Multiple/Split') + ((b.property_id || b.propertyId) ? (' (' + (b.property_id || b.propertyId) + ')') : '')) },
+      { label: 'Property Group', value: String(b.property_group || b.property_group_name || b.propertyGroup || b._propertyGroup || 'Unknown Group') },
+      { label: 'Property Manager', value: String(b.pm_name || b.property_manager || raw.pm_name || raw.property_manager || raw.PropertyManager || 'Unknown PM') },
       { label: 'Work Order', value: (function() {
           var woRef = resolveBillWorkOrderRef(b);
           return woRef ? String(woRef) : '—';
@@ -11695,18 +11726,18 @@ async function loadBillingMain() {
     // Normalize bill records to match expected field layout
     rows = rows.map(function(r) {
       return {
-        billing_id: r.bill_number || r.id || r.billing_id || '',
+        billing_id: r.bill_number || r.id || r.billing_id || 'Unknown',
         work_order_number: r.work_order_id || r.work_order_number || '',
         property_id: r.property_id || r.propertyId || '',
-        property_name: r.property_name || r.propertyName || '',
-        job_description: r.remarks || r.reference || '',
-        vendor: r.vendor_name || r.vendor || '',
+        property_name: r.property_name || r.propertyName || 'Multiple/Split',
+        job_description: r.remarks || r.reference || r.job_description || '',
+        vendor: r.vendor_name || r.vendor || r.vendorName || 'Unknown',
         amount: r.amount || r.total_amount || 0,
-        status: r.status_label || r.status || '',
+        status: r.status_label || r.status || 'Unknown',
         created_at: r.invoice_date || r.posting_date || r.created_at || '',
         last_billed_on: r.due_date || r.last_billed_on || '',
-        property_group: r.property_group || r.property_group_name || '',
-        property_manager: r.property_manager || r.pm_name || '',
+        property_group: r.property_group || r.property_group_name || 'Unknown Group',
+        property_manager: r.property_manager || r.pm_name || 'Unknown PM',
         _raw: r
       };
     });
@@ -11774,15 +11805,15 @@ function renderBillingMainTable() {
   var rows = _billingMainFiltered;
   var state = { page: _billingMainPage, pageSize: _billingMainPageSize };
   var view = buildUniversalTable([
-    { key: 'billing_id', render: function(row) { return '<span class="u-mono-sm">' + escHtml(row.billing_id || row.work_order_number || row.invoice || '—') + '</span>'; } },
-    { key: 'property', render: function(row) { return escHtml(row.property_name || row.property || '—'); } },
+    { key: 'billing_id', render: function(row) { return '<span class="u-mono-sm">' + escHtml(row.billing_id || row.work_order_number || row.invoice || 'Unknown') + '</span>'; } },
+    { key: 'property', render: function(row) { return escHtml(row.property_name || row.property || row.propertyName || 'Multiple/Split'); } },
     { key: 'wo_desc', render: function(row) { return escHtml(row.job_description || row.instructions || row.remarks || '—'); } },
-    { key: 'vendor', render: function(row) { return escHtml(row.vendor || row.vendor_name || '—'); } },
+    { key: 'vendor', render: function(row) { return escHtml(row.vendor || row.vendor_name || row.vendorName || 'Unknown'); } },
     { key: 'amount', cellAttrs: 'class="u-num-cell"', render: function(row) {
       var amt = row.amount != null && row.amount !== '' ? Number(row.amount) : null;
       return amt != null && !isNaN(amt)
         ? '$' + amt.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})
-        : '—';
+        : '$0.00';
     } },
     { key: 'status', render: function(row) {
       var statusRaw = row.status || '—';
@@ -11854,18 +11885,18 @@ function showBillingMainModal(row) {
   var woNum  = row.work_order_number || (raw.work_order && raw.work_order.number) || raw.work_order_number || raw.work_order_id || '';
   var woDesc = row.job_description || (raw.work_order && raw.work_order.description) || raw.remarks || raw.reference || '';
   var woType = (raw.work_order && raw.work_order.type) || raw.work_order_type || '';
-  var woStatus = row.status || (raw.work_order && raw.work_order.status) || raw.status_label || '';
-  var prop   = row.property_name || row.property || (raw.property_context && raw.property_context.property_name) || '';
+  var woStatus = row.status || (raw.work_order && raw.work_order.status) || raw.status_label || 'Unknown';
+  var prop   = row.property_name || row.property || (raw.property_context && raw.property_context.property_name) || 'Multiple/Split';
   var addr   = (raw.property_context && raw.property_context.address) || raw.property_address || '';
-  var vendor = row.vendor || row.vendor_name || (raw.vendor && raw.vendor.vendor_name) || '—';
+  var vendor = row.vendor || row.vendor_name || (raw.vendor && raw.vendor.vendor_name) || 'Unknown';
   var amtRaw = row.amount != null ? row.amount : ((raw.financials && raw.financials.amount_total != null) ? raw.financials.amount_total : raw.amount);
-  var amt    = amtRaw != null && amtRaw !== '' ? '$' + Number(amtRaw).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+  var amt    = (amtRaw != null && amtRaw !== '') ? '$' + Number(amtRaw).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : '$0.00';
   var vendorBillRaw = (raw.financials && raw.financials.vendor_bill_amount != null) ? raw.financials.vendor_bill_amount : raw.vendor_bill_amount;
-  var vendorBill  = vendorBillRaw != null && vendorBillRaw !== '' ? '$' + Number(vendorBillRaw).toFixed(2) : '—';
+  var vendorBill  = (vendorBillRaw != null && vendorBillRaw !== '') ? '$' + Number(vendorBillRaw).toFixed(2) : '$0.00';
   var tenantChgRaw = (raw.financials && raw.financials.tenant_total_charge != null) ? raw.financials.tenant_total_charge : raw.tenant_total_charge_amount;
-  var tenantChg   = tenantChgRaw != null && tenantChgRaw !== '' ? '$' + Number(tenantChgRaw).toFixed(2) : '—';
+  var tenantChg   = (tenantChgRaw != null && tenantChgRaw !== '') ? '$' + Number(tenantChgRaw).toFixed(2) : '$0.00';
   var maintLimitRaw = (raw.financials && raw.financials.maintenance_limit != null) ? raw.financials.maintenance_limit : raw.maintenance_limit;
-  var maintLimit  = maintLimitRaw != null && maintLimitRaw !== '' ? '$' + Number(maintLimitRaw).toFixed(2) : '—';
+  var maintLimit  = (maintLimitRaw != null && maintLimitRaw !== '') ? '$' + Number(maintLimitRaw).toFixed(2) : '$0.00';
   var created     = row.created_at || (raw.dates && raw.dates.created_at) || raw.invoice_date || raw.posting_date || '—';
   var completed   = (raw.dates && raw.dates.completed_on) || raw.completed_on || raw.work_completed_on || '—';
   var lastBilled  = row.last_billed_on || (raw.dates && raw.dates.last_billed_on) || raw.due_date || '—';
@@ -17863,13 +17894,16 @@ function wireUpUI() {
   if (btnAioBillSearch) {
     btnAioBillSearch.addEventListener('click', async function() {
       var search = String(($('#billingMainSearch') || {}).value || '').trim();
-      if (!search) {
-        showToast('Enter search terms for AIO deep search', { kind: 'warning' });
+      var dateFrom = String(($('#billingMainFrom') || {}).value || '').trim();
+      var dateTo = String(($('#billingMainTo') || {}).value || '').trim();
+
+      if (!search && !dateFrom && !dateTo) {
+        showToast('Enter search terms or date range for AIO deep search', { kind: 'warning' });
         return;
       }
       try {
         setSectionBusy('sec-billing', true, 'AIO Deep Search in progress…');
-        await fetchAioBills({ search: search });
+        await fetchAioBills({ search: search, date_from: dateFrom, date_to: dateTo });
       } catch (err) {
         showError('AIO Search failed: ' + err.message);
       } finally {
