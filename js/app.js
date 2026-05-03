@@ -54,7 +54,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.7.1';
+var APP_VERSION = 'v9.7.2';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 var DASHBOARD_KPI_HISTORY = [];
@@ -256,6 +256,11 @@ function showToast(msg, durationOrOpts) {
     if (toast && toast.parentNode) toast.parentNode.removeChild(toast);
   }, opts.duration || 3500);
 }
+
+function showError(msg, duration) {
+  showToast(msg, { kind: 'danger', duration: duration || 5000 });
+}
+
 
 function registerOfflineServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
@@ -8712,7 +8717,7 @@ function openBillKanbanCard(billId) {
 }
 
 function ensureBillingAioGridHost() {
-  var queuePanel = document.getElementById('billing-subpanel-queue');
+  var queuePanel = document.getElementById('billing-subpanel-main');
   if (!queuePanel) return null;
   var host = document.getElementById('billAioGridHost');
   if (host) return host;
@@ -8730,7 +8735,7 @@ function ensureBillingAioGridHost() {
 var _billingUseAioGrid = false;
 
 function setBillingQueueRenderMode(mode) {
-  var queuePanel = document.getElementById('billing-subpanel-queue');
+  var queuePanel = document.getElementById('billing-subpanel-main');
   if (!queuePanel) return;
   var host = ensureBillingAioGridHost();
   var tableScroll = queuePanel.querySelector('.table-scroll');
@@ -8928,7 +8933,7 @@ async function fetchAioBills(payload) {
     setBillingQueueRenderMode('aio');
     host.innerHTML = '<div class="bill-grid-loading">' + loadingHtml('Searching bills…') + '</div>';
   }
-  var res = await proxyPost('aio_bills', body);
+  var res = await proxyPost('bills_aio_search', body);
   if (!res || !res.ok) {
     throw new Error((res && (res.error || res.message)) || 'AIO bills search failed');
   }
@@ -17854,6 +17859,24 @@ function wireUpUI() {
   if (billingMainStatus) billingMainStatus.addEventListener('change', applyBillingMainFilters);
   var billingMainSearchBtn = $('#billingMainSearchBtn');
   if (billingMainSearchBtn) billingMainSearchBtn.addEventListener('click', applyBillingMainFilters);
+  var btnAioBillSearch = $('#btnAioBillSearch');
+  if (btnAioBillSearch) {
+    btnAioBillSearch.addEventListener('click', async function() {
+      var search = String(($('#billingMainSearch') || {}).value || '').trim();
+      if (!search) {
+        showToast('Enter search terms for AIO deep search', { kind: 'warning' });
+        return;
+      }
+      try {
+        setSectionBusy('sec-billing', true, 'AIO Deep Search in progress…');
+        await fetchAioBills({ search: search });
+      } catch (err) {
+        showError('AIO Search failed: ' + err.message);
+      } finally {
+        setSectionBusy('sec-billing', false);
+      }
+    });
+  }
 
   // Billing: Pagination
   var billingMainPrev = $('#billingMainPrev');
