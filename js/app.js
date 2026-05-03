@@ -9256,6 +9256,11 @@ function wireBillingFilters() {
   document.addEventListener('groupFilterChanged', function() {
     window._currentBillsCache = [];
     _billsPage = 0;
+    if (currentBillingSubtab === 'main') {
+      _billingMainPage = 1;
+      applyBillingMainFilters();
+      return;
+    }
     if (currentBillingSubtab === 'history') {
       BILL_HISTORY_PAGE = 0;
       runBillHistorySearch();
@@ -11513,7 +11518,15 @@ function renderBillingSection(opts) {
   if (currentBillingSubtab === 'charge-detail') { renderChargeDetailSection(opts); return; }
   if (currentBillingSubtab === 'bill-detail') { renderBillDetailSection(opts); return; }
   // default: main
-  if (opts && opts.forceRefresh) loadBillingMain();
+  if (opts && opts.forceRefresh) {
+    loadBillingMain();
+    return;
+  }
+  if (_billingMainData && _billingMainData.length) {
+    applyBillingMainFilters();
+    return;
+  }
+  loadBillingMain();
 }
 
 function getReportRows(payload, preferredKey) {
@@ -11607,14 +11620,17 @@ function applyBillingMainFilters() {
   var fromVal = String(($('#billingMainFrom') || {}).value || '').trim();
   var toVal   = String(($('#billingMainTo')   || {}).value || '').trim();
   var status  = String(($('#billingMainStatus') || {}).value || '').trim();
+  var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
   var terms = search ? search.split(',').map(function(t){ return t.trim(); }).filter(Boolean) : [];
   var filtered = _billingMainData.filter(function(row) {
     var billingId = row.billing_id || row.work_order_number || row.invoice || '';
     var propertyName = (row.property_context && row.property_context.property_name) || row.property_name || row.property || '';
+    var propertyId = row.property_id || row.propertyId || '';
     var woDesc = (row.work_order && row.work_order.description) || row.job_description || row.instructions || '';
     var vendorName = (row.vendor && row.vendor.vendor_name) || row.vendor || '';
     var woStatus = (row.work_order && row.work_order.status) || row.status || '';
     var createdAt = (row.dates && row.dates.created_at) || row.created_at || '';
+    if (effectiveGroup && !isInPropertyGroup(propertyId, propertyName, effectiveGroup)) return false;
     if (terms.length) {
       var haystack = [
         billingId,
@@ -11644,6 +11660,14 @@ function renderBillingMainTable() {
   var pageMeta = $('#billingMainPageMeta');
   if (!body) return;
   var rows = _billingMainFiltered;
+  var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+  if (effectiveGroup) {
+    rows = rows.filter(function(row) {
+      var pid = row.property_id || row.propertyId || '';
+      var pname = (row.property_context && row.property_context.property_name) || row.property_name || row.property || '';
+      return isInPropertyGroup(pid, pname, effectiveGroup);
+    });
+  }
   var state = { page: _billingMainPage, pageSize: _billingMainPageSize };
   var view = buildUniversalTable([
     { key: 'billing_id', render: function(row) { return '<span class="u-mono-sm">' + escHtml(row.billing_id || row.work_order_number || row.invoice || '—') + '</span>'; } },
@@ -12256,8 +12280,14 @@ function renderOccupancySubtab(subtab) {
   var body = $('#' + cfg.bodyId);
   if (!body) return;
   var rows = (_occupancyRowsBySubtab[subtab] || []).slice();
+  var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
   var terms = getOccupancySearchTerms(subtab);
   rows = rows.filter(function(r) {
+    if (effectiveGroup) {
+      var pid = r.property_id || r.propertyId || '';
+      var pname = r.property_name || r.property || r.property_name_address || '';
+      if (!isInPropertyGroup(pid, pname, effectiveGroup)) return false;
+    }
     if (!occupancyIsCurrentLease(subtab, r)) return false;
     if (!terms.length) return true;
     var hay = occupancyRowSearchText(r);
@@ -18435,6 +18465,7 @@ function wireUpUI() {
     routing: function() { loadRoutingEventsAndStats().catch(function() {}); loadRoutingCapabilities().catch(function() {}); },
     payroll: function() { renderPayroll(); },
     billing: function() { renderBillingSection(); },
+    occupancy: function() { renderOccupancySubtab(currentOccupancySubtab || 'tenant-transactions'); },
     properties: function() { renderPropertiesSection(); },
     turnboard: function() { renderTurnPipelineUI(); },
     inspections: function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
@@ -18444,8 +18475,16 @@ function wireUpUI() {
   // Optimized: only re-render the active tab + KPIs, defer via requestAnimationFrame
   // Other tabs marked dirty and re-rendered lazily when switched to
   function applyGroupFilterChange() {
-    var activeTab = document.querySelector('.nav-tab.active');
-    var tabName = activeTab ? activeTab.getAttribute('data-tab') : 'dashboard';
+    var activeTab = document.querySelector('.nav-tab.active[data-tab], .tab-btn.active[data-tab], [data-tab].active');
+    var tabName = activeTab ? activeTab.getAttribute('data-tab') : '';
+    if (!tabName) {
+      var activeSection = document.querySelector('.section.active');
+      if (activeSection && activeSection.id) {
+        var sec = String(activeSection.id).replace(/^sec-/, '');
+        if (_tabRenderMap[sec]) tabName = sec;
+      }
+    }
+    if (!tabName || !_tabRenderMap[tabName]) tabName = 'dashboard';
     // Mark all renderable tabs as dirty
     Object.keys(_tabRenderMap).forEach(function(t) { _groupFilterDirty[t] = true; });
     // Immediately clear + render the active tab (deferred one frame to unblock the event)
