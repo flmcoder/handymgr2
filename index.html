@@ -78,7 +78,7 @@
       <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.7.1</span></div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.7.2</span></div>
   </div>
 </div>
 
@@ -90,7 +90,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.7.1</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.7.2</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -118,7 +118,7 @@
     <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
     <div>
       <div class="sidebar-brand-text">HandyMgr</div>
-      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.7.1</div>
+      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.7.2</div>
     </div>
   </div>
 
@@ -667,19 +667,25 @@
   <div class="table-wrapper">
     <div class="table-header">
       <div class="table-title"><i class="fas fa-file-invoice-dollar" style="color:var(--accent)"></i> Billing Records</div>
-      <div class="u-toolbar-row">
-        <input type="text" id="billingMainSearch" class="search-box u-minw-220" placeholder="Search WO, property, vendor, description (comma-separated)…">
-        <span class="u-toolbar-label">From</span>
-        <input type="date" id="billingMainFrom" class="u-input-compact">
-        <span class="u-toolbar-label">To</span>
-        <input type="date" id="billingMainTo" class="u-input-compact">
-        <select id="billingMainStatus" class="filter-select u-toolbar-select-sm">
+      <div class="u-toolbar-row" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding: 10px; background: var(--bg-secondary); border-radius: 8px;">
+        <input type="text" id="billingMainSearch" class="search-box u-minw-220" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);" placeholder="Search WO, property, vendor (comma-separated)…">
+        <div style="display:flex; align-items:center; gap: 4px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px;">
+          <span class="u-toolbar-label" style="font-size:12px; color:var(--text-muted);">From</span>
+          <input type="date" id="billingMainFrom" style="border:none; background:transparent; font-size:12px; padding:4px; outline:none; color:var(--text-primary);">
+        </div>
+        <div style="display:flex; align-items:center; gap: 4px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px;">
+          <span class="u-toolbar-label" style="font-size:12px; color:var(--text-muted);">To</span>
+          <input type="date" id="billingMainTo" style="border:none; background:transparent; font-size:12px; padding:4px; outline:none; color:var(--text-primary);">
+        </div>
+        <select id="billingMainStatus" class="filter-select u-toolbar-select-sm" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);">
           <option value="">All WO Statuses</option>
           <option value="Completed">Completed</option>
           <option value="In Progress">In Progress</option>
           <option value="Open">Open</option>
           <option value="Canceled">Canceled</option>
         </select>
+        <button id="billingMainSearchBtn" class="action-btn primary" style="padding: 6px 16px; border-radius: 6px;"><i class="fas fa-search"></i> Search</button>
+        <button id="btnAioBillSearch" class="action-btn" title="Unified Backend Search (V0 + V2)" style="padding: 6px 16px; border-radius: 6px; background: var(--bg-secondary); border: 1px solid var(--accent); color: var(--accent);"><i class="fas fa-database"></i> AIO Search</button>
       </div>
     </div>
     <div class="table-scroll">
