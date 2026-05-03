@@ -11609,22 +11609,26 @@ function applyBillingMainFilters() {
   var status  = String(($('#billingMainStatus') || {}).value || '').trim();
   var terms = search ? search.split(',').map(function(t){ return t.trim(); }).filter(Boolean) : [];
   var filtered = _billingMainData.filter(function(row) {
+    var billingId = row.billing_id || row.work_order_number || row.invoice || '';
+    var propertyName = (row.property_context && row.property_context.property_name) || row.property_name || row.property || '';
+    var woDesc = (row.work_order && row.work_order.description) || row.job_description || row.instructions || '';
+    var vendorName = (row.vendor && row.vendor.vendor_name) || row.vendor || '';
+    var woStatus = (row.work_order && row.work_order.status) || row.status || '';
+    var createdAt = (row.dates && row.dates.created_at) || row.created_at || '';
     if (terms.length) {
       var haystack = [
-        row.billing_id || '',
-        (row.property_context && row.property_context.property_name) || '',
-        (row.work_order && row.work_order.description) || '',
-        (row.vendor && row.vendor.vendor_name) || ''
+        billingId,
+        propertyName,
+        woDesc,
+        vendorName
       ].join(' ').toLowerCase();
       if (!terms.every(function(t){ return haystack.indexOf(t) !== -1; })) return false;
     }
     if (fromVal || toVal) {
-      var created = (row.dates && row.dates.created_at) || '';
-      if (fromVal && created < fromVal) return false;
-      if (toVal   && created > toVal)   return false;
+      if (fromVal && createdAt && createdAt < fromVal) return false;
+      if (toVal   && createdAt && createdAt > toVal)   return false;
     }
     if (status) {
-      var woStatus = (row.work_order && row.work_order.status) || '';
       if (woStatus.toLowerCase() !== status.toLowerCase()) return false;
     }
     return true;
@@ -11642,26 +11646,27 @@ function renderBillingMainTable() {
   var rows = _billingMainFiltered;
   var state = { page: _billingMainPage, pageSize: _billingMainPageSize };
   var view = buildUniversalTable([
-    { key: 'billing_id', render: function(row) { return '<span class="u-mono-sm">' + escHtml(row.billing_id || '—') + '</span>'; } },
-    { key: 'property', render: function(row) { return escHtml((row.property_context && row.property_context.property_name) || '—'); } },
-    { key: 'wo_desc', render: function(row) { return escHtml((row.work_order && row.work_order.description) || '—'); } },
-    { key: 'vendor', render: function(row) { return escHtml((row.vendor && row.vendor.vendor_name) || '—'); } },
+    { key: 'billing_id', render: function(row) { return '<span class="u-mono-sm">' + escHtml(row.billing_id || row.work_order_number || row.invoice || '—') + '</span>'; } },
+    { key: 'property', render: function(row) { return escHtml((row.property_context && row.property_context.property_name) || row.property_name || row.property || '—'); } },
+    { key: 'wo_desc', render: function(row) { return escHtml((row.work_order && row.work_order.description) || row.job_description || row.instructions || '—'); } },
+    { key: 'vendor', render: function(row) { return escHtml((row.vendor && row.vendor.vendor_name) || row.vendor || '—'); } },
     { key: 'amount', cellAttrs: 'class="u-num-cell"', render: function(row) {
-      return row.financials && row.financials.amount_total != null
-        ? '$' + Number(row.financials.amount_total).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})
+      var amt = row.financials && row.financials.amount_total != null ? row.financials.amount_total : row.amount;
+      return amt != null && amt !== ''
+        ? '$' + Number(amt).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})
         : '—';
     } },
     { key: 'status', render: function(row) {
-      var statusRaw = (row.work_order && row.work_order.status) || '—';
+      var statusRaw = (row.work_order && row.work_order.status) || row.status || '—';
       var statusEsc = escHtml(statusRaw);
       var statusCls = statusRaw === 'Completed' ? 'badge-success' : statusRaw === 'In Progress' ? 'badge-warning' : statusRaw === 'Open' ? 'badge-info' : 'badge-muted';
       return '<span class="badge ' + statusCls + '">' + statusEsc + '</span>';
     } },
-    { key: 'created_at', cellAttrs: 'class="u-date-cell"', render: function(row) { return escHtml((row.dates && row.dates.created_at) || '—'); } },
-    { key: 'last_billed_on', cellAttrs: 'class="u-date-cell"', render: function(row) { return escHtml((row.dates && row.dates.last_billed_on) || '—'); } },
+    { key: 'created_at', cellAttrs: 'class="u-date-cell"', render: function(row) { return escHtml((row.dates && row.dates.created_at) || row.created_at || '—'); } },
+    { key: 'last_billed_on', cellAttrs: 'class="u-date-cell"', render: function(row) { return escHtml((row.dates && row.dates.last_billed_on) || row.last_billed_on || '—'); } },
   ], rows, state, {
     getRowClass: function() { return 'u-row-click'; },
-    getRowAttrs: function(row) { return 'data-billing-id="' + escHtml(row.billing_id || '') + '"'; },
+    getRowAttrs: function(row, absIdx) { return 'data-row-idx="' + absIdx + '"'; },
     emptyRowHtml: '<tr><td colspan="8" class="u-table-empty-cell">No billing records match the current filters</td></tr>'
   });
   _billingMainPage = state.page;
@@ -11670,13 +11675,25 @@ function renderBillingMainTable() {
   // KPI update
   var kpiCount = $('#billKpiPending'), kpiTotal = $('#billKpiTotal'), kpiPaid = $('#billKpiPaid'), kpiVendors = $('#billKpiVendors');
   if (kpiCount) kpiCount.textContent = view.total.toLocaleString();
-  var totalBilled = rows.reduce(function(s, r){ return s + (r.financials && r.financials.amount_total ? Number(r.financials.amount_total) : 0); }, 0);
+  var totalBilled = rows.reduce(function(s, r){
+    var amt = r.financials && r.financials.amount_total != null ? r.financials.amount_total : r.amount;
+    return s + (amt ? Number(amt) : 0);
+  }, 0);
   if (kpiTotal) kpiTotal.textContent = '$' + totalBilled.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
   var now = new Date(), thisMonth = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
-  var billedThisMonth = rows.filter(function(r){ return r.dates && r.dates.last_billed_on && String(r.dates.last_billed_on).slice(0,7) === thisMonth; }).reduce(function(s,r){ return s + (r.financials && r.financials.amount_total ? Number(r.financials.amount_total) : 0); }, 0);
+  var billedThisMonth = rows.filter(function(r){
+    var lb = (r.dates && r.dates.last_billed_on) || r.last_billed_on || '';
+    return lb && String(lb).slice(0,7) === thisMonth;
+  }).reduce(function(s,r){
+    var amt = r.financials && r.financials.amount_total != null ? r.financials.amount_total : r.amount;
+    return s + (amt ? Number(amt) : 0);
+  }, 0);
   if (kpiPaid) kpiPaid.textContent = '$' + billedThisMonth.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
   var vendorSet = {};
-  rows.forEach(function(r){ if (r.vendor && r.vendor.vendor_id) vendorSet[r.vendor.vendor_id] = true; });
+  rows.forEach(function(r) {
+    var vid = (r.vendor && r.vendor.vendor_id) || r.vendor_id || r.vendor || '';
+    if (vid) vendorSet[String(vid)] = true;
+  });
   if (kpiVendors) kpiVendors.textContent = Object.keys(vendorSet).length.toLocaleString();
 
   if (view.total === 0) {
@@ -11688,8 +11705,8 @@ function renderBillingMainTable() {
 
   body.querySelectorAll('.u-row-click').forEach(function(tr) {
     tr.addEventListener('click', function() {
-      var bid = tr.getAttribute('data-billing-id');
-      var row = _billingMainData.find(function(r){ return r.billing_id === bid; });
+      var idx = Number(tr.getAttribute('data-row-idx') || '-1');
+      var row = idx >= 0 ? _billingMainFiltered[idx] : null;
       if (row) showBillingMainModal(row);
     });
   });
@@ -11702,21 +11719,24 @@ function renderBillingMainTable() {
 }
 
 function showBillingMainModal(row) {
-  var woNum  = (row.work_order && row.work_order.number) || '';
-  var woDesc = (row.work_order && row.work_order.description) || '';
-  var woType = (row.work_order && row.work_order.type) || '';
-  var woStatus = (row.work_order && row.work_order.status) || '';
-  var prop   = (row.property_context && row.property_context.property_name) || '';
-  var addr   = (row.property_context && row.property_context.address) || '';
-  var vendor = (row.vendor && row.vendor.vendor_name) || '—';
-  var amt    = row.financials && row.financials.amount_total != null
-               ? '$' + Number(row.financials.amount_total).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
-  var vendorBill  = row.financials && row.financials.vendor_bill_amount != null ? '$' + Number(row.financials.vendor_bill_amount).toFixed(2) : '—';
-  var tenantChg   = row.financials && row.financials.tenant_total_charge != null ? '$' + Number(row.financials.tenant_total_charge).toFixed(2) : '—';
-  var maintLimit  = row.financials && row.financials.maintenance_limit != null ? '$' + Number(row.financials.maintenance_limit).toFixed(2) : '—';
-  var created     = (row.dates && row.dates.created_at) || '—';
-  var completed   = (row.dates && row.dates.completed_on) || '—';
-  var lastBilled  = (row.dates && row.dates.last_billed_on) || '—';
+  var woNum  = (row.work_order && row.work_order.number) || row.work_order_number || '';
+  var woDesc = (row.work_order && row.work_order.description) || row.job_description || row.instructions || '';
+  var woType = (row.work_order && row.work_order.type) || row.work_order_type || '';
+  var woStatus = (row.work_order && row.work_order.status) || row.status || '';
+  var prop   = (row.property_context && row.property_context.property_name) || row.property_name || row.property || '';
+  var addr   = (row.property_context && row.property_context.address) || row.property_address || '';
+  var vendor = (row.vendor && row.vendor.vendor_name) || row.vendor || '—';
+  var amtRaw = row.financials && row.financials.amount_total != null ? row.financials.amount_total : row.amount;
+  var amt    = amtRaw != null && amtRaw !== '' ? '$' + Number(amtRaw).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+  var vendorBillRaw = row.financials && row.financials.vendor_bill_amount != null ? row.financials.vendor_bill_amount : row.vendor_bill_amount;
+  var vendorBill  = vendorBillRaw != null && vendorBillRaw !== '' ? '$' + Number(vendorBillRaw).toFixed(2) : '—';
+  var tenantChgRaw = row.financials && row.financials.tenant_total_charge != null ? row.financials.tenant_total_charge : row.tenant_total_charge_amount;
+  var tenantChg   = tenantChgRaw != null && tenantChgRaw !== '' ? '$' + Number(tenantChgRaw).toFixed(2) : '—';
+  var maintLimitRaw = row.financials && row.financials.maintenance_limit != null ? row.financials.maintenance_limit : row.maintenance_limit;
+  var maintLimit  = maintLimitRaw != null && maintLimitRaw !== '' ? '$' + Number(maintLimitRaw).toFixed(2) : '—';
+  var created     = (row.dates && row.dates.created_at) || row.created_at || '—';
+  var completed   = (row.dates && row.dates.completed_on) || row.completed_on || row.work_completed_on || '—';
+  var lastBilled  = (row.dates && row.dates.last_billed_on) || row.last_billed_on || '—';
   var afLink = woNum ? 'https://flraz.appfolio.com/maintenance/work_orders?wo_number=' + encodeURIComponent(woNum) : '';
 
   var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 20px;font-size:13px">' +
@@ -11746,7 +11766,7 @@ function showBillingMainModal(row) {
   var _bmo = document.createElement('div');
   _bmo.className = 'modal-overlay show hm-modal-critical';
   _bmo.innerHTML = '<div class="modal" style="max-width:680px;width:95vw">' +
-    '<div class="modal-head"><h3>' + escHtml('Billing Detail — ' + (row.billing_id || '')) + '</h3></div>' +
+    '<div class="modal-head"><h3>' + escHtml('Billing Detail — ' + (row.billing_id || row.work_order_number || row.invoice || '')) + '</h3></div>' +
     '<div class="modal-body" style="max-height:70vh;overflow-y:auto;padding:16px">' + html + '</div>' +
     '<div class="modal-footer"><button class="hm-modal-btn hm-modal-btn-cancel">Close</button></div>' +
     '</div>';
@@ -12103,29 +12123,190 @@ function setOccupancySubtab(tab) {
     panel.classList.toggle('active', name === target);
     panel.style.display = name === target ? '' : 'none';
   });
+  if (!_occupancyRowsBySubtab[target]) {
+    loadOccupancySubtab(target);
+  } else {
+    renderOccupancySubtab(target);
+  }
   syncSubtabDock();
 }
 
+var _occupancyRowsBySubtab = {};
+var _occupancyPageState = {};
+
 var _occupancyReportMap = {
-  'tenant-transactions': { action: 'v2_report', report: 'tenant_transactions_summary', bodyId: 'tenantTxBody', cols: 6,
-    render: function(r){ return '<tr><td>' + escHtml(r.tenant_name||'\u2014') + '</td><td>' + escHtml((r.property_name||'') + (r.unit ? ' / '+r.unit : '')) + '</td><td class="u-num-cell">' + (r.total_charges != null ? '$'+Number(r.total_charges).toFixed(2) : '\u2014') + '</td><td class="u-num-cell">' + (r.total_payments != null ? '$'+Number(r.total_payments).toFixed(2) : '\u2014') + '</td><td class="u-num-cell">' + (r.balance != null ? '$'+Number(r.balance).toFixed(2) : '\u2014') + '</td><td class="u-date-cell">' + escHtml(r.last_activity_date||'\u2014') + '</td></tr>'; }
+  'tenant-transactions': { action: 'v2_report', report: 'tenant_transactions_summary', bodyId: 'tenantTxBody', tableId: 'tenantTxTable', cols: 6,
+    columns: [
+      { key: 'tenant', render: function(r){ return escHtml(r.occupancy_name || r.tenant_name || '\u2014'); } },
+      { key: 'prop', render: function(r){ return escHtml((r.property_name || r.property || '') + ((r.unit_name || r.unit) ? ' / ' + (r.unit_name || r.unit) : '')); } },
+      { key: 'chg', cellAttrs: 'class="u-num-cell"', render: function(r){ return '$' + Number(r.rent_charges || r.total_charges || 0).toFixed(2); } },
+      { key: 'pay', cellAttrs: 'class="u-num-cell"', render: function(r){ return '$' + Number(r.cash_payments || r.total_payments || 0).toFixed(2); } },
+      { key: 'bal', cellAttrs: 'class="u-num-cell"', render: function(r){ return '$' + Number(r.ending_balance || r.balance || 0).toFixed(2); } },
+      { key: 'last', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.last_activity_date || '\u2014'); } },
+    ]
   },
-  'tenant-directory': { action: 'v2_report', report: 'tenant_directory', bodyId: 'tenantDirBody', cols: 7,
-    render: function(r){ return '<tr><td>' + escHtml(r.tenant_name||'\u2014') + '</td><td>' + escHtml((r.property_name||'') + (r.unit ? ' / '+r.unit : '')) + '</td><td>' + escHtml(r.email||'\u2014') + '</td><td>' + escHtml(r.phone||'\u2014') + '</td><td class="u-date-cell">' + escHtml(r.lease_start||'\u2014') + '</td><td class="u-date-cell">' + escHtml(r.lease_end||'\u2014') + '</td><td class="u-date-cell">' + escHtml(r.move_in||'\u2014') + '</td></tr>'; }
+  'tenant-directory': { action: 'v2_report', report: 'tenant_directory', bodyId: 'tenantDirBody', tableId: 'tenantDirTable', cols: 7,
+    columns: [
+      { key: 'tenant', render: function(r){ return escHtml(r.tenant || r.tenant_name || '\u2014'); } },
+      { key: 'prop', render: function(r){ return escHtml((r.property_name || r.property || '') + (r.unit ? ' / ' + r.unit : '')); } },
+      { key: 'email', render: function(r){ return escHtml(r.emails || r.email || '\u2014'); } },
+      { key: 'phone', render: function(r){ return escHtml(r.phone_numbers || r.phone || '\u2014'); } },
+      { key: 'lease_from', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.lease_from || r.lease_start || '\u2014'); } },
+      { key: 'lease_to', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.lease_to || r.lease_end || '\u2014'); } },
+      { key: 'move_in', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.move_in || '\u2014'); } },
+    ]
   },
-  'delinquency': { action: 'v2_report', report: 'delinquency', bodyId: 'delinquencyBody', cols: 6,
-    render: function(r){ return '<tr><td>' + escHtml(r.tenant_name||'\u2014') + '</td><td>' + escHtml((r.property_name||'') + (r.unit ? ' / '+r.unit : '')) + '</td><td class="u-num-cell">' + (r.balance_due != null ? '$'+Number(r.balance_due).toFixed(2) : '\u2014') + '</td><td class="u-num-cell">' + escHtml(String(r.days_past_due||'\u2014')) + '</td><td class="u-date-cell">' + escHtml(r.last_payment_date||'\u2014') + '</td><td>' + escHtml(r.status||'\u2014') + '</td></tr>'; }
+  'delinquency': { action: 'v2_report', report: 'delinquency', bodyId: 'delinquencyBody', tableId: 'delinquencyTable', cols: 6,
+    columns: [
+      { key: 'tenant', render: function(r){ return escHtml(r.name || r.tenant_name || '\u2014'); } },
+      { key: 'prop', render: function(r){ return escHtml((r.property_name || r.property || '') + (r.unit ? ' / ' + r.unit : '')); } },
+      { key: 'due', cellAttrs: 'class="u-num-cell"', render: function(r){ return '$' + Number(r.amount_receivable || r.balance_due || 0).toFixed(2); } },
+      { key: 'days', cellAttrs: 'class="u-num-cell"', render: function(r){ return escHtml(String(r.days_past_due || r['30_plus'] || '\u2014')); } },
+      { key: 'last', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.last_payment || r.last_payment_date || '\u2014'); } },
+      { key: 'status', render: function(r){ return escHtml(r.tenant_status || r.status || '\u2014'); } },
+    ]
   },
-  'applications': { action: 'v2_report', report: 'rental_applications', bodyId: 'applicationsBody', cols: 6,
-    render: function(r){ return '<tr><td>' + escHtml(r.applicant_name||'\u2014') + '</td><td>' + escHtml((r.property_name||'') + (r.unit ? ' / '+r.unit : '')) + '</td><td>' + escHtml(r.status||'\u2014') + '</td><td class="u-date-cell">' + escHtml(r.applied_on||'\u2014') + '</td><td>' + escHtml(r.decision||'\u2014') + '</td><td>' + escHtml(r.agent||'\u2014') + '</td></tr>'; }
+  'applications': { action: 'v2_report', report: 'rental_applications', bodyId: 'applicationsBody', tableId: 'applicationsTable', cols: 6,
+    columns: [
+      { key: 'app', render: function(r){ return escHtml(r.applicants || r.applicant_name || '\u2014'); } },
+      { key: 'prop', render: function(r){ return escHtml((r.property_name || r.property || '') + (r.unit_name ? ' / ' + r.unit_name : '')); } },
+      { key: 'status', render: function(r){ return escHtml(r.status || r.application_status || '\u2014'); } },
+      { key: 'recv', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml((r.received || r.applied_on || '\u2014').slice(0, 10)); } },
+      { key: 'decision', render: function(r){ return escHtml(r.reason_for_status || r.decision || '\u2014'); } },
+      { key: 'agent', render: function(r){ return escHtml(r.assigned_user || r.agent || '\u2014'); } },
+    ]
   },
-  'showings': { action: 'v2_report', report: 'showings', bodyId: 'showingsBody', cols: 6,
-    render: function(r){ return '<tr><td>' + escHtml(r.prospect_name||'\u2014') + '</td><td>' + escHtml((r.property_name||'') + (r.unit ? ' / '+r.unit : '')) + '</td><td class="u-date-cell">' + escHtml(r.scheduled_at||'\u2014') + '</td><td>' + escHtml(r.status||'\u2014') + '</td><td>' + escHtml(r.agent||'\u2014') + '</td><td>' + escHtml(r.notes||'\u2014') + '</td></tr>'; }
+  'showings': { action: 'v2_report', report: 'showings', bodyId: 'showingsBody', tableId: 'showingsTable', cols: 6,
+    columns: [
+      { key: 'name', render: function(r){ return escHtml(r.prospect_name || r.name || '\u2014'); } },
+      { key: 'prop', render: function(r){ return escHtml((r.property_name || r.property || '') + (r.unit ? ' / ' + r.unit : '')); } },
+      { key: 'when', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml((r.scheduled_at || r.received || '\u2014').slice(0, 10)); } },
+      { key: 'status', render: function(r){ return escHtml(r.status || '\u2014'); } },
+      { key: 'agent', render: function(r){ return escHtml(r.agent || r.assigned_user || '\u2014'); } },
+      { key: 'notes', render: function(r){ return escHtml(r.notes || r.last_activity_type || '\u2014'); } },
+    ]
   },
-  'guest-cards': { action: 'v2_report', report: 'guest_cards', bodyId: 'guestCardsBody', cols: 6,
-    render: function(r){ return '<tr><td>' + escHtml(r.prospect_name||'\u2014') + '</td><td>' + escHtml(r.property_name||'\u2014') + '</td><td>' + escHtml(r.interested_in||'\u2014') + '</td><td>' + escHtml(r.source||'\u2014') + '</td><td class="u-date-cell">' + escHtml(r.created_at||'\u2014') + '</td><td>' + escHtml(r.status||'\u2014') + '</td></tr>'; }
+  'guest-cards': { action: 'v2_report', report: 'guest_cards', bodyId: 'guestCardsBody', tableId: 'guestCardsTable', cols: 6,
+    columns: [
+      { key: 'prospect', render: function(r){ return escHtml(r.name || r.prospect_name || '\u2014'); } },
+      { key: 'property', render: function(r){ return escHtml(r.property_name || r.property || '\u2014'); } },
+      { key: 'interested', render: function(r){ return escHtml(r.unit || r.interested_in || '\u2014'); } },
+      { key: 'source', render: function(r){ return escHtml(r.source || '\u2014'); } },
+      { key: 'received', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml((r.received || r.created_at || '\u2014').slice(0, 10)); } },
+      { key: 'status', render: function(r){ return escHtml(r.status || '\u2014'); } },
+    ]
   }
 };
+
+function getOccupancySearchTerms(subtab) {
+  var ids = {
+    'tenant-transactions': 'tenantTxSearch',
+    'tenant-directory': 'tenantDirSearch',
+    'delinquency': 'delinquencySearch',
+    'applications': 'applicationsSearch',
+    'showings': 'showingsSearch',
+    'guest-cards': 'guestCardsSearch',
+  };
+  var el = $('#' + (ids[subtab] || ''));
+  var raw = String(el && el.value || '').trim().toLowerCase();
+  return raw ? raw.split(',').map(function(t) { return t.trim(); }).filter(Boolean) : [];
+}
+
+function occupancyIsCurrentLease(subtab, row) {
+  if (subtab !== 'tenant-transactions' && subtab !== 'tenant-directory' && subtab !== 'delinquency') return true;
+  var status = String(row.occupancy_status || row.status || row.tenant_status || '').toLowerCase();
+  if (status && status !== 'current') return false;
+  var today = new Date().toISOString().slice(0, 10);
+  var leaseEnd = String(row.lease_to || row.lease_end || row.move_out || '').slice(0, 10);
+  if (leaseEnd && leaseEnd < today) return false;
+  return true;
+}
+
+function occupancyRowSearchText(row) {
+  return Object.keys(row || {}).map(function(k) {
+    var v = row[k];
+    return v == null ? '' : String(v);
+  }).join(' ').toLowerCase();
+}
+
+function showOccupancyRowModal(subtab, row) {
+  var keys = Object.keys(row || {}).slice(0, 32);
+  var detail = keys.map(function(k) {
+    var val = row[k];
+    return '<div style="display:grid;grid-template-columns:180px 1fr;gap:10px;padding:4px 0">' +
+      '<div class="u-label-muted">' + escHtml(k) + '</div>' +
+      '<div>' + escHtml(val == null || val === '' ? '—' : String(val)) + '</div>' +
+      '</div>';
+  }).join('');
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay show hm-modal-critical';
+  overlay.innerHTML = '<div class="modal" style="max-width:760px;width:95vw">' +
+    '<div class="modal-head"><h3>' + escHtml('Occupancy Detail — ' + subtab) + '</h3></div>' +
+    '<div class="modal-body" style="max-height:70vh;overflow-y:auto;padding:16px">' + detail + '</div>' +
+    '<div class="modal-footer"><button class="hm-modal-btn hm-modal-btn-cancel">Close</button></div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  overlay.querySelector('.hm-modal-btn-cancel').addEventListener('click', function() { overlay.remove(); });
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+}
+
+function renderOccupancySubtab(subtab) {
+  var cfg = _occupancyReportMap[subtab];
+  if (!cfg) return;
+  var body = $('#' + cfg.bodyId);
+  if (!body) return;
+  var rows = (_occupancyRowsBySubtab[subtab] || []).slice();
+  var terms = getOccupancySearchTerms(subtab);
+  rows = rows.filter(function(r) {
+    if (!occupancyIsCurrentLease(subtab, r)) return false;
+    if (!terms.length) return true;
+    var hay = occupancyRowSearchText(r);
+    return terms.every(function(t) { return hay.indexOf(t) !== -1; });
+  });
+  if (!_occupancyPageState[subtab]) _occupancyPageState[subtab] = { page: 1, pageSize: 50 };
+  var state = _occupancyPageState[subtab];
+  var view = buildUniversalTable(cfg.columns, rows, state, {
+    getRowClass: function() { return 'u-row-click'; },
+    getRowAttrs: function(row, absIdx) { return 'data-occ-idx="' + absIdx + '"'; },
+    emptyRowHtml: '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell">No data returned</td></tr>'
+  });
+  body.innerHTML = view.html;
+  body.querySelectorAll('.u-row-click').forEach(function(tr) {
+    tr.addEventListener('click', function() {
+      var idx = Number(tr.getAttribute('data-occ-idx') || '-1');
+      var row = idx >= 0 ? rows[idx] : null;
+      if (row) showOccupancyRowModal(subtab, row);
+    });
+  });
+
+  var table = $('#' + cfg.tableId);
+  var wrap = table ? table.closest('.table-wrapper') : null;
+  var footerId = cfg.tableId + 'Footer';
+  var footer = document.getElementById(footerId);
+  if (!footer && wrap) {
+    footer = document.createElement('div');
+    footer.id = footerId;
+    footer.className = 'u-table-footer-split';
+    wrap.appendChild(footer);
+  }
+  if (footer) {
+    if (view.total <= 0) {
+      footer.style.display = 'none';
+    } else {
+      footer.style.display = '';
+      footer.innerHTML = '<span>Showing ' + view.start + '\u2013' + view.end + ' of ' + view.total + ' rows</span>' +
+        '<span class="u-pagination-row">' +
+        '<button class="action-btn u-action-btn-sm" id="' + footerId + 'Prev"' + (state.page <= 1 ? ' disabled' : '') + '>Prev</button>' +
+        '<span class="u-mono-sm">Page ' + state.page + ' / ' + view.totalPages + '</span>' +
+        '<button class="action-btn u-action-btn-sm" id="' + footerId + 'Next"' + (state.page >= view.totalPages ? ' disabled' : '') + '>Next</button>' +
+        '</span>';
+      var prev = document.getElementById(footerId + 'Prev');
+      var next = document.getElementById(footerId + 'Next');
+      if (prev) prev.onclick = function() { if (state.page > 1) { state.page -= 1; renderOccupancySubtab(subtab); } };
+      if (next) next.onclick = function() { if (state.page < view.totalPages) { state.page += 1; renderOccupancySubtab(subtab); } };
+    }
+  }
+}
 
 async function loadOccupancySubtab(subtab) {
   var cfg = _occupancyReportMap[subtab];
@@ -12135,9 +12316,9 @@ async function loadOccupancySubtab(subtab) {
   try {
     var data = await proxyAction(cfg.action, { report: cfg.report });
     var rows = (data && data.results) ? data.results : [];
-    if (!rows.length) { if (body) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell">No data returned</td></tr>'; return; }
-    var html = rows.map(cfg.render).join('');
-    if (body) body.innerHTML = html;
+    _occupancyRowsBySubtab[subtab] = rows;
+    if (_occupancyPageState[subtab]) _occupancyPageState[subtab].page = 1;
+    renderOccupancySubtab(subtab);
   } catch(e) {
     if (body) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell u-text-danger">Error: ' + escHtml(String(e&&e.message||e)) + '</td></tr>';
   }
@@ -17457,6 +17638,14 @@ function wireUpUI() {
   // Occupancy: Refresh button
   var btnRefreshOccupancy = $('#btnRefreshOccupancy');
   if (btnRefreshOccupancy) btnRefreshOccupancy.addEventListener('click', function() { loadOccupancySubtab(currentOccupancySubtab); });
+  ['tenantTxSearch', 'tenantDirSearch', 'delinquencySearch', 'applicationsSearch', 'showingsSearch', 'guestCardsSearch'].forEach(function(id) {
+    var el = $('#' + id);
+    if (!el) return;
+    el.addEventListener('input', function() {
+      if (_occupancyPageState[currentOccupancySubtab]) _occupancyPageState[currentOccupancySubtab].page = 1;
+      renderOccupancySubtab(currentOccupancySubtab);
+    });
+  });
 
   // Properties: new subtab data load
   var btnRefreshPropPerf = $('#btnRefreshPropPerf');
