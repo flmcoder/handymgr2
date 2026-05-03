@@ -3227,6 +3227,49 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   .turn-dash-summary { font-size: 10px; }
 }
 
+/* ── Topbar wraps at ≤1100px – reserve enough grid row + filter-bar sticky space ── */
+@media (max-width: 1100px) {
+  /* Two-row topbar height: ~42px × 2 rows + 8px gap + 2 × 10px padding = ~110px */
+  :root { --header-height: 110px; }
+  /* Hide topbar logo duplicate – sidebar already shows it */
+  .topbar-logo { display: none; }
+  /* Let topbar-left shrink so both rows stay tight */
+  .topbar-left { flex-wrap: wrap; }
+  /* Prevent topbar-right from growing taller than needed */
+  .topbar-right { flex-wrap: nowrap; }
+}
+
+/* At 768px sidebar collapses, topbar spans full width – re-check height */
+@media (max-width: 768px) {
+  /* With many items hidden, topbar fits in ~80px at 768px */
+  :root { --header-height: 80px; }
+  /* topbar-right has fewer items visible so allow tighter wrap */
+  .topbar-right { flex-wrap: wrap; row-gap: 4px; }
+}
+
+/* ── Toast: clamp width on narrow viewports ── */
+#v9-toast-container {
+  max-width: min(340px, calc(100vw - 24px));
+  left: auto;
+}
+@media (max-width: 480px) {
+  #v9-toast-container { right: 8px; top: 8px; max-width: calc(100vw - 16px); }
+}
+
+/* ── Modal: prevent inner content overflow at narrow widths ── */
+@media (max-width: 600px) {
+  .modal-overlay { padding: 10px; }
+  .modal { border-radius: 12px; }
+  .modal-body { padding: 14px; overflow-x: auto; }
+  .modal-body table { min-width: 0; width: 100%; }
+  .modal-body .detail-grid,
+  .modal-body .info-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Table scroll: ensure all data tables allow horizontal scroll ── */
+.u-table-wrap, .table-container, [id$="TableBody"] { overflow-x: auto; }
+.u-table-wrap table, .table-container table { min-width: 520px; }
+
 /* Live Webhook Feed Drawer */
 .live-feed-drawer{
   position:fixed;top:0;right:-380px;width:min(360px,92vw);height:100vh;z-index:900;

@@ -8622,20 +8622,22 @@ function renderBillsSection(preFilteredData) {
   }, 0);
 
   var setKpi = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
-  setKpi('billKpiPending', String(pendingBills.length));
-  setKpi('billKpiPendingSub', pendingBills.length === 1 ? '1 bill' : pendingBills.length + ' bills');
-  setKpi('billKpiTotal', '$' + outstandingTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-  setKpi('billKpiTotalSub', 'approved, not yet paid');
-  setKpi('billKpiPaid', '$' + paidTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-  setKpi('billKpiPaidSub', paidBills.length + ' bills in last 30d');
-  setKpi('billKpiVendors', String(uniqueVendors.size));
-  setKpi('billKpiVendorsSub', 'distinct payees');
-
-  // Update nav badge with pending count
-  var badge = $('#billingBadge');
-  if (badge) {
-    badge.textContent = String(pendingBills.length);
-    badge.style.display = pendingBills.length > 0 ? '' : 'none';
+  // Only write legacy page-subset KPIs when bills_stats hasn't already provided accurate totals
+  if (!_billingKpisLoadedGroup) {
+    setKpi('billKpiPending', String(pendingBills.length));
+    setKpi('billKpiPendingSub', '≥' + pendingBills.length + ' pending (this page)');
+    setKpi('billKpiTotal', '$' + outstandingTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    setKpi('billKpiTotalSub', 'approved, not yet paid (this page)');
+    setKpi('billKpiPaid', '$' + paidTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    setKpi('billKpiPaidSub', paidBills.length + ' bills last 30d (this page)');
+    setKpi('billKpiVendors', String(uniqueVendors.size));
+    setKpi('billKpiVendorsSub', 'distinct payees (this page)');
+    // Update nav badge with pending count (interim until bills_stats loads)
+    var badge = $('#billingBadge');
+    if (badge) {
+      badge.textContent = String(pendingBills.length);
+      badge.style.display = pendingBills.length > 0 ? '' : 'none';
+    }
   }
 
   var sourceBadge = $('#billing-source-badge');
@@ -9256,6 +9258,8 @@ function wireBillingFilters() {
   document.addEventListener('groupFilterChanged', function() {
     window._currentBillsCache = [];
     _billsPage = 0;
+    _billingKpisLoadedGroup = null; // invalidate KPI cache on group change
+    loadBillingKpis({ forceRefresh: true });
     if (currentBillingSubtab === 'main') {
       _billingMainPage = 1;
       applyBillingMainFilters();
@@ -10520,6 +10524,75 @@ var currentWOSort = 'oldest';
 var currentWOView = 'board'; // 'board' | 'list'
 var currentWOSubtab = 'active'; // active | completed | closure | followup
 var currentBillingSubtab = 'main'; // main | payables | charge-detail | bill-detail
+var _billingKpisLoading = false;
+var _billingKpisLoadedGroup = null; // group key for which KPIs were last loaded
+
+async function loadBillingKpis(opts) {
+  opts = opts || {};
+  if (_billingKpisLoading && !opts.forceRefresh) return;
+  var grpName = normalizeGroupSelectionValue(getEffectiveGroupId());
+  var grpUuid = getEffectiveGroupUuid(grpName);
+  var grpKey  = grpUuid || grpName || '__all__';
+  if (!opts.forceRefresh && _billingKpisLoadedGroup === grpKey) return;
+
+  // Show skeleton state
+  var kpiGrid = $('#billingKpiGrid');
+  if (kpiGrid) {
+    kpiGrid.querySelectorAll('.kpi-card').forEach(function(c) { c.classList.add('kpi-skeleton'); });
+  }
+  var setKpi = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+  setKpi('billKpiPending', '…');
+  setKpi('billKpiTotal',   '…');
+  setKpi('billKpiPaid',    '…');
+  setKpi('billKpiVendors', '…');
+
+  _billingKpisLoading = true;
+  try {
+    var params = {};
+    if (grpUuid)  params.group_id   = grpUuid;
+    else if (grpName) params.group_name = grpName;
+    var stats = await proxyAction('bills_stats', params);
+    if (!stats || !stats.ok) throw new Error(stats && stats.error ? stats.error : 'bills_stats failed');
+
+    var pendingCount    = Number(stats.pending_approval_count || 0);
+    var pendingAmt      = Number(stats.pending_approval_amount || 0);
+    var outstandingAmt  = Number(stats.total_outstanding || 0);
+    var paidAmt         = Number(stats.paid_this_period_amount || 0);
+    var paidCount       = Number(stats.paid_this_period_count || 0);
+    var vendorCount     = Number(stats.vendors_with_open_bills || 0);
+
+    var fmt = function(n) { return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+
+    setKpi('billKpiPending',    String(pendingCount));
+    setKpi('billKpiPendingSub', pendingCount === 1 ? '1 invoice pending approval' : pendingCount + ' invoices pending approval');
+    setKpi('billKpiTotal',      fmt(outstandingAmt));
+    setKpi('billKpiTotalSub',   'approved, not yet paid');
+    setKpi('billKpiPaid',       fmt(paidAmt));
+    setKpi('billKpiPaidSub',    paidCount + ' bill' + (paidCount === 1 ? '' : 's') + ' paid this period');
+    setKpi('billKpiVendors',    String(vendorCount));
+    setKpi('billKpiVendorsSub', 'with pending or approved bills');
+
+    // Update nav badge with pending count
+    var badge = $('#billingBadge');
+    if (badge) {
+      badge.textContent = String(pendingCount);
+      badge.style.display = pendingCount > 0 ? '' : 'none';
+    }
+
+    _billingKpisLoadedGroup = grpKey;
+  } catch (e) {
+    setKpi('billKpiPending',    '—');
+    setKpi('billKpiPendingSub', 'could not load');
+    setKpi('billKpiTotal',      '—');
+    setKpi('billKpiPaid',       '—');
+    setKpi('billKpiVendors',    '—');
+  } finally {
+    _billingKpisLoading = false;
+    if (kpiGrid) {
+      kpiGrid.querySelectorAll('.kpi-card').forEach(function(c) { c.classList.remove('kpi-skeleton'); });
+    }
+  }
+}
 var currentPropertiesSubtab = 'directory'; // directory | performance | vacancies | renewals | bulk
 var currentOccupancySubtab = 'tenant-transactions'; // tenant-transactions | tenant-directory | delinquency | applications | showings | guest-cards
 // Billing main (saved report)
@@ -10618,6 +10691,7 @@ function setBillingSubtab(tab) {
   if (target === 'main') {
     // auto-load if empty
     if (!_billingMainLoading && _billingMainData.length === 0) loadBillingMain();
+    loadBillingKpis();
     return;
   }
   if (target === 'payables') { renderPayablesSection(); return; }
@@ -11518,6 +11592,7 @@ function renderBillingSection(opts) {
   if (currentBillingSubtab === 'charge-detail') { renderChargeDetailSection(opts); return; }
   if (currentBillingSubtab === 'bill-detail') { renderBillDetailSection(opts); return; }
   // default: main
+  loadBillingKpis();
   if (opts && opts.forceRefresh) {
     loadBillingMain();
     return;
@@ -11696,30 +11771,7 @@ function renderBillingMainTable() {
   _billingMainPage = state.page;
   _billingMainPageSize = state.pageSize;
 
-  // KPI update
-  var kpiCount = $('#billKpiPending'), kpiTotal = $('#billKpiTotal'), kpiPaid = $('#billKpiPaid'), kpiVendors = $('#billKpiVendors');
-  if (kpiCount) kpiCount.textContent = view.total.toLocaleString();
-  var totalBilled = rows.reduce(function(s, r){
-    var amt = r.financials && r.financials.amount_total != null ? r.financials.amount_total : r.amount;
-    return s + (amt ? Number(amt) : 0);
-  }, 0);
-  if (kpiTotal) kpiTotal.textContent = '$' + totalBilled.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
-  var now = new Date(), thisMonth = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
-  var billedThisMonth = rows.filter(function(r){
-    var lb = (r.dates && r.dates.last_billed_on) || r.last_billed_on || '';
-    return lb && String(lb).slice(0,7) === thisMonth;
-  }).reduce(function(s,r){
-    var amt = r.financials && r.financials.amount_total != null ? r.financials.amount_total : r.amount;
-    return s + (amt ? Number(amt) : 0);
-  }, 0);
-  if (kpiPaid) kpiPaid.textContent = '$' + billedThisMonth.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
-  var vendorSet = {};
-  rows.forEach(function(r) {
-    var vid = (r.vendor && r.vendor.vendor_id) || r.vendor_id || r.vendor || '';
-    if (vid) vendorSet[String(vid)] = true;
-  });
-  if (kpiVendors) kpiVendors.textContent = Object.keys(vendorSet).length.toLocaleString();
-
+  // KPIs are now driven by loadBillingKpis() → bills_stats action; no WO-derived KPIs here.
   if (view.total === 0) {
     body.innerHTML = view.html;
     if (footer) footer.style.display = 'none';
