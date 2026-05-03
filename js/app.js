@@ -8621,24 +8621,8 @@ function renderBillsSection(preFilteredData) {
     return sum + n;
   }, 0);
 
-  var setKpi = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
-  // Only write legacy page-subset KPIs when bills_stats hasn't already provided accurate totals
-  if (!_billingKpisLoadedGroup) {
-    setKpi('billKpiPending', String(pendingBills.length));
-    setKpi('billKpiPendingSub', '≥' + pendingBills.length + ' pending (this page)');
-    setKpi('billKpiTotal', '$' + outstandingTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-    setKpi('billKpiTotalSub', 'approved, not yet paid (this page)');
-    setKpi('billKpiPaid', '$' + paidTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-    setKpi('billKpiPaidSub', paidBills.length + ' bills last 30d (this page)');
-    setKpi('billKpiVendors', String(uniqueVendors.size));
-    setKpi('billKpiVendorsSub', 'distinct payees (this page)');
-    // Update nav badge with pending count (interim until bills_stats loads)
-    var badge = $('#billingBadge');
-    if (badge) {
-      badge.textContent = String(pendingBills.length);
-      badge.style.display = pendingBills.length > 0 ? '' : 'none';
-    }
-  }
+  // Billing KPIs are owned by loadBillingKpis() via bills_stats and should not
+  // be overwritten by section-specific table renders.
 
   var sourceBadge = $('#billing-source-badge');
   if (sourceBadge) {
@@ -9728,20 +9712,8 @@ function renderBillHistoryPage(dateFrom, dateTo) {
   var end = Math.min(start + BILL_HISTORY_ROWS.length, totalRows);
   var pageRows = BILL_HISTORY_ROWS;
 
-  var pendingHistory = pageRows.filter(function(r) {
-    var statusKey = normalizeBillApprovalStatus(
-      r.status || r.status_label || r.ApprovalStatus || r.approval_status || r.Status || ''
-    );
-    return statusKey === 'pending_approval';
-  });
-  var kpiPendingEl = document.getElementById('billKpiPending');
-  var kpiPendingSubEl = document.getElementById('billKpiPendingSub');
-  if (kpiPendingEl) kpiPendingEl.textContent = String(pendingHistory.length);
-  if (kpiPendingSubEl) {
-    kpiPendingSubEl.textContent = pendingHistory.length > 0
-      ? (pendingHistory.length + ' pending in history result')
-      : 'No pending approvals in history result';
-  }
+  // Billing KPIs are owned by loadBillingKpis() via bills_stats and should not
+  // be overwritten by section-specific table renders.
 
   body.innerHTML = pageRows.map(function(r) {
     var wo = String(resolveBillWorkOrderRef(r) || '').trim();
