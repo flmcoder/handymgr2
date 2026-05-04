@@ -8419,14 +8419,28 @@ function searchBillingRecords(results, searchTerms) {
     var vendor = row.vendor || {};
     var searchFields = [
       row.billing_id,
+      row.work_order_number,
+      row.invoice,
       row.property_id,
+      row.property_name,
+      row.property,
+      row.property_address,
       row.property_group_id,
       propCtx.property_id,
       propCtx.property_group_id,
       propCtx.property_name,
       propCtx.address,
+      typeof row.vendor === 'string' ? row.vendor : '',
+      row.vendor_id,
       vendor.vendor_id,
       vendor.vendor_name,
+      row.status,
+      row.work_order_type,
+      row.job_description,
+      row.instructions,
+      row.service_request_description,
+      row.primary_tenant,
+      row.unit_name,
       wo.number,
       wo.status,
       wo.description
@@ -8971,8 +8985,12 @@ function matchAioBillQuery(row, queryText) {
     row.propertyGroup,
     row.propertyManager,
     row.workOrderId,
+    row.workOrderNumber,
+    row.description,
+    row.partyType,
     row.status,
     row.date,
+    row.sourceEndpoint,
     String(amountRaw),
     amountFixed,
   ].join(' ').toLowerCase();
@@ -8997,12 +9015,16 @@ function normalizeAioBillRowForGrid(row) {
     propertyGroup: String(src.property_group || src.propertyGroup || ''),
     propertyManager: String(src.property_manager || src.pm_name || src.propertyManager || ''),
     workOrderId: String(src.work_order_id || src.work_order_ref || src.work_order_number || ''),
+    workOrderNumber: String(src.work_order_number || src.work_order_ref || src.workOrderNumber || ''),
+    description: String(src.description || src.work_order_issue || src.workOrderIssue || ''),
+    partyType: String(src.party_type || src.partyType || ''),
     amount: amount,
     bill_total_amount: amount,
     date: String(src.bill_date || src.invoice_date || src.date || '').slice(0, 10),
     invoice_date: String(src.bill_date || src.invoice_date || src.date || '').slice(0, 10),
     status: status,
     statusLabel: status,
+    sourceEndpoint: String(src.source_endpoint || src.sourceEndpoint || ''),
     _sourceEndpoint: String(src.source_endpoint || src.sourceEndpoint || ''),
   };
 }
@@ -9037,11 +9059,23 @@ function renderBillGrid(data) {
 
   rows.forEach(function(bill) {
     var statusClass = String(bill.status || 'unknown').toLowerCase().replace(/\s+/g, '-');
+    var description = String(bill.description || '').trim();
+    var workOrderMeta = String(bill.workOrderNumber || bill.workOrderId || '').trim();
+    var metaBits = [];
+    if (workOrderMeta) metaBits.push('WO ' + workOrderMeta);
+    if (bill.partyType) metaBits.push(bill.partyType);
+    if (bill.sourceEndpoint) metaBits.push(bill.sourceEndpoint);
     html +=
       '<div class="kanban-card bill-row-item bill-grid-card" data-bill-id="' + escapeHtml(bill.id) + '">' +
       '<div class="grid-col-main bill-grid-main">' +
       '<strong class="bill-grid-vendor">' + escapeHtml(bill.vendorName || 'Unknown') + '</strong>' +
       '<span class="bill-grid-property"><i class="fas fa-building"></i> ' + escapeHtml(bill.propertyName || 'Multiple/Split') + '</span>' +
+      (description
+        ? ('<span class="bill-grid-property" title="' + escapeHtml(description) + '"><i class="fas fa-file-alt"></i> ' + escapeHtml(description) + '</span>')
+        : '') +
+      (metaBits.length
+        ? ('<span class="bill-grid-property" title="' + escapeHtml(metaBits.join(' | ')) + '"><i class="fas fa-link"></i> ' + escapeHtml(metaBits.join(' | ')) + '</span>')
+        : '') +
       '</div>' +
       '<div class="grid-col-meta bill-grid-meta">' +
       '<span class="bill-grid-date"><i class="fas fa-calendar-alt"></i> ' + escapeHtml(formatDate(bill.date || bill.invoice_date || '')) + '</span>' +
@@ -9140,6 +9174,7 @@ async function fetchAioBills(payload) {
   if (!res || !res.ok) {
     throw new Error((res && (res.error || res.message)) || 'AIO bills search failed');
   }
+  _lastBillSource = 'live';
   var rows = Array.isArray(res.data) ? res.data : [];
   var queryText = String(body.search || '').trim();
   if (queryText) {
@@ -9362,6 +9397,18 @@ function wireBillingFilters() {
     var originalText = applyBtn.innerHTML;
     applyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying…';
     try {
+      if (payload.search) {
+        _billingListCacheRows = [];
+        _billingListCacheKey = '';
+        window._billingPageRows = [];
+        _billingServerTotal = 0;
+        _billingServerTotalPages = 1;
+        _billingServerPage = 1;
+        _billsPage = 0;
+        await fetchAioBills(payload);
+        return;
+      }
+
       _billingUseAioGrid = false;
       setBillingQueueRenderMode('legacy');
       _billingListCacheRows = [];
@@ -18825,7 +18872,29 @@ function wireUpUI() {
     });
   }
   var billSearch = $('#billSearch');
-  if (billSearch) billSearch.addEventListener('input', function() { _billsPage = 0; renderBillsSection(); });
+  if (billSearch) {
+    var billingSearchTimer = null;
+    billSearch.addEventListener('input', function() {
+      var query = String(billSearch.value || '').trim();
+      _billsPage = 0;
+      clearTimeout(billingSearchTimer);
+      if (!query) {
+        if (_billingUseAioGrid) {
+          applyBillingFilter();
+          return;
+        }
+        renderBillsSection();
+        return;
+      }
+      if (query.length < 2) {
+        renderBillsSection();
+        return;
+      }
+      billingSearchTimer = setTimeout(function() {
+        applyBillingFilter();
+      }, 260);
+    });
+  }
   var billStatusFilter = $('#billStatusFilter');
   if (billStatusFilter) {
     billStatusFilter.addEventListener('change', function() {
