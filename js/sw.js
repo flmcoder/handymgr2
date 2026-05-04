@@ -1,4 +1,4 @@
-const HM_CACHE_VERSION = "hm-static-v4";
+const HM_CACHE_VERSION = "hm-static-v5";
 const HM_STATIC_ASSETS = [
   "/",
   "/index.html",
