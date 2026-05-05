@@ -531,6 +531,46 @@ body.theme-neo {
   background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #ffffff 45%));
 }
 
+.dashboard-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  padding: 12px;
+}
+
+.dashboard-insight-card {
+  border: 1px solid color-mix(in srgb, var(--text-muted) 24%, transparent);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--bg-secondary) 86%, transparent);
+}
+
+.dashboard-insight-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.dashboard-insight-card__header h4 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.dashboard-insight-card__meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.dashboard-insight-card .billing-mini-chart {
+  min-height: 190px;
+}
+
 .billing-detail-cell {
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
@@ -1745,6 +1785,28 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .kpi-value { font-size: 29px; font-weight: 700; font-family: var(--font-mono); line-height: 1; }
 .kpi-sub { font-size: 11px; color: var(--text-secondary); margin-top: 8px; display: flex; align-items: center; gap: 4px; }
 
+.kpi-value[data-metric-state="loading"] {
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  animation: kpiPulse 1.2s ease-in-out infinite;
+}
+
+.kpi-value[data-metric-state="no_response"],
+.kpi-sub[data-metric-state="no_response"],
+.kpi-card[data-metric-state="no_response"] .kpi-label {
+  color: var(--danger);
+}
+
+.kpi-value[data-metric-state="degraded"],
+.kpi-sub[data-metric-state="degraded"] {
+  color: var(--warning);
+}
+
+@keyframes kpiPulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
 .kpi-trend-wrap {
   margin-top: 8px;
   display: none;
@@ -1958,7 +2020,23 @@ html.dark .kpi-card--neo:hover {
 .mono-cell { font-family: var(--font-mono); }
 .mono-cell-sm { font-family: var(--font-mono); font-size: 11px; }
 .cell-stack-title { font-weight: 600; }
-.cell-stack-sub { font-size: 11px; color: var(--text-muted); }
+.cell-stack-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.cell-ellipsis {
+  display: inline-block;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 .cell-inline-muted { color: var(--text-muted); }
 .balance-positive { color: var(--success); }
 .balance-negative { color: var(--danger); }
@@ -2114,6 +2192,13 @@ html.dark .kpi-card--neo:hover {
 .routing-badge.high { background: var(--danger-dim); color: var(--danger); }
 .routing-badge.medium { background: var(--warning-dim); color: var(--warning); }
 .routing-badge.low { background: var(--info-dim); color: var(--info); }
+.routing-insight-cell {
+  max-width: 260px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .routing-review.pending { color: var(--warning); }
 .routing-review.approved_external { color: var(--info); }
 .routing-review.reassign_inhouse { color: var(--success); }
@@ -2293,7 +2378,7 @@ html.dark .vendor-trade-cat-select option {
   display: none;
   position: fixed;
   inset: 0;
-  background: radial-gradient(circle at 18% 16%, rgba(76, 126, 255, 0.18), transparent 36%), rgba(8, 15, 26, 0.7);
+  background: radial-gradient(circle at 18% 16%, rgba(76, 126, 255, 0.22), transparent 36%), rgba(5, 10, 20, 0.78);
   z-index: var(--z-layer-modal);
   justify-content: center;
   align-items: center;
@@ -2302,8 +2387,8 @@ html.dark .vendor-trade-cat-select option {
 }
 .modal-overlay.show { display: flex; }
 .modal {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 92%, var(--bg-secondary)) 0%, color-mix(in srgb, var(--bg-card) 86%, var(--bg-secondary)) 100%);
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 96%, #ffffff 4%) 0%, color-mix(in srgb, var(--bg-card) 90%, var(--bg-secondary)) 100%);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
   border-radius: 16px;
   width: 100%;
   max-width: 680px;
@@ -2326,7 +2411,7 @@ html.dark .vendor-trade-cat-select option {
   align-items: center;
   position: sticky;
   top: 0;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 80%, var(--bg-secondary)) 0%, color-mix(in srgb, var(--bg-card) 95%, var(--bg-secondary)) 100%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 88%, #ffffff 12%) 0%, color-mix(in srgb, var(--bg-card) 96%, var(--bg-secondary)) 100%);
   z-index: 1;
 }
 .modal-head h3 {
