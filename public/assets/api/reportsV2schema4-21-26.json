@@ -1,0 +1,640 @@
+[
+  {
+    "sc-fznyAO href": ""
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#section/Getting-Started"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#section/Getting-Started/Migrating-from-V1-to-V2-of-the-Reports-API"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#section/Getting-Started/Saved-Reports"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#section/Getting-Started/Rate-Limits"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#section/Getting-Started/Pagination"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#section/Getting-Started/Errors"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#section/Getting-Started/Data-Types"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#section/Best-Practices"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1account_totals.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1additional_fees.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1aged_payables_summary.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1aged_receivables_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1amenities_by_property.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1annual_budget_comparative.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1annual_budget_forecast.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1appfolio_stack_usage.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1balance_sheet.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1balance_sheet_comparative.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1balance_sheet_comparison.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1bank_account_association.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1bill_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1budget_comparative.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1budget_comparison.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1cancelled_processes.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1cash_flow.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1cash_flow_comparison.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1cash_flow_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1charge_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1chart_of_accounts.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1check_register.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1check_register_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1completed_processes.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1insurance_enforcement.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1delinquency.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1delinquency_as_of.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1deposit_register.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1eligible_debt_summary.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1email_delivery_errors.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1expense_distribution.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1expense_register.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1fixed_assets.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1flows_assigned_tasks.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1general_ledger.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1gross_potential_rent_enhanced.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1guest_card_inquiries.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1guest_cards.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1historical_advertised_rent.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1import_variances.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1in_progress_workflows.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1inactive_guest_cards.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1income_register.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1income_statement.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1income_statement_comparative.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1income_statement_comparison.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1income_statement_date_range.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1inspection_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1inventory_status.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1inventory_usage.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1keys_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1late_fee_policy_comparison.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1lease_expiration_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1lease_expiration_summary.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1lease_history.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1leasing_agent_performance.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1leasing_funnel_performance.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1leasing_summary.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1loans.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1occupancy_custom_fields.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1occupancy_summary.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1owner1099.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1owner1099_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1owner_custom_fields.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1owner_directory.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1owner_leasing.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1owner_withholdings.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1payment_plans.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1premium_leads_billing_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1project_budget_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1project_directory.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1property_budget.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1property_custom_fields.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1property_directory.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1property_group_directory.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1property_performance.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1property_staff_assignments.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1prospect_source_tracking.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1purchase_order.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1receivables_activity.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1renewal_summary.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1rent_roll.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1rent_roll_commercial.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1rent_roll_itemized.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1rentable_items.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1rental_applications.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1resident_financial_activity.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1security_deposit_funds_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1showings.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1surveys_summary.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1student_housing_rent_roll_by_bed.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1tenant_debt_collections_status.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1tenant_directory.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1tenant_ledger.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1tenant_tickler.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1tenant_transactions_summary.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1tenant_unpaid_charges_summary.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1tenant_vehicle_info.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1trial_balance.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1trial_balance_by_property.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1trust_account_balance.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1trust_account_balance_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1twelve_month_cash_flow.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1twelve_month_income_statement.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1unit_custom_fields.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1unit_directory.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1unit_inspection.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1unit_turn_detail.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1unit_vacancy.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1unpaid_balances_by_month.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1upcoming_activities.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1vendor1099.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1vendor_custom_fields.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1vendor_directory.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1vendor_ledger.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1vendor_ledger_enhanced.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1work_order.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1work_order_labor_summary.json/post"
+  },
+  {
+    "react-tabs__tab-panel": "Content type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"property_visibility\": \"active\",\n\"properties\": \n{\n\"properties_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"property_groups_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"portfolios_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n],\n\"owners_ids\": \n[\n\"1\",\n\"2\",\n\"3\"\n]\n},\n\"party_contact_info\": \n{\n\"company_id\": \"1\"\n},\n\"payment_type\": \"All\",\n\"created_by\": \"All\",\n\"gl_account_ids\": \n[\n\"1\",\n\"2\"\n],\n\"payment_status\": \"All\",\n\"date_type\": \"Bill Date\",\n\"occurred_on_from\": \"2023-06-01\",\n\"occurred_on_to\": \"2023-06-30\",\n\"reverse_transaction\": \"0\",\n\"columns\": \n[\n\"some_column\",\n\"some_other_column\"\n]\n}",
+    "sc-fzpmMD": "Copy\nExpand allCollapse all",
+    "sc-fznyAO href": "https://flraz.appfolio.com/api_credentials/basic_auth_credentials?selected_tab=documentation#/paths/~1saved~1{uuid}.json/get"
+  }
+]
