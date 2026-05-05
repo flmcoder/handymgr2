@@ -54,7 +54,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.7.3';
+var APP_VERSION = 'v9.7.4';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 var DASHBOARD_KPI_HISTORY = [];
@@ -8559,10 +8559,15 @@ function searchBillingRecords(results, searchTerms) {
 function getPreferredBillingAmount(row) {
   var fin = (row && row.financials) || {};
   var candidates = [
+    fin.bill_total_amount,
+    fin.total_amount,
     fin.vendor_bill_amount,
     fin.vendor_charge_amount,
     fin.tenant_total_charge,
     fin.amount_total,
+    row && row.bill_total_amount,
+    row && row.total_amount,
+    row && row.amount_total,
     row && row.vendor_bill_amount,
     row && row.vendor_charge_amount,
     row && row.tenant_total_charge_amount,
@@ -9164,7 +9169,7 @@ function renderBillGrid(data) {
       var deepBtn = document.getElementById('billingDeepSearchBtn');
       if (deepBtn) {
         deepBtn.onclick = function() {
-          runBillingDeepSearch();
+          showBillingDeepSearchModal('aio');
         };
       }
     }
@@ -9324,6 +9329,119 @@ async function runBillingDeepSearch() {
     showToast('Deep search failed: ' + String((err && err.message) || err || 'unknown error'), { kind: 'warning' });
   } finally {
     _billingDeepSearchInFlight = false;
+  }
+}
+
+function getBillingMainDeepSearchPayload() {
+  function inferScopedPropertyManager() {
+    var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
+    var names = {};
+    (_billingMainData || []).forEach(function(row) {
+      var propertyName = (row.property_context && row.property_context.property_name) || row.property_name || row.property || '';
+      var propertyId = row.property_id || row.propertyId || '';
+      if (grp && !isInPropertyGroup(propertyId, propertyName, grp)) return;
+      var pm = String(row.pm_name || row.property_manager || (row.work_order && row.work_order.pm_name) || '').trim();
+      if (!pm) return;
+      names[pm] = (names[pm] || 0) + 1;
+    });
+    var winner = '';
+    var max = 0;
+    Object.keys(names).forEach(function(k) {
+      if (names[k] > max) { max = names[k]; winner = k; }
+    });
+    return winner;
+  }
+
+  var search = String(($('#billingMainSearch') || {}).value || '').trim();
+  if (!search) return null;
+  var fromVal = String(($('#billingMainFrom') || {}).value || '').trim();
+  var toVal = String(($('#billingMainTo') || {}).value || '').trim();
+  var includeOlder = !!(($('#billingMainIncludeOlder') || {}).checked);
+  var status = String(($('#billingMainStatus') || {}).value || '').trim();
+  var grp = normalizeGroupSelectionValue(getEffectiveGroupId());
+  var groupUuid = String(getEffectiveGroupUuid(grp) || '').trim();
+
+  var now = new Date();
+  var defaultFrom = new Date(now.getTime());
+  defaultFrom.setDate(defaultFrom.getDate() - (includeOlder ? 730 : BILLS_DEFAULT_LOOKBACK_DAYS));
+  var dateFrom = fromVal || dateInputValue(defaultFrom);
+  var dateTo = toVal || dateInputValue(now);
+
+  return {
+    search: search,
+    status: status || 'All',
+    date_from: dateFrom,
+    date_to: dateTo,
+    property_group_uuid: groupUuid,
+    property_manager: inferScopedPropertyManager(),
+    limit: 300,
+    page: 1,
+    __deepSearch: true,
+  };
+}
+
+function renderBillingMainDeepResults(rows) {
+  var wrap = $('#billingDeepResultsWrap');
+  var body = $('#billingDeepResultsBody');
+  var meta = $('#billingDeepResultsMeta');
+  if (!wrap || !body || !meta) return;
+
+  var list = Array.isArray(rows) ? rows.map(normalizeAioBillRowForGrid) : [];
+  if (!list.length) {
+    wrap.style.display = 'none';
+    body.innerHTML = '';
+    meta.textContent = '';
+    return;
+  }
+
+  var html = '';
+  list.forEach(function(b) {
+    html += '<tr>' +
+      '<td><span class="u-mono-sm">' + escHtml(b.billNumber || b.id || '—') + '</span></td>' +
+      '<td>' + escHtml(b.propertyName || '—') + '</td>' +
+      '<td><span class="cell-ellipsis" title="' + escHtml(b.description || '—') + '">' + escHtml(b.description || '—') + '</span></td>' +
+      '<td>' + escHtml(b.vendorName || '—') + '</td>' +
+      '<td class="u-num-cell">' + escHtml(currency(b.amount, 2)) + '</td>' +
+      '<td><span class="badge badge-muted">' + escHtml(b.status || 'Unknown') + '</span></td>' +
+      '<td class="u-date-cell">' + escHtml(b.date || '—') + '</td>' +
+      '<td class="u-date-cell">—</td>' +
+    '</tr>';
+  });
+
+  body.innerHTML = html;
+  meta.textContent = list.length.toLocaleString() + ' rows from deep V2 search';
+  wrap.style.display = '';
+}
+
+async function runBillingMainDeepSearch() {
+  var payload = getBillingMainDeepSearchPayload();
+  if (!payload) {
+    showToast('Enter a billing search term before running Deep Search.', { kind: 'warning' });
+    return;
+  }
+  var btn = $('#billingMainDeepSearchBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running Deep Search…';
+  }
+  try {
+    var res = await proxyPost('aio_bills', payload);
+    if (!res || !res.ok) throw new Error((res && (res.error || res.message)) || 'Deep search failed');
+    var rows = Array.isArray(res.data) ? res.data : [];
+    if (payload.search) {
+      rows = rows.filter(function(row) {
+        return matchAioBillQuery(normalizeAioBillRowForGrid(row), payload.search);
+      });
+    }
+    renderBillingMainDeepResults(rows);
+    showToast('Deep Search complete: ' + rows.length + ' rows');
+  } catch (err) {
+    showToast('Deep Search failed: ' + String((err && err.message) || err || 'unknown error'), { kind: 'warning' });
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-search-plus"></i> Can\'t find what you\'re looking for? Try Deep Search';
+    }
   }
 }
 
@@ -10844,6 +10962,16 @@ function renderDashboardInsightChart(elId, rows, title) {
     _dashboardInsightCharts[elId] = chart;
   }
 
+  // Ensure container has layout before first paint.
+  if (!el.offsetWidth || !el.offsetHeight) {
+    setTimeout(function() {
+      var c = _dashboardInsightCharts[elId];
+      if (c && typeof c.resize === 'function') {
+        try { c.resize(); } catch (e) { /* noop */ }
+      }
+    }, 80);
+  }
+
   chart.setOption({
     animationDuration: 380,
     animationEasing: 'cubicOut',
@@ -11244,6 +11372,7 @@ var currentWOSubtab = 'active'; // active | completed | closure | followup
 var currentBillingSubtab = 'main'; // main | payables | charge-detail | bill-detail
 var _billingKpisLoading = false;
 var _billingKpisLoadedGroup = null; // group key for which KPIs were last loaded
+var _billingDeepSearchPendingSource = 'billing-main';
 
 function aggregateBillingKpisFromRows(rows) {
   var list = Array.isArray(rows) ? rows : [];
@@ -12901,6 +13030,7 @@ function applyBillingMainFilters() {
 
   _billingMainFiltered = filtered;
   _billingMainPage = 1;
+  renderBillingMainDeepResults([]);
   renderBillingInsights(_billingMainFiltered);
   renderBillingMainTable();
 }
@@ -12909,6 +13039,7 @@ function renderBillingMainTable() {
   var body = $('#billingMainBody');
   var footer = $('#billingMainFooter');
   var pageMeta = $('#billingMainPageMeta');
+  var deepCta = $('#billingMainDeepSearchCta');
   if (!body) return;
   var rows = _billingMainFiltered;
   var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
@@ -12954,8 +13085,13 @@ function renderBillingMainTable() {
   if (view.total === 0) {
     body.innerHTML = view.html;
     if (footer) footer.style.display = 'none';
+    if (deepCta) {
+      var hasSearch = !!String(($('#billingMainSearch') || {}).value || '').trim();
+      deepCta.style.display = hasSearch ? '' : 'none';
+    }
     return;
   }
+  if (deepCta) deepCta.style.display = 'none';
   body.innerHTML = view.html;
 
   body.querySelectorAll('.u-row-click').forEach(function(tr) {
@@ -18983,6 +19119,64 @@ function wireUpUI() {
   if (billingMainTo)     billingMainTo.addEventListener('change', applyBillingMainFilters);
   if (billingMainStatus) billingMainStatus.addEventListener('change', applyBillingMainFilters);
   if (billingMainIncludeOlder) billingMainIncludeOlder.addEventListener('change', applyBillingMainFilters);
+
+    // Billing search bar hint visibility (show/hide on input)
+    if (billingMainSearch) {
+      function updateBillingSearchHint() {
+        var hint = billingMainSearch.parentElement.querySelector('.billing-search-marquee');
+        if (!hint) return;
+        if (billingMainSearch.value.trim()) {
+          hint.classList.remove('show-hint');
+          hint.classList.add('hide-hint');
+        } else {
+          hint.classList.add('show-hint');
+          hint.classList.remove('hide-hint');
+        }
+      }
+      billingMainSearch.addEventListener('input', updateBillingSearchHint);
+      billingMainSearch.addEventListener('focus', updateBillingSearchHint);
+      updateBillingSearchHint(); // Initialize
+    }
+
+    // Deep Search Modal Handler
+    var billingDeepSearchModal = $('#billingDeepSearchModal');
+    var billingDeepSearchModalClose = $('#billingDeepSearchModalClose');
+    var billingDeepSearchCancel = $('#billingDeepSearchCancel');
+    var billingDeepSearchContinue = $('#billingDeepSearchContinue');
+    if (billingDeepSearchModalClose) {
+      billingDeepSearchModalClose.addEventListener('click', function() {
+        if (billingDeepSearchModal) billingDeepSearchModal.style.display = 'none';
+      });
+    }
+    if (billingDeepSearchCancel) {
+      billingDeepSearchCancel.addEventListener('click', function() {
+        if (billingDeepSearchModal) billingDeepSearchModal.style.display = 'none';
+      });
+    }
+    if (billingDeepSearchContinue) {
+      billingDeepSearchContinue.addEventListener('click', function() {
+        if (billingDeepSearchModal) billingDeepSearchModal.style.display = 'none';
+        if (_billingDeepSearchPendingSource === 'aio') runBillingDeepSearch();
+        else runBillingMainDeepSearch();
+      });
+    }
+    // Expose function to show deep search modal
+    window.showBillingDeepSearchModal = function(source) {
+      _billingDeepSearchPendingSource = source || 'billing-main';
+      if (billingDeepSearchModal) billingDeepSearchModal.style.display = 'flex';
+    };
+
+    var billingMainDeepSearchBtn = $('#billingMainDeepSearchBtn');
+    if (billingMainDeepSearchBtn) {
+      billingMainDeepSearchBtn.addEventListener('click', function() {
+        var needsWarning = _accessRole === 'full' || _accessRole === 'manager';
+        if (needsWarning) {
+          showBillingDeepSearchModal('billing-main');
+        } else {
+          runBillingMainDeepSearch();
+        }
+      });
+    }
 
   // Billing: Pagination
   var billingMainPrev = $('#billingMainPrev');
