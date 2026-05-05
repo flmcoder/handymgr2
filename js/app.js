@@ -500,8 +500,8 @@ function emptyHtml(icon, msg) { return '<div class="empty-state"><i class="fas '
 
 // ---- AppFolio deep link builder ----
 // Builds URLs to view resources directly in AppFolio
-// Work orders: /maintenance/service_requests/{base_number}/
-//   "12345-1" → "12345" (strip hyphen suffix)
+// Work orders: /maintenance/service_requests/{work_order_number}/
+// Inspections: /inspections/{inspection_or_unit_id}
 function appfolioUrl(type, id) {
   if (!id) return '';
   var base = API_VHOST ? 'https://' + API_VHOST + '.appfolio.com' : '';
@@ -514,19 +514,17 @@ function appfolioUrl(type, id) {
         var match = WORK_ORDERS.find(function(w) { return w.uuid === woNum; });
         if (match && match.id) woNum = String(match.id);
       }
-      // Strip hyphen suffix: "12345-1" → "12345"
-      woNum = woNum.replace(/-\d+$/, '');
       return base + '/maintenance/service_requests/' + encodeURIComponent(woNum) + '/';
     case 'vendor': return base + '/vendor_details?vendor_id=' + encodeURIComponent(id);
     case 'property': return base + '/properties/' + encodeURIComponent(id) + '/';
     case 'unit_turn': return base + '/maintenance/unit_turns/' + encodeURIComponent(id) + '/';
     case 'inspection_property':
     case 'inspection':
-      var propertyId = (typeof id === 'object' && id)
-        ? (id.propertyId || id.id || '')
+      var inspectionId = (typeof id === 'object' && id)
+        ? (id.inspectionId || id.unitId || id.id || id.propertyId || '')
         : String(id || '');
-      propertyId = String(propertyId || '').replace(/^p_/i, '');
-      return propertyId ? (base + '/maintenance/inspections?filters%5Bproperty_ids_list%5D=p_' + encodeURIComponent(propertyId)) : '';
+      inspectionId = String(inspectionId || '').replace(/^p_/i, '');
+      return inspectionId ? (base + '/inspections/' + encodeURIComponent(inspectionId)) : '';
     case 'tenant': return base + '/tenant_details?occupancy_id=' + encodeURIComponent(id);
     default: return base + '/' + type + '/' + encodeURIComponent(id);
   }
@@ -559,6 +557,13 @@ function isInPropertyGroup(propertyId, propertyName, groupName) {
   if (normalizedGroup.charAt(0) === '*' && normalizedGroupLower.indexOf('all properties') !== -1) return true;
 
   groupName = normalizedGroup;
+
+  // If the selected group is a UUID, compare directly against UUID mappings.
+  if (/^[0-9a-fA-F-]{20,}$/.test(groupName)) {
+    if (String(propertyId || '').trim().toLowerCase() === groupName.toLowerCase()) return true;
+    var resolvedGroupName = resolveGroupNameFromUuid(groupName);
+    if (resolvedGroupName) groupName = String(resolvedGroupName);
+  }
 
   // 1. Fast lookup by property name (covers both Reports API and DB API names)
   if (propertyName) {
@@ -758,6 +763,30 @@ function setDashboardKpiSkeleton(active) {
   $$('#sec-dashboard .kpi-card').forEach(function(card) {
     card.classList.toggle('kpi-skeleton', !!active);
   });
+}
+
+function setMetricVisualState(valueId, subId, config) {
+  var opts = config || {};
+  var valueEl = document.getElementById(valueId);
+  var subEl = subId ? document.getElementById(subId) : null;
+  if (!valueEl) return;
+
+  var card = valueEl.closest('.kpi-card');
+  var state = String(opts.state || 'ok');
+  var displayValue = opts.value;
+
+  if (state === 'loading') displayValue = '··';
+  if (state === 'no_response' || state === 'error') displayValue = '--';
+  if (displayValue === undefined || displayValue === null || displayValue === '') displayValue = '—';
+
+  valueEl.textContent = String(displayValue);
+  valueEl.setAttribute('data-metric-state', state);
+  if (card) card.setAttribute('data-metric-state', state);
+
+  if (subEl) {
+    if (opts.subText != null) subEl.textContent = String(opts.subText);
+    subEl.setAttribute('data-metric-state', state);
+  }
 }
 
 function normalizeKpiNumber(value) {
@@ -1392,7 +1421,7 @@ var _accessRole = 'full'; // 'full' | 'manager' | 'vendors' | 'pm_readonly'
 var _pmScopeGroupUuid = '';
 var _pmScopeEmail = '';
 var DEFAULT_BILLS_LOOKBACK_DAYS = 90;
-var BILLS_DEFAULT_LOOKBACK_DAYS = 7; // Used for the UI date filter default
+var BILLS_DEFAULT_LOOKBACK_DAYS = 90; // Used for the UI date filter default
 var DEFAULT_COMPLETED_WO_LOOKBACK_DAYS = 30;
 
 function normalizeAccessRole(role) {
@@ -1796,6 +1825,17 @@ function applyAccessRole() {
     // pm_readonly users are auto-scoped to their property group UUID — no manual filter needed
     if (gfBar2) gfBar2.style.display = _accessRole === 'pm_readonly' ? 'none' : '';
   }
+
+  // PM role should not see vendor spend tiles/alerts.
+  var hideVendorSpend = _accessRole === 'pm_readonly';
+  var billVendorKpi = document.getElementById('billKpiVendors');
+  var billVendorKpiCard = document.getElementById('billKpiVendorsCard') || (billVendorKpi ? billVendorKpi.closest('.kpi-card') : null);
+  if (billVendorKpiCard) billVendorKpiCard.style.display = hideVendorSpend ? 'none' : '';
+  var billingVendorCard = document.getElementById('billingVendorCard');
+  if (billingVendorCard) billingVendorCard.style.display = hideVendorSpend ? 'none' : '';
+  var attentionVendors = document.getElementById('attentionVendors');
+  if (attentionVendors) attentionVendors.style.display = hideVendorSpend ? 'none' : '';
+
   persistAccessRole(_accessRole);
 }
 
@@ -3999,9 +4039,9 @@ var CONFIG = {
   INSPECTION_DUE_SOON_DAYS: 270,
   // Vendor compliance
   VENDOR_EXPIRY_ALERT_DAYS: 60,
-  VENDOR_GRID_INITIAL_LIMIT_DESKTOP: 140,
-  VENDOR_GRID_INITIAL_LIMIT_MOBILE: 40,
-  VENDOR_GRID_LOAD_MORE_STEP: 80,
+  VENDOR_GRID_INITIAL_LIMIT_DESKTOP: 90,
+  VENDOR_GRID_INITIAL_LIMIT_MOBILE: 30,
+  VENDOR_GRID_LOAD_MORE_STEP: 60,
   VENDOR_SELECT_INITIAL_LIMIT_DESKTOP: 250,
   VENDOR_SELECT_INITIAL_LIMIT_MOBILE: 60,
   VENDOR_SELECT_SEARCH_LIMIT: 260,
@@ -4890,7 +4930,7 @@ var TEMPLATES = [
 /* =================================================================
    SMART FILTERS — 180-day window, open-only WOs, small chunks
    ================================================================= */
-var DATA_WINDOW_DAYS = 180;
+var DATA_WINDOW_DAYS = 90;
 var PROPERTY_GROUPS_LAST_UPDATED_FROM = '2024-01-01T00:00:00Z';
 var PROPERTY_GROUPS_PAGE_SIZE = 100;
 
@@ -4964,6 +5004,7 @@ function hideProgress() {
 //   6=Waiting, 8=WorkDone, 12=ReadyToBill
 // Excludes: 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill
 async function fetchWorkOrders() {
+  setDataSourceState('work_orders', 'loading', { error: '' });
   try {
     setApiStatus('loading', 'Loading work orders (server-side)\u2026');
     var data = await proxyAction('work_orders', { days: DATA_WINDOW_DAYS });
@@ -5004,9 +5045,11 @@ async function fetchWorkOrders() {
     });
     var cacheNote = (data.from_cache && data.cached_at) ? ' (cached)' : '';
     setApiStatus('loading', 'Work orders: ' + WORK_ORDERS.length + ' loaded' + cacheNote);
+    setDataSourceState('work_orders', 'ok', { count: WORK_ORDERS.length, error: '' });
     return true;
   } catch (err) {
     WORK_ORDERS = [];
+    setDataSourceState('work_orders', 'no_response', { count: null, error: String((err && err.message) || err || 'work orders unavailable') });
     return false;
   }
 }
@@ -5225,6 +5268,7 @@ async function fetchBills(days, opts) {
     var requestedPage = Math.max(1, parseInt(opts.page || 1, 10) || 1);
     var requestedPerPage = Math.max(1, Math.min(200, parseInt(opts.perPage || opts.limit || 50, 10) || 50));
     var assignGlobal = opts.assignGlobal !== false;
+    if (assignGlobal) setDataSourceState('bills', 'loading', { error: '' });
     if (opts.forceRefresh) params.force_refresh = 'true';
     var routeAction = String(opts.filterType || '').trim();
     var routeStatusFilter = String(opts.routeStatusFilter || opts.statusFilter || '').trim().toLowerCase();
@@ -5458,6 +5502,7 @@ async function fetchBills(days, opts) {
     if (assignGlobal) {
       BILLS = mappedBills;
       _billsLoadedAt = Date.now();
+      setDataSourceState('bills', 'ok', { count: BILLS.length, error: '' });
     }
 
     if (opts.returnPayload) {
@@ -5477,7 +5522,10 @@ async function fetchBills(days, opts) {
   } catch (err) {
     console.log('fetchBills error: ' + (err.message || err));
     _lastBillSource = 'legacy';
-    if (assignGlobal) BILLS = [];
+    if (assignGlobal) {
+      BILLS = [];
+      setDataSourceState('bills', 'no_response', { count: null, error: String((err && err.message) || err || 'bills unavailable') });
+    }
     if (opts && opts.returnPayload) {
       return {
         ok: false,
@@ -5623,6 +5671,7 @@ function normalizeTurnRecord(t) {
 
 // Turns: Proxy ?action=turns — merged In Progress + Completed for richer detail context
 async function fetchTurns() {
+  setDataSourceState('turns', 'loading', { error: '' });
   try {
     setApiStatus('loading', 'Loading turns (In Progress + Completed)…');
     var activeData = await proxyAction('turns', { days: 60, status: 'In Progress' });
@@ -5644,9 +5693,11 @@ async function fetchTurns() {
 
     TURNS = results.map(normalizeTurnRecord);
     DASH_TURN_LAST_SYNC_AT = new Date().toISOString();
+    setDataSourceState('turns', 'ok', { count: TURNS.length, error: '' });
     return true;
   } catch (err) {
     TURNS = [];
+    setDataSourceState('turns', 'no_response', { count: null, error: String((err && err.message) || err || 'turns unavailable') });
     return false;
   }
 }
@@ -5654,6 +5705,29 @@ async function fetchTurns() {
 // Inspections: Proxy ?action=inspections — server-side pagination, one request
 var INSPECTIONS = [];
 var INSPECTION_LOOKBACK_DAYS = 180;
+var DATA_SOURCE_STATE = {
+  work_orders: { status: 'idle', count: null, error: '' },
+  turns: { status: 'idle', count: null, error: '' },
+  inspections: { status: 'idle', count: null, error: '' },
+  upcoming_moveouts: { status: 'idle', count: null, error: '' },
+  bills: { status: 'idle', count: null, error: '' },
+  billing_kpis: { status: 'idle', count: null, error: '' }
+};
+
+function setDataSourceState(name, status, meta) {
+  if (!name) return;
+  var current = DATA_SOURCE_STATE[name] || { status: 'idle', count: null, error: '' };
+  var next = Object.assign({}, current, {
+    status: status || 'idle',
+    count: meta && meta.count != null ? Number(meta.count) : current.count,
+    error: meta && meta.error ? String(meta.error) : ''
+  });
+  DATA_SOURCE_STATE[name] = next;
+}
+
+function getDataSourceState(name) {
+  return DATA_SOURCE_STATE[name] || { status: 'idle', count: null, error: '' };
+}
 
 function getCurrentYearStartDate(nowRef) {
   var now = nowRef || new Date();
@@ -5730,6 +5804,7 @@ function isInspectionWithinWindow(row) {
 }
 
 async function fetchInspections() {
+  setDataSourceState('inspections', 'loading', { error: '' });
   try {
     var now = new Date();
     var yearStart = getCurrentYearStartDate(now);
@@ -5754,9 +5829,11 @@ async function fetchInspections() {
     }).filter(function(row) {
       return isActiveInspectionProperty(row) && isInspectionWithinWindow(row);
     });
+    setDataSourceState('inspections', 'ok', { count: INSPECTIONS.length, error: '' });
     return true;
   } catch (err) {
     INSPECTIONS = [];
+    setDataSourceState('inspections', 'no_response', { count: null, error: String((err && err.message) || err || 'inspections unavailable') });
     return false;
   }
 }
@@ -6169,6 +6246,7 @@ async function fetchRecentTasks() {
 // Upcoming Move-Outs: Proxy ?action=upcoming_moveouts — tenant directory
 // Returns tenants on notice or current with move_out dates in the window
 async function fetchUpcomingMoveouts() {
+  setDataSourceState('upcoming_moveouts', 'loading', { error: '' });
   try {
     setApiStatus('loading', 'Loading upcoming move-outs\u2026');
     var data = await proxyAction('upcoming_moveouts', { days: 60 });
@@ -6189,10 +6267,12 @@ async function fetchUpcomingMoveouts() {
         occupancyId: t.occupancy_id || ''
       };
     });
+    setDataSourceState('upcoming_moveouts', 'ok', { count: UPCOMING_MOVEOUTS.length, error: '' });
     return true;
   } catch (err) {
     console.log('fetchUpcomingMoveouts error: ' + (err.message || err));
     UPCOMING_MOVEOUTS = [];
+    setDataSourceState('upcoming_moveouts', 'no_response', { count: null, error: String((err && err.message) || err || 'move-outs unavailable') });
     return false;
   }
 }
@@ -7573,27 +7653,33 @@ function resolveWODbUuid(wo) {
   return wo.uuid || '';
 }
 
-async function fetchWONotes(woIdOrUuid, woContext) {
-  if (!woIdOrUuid) return [];
-  var woRef = String(woIdOrUuid || '').trim();
-  if (!isUuidString(woRef)) {
-    var requiredUnitTurnId = String((woContext && woContext.unitTurnId) || '').trim();
-    var requiredUnitId = String((woContext && woContext.unitId) || '').trim();
-    var dbWo = TURN_WORK_ORDERS.find(function(tw) {
-      if (String(tw.woNumber || '').trim() !== woRef) return false;
-      if (requiredUnitTurnId && String(tw.unitTurnId || '').trim() !== requiredUnitTurnId) return false;
-      if (requiredUnitId && String(tw.unitId || '').trim() !== requiredUnitId) return false;
-      return isUuidString(tw.id || '');
+async function resolveWorkOrderApiUuid(woIdOrUuid, woContext) {
+  if (!woIdOrUuid) return '';
+  var woRef = String(woIdOrUuid || '').trim().replace(/^#/, '');
+  if (isUuidString(woRef)) return woRef;
+
+  var requiredUnitTurnId = String((woContext && woContext.unitTurnId) || '').trim();
+  var requiredUnitId = String((woContext && woContext.unitId) || '').trim();
+  var dbWo = TURN_WORK_ORDERS.find(function(tw) {
+    if (String(tw.woNumber || '').trim() !== woRef) return false;
+    if (requiredUnitTurnId && String(tw.unitTurnId || '').trim() !== requiredUnitTurnId) return false;
+    if (requiredUnitId && String(tw.unitId || '').trim() !== requiredUnitId) return false;
+    return isUuidString(tw.id || '');
+  });
+  if (dbWo && dbWo.id) {
+    woRef = String(dbWo.id);
+  } else {
+    var fallback = TURN_WORK_ORDERS.find(function(tw) {
+      return String(tw.woNumber || '').trim() === woRef && isUuidString(tw.id || '');
     });
-    if (dbWo && dbWo.id) {
-      woRef = String(dbWo.id);
-    } else {
-      var fallback = TURN_WORK_ORDERS.find(function(tw) {
-        return String(tw.woNumber || '').trim() === woRef && isUuidString(tw.id || '');
-      });
-      woRef = fallback ? String(fallback.id) : '';
-    }
+    if (fallback && fallback.id) woRef = String(fallback.id);
   }
+
+  if (!isUuidString(woRef) && woContext) {
+    var contextUuid = resolveWODbUuid(woContext);
+    if (isUuidString(contextUuid)) woRef = String(contextUuid);
+  }
+
   // Final fallback: ask proxy to resolve WO reference to DB API UUID.
   if ((!woRef || !isUuidString(woRef)) && API_PROXY) {
     try {
@@ -7601,9 +7687,16 @@ async function fetchWONotes(woIdOrUuid, woContext) {
       var resolvedUuid = String((detailData && detailData.uuid) || (detailData && detailData.result && detailData.result.id) || '').trim();
       if (isUuidString(resolvedUuid)) woRef = resolvedUuid;
     } catch (e) {
-      // Keep silent fallback behavior for modal; render function shows empty state.
+      // Keep silent fallback behavior for modal; caller handles empty-state UX.
     }
   }
+
+  return isUuidString(woRef) ? woRef : '';
+}
+
+async function fetchWONotes(woIdOrUuid, woContext) {
+  if (!woIdOrUuid) return [];
+  var woRef = await resolveWorkOrderApiUuid(woIdOrUuid, woContext);
   if (!woRef || !isUuidString(woRef)) return [];
   var notesCached = detailCacheGet('notes_' + woRef);
   if (typeof notesCached !== 'undefined') return notesCached;
@@ -7682,12 +7775,17 @@ function renderWOAttachmentsList(attachments, errorText) {
   if (metaEl) metaEl.textContent = contentTypes.length ? contentTypes.join(', ') : 'unknown';
 }
 
-async function loadWOAttachments(woIdOrUuid) {
+async function loadWOAttachments(woIdOrUuid, woContext) {
   var el = document.getElementById('detailAttachmentList');
   if (!el || !woIdOrUuid) return;
   el.innerHTML = '<div style="color:var(--text-muted);font-size:11px"><i class="fas fa-spinner fa-spin"></i> Loading attachments…</div>';
   try {
-    var data = await proxyAction('wo_attachments', { wo_id: String(woIdOrUuid) }, { suppressSessionExpiry: true });
+    var woRef = await resolveWorkOrderApiUuid(woIdOrUuid, woContext);
+    if (!woRef || !isUuidString(woRef)) {
+      renderWOAttachmentsList([], 'Unable to resolve the AppFolio work order UUID for attachments.');
+      return;
+    }
+    var data = await proxyAction('wo_attachments', { wo_id: String(woRef) }, { suppressSessionExpiry: true });
     if (!data || data.ok === false) {
       renderWOAttachmentsList([], String((data && (data.detail || data.error)) || 'No detail from proxy'));
       return;
@@ -8396,7 +8494,10 @@ function filterBillingByPropertyGroup(results, groupUuid) {
   return results.filter(function(row) {
     var propCtx = row.property_context || {};
     var rowGroupId = propCtx.property_group_id;
-    return rowGroupId === groupUuid;
+    if (rowGroupId && String(rowGroupId).trim() === String(groupUuid).trim()) return true;
+    var propertyId = row.property_id || row.propertyId || propCtx.property_id || '';
+    var propertyName = propCtx.property_name || row.property_name || row.property || '';
+    return isInPropertyGroup(propertyId, propertyName, String(groupUuid));
   });
 }
 
@@ -8950,6 +9051,8 @@ function ensureBillingAioGridHost() {
 }
 
 var _billingUseAioGrid = false;
+var _billingLastSearchPayload = null;
+var _billingDeepSearchInFlight = false;
 
 function setBillingQueueRenderMode(mode) {
   var queuePanel = document.getElementById('billing-subpanel-queue');
@@ -9044,13 +9147,27 @@ function renderBillGrid(data) {
   setBillingQueueRenderMode('aio');
 
   if (!rows.length) {
+    var deepSearchEnabled = !!(_billingLastSearchPayload && _billingLastSearchPayload.search && !_billingLastSearchPayload.__deepSearch);
     container.classList.add('layout-list');
     container.innerHTML =
       '<div class="empty-state bill-grid-empty">' +
       '<i class="fas fa-file-invoice bill-grid-empty-icon"></i>' +
       '<h3 class="bill-grid-empty-title">No bills found</h3>' +
-      '<p class="bill-grid-empty-copy">Try adjusting your search filters.</p>' +
+      '<p class="bill-grid-empty-copy">Try adjusting your search filters.' +
+      (deepSearchEnabled ? ' You can also run a deeper historical search.' : '') +
+      '</p>' +
+      (deepSearchEnabled
+        ? '<div style="margin-top:10px"><button id="billingDeepSearchBtn" class="action-btn"><i class="fas fa-search-plus"></i> Deep Search (>90d)</button></div>'
+        : '') +
       '</div>';
+    if (deepSearchEnabled) {
+      var deepBtn = document.getElementById('billingDeepSearchBtn');
+      if (deepBtn) {
+        deepBtn.onclick = function() {
+          runBillingDeepSearch();
+        };
+      }
+    }
     return;
   }
 
@@ -9165,6 +9282,7 @@ function renderBillDetailHTML(data) {
 
 async function fetchAioBills(payload) {
   var body = payload && typeof payload === 'object' ? payload : {};
+  _billingLastSearchPayload = Object.assign({}, body);
   var host = ensureBillingAioGridHost();
   if (host) {
     setBillingQueueRenderMode('aio');
@@ -9184,6 +9302,29 @@ async function fetchAioBills(payload) {
   }
   renderBillGrid(rows);
   return res;
+}
+
+async function runBillingDeepSearch() {
+  if (_billingDeepSearchInFlight) return;
+  if (!_billingLastSearchPayload || !_billingLastSearchPayload.search) return;
+  _billingDeepSearchInFlight = true;
+  try {
+    var deepPayload = Object.assign({}, _billingLastSearchPayload);
+    var toDate = new Date();
+    var fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 730);
+    deepPayload.page = 1;
+    deepPayload.limit = 200;
+    deepPayload.date_from = fromDate.toISOString().slice(0, 10);
+    deepPayload.date_to = toDate.toISOString().slice(0, 10);
+    deepPayload.__deepSearch = true;
+    showToast('Running deep historical bill search (24 months)…');
+    await fetchAioBills(deepPayload);
+  } catch (err) {
+    showToast('Deep search failed: ' + String((err && err.message) || err || 'unknown error'), { kind: 'warning' });
+  } finally {
+    _billingDeepSearchInFlight = false;
+  }
 }
 
 async function loadBillDetailModal(billId) {
@@ -9784,6 +9925,9 @@ async function showBillDetailModal(billId) {
     }
 
     var raw = b.raw || {};
+    var attachmentBillRef = String(
+      b.id || b.bill_id || b.BillId || raw.BillId || raw.bill_id || billId || ''
+    ).trim();
     var lineItems = b.line_items || b.lineItems || raw.LineItems || raw.line_items || [];
     var afLink = API_VHOST
       ? ('https://' + API_VHOST + '.appfolio.com/bills/' + encodeURIComponent(String(b.id || billId)))
@@ -9844,7 +9988,7 @@ async function showBillDetailModal(billId) {
       var payloadCopyBtn = document.getElementById('btnBillPayloadCopy');
       var payloadDownloadBtn = document.getElementById('btnBillPayloadDownload');
 
-      if (listEl) loadBillAttachments(billId, listEl);
+      if (listEl) loadBillAttachments(attachmentBillRef, listEl);
         var goVendorBtn = document.getElementById('billGoToVendor');
         if (goVendorBtn) {
           goVendorBtn.addEventListener('click', function() {
@@ -9868,7 +10012,7 @@ async function showBillDetailModal(billId) {
         }
       if (uploadBtn) {
         uploadBtn.addEventListener('click', function() {
-          uploadBillAttachment(billId, fileInput, statusEl, listEl);
+          uploadBillAttachment(attachmentBillRef, fileInput, statusEl, listEl);
         });
       }
       Array.prototype.forEach.call(document.querySelectorAll('#itemDetailBody tr[data-li-uuid]'), function(row) {
@@ -10436,40 +10580,153 @@ function renderDashboardKPIs() {
   // Unassigned urgent count
   var unassignedUrgent = urgentWOs.filter(function(w) { return !w.vendorName && !w.vendor; });
 
-  $('#kpiOpen').textContent = openWOs.length;
-  var openSubEl = $('#kpiOpenSub');
-  if (openSubEl) openSubEl.innerHTML = WORK_ORDERS.length + ' loaded (' + DATA_WINDOW_DAYS + 'd)' + agingHtml;
-  $('#kpiUrgent').textContent = urgentWOs.length;
-  var urgSubText = urgentWOs.length > 0 ? urgentWOs.length + ' require attention' : 'No urgent items';
-  if (unassignedUrgent.length > 0) urgSubText += ' \u2022 ' + unassignedUrgent.length + ' unassigned';
-  $('#kpiUrgentSub').textContent = urgSubText;
-  $('#kpiTurns').textContent = activeTurns.length;
-  $('#kpiTurnsSub').textContent = activeTurns.length > 0 ? activeTurns.length + ' active now' : 'No active turns';
-  $('#kpiMoveOuts').textContent = moveOuts.length;
-  $('#kpiMoveOutsSub').textContent = moveOuts.length > 0 ? moveOuts[0].daysLeft + 'd until next' : 'None in ' + CONFIG.MOVEOUT_WINDOW_DAYS + ' days';
-  $('#kpiFlagged').textContent = flaggedCount;
-  $('#kpiFlaggedSub').textContent = flaggedCount > 0 ? flaggedCount + ' items flagged' : 'No flagged items';
-  if ($('#kpiPendingBills')) $('#kpiPendingBills').textContent = String(pendingBillApprovals.length);
-  if ($('#kpiPendingBillsSub')) {
-    $('#kpiPendingBillsSub').textContent = pendingBillApprovals.length > 0
-      ? pendingBillApprovals.length + ' bill(s) awaiting approval'
-      : (BILLS.length > 0 ? 'No pending approvals in scope' : 'AP bills not loaded yet');
+  var woSourceState = getDataSourceState('work_orders');
+  var turnsSourceState = getDataSourceState('turns');
+  var moveoutsSourceState = getDataSourceState('upcoming_moveouts');
+  var billsSourceState = getDataSourceState('bills');
+
+  if (woSourceState.status === 'no_response') {
+    setMetricVisualState('kpiOpen', 'kpiOpenSub', {
+      state: 'no_response',
+      subText: 'No API response for work orders'
+    });
+    setMetricVisualState('kpiUrgent', 'kpiUrgentSub', {
+      state: 'no_response',
+      subText: 'No API response for urgent work orders'
+    });
+  } else if (woSourceState.status === 'loading' || woSourceState.status === 'idle') {
+    setMetricVisualState('kpiOpen', 'kpiOpenSub', {
+      state: 'loading',
+      subText: 'Loading work orders…'
+    });
+    setMetricVisualState('kpiUrgent', 'kpiUrgentSub', {
+      state: 'loading',
+      subText: 'Loading urgent queue…'
+    });
+  } else {
+    setMetricVisualState('kpiOpen', 'kpiOpenSub', {
+      state: 'ok',
+      value: String(openWOs.length),
+      subText: WORK_ORDERS.length + ' loaded (' + DATA_WINDOW_DAYS + 'd)'
+    });
+    var openSubEl = $('#kpiOpenSub');
+    if (openSubEl) openSubEl.innerHTML = WORK_ORDERS.length + ' loaded (' + DATA_WINDOW_DAYS + 'd)' + agingHtml;
+    var urgSubText = urgentWOs.length > 0 ? urgentWOs.length + ' require attention' : 'No urgent items';
+    if (unassignedUrgent.length > 0) urgSubText += ' \u2022 ' + unassignedUrgent.length + ' unassigned';
+    setMetricVisualState('kpiUrgent', 'kpiUrgentSub', {
+      state: 'ok',
+      value: String(urgentWOs.length),
+      subText: urgSubText
+    });
+  }
+
+  if (turnsSourceState.status === 'no_response') {
+    setMetricVisualState('kpiTurns', 'kpiTurnsSub', {
+      state: 'no_response',
+      subText: 'No API response for turns'
+    });
+  } else if (turnsSourceState.status === 'loading' || turnsSourceState.status === 'idle') {
+    setMetricVisualState('kpiTurns', 'kpiTurnsSub', {
+      state: 'loading',
+      subText: 'Loading turns…'
+    });
+  } else {
+    setMetricVisualState('kpiTurns', 'kpiTurnsSub', {
+      state: 'ok',
+      value: String(activeTurns.length),
+      subText: activeTurns.length > 0 ? activeTurns.length + ' active now' : 'No active turns'
+    });
+  }
+
+  if (moveoutsSourceState.status === 'no_response') {
+    setMetricVisualState('kpiMoveOuts', 'kpiMoveOutsSub', {
+      state: 'no_response',
+      subText: 'No API response for move-outs'
+    });
+  } else if (moveoutsSourceState.status === 'loading' || moveoutsSourceState.status === 'idle') {
+    setMetricVisualState('kpiMoveOuts', 'kpiMoveOutsSub', {
+      state: 'loading',
+      subText: 'Loading move-outs…'
+    });
+  } else {
+    setMetricVisualState('kpiMoveOuts', 'kpiMoveOutsSub', {
+      state: 'ok',
+      value: String(moveOuts.length),
+      subText: moveOuts.length > 0 ? moveOuts[0].daysLeft + 'd until next' : 'None in ' + CONFIG.MOVEOUT_WINDOW_DAYS + ' days'
+    });
+  }
+
+  setMetricVisualState('kpiFlagged', 'kpiFlaggedSub', {
+    state: 'ok',
+    value: String(flaggedCount),
+    subText: flaggedCount > 0 ? flaggedCount + ' items flagged' : 'No flagged items'
+  });
+
+  if (billsSourceState.status === 'no_response') {
+    setMetricVisualState('kpiPendingBills', 'kpiPendingBillsSub', {
+      state: 'no_response',
+      subText: 'No API response for AP bills'
+    });
+  } else if (billsSourceState.status === 'loading' || billsSourceState.status === 'idle') {
+    setMetricVisualState('kpiPendingBills', 'kpiPendingBillsSub', {
+      state: 'loading',
+      subText: 'Loading AP bills…'
+    });
+  } else {
+    setMetricVisualState('kpiPendingBills', 'kpiPendingBillsSub', {
+      state: 'ok',
+      value: String(pendingBillApprovals.length),
+      subText: pendingBillApprovals.length > 0
+        ? pendingBillApprovals.length + ' bill(s) awaiting approval'
+        : (BILLS.length > 0 ? 'No pending approvals in scope' : 'AP bills not loaded yet')
+    });
   }
 
   var mgrTurn = $('#kpiMgrAvgTurnCompletion');
   var mgrTurnSub = $('#kpiMgrAvgTurnCompletionSub');
-  if (mgrTurn) mgrTurn.textContent = avgTurnCompletion !== null ? avgTurnCompletion + 'd' : '—';
-  if (mgrTurnSub) mgrTurnSub.textContent = turnDurations.length + ' completed turn(s) measured';
+  if (turnsSourceState.status === 'no_response') {
+    setMetricVisualState('kpiMgrAvgTurnCompletion', 'kpiMgrAvgTurnCompletionSub', {
+      state: 'no_response',
+      subText: 'No API response for turns'
+    });
+  } else {
+    setMetricVisualState('kpiMgrAvgTurnCompletion', 'kpiMgrAvgTurnCompletionSub', {
+      state: 'ok',
+      value: avgTurnCompletion !== null ? avgTurnCompletion + 'd' : '—',
+      subText: turnDurations.length + ' completed turn(s) measured'
+    });
+  }
 
   var mgrInsp = $('#kpiMgrAvgInspectionAge');
   var mgrInspSub = $('#kpiMgrAvgInspectionAgeSub');
-  if (mgrInsp) mgrInsp.textContent = avgInspectionAge !== null ? avgInspectionAge + 'd' : '—';
-  if (mgrInspSub) mgrInspSub.textContent = inspectionAges.length + ' records with last inspection date';
+  var inspectionsSourceState = getDataSourceState('inspections');
+  if (inspectionsSourceState.status === 'no_response') {
+    setMetricVisualState('kpiMgrAvgInspectionAge', 'kpiMgrAvgInspectionAgeSub', {
+      state: 'no_response',
+      subText: 'No API response for inspections'
+    });
+  } else {
+    setMetricVisualState('kpiMgrAvgInspectionAge', 'kpiMgrAvgInspectionAgeSub', {
+      state: 'ok',
+      value: avgInspectionAge !== null ? avgInspectionAge + 'd' : '—',
+      subText: inspectionAges.length + ' records with last inspection date'
+    });
+  }
 
   var mgrWo = $('#kpiMgrAvgWOCompletion');
   var mgrWoSub = $('#kpiMgrAvgWOCompletionSub');
-  if (mgrWo) mgrWo.textContent = avgWOCompletion !== null ? avgWOCompletion + 'd' : '—';
-  if (mgrWoSub) mgrWoSub.textContent = woCompletionDurations.length + ' closed WO(s): created -> terminal status';
+  if (woSourceState.status === 'no_response') {
+    setMetricVisualState('kpiMgrAvgWOCompletion', 'kpiMgrAvgWOCompletionSub', {
+      state: 'no_response',
+      subText: 'No API response for work orders'
+    });
+  } else {
+    setMetricVisualState('kpiMgrAvgWOCompletion', 'kpiMgrAvgWOCompletionSub', {
+      state: 'ok',
+      value: avgWOCompletion !== null ? avgWOCompletion + 'd' : '—',
+      subText: woCompletionDurations.length + ' closed WO(s): created -> terminal status'
+    });
+  }
 
   var mgrComp = $('#kpiMgrCompletedTurns');
   var mgrCompSub = $('#kpiMgrCompletedTurnsSub');
@@ -10522,6 +10779,7 @@ function renderDashboardKPIs() {
   });
   renderDashboardKpiTrends();
   ensureDashboardKpiModeRotation();
+  renderDashboardInsightCharts(openWOs, urgentWOs);
 
   $('#woBadge').textContent = openWOs.length || '0';
   $('#turnBadge').textContent = activeTurns.length || '0';
@@ -10555,6 +10813,239 @@ function renderDashboardKPIs() {
   }
 
   renderTurnDashboardStrip();
+}
+
+var _dashboardInsightCharts = {};
+var _dashboardInsightsResizeWired = false;
+
+function destroyDashboardInsightChart(elId) {
+  var chart = _dashboardInsightCharts[elId];
+  if (chart && typeof chart.dispose === 'function') {
+    try { chart.dispose(); } catch (e) { /* noop */ }
+  }
+  delete _dashboardInsightCharts[elId];
+}
+
+function renderDashboardInsightChart(elId, rows, title) {
+  var el = document.getElementById(elId);
+  if (!el) return false;
+  if (!(window.echarts && typeof window.echarts.init === 'function')) {
+    destroyDashboardInsightChart(elId);
+    return false;
+  }
+  if (!rows || !rows.length) {
+    destroyDashboardInsightChart(elId);
+    return false;
+  }
+
+  var chart = _dashboardInsightCharts[elId];
+  if (!chart) {
+    chart = window.echarts.init(el);
+    _dashboardInsightCharts[elId] = chart;
+  }
+
+  chart.setOption({
+    animationDuration: 380,
+    animationEasing: 'cubicOut',
+    grid: { left: 8, right: 8, top: 30, bottom: 6, containLabel: true },
+    tooltip: { trigger: 'item', confine: true },
+    series: [{
+      name: title,
+      type: 'pie',
+      radius: ['42%', '72%'],
+      center: ['50%', '58%'],
+      avoidLabelOverlap: true,
+      label: {
+        color: '#9aa6b2',
+        fontSize: 10,
+        formatter: function(p) {
+          return String(p.name || '') + '\n' + String(p.value || 0);
+        }
+      },
+      labelLine: { length: 8, length2: 6 },
+      itemStyle: { borderColor: 'rgba(15,23,42,0.35)', borderWidth: 1 },
+      data: rows.map(function(row) {
+        return { name: row.label, value: Number(row.value || 0) };
+      })
+    }]
+  });
+
+  if (!_dashboardInsightsResizeWired) {
+    _dashboardInsightsResizeWired = true;
+    window.addEventListener('resize', function() {
+      Object.keys(_dashboardInsightCharts).forEach(function(key) {
+        var c = _dashboardInsightCharts[key];
+        if (c && typeof c.resize === 'function') {
+          try { c.resize(); } catch (e) { /* noop */ }
+        }
+      });
+    });
+  }
+
+  return true;
+}
+
+function setDashboardInsightCardText(title1, title2, title3, subtitle) {
+  var card1 = document.getElementById('dashInsightPmLoadCard');
+  var card2 = document.getElementById('dashInsightWoTypeCard');
+  var card3 = document.getElementById('dashInsightUrgencyCard');
+  var subEl = document.getElementById('dashInsightsSubtitle');
+  if (card1) {
+    var h4a = card1.querySelector('h4');
+    if (h4a) h4a.textContent = String(title1 || 'Insight 1');
+  }
+  if (card2) {
+    var h4b = card2.querySelector('h4');
+    if (h4b) h4b.textContent = String(title2 || 'Insight 2');
+  }
+  if (card3) {
+    var h4c = card3.querySelector('h4');
+    if (h4c) h4c.textContent = String(title3 || 'Insight 3');
+  }
+  if (subEl) subEl.textContent = String(subtitle || 'Comparative snapshots from indexed work order and turn data.');
+}
+
+function renderDashboardInsightCharts(openWOs, urgentWOs) {
+  var openList = Array.isArray(openWOs) ? openWOs : [];
+  var urgentList = Array.isArray(urgentWOs) ? urgentWOs : [];
+  var pmMeta = $('#dashPmLoadMeta');
+  var woTypeMeta = $('#dashWoTypeMeta');
+  var urgMeta = $('#dashUrgencyMeta');
+  var isPmScoped = _accessRole === 'pm_readonly';
+
+  if (isPmScoped) {
+    setDashboardInsightCardText(
+      'Your Open WO Status Mix',
+      'Your Property Load',
+      'Your Urgency Split',
+      'Personalized insights for your OTP-scoped portfolio.'
+    );
+  } else {
+    setDashboardInsightCardText(
+      'PM Workload Comparison',
+      'PM Aging Pressure',
+      'Urgent Pressure by PM',
+      'Comparative PM snapshots from indexed work order and turn data.'
+    );
+  }
+
+  if (!openList.length) {
+    if (pmMeta) pmMeta.textContent = 'No open workload';
+    if (woTypeMeta) woTypeMeta.textContent = 'No open WO types';
+    if (urgMeta) urgMeta.textContent = 'No urgent workload';
+    destroyDashboardInsightChart('dashPmLoadChart');
+    destroyDashboardInsightChart('dashWoTypeChart');
+    destroyDashboardInsightChart('dashUrgencyChart');
+    renderKpiMiniChart('dashPmLoadChart', []);
+    renderKpiMiniChart('dashWoTypeChart', []);
+    renderKpiMiniChart('dashUrgencyChart', []);
+    return;
+  }
+
+  var pmAgg = {};
+  var woTypeAgg = {};
+  var statusAgg = {};
+  var urgentPmAgg = {};
+  var pmAgeAgg = {};
+  var propertyAgg = {};
+
+  openList.forEach(function(wo) {
+    var pm = String(wo.pmName || wo.pm_name || wo.propertyManager || wo.property_manager || 'Unassigned PM').trim() || 'Unassigned PM';
+    var woType = String(wo.type || wo.workOrderType || wo.work_order_type || 'Unspecified').trim() || 'Unspecified';
+    var statusText = String(wo.status || wo.statusLabel || 'Unknown').trim() || 'Unknown';
+    var propertyName = String(wo.propertyName || wo.property_name || wo.property || 'Unknown Property').trim() || 'Unknown Property';
+    var createdRaw = wo.created || wo.createdAt || wo.created_at || wo.statusDate || wo.updatedAt || '';
+    var createdMs = Date.parse(String(createdRaw || ''));
+    var ageDays = Number.isFinite(createdMs)
+      ? Math.max(0, Math.round((Date.now() - createdMs) / 86400000))
+      : 0;
+    pmAgg[pm] = (pmAgg[pm] || 0) + 1;
+    woTypeAgg[woType] = (woTypeAgg[woType] || 0) + 1;
+    statusAgg[statusText] = (statusAgg[statusText] || 0) + 1;
+    propertyAgg[propertyName] = (propertyAgg[propertyName] || 0) + 1;
+    if (!pmAgeAgg[pm]) pmAgeAgg[pm] = { count: 0, totalDays: 0 };
+    pmAgeAgg[pm].count += 1;
+    pmAgeAgg[pm].totalDays += ageDays;
+  });
+
+  urgentList.forEach(function(wo) {
+    var pm = String(wo.pmName || wo.pm_name || wo.propertyManager || wo.property_manager || 'Unassigned PM').trim() || 'Unassigned PM';
+    urgentPmAgg[pm] = (urgentPmAgg[pm] || 0) + 1;
+  });
+
+  var pmRows = Object.keys(pmAgg).map(function(key) {
+    return { label: key, value: pmAgg[key] };
+  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
+
+  var pmAgingRows = Object.keys(pmAgeAgg).map(function(key) {
+    var bucket = pmAgeAgg[key] || { count: 0, totalDays: 0 };
+    var avgDays = bucket.count ? (bucket.totalDays / bucket.count) : 0;
+    return { label: key, value: Number(avgDays.toFixed(1)) };
+  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
+
+  var woTypeRows = Object.keys(woTypeAgg).map(function(key) {
+    return { label: key, value: woTypeAgg[key] };
+  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
+
+  var propertyRows = Object.keys(propertyAgg).map(function(key) {
+    return { label: key, value: propertyAgg[key] };
+  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
+
+  var urgentRows = Object.keys(urgentPmAgg).map(function(key) {
+    return { label: key, value: urgentPmAgg[key] };
+  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
+
+  var statusRows = Object.keys(statusAgg).map(function(key) {
+    return { label: key, value: statusAgg[key] };
+  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
+
+  if (pmMeta) {
+    if (isPmScoped) {
+      var topStatus = statusRows[0];
+      pmMeta.textContent = topStatus ? (topStatus.label + ': ' + topStatus.value + ' open') : 'No status data';
+    } else {
+      var topPm = pmRows[0];
+      pmMeta.textContent = topPm ? (topPm.label + ': ' + topPm.value + ' open') : 'No PM load data';
+    }
+  }
+  if (woTypeMeta) {
+    if (isPmScoped) {
+      var topProperty = propertyRows[0];
+      woTypeMeta.textContent = topProperty ? (topProperty.label + ': ' + topProperty.value + ' open') : 'No property load data';
+    } else {
+      var topAging = pmAgingRows[0];
+      woTypeMeta.textContent = topAging ? (topAging.label + ': ' + topAging.value + ' avg days open') : 'No PM aging data';
+    }
+  }
+  if (urgMeta) {
+    var totalUrgent = urgentRows.reduce(function(sum, row) { return sum + Number(row.value || 0); }, 0);
+    urgMeta.textContent = totalUrgent > 0 ? (totalUrgent + ' urgent open WOs') : 'No urgent WOs';
+  }
+
+  var card1Rows = isPmScoped ? statusRows : pmRows;
+  var card2Rows = isPmScoped ? propertyRows : pmAgingRows;
+  var card3Rows = isPmScoped
+    ? [
+      { label: 'Urgent', value: urgentList.length },
+      { label: 'Not Urgent', value: Math.max(0, openList.length - urgentList.length) },
+    ]
+    : urgentRows;
+
+  if (!renderDashboardInsightChart('dashPmLoadChart', card1Rows, isPmScoped ? 'Your Open WO Status Mix' : 'Open WO Load by PM')) {
+    renderKpiMiniChart('dashPmLoadChart', card1Rows, {
+      valueFormatter: function(v) { return Number(v || 0).toLocaleString(); },
+    });
+  }
+  if (!renderDashboardInsightChart('dashWoTypeChart', card2Rows, isPmScoped ? 'Your Property Load' : 'PM Aging Pressure')) {
+    renderKpiMiniChart('dashWoTypeChart', card2Rows, {
+      valueFormatter: function(v) { return Number(v || 0).toLocaleString(); },
+    });
+  }
+  if (!renderDashboardInsightChart('dashUrgencyChart', card3Rows, isPmScoped ? 'Your Urgency Split' : 'Urgent WO Pressure')) {
+    renderKpiMiniChart('dashUrgencyChart', card3Rows, {
+      valueFormatter: function(v) { return Number(v || 0).toLocaleString(); },
+    });
+  }
 }
 
 function renderActivityFeed() {
@@ -10822,12 +11313,13 @@ async function loadBillingKpis(opts) {
     kpiGrid.querySelectorAll('.kpi-card').forEach(function(c) { c.classList.add('kpi-skeleton'); });
   }
   var setKpi = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
-  setKpi('billKpiPending', '…');
-  setKpi('billKpiTotal',   '…');
-  setKpi('billKpiPaid',    '…');
-  setKpi('billKpiVendors', '…');
+  setMetricVisualState('billKpiPending', 'billKpiPendingSub', { state: 'loading', subText: 'Loading KPI…' });
+  setMetricVisualState('billKpiTotal', 'billKpiTotalSub', { state: 'loading', subText: 'Loading KPI…' });
+  setMetricVisualState('billKpiPaid', 'billKpiPaidSub', { state: 'loading', subText: 'Loading KPI…' });
+  setMetricVisualState('billKpiVendors', 'billKpiVendorsSub', { state: 'loading', subText: 'Loading KPI…' });
 
   _billingKpisLoading = true;
+  setDataSourceState('billing_kpis', 'loading', { error: '' });
   try {
     var stats = null;
     var useV2 = false;
@@ -10883,14 +11375,26 @@ async function loadBillingKpis(opts) {
 
     var fmt = function(n) { return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
 
-    setKpi('billKpiPending',    String(pendingCount));
-    setKpi('billKpiPendingSub', pendingCount === 1 ? '1 invoice pending approval' : pendingCount + ' invoices pending approval');
-    setKpi('billKpiTotal',      fmt(outstandingAmt));
-    setKpi('billKpiTotalSub',   'approved, not yet paid');
-    setKpi('billKpiPaid',       fmt(paidAmt));
-    setKpi('billKpiPaidSub',    paidCount + ' bill' + (paidCount === 1 ? '' : 's') + ' paid this period');
-    setKpi('billKpiVendors',    String(vendorCount));
-    setKpi('billKpiVendorsSub', 'with pending or approved bills');
+    setMetricVisualState('billKpiPending', 'billKpiPendingSub', {
+      state: 'ok',
+      value: String(pendingCount),
+      subText: pendingCount === 1 ? '1 invoice pending approval' : pendingCount + ' invoices pending approval'
+    });
+    setMetricVisualState('billKpiTotal', 'billKpiTotalSub', {
+      state: 'ok',
+      value: fmt(outstandingAmt),
+      subText: 'approved, not yet paid'
+    });
+    setMetricVisualState('billKpiPaid', 'billKpiPaidSub', {
+      state: 'ok',
+      value: fmt(paidAmt),
+      subText: paidCount + ' bill' + (paidCount === 1 ? '' : 's') + ' paid this period'
+    });
+    setMetricVisualState('billKpiVendors', 'billKpiVendorsSub', {
+      state: 'ok',
+      value: String(vendorCount),
+      subText: 'with pending or approved bills'
+    });
 
     // Update nav badge with pending count
     var badge = $('#billingBadge');
@@ -10900,6 +11404,7 @@ async function loadBillingKpis(opts) {
     }
 
     _billingKpisLoadedGroup = grpKey;
+    setDataSourceState('billing_kpis', 'ok', { count: 4, error: '' });
   } catch (e) {
     var fallbackRows = [];
     if (Array.isArray(window._billingPageRows) && window._billingPageRows.length) fallbackRows = window._billingPageRows;
@@ -10909,20 +11414,45 @@ async function loadBillingKpis(opts) {
     if (fallbackRows.length) {
       var local = aggregateBillingKpisFromRows(fallbackRows);
       var fmtLocal = function(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
-      setKpi('billKpiPending', String(local.pending_approval_count || 0));
-      setKpi('billKpiPendingSub', 'fallback from visible bill rows');
-      setKpi('billKpiTotal', fmtLocal(local.total_outstanding || 0));
-      setKpi('billKpiTotalSub', 'approved, not yet paid');
-      setKpi('billKpiPaid', fmtLocal(local.paid_this_period_amount || 0));
-      setKpi('billKpiPaidSub', String(local.paid_this_period_count || 0) + ' bills paid this period');
-      setKpi('billKpiVendors', String(local.vendors_with_open_bills || 0));
-      setKpi('billKpiVendorsSub', 'with pending or approved bills');
+      setMetricVisualState('billKpiPending', 'billKpiPendingSub', {
+        state: 'degraded',
+        value: String(local.pending_approval_count || 0),
+        subText: '⚠ fallback from visible bill rows'
+      });
+      setMetricVisualState('billKpiTotal', 'billKpiTotalSub', {
+        state: 'degraded',
+        value: fmtLocal(local.total_outstanding || 0),
+        subText: '⚠ approved, not yet paid (fallback)'
+      });
+      setMetricVisualState('billKpiPaid', 'billKpiPaidSub', {
+        state: 'degraded',
+        value: fmtLocal(local.paid_this_period_amount || 0),
+        subText: '⚠ ' + String(local.paid_this_period_count || 0) + ' bills paid this period'
+      });
+      setMetricVisualState('billKpiVendors', 'billKpiVendorsSub', {
+        state: 'degraded',
+        value: String(local.vendors_with_open_bills || 0),
+        subText: '⚠ with pending or approved bills'
+      });
+      setDataSourceState('billing_kpis', 'error', { count: null, error: 'live KPI API unavailable, fallback rows used' });
     } else {
-      setKpi('billKpiPending',    '—');
-      setKpi('billKpiPendingSub', 'could not load');
-      setKpi('billKpiTotal',      '—');
-      setKpi('billKpiPaid',       '—');
-      setKpi('billKpiVendors',    '—');
+      setMetricVisualState('billKpiPending', 'billKpiPendingSub', {
+        state: 'no_response',
+        subText: 'No response from KPI API'
+      });
+      setMetricVisualState('billKpiTotal', 'billKpiTotalSub', {
+        state: 'no_response',
+        subText: 'No response from KPI API'
+      });
+      setMetricVisualState('billKpiPaid', 'billKpiPaidSub', {
+        state: 'no_response',
+        subText: 'No response from KPI API'
+      });
+      setMetricVisualState('billKpiVendors', 'billKpiVendorsSub', {
+        state: 'no_response',
+        subText: 'No response from KPI API'
+      });
+      setDataSourceState('billing_kpis', 'no_response', { count: null, error: String((e && e.message) || e || 'billing KPI unavailable') });
     }
   } finally {
     _billingKpisLoading = false;
@@ -11154,7 +11684,7 @@ function ensureBillDetailDateRange() {
 function buildScopedPropertiesPayload() {
   var explicitUuid = String(getEffectiveGroupUuid() || '').trim();
   if (explicitUuid) return { property_groups_ids: [explicitUuid] };
-  if ((_accessRole === 'pm_readonly' || _accessRole === 'manager') && forcedPropertyGroupUuid) {
+  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
     return { property_groups_ids: [String(forcedPropertyGroupUuid).trim()] };
   }
   return { property_groups_ids: [] };
@@ -11295,10 +11825,17 @@ function ensurePayablesAsOfDate() {
 function getPayablesScopeGroupUuids() {
   var explicitUuid = String(getEffectiveGroupUuid() || '').trim();
   if (explicitUuid) return [explicitUuid];
-  if ((_accessRole === 'pm_readonly' || _accessRole === 'manager') && forcedPropertyGroupUuid) {
+  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
     return [String(forcedPropertyGroupUuid).trim()];
   }
   return [];
+}
+
+function getPayablesGroupMode() {
+  var el = $('#payablesGroupBy');
+  var mode = String(el ? el.value : 'detail').trim();
+  if (mode === 'property_vendor' || mode === 'vendor_property') return mode;
+  return 'detail';
 }
 
 function buildPayablesRequestPayload() {
@@ -11469,12 +12006,49 @@ function renderPayablesTable() {
     return String(a.property_name || a.property || '').localeCompare(String(b.property_name || b.property || ''));
   });
 
+  var groupMode = getPayablesGroupMode();
+  if (groupMode !== 'detail') {
+    var grouped = {};
+    rows.forEach(function(row) {
+      var propertyLabel = String(row.property_name || row.property || 'Unassigned').trim() || 'Unassigned';
+      var payeeLabel = String(row.payee_name || 'Unknown Payee').trim() || 'Unknown Payee';
+      var key = groupMode === 'property_vendor'
+        ? (propertyLabel + '||' + payeeLabel)
+        : (payeeLabel + '||' + propertyLabel);
+      if (!grouped[key]) {
+        grouped[key] = {
+          payee_name: payeeLabel,
+          property_name: propertyLabel,
+          property: propertyLabel,
+          party_type: 'Grouped',
+          amount_payable: 0,
+          not_yet_due: 0,
+          '0_to30': 0,
+          '30_to60': 0,
+          '60_to90': 0,
+          '90_plus': 0,
+          '30_plus': 0,
+          '60_plus': 0,
+        };
+      }
+      grouped[key].amount_payable += amountToNumber(row.amount_payable || 0);
+      grouped[key].not_yet_due += amountToNumber(row.not_yet_due || 0);
+      grouped[key]['0_to30'] += amountToNumber(row['0_to30'] || 0);
+      grouped[key]['30_to60'] += amountToNumber(row['30_to60'] || 0);
+      grouped[key]['60_to90'] += amountToNumber(row['60_to90'] || 0);
+      grouped[key]['90_plus'] += amountToNumber(row['90_plus'] || 0);
+      grouped[key]['30_plus'] += amountToNumber(row['30_plus'] || 0);
+      grouped[key]['60_plus'] += amountToNumber(row['60_plus'] || 0);
+    });
+    rows = Object.keys(grouped).map(function(key) { return grouped[key]; });
+  }
+
   var summaryEl = $('#payablesSummary');
   if (summaryEl) {
     var totalAmount = rows.reduce(function(sum, row) {
       return sum + amountToNumber(row.amount_payable || 0);
     }, 0);
-    var scopeText = effectiveGroup || ((_accessRole === 'pm_readonly' || _accessRole === 'manager') && forcedPropertyGroupUuid ? (resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'Assigned PM Group') : 'All Properties');
+    var scopeText = effectiveGroup || (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid ? (resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'Assigned PM Group') : 'All Properties');
     summaryEl.textContent = rows.length + ' payables • ' + formatPayablesCurrency(totalAmount) + ' total • ' + scopeText;
   }
 
@@ -12295,8 +12869,14 @@ function applyBillingMainFilters() {
   var search = String(($('#billingMainSearch') || {}).value || '').trim().toLowerCase();
   var fromVal = String(($('#billingMainFrom') || {}).value || '').trim();
   var toVal   = String(($('#billingMainTo')   || {}).value || '').trim();
+  var includeOlder = !!(($('#billingMainIncludeOlder') || {}).checked);
   var status  = String(($('#billingMainStatus') || {}).value || '').trim();
   var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+  var now = new Date();
+  var defaultFrom = new Date(now.getTime());
+  defaultFrom.setDate(defaultFrom.getDate() - BILLS_DEFAULT_LOOKBACK_DAYS);
+  var effectiveFrom = fromVal || (includeOlder ? '' : dateInputValue(defaultFrom));
+  var effectiveTo = toVal || (includeOlder ? '' : dateInputValue(now));
   var filtered = _billingMainData.filter(function(row) {
     var billingId = row.billing_id || row.work_order_number || row.invoice || '';
     var propertyName = (row.property_context && row.property_context.property_name) || row.property_name || row.property || '';
@@ -12305,9 +12885,9 @@ function applyBillingMainFilters() {
     var createdAt = (row.dates && row.dates.created_at) || row.created_at || '';
     if (effectiveGroup && !isInPropertyGroup(propertyId, propertyName, effectiveGroup)) return false;
     if (!billingId && !propertyName) return false;
-    if (fromVal || toVal) {
-      if (fromVal && createdAt && createdAt < fromVal) return false;
-      if (toVal   && createdAt && createdAt > toVal)   return false;
+    if (effectiveFrom || effectiveTo) {
+      if (effectiveFrom && createdAt && createdAt < effectiveFrom) return false;
+      if (effectiveTo   && createdAt && createdAt > effectiveTo)   return false;
     }
     if (status) {
       if (woStatus.toLowerCase() !== status.toLowerCase()) return false;
@@ -12343,7 +12923,10 @@ function renderBillingMainTable() {
   var view = buildUniversalTable([
     { key: 'billing_id', render: function(row) { return '<span class="u-mono-sm">' + escHtml(row.billing_id || row.work_order_number || row.invoice || '—') + '</span>'; } },
     { key: 'property', render: function(row) { return escHtml((row.property_context && row.property_context.property_name) || row.property_name || row.property || '—'); } },
-    { key: 'wo_desc', render: function(row) { return escHtml((row.work_order && row.work_order.description) || row.job_description || row.instructions || '—'); } },
+    { key: 'wo_desc', render: function(row) {
+      var desc = String((row.work_order && row.work_order.description) || row.job_description || row.instructions || '—');
+      return '<span class="cell-ellipsis" title="' + escHtml(desc) + '">' + escHtml(desc) + '</span>';
+    } },
     { key: 'vendor', render: function(row) { return escHtml((row.vendor && row.vendor.vendor_name) || row.vendor || '—'); } },
     { key: 'amount', cellAttrs: 'class="u-num-cell"', render: function(row) {
       var amt = getPreferredBillingAmount(row);
@@ -12409,7 +12992,7 @@ function showBillingMainModal(row) {
   var created     = (row.dates && row.dates.created_at) || row.created_at || '';
   var completed   = (row.dates && row.dates.completed_on) || row.completed_on || row.work_completed_on || '';
   var lastBilled  = (row.dates && row.dates.last_billed_on) || row.last_billed_on || '';
-  var afLink = woNum ? 'https://flraz.appfolio.com/maintenance/work_orders?wo_number=' + encodeURIComponent(woNum) : '';
+  var afLink = woNum ? appfolioUrl('work_order', woNum) : '';
 
   var detailRows = [];
   function pushDetail(label, value, opts) {
@@ -12495,7 +13078,7 @@ function ensureRenewalsMonthRange() {
 function getRenewalsScopeGroupUuids() {
   var explicitUuid = String(getEffectiveGroupUuid() || '').trim();
   if (explicitUuid) return [explicitUuid];
-  if ((_accessRole === 'pm_readonly' || _accessRole === 'manager') && forcedPropertyGroupUuid) {
+  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
     return [String(forcedPropertyGroupUuid).trim()];
   }
   return [];
@@ -12516,9 +13099,6 @@ function buildRenewalsRequestPayload() {
   }
   var groupUuids = getRenewalsScopeGroupUuids();
   var payload = {
-    properties: {
-      property_groups_ids: groupUuids,
-    },
     unit_visibility: 'active',
     start_on_from: startOnFrom,
     start_on_to: startOnTo,
@@ -12545,6 +13125,11 @@ function buildRenewalsRequestPayload() {
       'tenant_tags'
     ]
   };
+  if (groupUuids.length) {
+    payload.properties = {
+      property_groups_ids: groupUuids,
+    };
+  }
   var statusValue = String(statusEl ? statusEl.value : 'all').trim();
   if (statusValue && statusValue !== 'all') payload.statuses = [statusValue];
   return payload;
@@ -12627,7 +13212,7 @@ function renderRenewalsTable() {
     var countSummary = Object.keys(counts).sort().map(function(key) {
       return key + ': ' + counts[key];
     }).join(' • ');
-    var scopeText = effectiveGroup || ((_accessRole === 'pm_readonly' || _accessRole === 'manager') && forcedPropertyGroupUuid ? (resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'Assigned PM Group') : 'All Properties');
+    var scopeText = effectiveGroup || (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid ? (resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'Assigned PM Group') : 'All Properties');
     summaryEl.textContent = rows.length + ' renewal rows • ' + scopeText + (countSummary ? ' • ' + countSummary : '');
   }
 
@@ -12765,16 +13350,43 @@ async function loadPropertyPerformance() {
   if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
     var data = await proxyAction('v2_report', { report: 'property_performance' });
-    var rows = (data && data.results) ? data.results : [];
+    var rows = getReportRows(data, 'results');
+    var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+    if (effectiveGroup) {
+      rows = rows.filter(function(r) {
+        var pid = r.property_id || r.propertyId || r.property_uuid || '';
+        var pname = r.property_name || r.property || r.property_label || '';
+        return isInPropertyGroup(pid, pname, effectiveGroup);
+      });
+    }
     if (!rows.length) { if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell">No performance data returned</td></tr>'; return; }
     var html = '';
     rows.forEach(function(r) {
-      html += '<tr><td>' + escHtml(r.property_name||'\u2014') + '</td><td>' + escHtml(r.property_group||'\u2014') + '</td>' +
-        '<td class="u-num-cell">' + (r.total_units||'\u2014') + '</td><td class="u-num-cell">' + (r.occupied_units||'\u2014') + '</td>' +
-        '<td class="u-num-cell">' + (r.vacant_units||'\u2014') + '</td>' +
-        '<td class="u-num-cell">' + (r.occupancy_rate != null ? (Number(r.occupancy_rate)*100).toFixed(1)+'%' : '\u2014') + '</td>' +
-        '<td class="u-num-cell">' + (r.avg_rent != null ? '$'+Number(r.avg_rent).toFixed(2) : '\u2014') + '</td>' +
-        '<td class="u-num-cell">' + (r.total_rent != null ? '$'+Number(r.total_rent).toFixed(2) : '\u2014') + '</td></tr>';
+      var propertyName = r.property_name || r.property || r.property_label || '\u2014';
+      var propertyGroup = r.property_group || r.portfolio || r.group_name || '\u2014';
+      var totalUnits = r.total_units != null ? r.total_units : (r.units_total != null ? r.units_total : r.unit_count);
+      var occupiedUnits = r.occupied_units != null ? r.occupied_units : (r.units_occupied != null ? r.units_occupied : r.occupied);
+      var vacantUnits = r.vacant_units != null ? r.vacant_units : (r.units_vacant != null ? r.units_vacant : r.vacant);
+      var occupancyRate = r.occupancy_rate;
+      if (occupancyRate == null && totalUnits != null && occupiedUnits != null && Number(totalUnits) > 0) {
+        occupancyRate = Number(occupiedUnits) / Number(totalUnits);
+      }
+      var avgRent = r.avg_rent != null ? r.avg_rent : (r.average_rent != null ? r.average_rent : r.market_rent_avg);
+      var totalRent = r.total_rent != null ? r.total_rent : (r.rent_total != null ? r.rent_total : r.scheduled_rent);
+      var occupancyPct = '\u2014';
+      if (occupancyRate != null && occupancyRate !== '') {
+        var occNum = Number(occupancyRate);
+        if (isFinite(occNum)) {
+          if (occNum > 1) occNum = occNum / 100;
+          occupancyPct = (occNum * 100).toFixed(1) + '%';
+        }
+      }
+      html += '<tr><td>' + escHtml(propertyName) + '</td><td>' + escHtml(propertyGroup) + '</td>' +
+        '<td class="u-num-cell">' + escHtml(totalUnits != null ? String(totalUnits) : '\u2014') + '</td><td class="u-num-cell">' + escHtml(occupiedUnits != null ? String(occupiedUnits) : '\u2014') + '</td>' +
+        '<td class="u-num-cell">' + escHtml(vacantUnits != null ? String(vacantUnits) : '\u2014') + '</td>' +
+        '<td class="u-num-cell">' + escHtml(occupancyPct) + '</td>' +
+        '<td class="u-num-cell">' + (avgRent != null ? '$'+Number(avgRent).toFixed(2) : '\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (totalRent != null ? '$'+Number(totalRent).toFixed(2) : '\u2014') + '</td></tr>';
     });
     if (body) body.innerHTML = html;
   } catch(e) {
@@ -12787,18 +13399,34 @@ async function loadPropertyVacancies() {
   if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
     var data = await proxyAction('v2_report', { report: 'unit_vacancy' });
-    var rows = (data && data.results) ? data.results : [];
+    var rows = getReportRows(data, 'results');
+    var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+    if (effectiveGroup) {
+      rows = rows.filter(function(r) {
+        var pid = r.property_id || r.propertyId || r.property_uuid || '';
+        var pname = r.property_name || r.property || r.property_label || '';
+        return isInPropertyGroup(pid, pname, effectiveGroup);
+      });
+    }
     if (!rows.length) { if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell">No vacancy data returned</td></tr>'; return; }
     var html = '';
     rows.forEach(function(r) {
-      html += '<tr><td>' + escHtml(r.property_name||'\u2014') + '</td>' +
-        '<td>' + escHtml(r.unit||r.unit_number||'\u2014') + '</td>' +
-        '<td class="u-num-cell">' + (r.bedrooms||'\u2014') + '</td>' +
-        '<td class="u-num-cell">' + (r.bathrooms||'\u2014') + '</td>' +
-        '<td class="u-num-cell">' + (r.square_feet||'\u2014') + '</td>' +
-        '<td class="u-num-cell">' + (r.market_rent != null ? '$'+Number(r.market_rent).toFixed(2) : '\u2014') + '</td>' +
-        '<td class="u-date-cell">' + escHtml(r.vacant_from||r.vacated_on||'\u2014') + '</td>' +
-        '<td class="u-num-cell">' + (r.days_vacant||'\u2014') + '</td></tr>';
+      var propertyName = r.property_name || r.property || r.property_label || '\u2014';
+      var unitLabel = r.unit || r.unit_name || r.unit_number || r.unit_label || '\u2014';
+      var bedrooms = r.bedrooms != null ? r.bedrooms : r.beds;
+      var bathrooms = r.bathrooms != null ? r.bathrooms : r.baths;
+      var sqft = r.square_feet != null ? r.square_feet : (r.sqft != null ? r.sqft : r.area);
+      var marketRent = r.market_rent != null ? r.market_rent : (r.rent != null ? r.rent : r.asking_rent);
+      var vacantFrom = r.vacant_from || r.vacated_on || r.available_on || '\u2014';
+      var daysVacant = r.days_vacant != null ? r.days_vacant : r.vacancy_days;
+      html += '<tr><td>' + escHtml(propertyName) + '</td>' +
+        '<td>' + escHtml(unitLabel) + '</td>' +
+        '<td class="u-num-cell">' + escHtml(bedrooms != null ? String(bedrooms) : '\u2014') + '</td>' +
+        '<td class="u-num-cell">' + escHtml(bathrooms != null ? String(bathrooms) : '\u2014') + '</td>' +
+        '<td class="u-num-cell">' + escHtml(sqft != null ? String(sqft) : '\u2014') + '</td>' +
+        '<td class="u-num-cell">' + (marketRent != null ? '$'+Number(marketRent).toFixed(2) : '\u2014') + '</td>' +
+        '<td class="u-date-cell">' + escHtml(vacantFrom) + '</td>' +
+        '<td class="u-num-cell">' + escHtml(daysVacant != null ? String(daysVacant) : '\u2014') + '</td></tr>';
     });
     if (body) body.innerHTML = html;
   } catch(e) {
@@ -13998,7 +14626,7 @@ function showWODetail(id) {
   fetchWONotes(woRefForApi, wo).then(function(notes) {
     renderWONotesList(notes);
   });
-  loadWOAttachments(woRefForApi);
+  loadWOAttachments(woRefForApi, wo);
   loadWODetailExtras(wo, isUuidString(woRefForApi) ? woRefForApi : woDbUuid);
 
   var vendorWOBtn = document.getElementById('detailOpenVendorWOs');
@@ -16708,6 +17336,15 @@ function getRoutingTradeFilterNormalized() {
   return String(tradeFilter || 'all').trim().toLowerCase();
 }
 
+function getRoutingWoTypeFilterNormalized() {
+  var woType = ($('#routingWoTypeFilter') && $('#routingWoTypeFilter').value) || 'all';
+  return String(woType || 'all').trim().toLowerCase();
+}
+
+function getRoutingEventWoType(r) {
+  return String((r && (r.wo_type || r.work_order_type || r.work_type || r.wo_category)) || '').trim();
+}
+
 function getRoutingEventTradeLabel(r) {
   var direct = String((r && r.matched_trade) || '').trim();
   if (direct) return direct;
@@ -16720,10 +17357,17 @@ function getRoutingEventTradeLabel(r) {
 
 function getFilteredRoutingEvents() {
   var tradeFilterNorm = getRoutingTradeFilterNormalized();
+  var woTypeFilterNorm = getRoutingWoTypeFilterNormalized();
   return (ROUTING_EVENTS || []).filter(function(r) {
-    if (tradeFilterNorm === 'all') return true;
-    var eventTradeNorm = getRoutingEventTradeLabel(r).toLowerCase();
-    return !!eventTradeNorm && eventTradeNorm === tradeFilterNorm;
+    if (tradeFilterNorm !== 'all') {
+      var eventTradeNorm = getRoutingEventTradeLabel(r).toLowerCase();
+      if (!eventTradeNorm || eventTradeNorm !== tradeFilterNorm) return false;
+    }
+    if (woTypeFilterNorm !== 'all') {
+      var eventWoTypeNorm = getRoutingEventWoType(r).toLowerCase();
+      if (!eventWoTypeNorm || eventWoTypeNorm !== woTypeFilterNorm) return false;
+    }
+    return true;
   });
 }
 
@@ -16759,6 +17403,21 @@ function renderRoutingPmFilter() {
     });
     tradeSel.innerHTML = tradeOpts.join('');
     tradeSel.value = tradesSeen[currentTrade] ? currentTrade : 'all';
+  }
+
+  var woTypeSel = $('#routingWoTypeFilter');
+  if (woTypeSel) {
+    var currentWoType = woTypeSel.value || 'all';
+    var woTypesSeen = {};
+    var woTypeOpts = ['<option value="all">All WO Types</option>'];
+    ROUTING_EVENTS.forEach(function(e) {
+      var wt = getRoutingEventWoType(e);
+      if (!wt || woTypesSeen[wt]) return;
+      woTypesSeen[wt] = true;
+      woTypeOpts.push('<option value="' + escapeHtml(wt) + '">' + escapeHtml(wt) + '</option>');
+    });
+    woTypeSel.innerHTML = woTypeOpts.join('');
+    woTypeSel.value = woTypesSeen[currentWoType] ? currentWoType : 'all';
   }
 }
 
@@ -16851,14 +17510,19 @@ function renderRoutingEventsTable(query) {
   if (!body) return;
   var q = String(query || '').trim().toLowerCase();
   var tradeFilterNorm = getRoutingTradeFilterNormalized();
+  var woTypeFilterNorm = getRoutingWoTypeFilterNormalized();
 
   var rows = ROUTING_EVENTS.filter(function(r) {
     if (tradeFilterNorm !== 'all') {
       var eventTradeNorm = getRoutingEventTradeLabel(r).toLowerCase();
       if (!eventTradeNorm || eventTradeNorm !== tradeFilterNorm) return false;
     }
+    if (woTypeFilterNorm !== 'all') {
+      var eventWoTypeNorm = getRoutingEventWoType(r).toLowerCase();
+      if (!eventWoTypeNorm || eventWoTypeNorm !== woTypeFilterNorm) return false;
+    }
     if (!q) return true;
-    var hay = [r.wo_number, r.property_name, r.property_group, r.pm_name, r.vendor_name, getRoutingEventTradeLabel(r), r.description].join(' ').toLowerCase();
+    var hay = [r.wo_number, r.property_name, r.property_group, r.pm_name, r.vendor_name, getRoutingEventTradeLabel(r), getRoutingEventWoType(r), r.description].join(' ').toLowerCase();
     return hay.indexOf(q) !== -1;
   });
 
@@ -16885,7 +17549,7 @@ function renderRoutingEventsTable(query) {
   if (nextBtn) nextBtn.disabled = ROUTING_PAGE >= totalPages;
 
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="12" style="color:var(--text-muted)">No flagged routing events match current filters.</td></tr>';
+    body.innerHTML = '<tr><td colspan="13" style="color:var(--text-muted)">No flagged routing events match current filters.</td></tr>';
     return;
   }
 
@@ -16914,11 +17578,12 @@ function renderRoutingEventsTable(query) {
       '<td><strong>' + escapeHtml(String(r.pm_name || 'Unmapped PM')) + '</strong></td>' +
       '<td>' + escapeHtml(String(r.vendor_name || '-')) + '</td>' +
       '<td>' + escapeHtml(matchLabel) + '</td>' +
+      '<td>' + escapeHtml(getRoutingEventWoType(r) || '-') + '</td>' +
       '<td><span class="routing-badge ' + conf + '">' + escapeHtml(conf) + '</span></td>' +
       '<td>' + escapeHtml(String(r.wo_status || '-')) + '</td>' +
       '<td style="font-family:var(--font-mono);font-size:11px">' + escapeHtml(flaggedAt) + '</td>' +
       '<td class="routing-review ' + rev + '">' + escapeHtml(rev.replace('_', ' ')) + '</td>' +
-      '<td style="max-width:260px;white-space:normal;line-height:1.35">' + escapeHtml(riskInsight) + '</td>' +
+      '<td class="routing-insight-cell" title="' + escapeHtml(riskInsight) + '">' + escapeHtml(riskInsight) + '</td>' +
       '<td>' +
       '<button class="filter-btn" data-routing-review="approved_external" data-routing-id="' + escapeHtml(String(r.id)) + '" style="padding:4px 6px">Approve</button> ' +
       '<button class="filter-btn" data-routing-review="reassign_inhouse" data-routing-id="' + escapeHtml(String(r.id)) + '" style="padding:4px 6px;color:var(--success)">Reassign</button> ' +
@@ -17217,7 +17882,7 @@ function ensureRoutingFilterDelegation() {
       return;
     }
 
-    if (t.id === 'routingTradeFilter') {
+    if (t.id === 'routingTradeFilter' || t.id === 'routingWoTypeFilter') {
       ROUTING_PAGE = 1;
       renderRoutingEventsTable($('#routingSearch') ? $('#routingSearch').value : '');
       return;
@@ -17654,7 +18319,7 @@ function renderEmailDeliveryErrorsTable() {
   EMAIL_DELIVERY_VISIBLE_ROWS = visibleRows;
 
   var effectiveGroup = getEffectiveGroupId();
-  var scopeText = effectiveGroup || ((_accessRole === 'manager' || _accessRole === 'pm_readonly') && forcedPropertyGroupUuid ? (resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'Assigned PM Group') : 'All Active Properties');
+  var scopeText = effectiveGroup || (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid ? (resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'Assigned PM Group') : 'All Active Properties');
   if (summaryEl) {
     summaryEl.textContent = totalRows
       ? (totalRows + ' failures across ' + scopeText + ' in the selected date range')
@@ -18310,12 +18975,14 @@ function wireUpUI() {
   var billingMainFrom   = $('#billingMainFrom');
   var billingMainTo     = $('#billingMainTo');
   var billingMainStatus = $('#billingMainStatus');
+  var billingMainIncludeOlder = $('#billingMainIncludeOlder');
   var _billingMainDebounce;
   function _debounceBillingFilter() { clearTimeout(_billingMainDebounce); _billingMainDebounce = setTimeout(applyBillingMainFilters, 280); }
   if (billingMainSearch) billingMainSearch.addEventListener('input', _debounceBillingFilter);
   if (billingMainFrom)   billingMainFrom.addEventListener('change', applyBillingMainFilters);
   if (billingMainTo)     billingMainTo.addEventListener('change', applyBillingMainFilters);
   if (billingMainStatus) billingMainStatus.addEventListener('change', applyBillingMainFilters);
+  if (billingMainIncludeOlder) billingMainIncludeOlder.addEventListener('change', applyBillingMainFilters);
 
   // Billing: Pagination
   var billingMainPrev = $('#billingMainPrev');
@@ -18920,6 +19587,13 @@ function wireUpUI() {
   var payablesPartyTypeFilter = $('#payablesPartyTypeFilter');
   if (payablesPartyTypeFilter) {
     payablesPartyTypeFilter.addEventListener('change', function() {
+      _payablesPage = 0;
+      renderPayablesTable();
+    });
+  }
+  var payablesGroupBy = $('#payablesGroupBy');
+  if (payablesGroupBy) {
+    payablesGroupBy.addEventListener('change', function() {
       _payablesPage = 0;
       renderPayablesTable();
     });
@@ -19770,52 +20444,52 @@ async function fetchAllLive() {
   var anySuccess = false;
   updateCacheBadge('loading');
   // Vendors & Inspections lazy-loaded on tab click — removed from initial sync
-  var steps = ['Work Orders', 'Properties', 'Turns', 'Move-Outs', 'Turn WOs', 'Groups', 'Tasks', 'Turn Tracker'];
+  var steps = ['Properties', 'Groups', 'Work Orders', 'Turns', 'Move-Outs', 'Turn WOs', 'Tasks', 'Turn Tracker'];
   showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
 
   try {
-    // Step 0: Work Orders (proxy action — Reports API)
-    updateProgress(0, 'active', 'Fetching work orders\u2026');
-    var woOk = await withStepTimeout(fetchWorkOrders, 60000);
-    updateProgress(0, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
-    if (woOk) { renderWorkOrders(); renderDashboardKPIs(); renderActivityFeed(); }
-
-    // Step 1: Properties (proxy action — Reports API)
-    updateProgress(1, 'active', 'Fetching properties\u2026');
+    // Step 0: Properties (proxy action — Reports API)
+    updateProgress(0, 'active', 'Fetching properties\u2026');
     var propOk = await withStepTimeout(fetchProperties, 60000);
-    updateProgress(1, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
+    updateProgress(0, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
     if (propOk) { populateDropdowns(); renderWorkOrders(); }
 
-    // Step 2: Turns — In Progress only, 60-day window (proxy action — Reports API)
+    // Step 1: Property Groups (proxy action — DB API v0)
+    updateProgress(1, 'active', 'Fetching property groups\u2026');
+    var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
+    var grpMsg = grpOk
+      ? PROPERTY_GROUPS.length + ' groups, ' + Object.keys(_idToGroups).length + ' ID maps'
+      : 'Groups skipped';
+    updateProgress(1, grpOk ? 'done' : 'error', grpMsg);
+    if (grpOk) { populateDropdowns(); renderWorkOrders(); }
+
+    // Step 2: Work Orders (proxy action — Reports API)
+    updateProgress(2, 'active', 'Fetching work orders\u2026');
+    var woOk = await withStepTimeout(fetchWorkOrders, 60000);
+    updateProgress(2, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
+    if (woOk) { renderWorkOrders(); renderDashboardKPIs(); renderActivityFeed(); }
+
+    // Step 3: Turns — In Progress only, 60-day window (proxy action — Reports API)
     // Short timeout (20s) — turns are supplementary; pipeline works from WOs + move-outs too
-    updateProgress(2, 'active', 'Fetching in-progress turns\u2026');
+    updateProgress(3, 'active', 'Fetching in-progress turns\u2026');
     var turnOk = await withStepTimeout(function() { return fetchTurns(); }, 20000);
-    updateProgress(2, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns skipped (timeout)');
+    updateProgress(3, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns skipped (timeout)');
     if (turnOk) { renderTurnBoard(); renderActivityFeed(); }
 
     // Step 2b: Unit Turns (DB API) — live deposit / scheduling data to augment Reports API turns
     fetchUnitTurnsDB().then(function(ok) { if (ok && turnOk) renderTurnBoard(); }).catch(function(){});
 
-    // Step 3: Upcoming Move-Outs — tenant directory, Notice tenants (proxy action — Reports API)
-    updateProgress(3, 'active', 'Fetching upcoming move-outs\u2026');
+    // Step 4: Upcoming Move-Outs — tenant directory, Notice tenants (proxy action — Reports API)
+    updateProgress(4, 'active', 'Fetching upcoming move-outs\u2026');
     var moOk = await withStepTimeout(fetchUpcomingMoveouts, 45000);
-    updateProgress(3, moOk ? 'done' : 'error', moOk ? UPCOMING_MOVEOUTS.length + ' upcoming' : 'Move-outs skipped');
+    updateProgress(4, moOk ? 'done' : 'error', moOk ? UPCOMING_MOVEOUTS.length + ' upcoming' : 'Move-outs skipped');
     if (moOk) { renderTurnBoard(); renderDashboardKPIs(); }
 
-    // Step 4: Turn Work Orders — DB API v0, Unit Turn type only (real-time status)
-    updateProgress(4, 'active', 'Fetching turn work orders\u2026');
+    // Step 5: Turn Work Orders — DB API v0, Unit Turn type only (real-time status)
+    updateProgress(5, 'active', 'Fetching turn work orders\u2026');
     var twoOk = await withStepTimeout(fetchTurnWorkOrders, 20000);
-    updateProgress(4, twoOk ? 'done' : 'error', twoOk ? TURN_WORK_ORDERS.length + ' turn WOs' : 'Turn WOs skipped');
+    updateProgress(5, twoOk ? 'done' : 'error', twoOk ? TURN_WORK_ORDERS.length + ' turn WOs' : 'Turn WOs skipped');
     if (twoOk) { renderTurnBoard(); }
-
-    // Step 5: Property Groups (proxy action — DB API v0)
-    updateProgress(5, 'active', 'Fetching property groups\u2026');
-    var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
-    var grpMsg = grpOk
-      ? PROPERTY_GROUPS.length + ' groups, ' + Object.keys(_idToGroups).length + ' ID maps'
-      : 'Groups skipped';
-    updateProgress(5, grpOk ? 'done' : 'error', grpMsg);
-    if (grpOk) { populateDropdowns(); renderWorkOrders(); }
 
     // Step 6: Recent Tasks (proxy action — DB API v0)
     updateProgress(6, 'active', 'Fetching recent tasks\u2026');
