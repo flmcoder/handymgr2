@@ -1,0 +1,11 @@
+.env
+afproxy/
+chart.svg
+chart.mmd
+.github/agents/handymgr.agent.md
+.github/agents/handymgr.agent.md
+.github
+.vscode
+api
+BILLING_REWRITE_BRIEF.md
+manifest.webmanifest
