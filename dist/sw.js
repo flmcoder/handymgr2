@@ -1,10 +1,20 @@
 const HM_CACHE_VERSION = "hm-static-v7";
 const HM_STATIC_ASSETS = [
+<<<<<<< HEAD
   "/handymgr2/",
   "/handymgr2/index.html",
   "/handymgr2/assets/logo.png",
   "/handymgr2/assets/favicon.svg",
   "/handymgr2/manifest.webmanifest",
+=======
+  "./",
+  "./index.html",
+  "./css/app.css",
+  "./public/app.js",
+  "./public/login-effects.js",
+  "./public/assets/logo.png",
+  "./public/assets/favicon.svg",
+>>>>>>> 45ccc7a87f6cf718136df8b0b7fac78061f98379
 ];
 
 const HM_QUEUE_DB = "hm-offline-queue";
