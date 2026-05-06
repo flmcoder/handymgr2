@@ -345,8 +345,7 @@ function buildWorkOrdersUrl(): string {
     const sep = proxy.includes('?') ? '&' : '?';
     return `${proxy}${sep}action=work_orders&days=180`;
   }
-  // Fallback hardcoded URL.
-  return 'https://flr-appfolio.val.run?action=work_orders&days=180';
+  return 'https://flr-appfolio.val.run/?action=work_orders&days=180';
 }
 
 // =============================================================================

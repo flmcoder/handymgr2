@@ -2,6 +2,7 @@
    MAINTENANCE COCKPIT — AppFolio Live Integration Dashboard
    AES-256-GCM Credential Vault + Rate-Limited API Client
    ============================================================== */
+import './css/app.css';
 
 // ---- Dark/Light Mode ----
 var _manualTheme = null; // null = follow system, 'dark' or 'light' = manual override
