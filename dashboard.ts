@@ -4,7 +4,7 @@
 // =============================================================================
 
 import * as echarts from 'echarts/core';
-import './css/styles.css';
+import './css/app.css';
 import { BarChart, PieChart, RadarChart, TreemapChart, EffectScatterChart, FunnelChart } from 'echarts/charts';
 import {
   GridComponent,
