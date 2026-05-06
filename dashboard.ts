@@ -7,7 +7,6 @@ import * as echarts from 'echarts/core';
 import './css/app.css';
 import './public/app.js';
 import './public/login-effects.js';
-import './public/sw.js';
 import './public/assets/logo.png';
 import './public/assets/favicon.svg';
 import { BarChart, PieChart, RadarChart, TreemapChart, EffectScatterChart, FunnelChart } from 'echarts/charts';
