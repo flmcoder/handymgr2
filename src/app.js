@@ -4,6 +4,48 @@
    ============================================================== */
 import './css/app.css';
 
+// ---- OTP Countdown Timer ----
+var _otpCountdownTimer = null;
+var _otpExpiryTime = null;
+
+function startOtpCountdown() {
+  stopOtpCountdown();
+  var countdownEl = $('#vaultOtpCountdown');
+  var timeEl = $('#vaultOtpCountdownTime');
+  if (!countdownEl || !timeEl) return;
+
+  _otpExpiryTime = Date.now() + 600000; // 10 minutes
+  countdownEl.style.display = 'flex';
+  countdownEl.classList.remove('expired');
+
+  function updateCountdown() {
+    var remaining = _otpExpiryTime - Date.now();
+    if (remaining <= 0) {
+      countdownEl.classList.add('expired');
+      timeEl.textContent = 'EXPIRED';
+      stopOtpCountdown();
+      return;
+    }
+    var minutes = Math.floor(remaining / 60000);
+    var seconds = Math.floor((remaining % 60000) / 1000);
+    timeEl.textContent = minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+  }
+
+  updateCountdown();
+  _otpCountdownTimer = setInterval(updateCountdown, 1000);
+}
+
+function stopOtpCountdown() {
+  if (_otpCountdownTimer) {
+    clearInterval(_otpCountdownTimer);
+    _otpCountdownTimer = null;
+  }
+  var countdownEl = $('#vaultOtpCountdown');
+  if (countdownEl) {
+    countdownEl.style.display = 'none';
+  }
+}
+
 // ---- Dark/Light Mode ----
 var _manualTheme = null; // null = follow system, 'dark' or 'light' = manual override
 // Light theme by default — manual toggle only (no system detection)
@@ -55,7 +97,8 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.7.5';
+var APP_VERSION = 'v9.7.6b';
+var DEFAULT_PROXY_URL = 'https://afproxy.val.run';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 var DASHBOARD_KPI_HISTORY = [];
@@ -363,6 +406,7 @@ function setResumeSessionState(sessionPayload) {
   hint.textContent = 'Verified ' + roleLabel + ' session found. Click Resume Session to continue.';
   hint.style.display = '';
   resumeBtn.style.display = '';
+  resumeBtn.classList.remove('vault-advanced-toggle');
 }
 
 async function resumeFromPendingSession() {
@@ -1962,8 +2006,10 @@ function setPmOtpStep(step, identifier) {
   if (summaryValue && sent) summaryValue.textContent = formatOtpIdentifierSummary(identifier || (identifierInput ? identifierInput.value : ''));
   if (verifyBtn) verifyBtn.textContent = 'Verify OTP';
 
-  if (!sent && codeInput) codeInput.value = '';
-  if (sent && codeInput) {
+  if (!sent) {
+    stopOtpCountdown();
+    if (codeInput) codeInput.value = '';
+  } else if (codeInput) {
     setTimeout(function() { codeInput.focus(); codeInput.select(); }, 20);
   }
 }
@@ -2146,12 +2192,52 @@ async function fetchWithTimeout(url, opts, timeoutMsOrRetries, baseBackoffMs) {
 // Makes ONE request to proxy like ?action=work_orders&days=180
 // Proxy does all pagination server-side and returns complete dataset
 // Includes 45-second timeout — never hangs forever
+//
+// HYBRID DATA STRATEGY:
+// - v2_report actions: Always go to v1 proxy (live AppFolio data)
+// - v0 data actions (work_orders, turns, turn_work_orders): Try SQL/Turso first,
+//   fallback to v1 proxy if SQL unavailable or stale
 async function proxyAction(action, params, options) {
+  var opts = options || {};
+  if (!API_PROXY) throw new Error('No proxy configured');
+
+  // Actions that should use SQL/Turso backend when available (avoids AppFolio 429s)
+  var SQL_FALLBACK_ACTIONS = {
+    work_orders: 'sql_work_orders',
+    turns: 'sql_turns',
+    turn_work_orders: 'sql_turn_work_orders',
+    work_orders_completed_history: 'sql_work_orders_completed_history'
+  };
+
+  // Try SQL endpoint first for v0 data to avoid AppFolio rate limits
+  if (SQL_FALLBACK_ACTIONS[action] && !opts.skipSqlFallback) {
+    try {
+      var sqlAction = SQL_FALLBACK_ACTIONS[action];
+      var sqlParams = Object.assign({}, params, { _sql_source: '1' });
+      var sqlResult = await _proxyActionDirect(sqlAction, sqlParams, Object.assign({}, opts, { skipSqlFallback: true, suppressErrors: true }));
+      if (sqlResult && sqlResult.ok && (sqlResult.results || sqlResult.data)) {
+        // Normalize SQL response to match v0 format
+        var normalized = Object.assign({}, sqlResult, { _source: 'sql' });
+        return normalized;
+      }
+    } catch (sqlErr) {
+      // SQL failed or returned empty — silently fall through to v1 proxy
+      console.log('SQL fallback for ' + action + ' unavailable, using v1 proxy: ' + (sqlErr.message || sqlErr));
+    }
+  }
+
+  // Standard v1 proxy path (live AppFolio API)
+  return _proxyActionDirect(action, params, opts);
+}
+
+// Internal direct proxy call (no SQL fallback logic)
+async function _proxyActionDirect(action, params, options) {
   var opts = options || {};
   if (!API_PROXY) throw new Error('No proxy configured');
   // Show top progress bar for heavy data-load actions
   var HEAVY_ACTIONS = { work_orders: 1, bills: 1, properties: 1, vendors: 1, turns: 1, inspections: 1,
-    work_orders_completed_history: 1, bills_history: 1, turn_work_orders: 1 };
+    work_orders_completed_history: 1, bills_history: 1, turn_work_orders: 1,
+    sql_work_orders: 1, sql_turns: 1, sql_turn_work_orders: 1, sql_work_orders_completed_history: 1 };
   var isHeavy = !!HEAVY_ACTIONS[action];
   if (isHeavy) topBarStart();
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
@@ -2239,7 +2325,13 @@ async function proxyAction(action, params, options) {
     var data = await res.json();
     if (data && data.ok === false) {
       var dataStatus = parseInt(data.status || '0', 10) || 0;
+      // For SQL fallback actions, 404 or empty results are NOT errors — just means SQL cache miss
+      var isSqlAction = action.indexOf('sql_') === 0;
       var isRetryable = dataStatus === 0 || dataStatus === 429 || dataStatus === 502 || dataStatus === 503 || dataStatus === 504 || dataStatus === 533;
+      if (isSqlAction && (dataStatus === 404 || dataStatus === 204 || !data.results || data.results.length === 0)) {
+        // Return as ok:false so upstream can fall back to v1 proxy
+        return { ok: false, status: dataStatus || 404, error: data.error || 'SQL cache miss', _source: 'sql' };
+      }
       if (action === 'wo_notes' && dataStatus === 404) {
         return { ok: true, results: [], warning: data.error || 'wo_notes not found' };
       }
@@ -4376,9 +4468,28 @@ function _decodeConfigPayload(raw) {
 function getVaultConfigFromInputs() {
   return {
     vhost: sanitizeVhost(($('#vaultVhost') && $('#vaultVhost').value) || ''),
-    proxy: sanitizeProxy(($('#vaultProxy') && $('#vaultProxy').value) || ''),
+    proxy: normalizeConfiguredProxy(($('#vaultProxy') && $('#vaultProxy').value) || ''),
     updatedAt: new Date().toISOString()
   };
+}
+
+// Sanitize proxy URL — ensure https:// prefix, trim whitespace
+function sanitizeProxy(raw) {
+  var val = (raw || '').trim();
+  if (!val) return '';
+  // Auto-add https:// if user forgot
+  if (val && !val.match(/^https?:\/\//i)) {
+    val = 'https://' + val;
+  }
+  // Remove trailing slash for consistency
+  val = val.replace(/\/+$/, '');
+  return val;
+}
+
+function normalizeConfiguredProxy(raw) {
+  var proxy = sanitizeProxy(raw);
+  if (!proxy) return DEFAULT_PROXY_URL;
+  return proxy.indexOf('afproxy.val.run') !== -1 ? DEFAULT_PROXY_URL : proxy;
 }
 
 function applyVaultConfigToInputs(cfg) {
@@ -4387,8 +4498,8 @@ function applyVaultConfigToInputs(cfg) {
     $('#vaultVhost').value = sanitizeVhost(cfg.vhost);
     $('#vhostPreview').textContent = $('#vaultVhost').value || 'yourco';
   }
-  if ($('#vaultProxy') && cfg.proxy) {
-    $('#vaultProxy').value = sanitizeProxy(cfg.proxy);
+  if ($('#vaultProxy')) {
+    $('#vaultProxy').value = normalizeConfiguredProxy(cfg.proxy);
   }
 }
 
@@ -4552,12 +4663,17 @@ if ($('#pmLoginToggle')) {
   });
 }
 
+if ($('#btnRefreshOwnerReports')) {
+  $('#btnRefreshOwnerReports').addEventListener('click', function() {
+    loadOwnerReports();
+  });
+}
+
 if ($('#pmLoginBackBtn')) {
   $('#pmLoginBackBtn').addEventListener('click', function() {
-    setVaultPanel('main');
     setPmOtpStep('request');
-    if ($('#vaultPassphrase')) $('#vaultPassphrase').focus();
-    setVaultFeedback('');
+    stopOtpCountdown();
+    setVaultFeedback('', '');
   });
 }
 
@@ -4588,7 +4704,7 @@ if ($('#btnSendOtp')) {
       setVaultFeedback('Enter a valid PM email or phone number to start PM login. US numbers work with or without +1.', '');
       return;
     }
-    API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
+    API_PROXY = normalizeConfiguredProxy($('#vaultProxy').value || '');
     if (API_PROXY) {
       try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eSaveProxy) { /* */ }
     }
@@ -4604,11 +4720,13 @@ if ($('#btnSendOtp')) {
       await requestDeviceOtp(identifier, 'dispatcher');
       showToast('OTP sent', { kind: 'success' });
       setPmOtpStep('verify', identifier);
-      setVaultFeedback('OTP code sent successfully. Enter the 6-digit verification code.', 'success');
+      setVaultFeedback('OTP code sent successfully. Enter 6-digit verification code.', 'success');
+      startOtpCountdown();
     } catch (err) {
       var msg = (err && (err.message || String(err))) || 'OTP request failed';
       setVaultFeedback(msg, '');
       showToast(msg, { kind: 'danger' });
+      stopOtpCountdown();
     } finally {
       btn.disabled = false;
       btn.textContent = 'Send OTP';
@@ -4626,10 +4744,10 @@ if ($('#btnVerifyOtp')) {
       return;
     }
     if (!/^\d{6}$/.test(code)) {
-      setVaultFeedback('Enter the 6-digit OTP code.', '');
+      setVaultFeedback('Enter 6-digit OTP code.', '');
       return;
     }
-    API_PROXY = sanitizeProxy($('#vaultProxy').value || '');
+    API_PROXY = normalizeConfiguredProxy($('#vaultProxy').value || '');
     if (!API_PROXY) {
       setVaultFeedback('Proxy URL is required before verifying OTP.', '');
       return;
@@ -4647,6 +4765,7 @@ if ($('#btnVerifyOtp')) {
     btn.disabled = true;
     btn.textContent = 'Verifying...';
     setVaultFeedback('');
+    stopOtpCountdown();
     try {
       var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher');
       var token = verifyData.token;
@@ -4676,6 +4795,7 @@ if ($('#btnVerifyOtp')) {
       var msg = (err && (err.message || String(err))) || 'OTP verification failed';
       setVaultFeedback(msg, '');
       showToast(msg, { kind: 'danger' });
+      stopOtpCountdown();
     } finally {
       btn.disabled = false;
       btn.textContent = 'Verify OTP';
@@ -4741,19 +4861,6 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   showToast('Connected — ' + vhost + '.appfolio.com via verified device');
 }
 
-// Sanitize proxy URL — ensure https:// prefix, trim whitespace
-function sanitizeProxy(raw) {
-  var val = (raw || '').trim();
-  if (!val) return '';
-  // Auto-add https:// if user forgot
-  if (val && !val.match(/^https?:\/\//i)) {
-    val = 'https://' + val;
-  }
-  // Remove trailing slash for consistency
-  val = val.replace(/\/+$/, '');
-  return val;
-}
-
 initVaultConfigUI();
 setPmOtpStep('request');
 if ($('#vhostPreviewPm')) {
@@ -4776,12 +4883,12 @@ setVaultPanel('main');
   if (!_token) return;
 
   var _proxyUrl = '';
-  try { _proxyUrl = sanitizeProxy(localStorage.getItem('hm_proxy_url') || ''); } catch (e) { /* */ }
+  try { _proxyUrl = normalizeConfiguredProxy(localStorage.getItem('hm_proxy_url') || ''); } catch (e) { /* */ }
   var _vhost = '';
   try {
     var _resumeCfg = await loadVaultConfig();
     if (_resumeCfg) {
-      if (!_proxyUrl && _resumeCfg.proxy) _proxyUrl = sanitizeProxy(_resumeCfg.proxy);
+      if (!_proxyUrl && _resumeCfg.proxy) _proxyUrl = normalizeConfiguredProxy(_resumeCfg.proxy);
       if (_resumeCfg.vhost) _vhost = sanitizeVhost(_resumeCfg.vhost);
     }
   } catch (e) { /* */ }
@@ -4843,10 +4950,10 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
   var vhost = sanitizeVhost(rawVhost);
   $('#vaultVhost').value = vhost;
   $('#vhostPreview').textContent = vhost || 'yourco';
-  var proxyUrl = sanitizeProxy($('#vaultProxy').value);
+  var proxyUrl = normalizeConfiguredProxy($('#vaultProxy').value);
   if (!proxyUrl) {
     try {
-      proxyUrl = sanitizeProxy(localStorage.getItem('hm_proxy_url') || '');
+      proxyUrl = normalizeConfiguredProxy(localStorage.getItem('hm_proxy_url') || '');
       if (proxyUrl && $('#vaultProxy')) $('#vaultProxy').value = proxyUrl;
     } catch (eProxyLoad) { /* */ }
   }
@@ -5093,9 +5200,13 @@ async function fetchWorkOrders() {
     var data = await proxyAction('work_orders', { days: DATA_WINDOW_DAYS });
     var results = data.results || [];
     WORK_ORDERS = results.map(function(r) {
+      var rawUuid = r.work_order_id || r.Id || '';
+      var dbApiId = r.db_api_id || r.dbApiId || r.v0_uuid || r.v0_id || r.uuid || r.UUID || '';
       return {
         id: r.work_order_number || r.WorkOrderNumber || r.service_request_number || '',
-        uuid: r.work_order_id || r.Id || '',
+        uuid: rawUuid,
+        dbApiId: dbApiId,
+        _dataSource: data._source || (isUuidString(rawUuid) ? 'v0' : 'v2'),
         propertyId: r.property_id || r.PropertyId || '',
         propertyName: r.property_name || r.property || r.PropertyName || '',
         propertyAddress: ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
@@ -7780,12 +7891,16 @@ async function fetchPropertyDetail(propId) {
 function resolveWODbUuid(wo) {
   if (!wo) return '';
   if (isUuidString(wo.dbApiId || '')) return String(wo.dbApiId);
-  // WORK_ORDERS items store the UUID in wo.uuid (r.work_order_id from Reports API)
+  // v0 UUID from SQL cache — this IS the correct DB API UUID
   if (isUuidString(wo.uuid || '')) return String(wo.uuid);
-  // 1. Check if wo already has a DB API link (contains UUID in path)
+  // v2 Reports API work_order_id is a NUMERIC integer (e.g. 28174), NOT a v0 UUID.
+  // The Link field contains the v0 UUID path segment — extract it.
   if (wo.link) {
     var linkMatch = String(wo.link).match(/work_orders\/([0-9a-f\-]{36})/i);
     if (linkMatch) return linkMatch[1];
+    // Also try generic UUID pattern anywhere in the link
+    var genericMatch = String(wo.link).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+    if (genericMatch) return genericMatch[1];
   }
   // 2. Look up matching DB API work order by WO number and turn context
   if (wo.id) {
@@ -7839,10 +7954,20 @@ async function resolveWorkOrderApiUuid(woIdOrUuid, woContext) {
   if ((!woRef || !isUuidString(woRef)) && API_PROXY) {
     try {
       var detailData = await proxyAction('wo_detail', { wo_id: String(woIdOrUuid || '') });
-      var resolvedUuid = String((detailData && detailData.uuid) || (detailData && detailData.result && detailData.result.id) || '').trim();
+      var resolvedUuid = String(
+        (detailData && detailData.uuid) ||
+        (detailData && detailData.work_order && detailData.work_order.id) ||
+        (detailData && detailData.work_order && detailData.work_order.uuid) ||
+        (detailData && detailData.result && detailData.result.id) ||
+        (detailData && detailData.result && detailData.result.uuid) ||
+        (detailData && detailData.results && detailData.results[0] && detailData.results[0].id) ||
+        (detailData && detailData.results && detailData.results[0] && detailData.results[0].uuid) ||
+        (detailData && detailData.id) ||
+        ''
+      ).trim();
       if (isUuidString(resolvedUuid)) woRef = resolvedUuid;
     } catch (e) {
-      // Keep silent fallback behavior for modal; caller handles empty-state UX.
+      console.warn('[resolveWorkOrderApiUuid] wo_detail failed for', woIdOrUuid, ':', e.message || e);
     }
   }
 
@@ -7852,7 +7977,10 @@ async function resolveWorkOrderApiUuid(woIdOrUuid, woContext) {
 async function fetchWONotes(woIdOrUuid, woContext) {
   if (!woIdOrUuid) return [];
   var woRef = await resolveWorkOrderApiUuid(woIdOrUuid, woContext);
-  if (!woRef || !isUuidString(woRef)) return [];
+  if (!woRef || !isUuidString(woRef)) {
+    console.warn('[fetchWONotes] Could not resolve v0 UUID for WO ref:', woIdOrUuid, '- notes unavailable');
+    return [];
+  }
   var notesCached = detailCacheGet('notes_' + woRef);
   if (typeof notesCached !== 'undefined') return notesCached;
   try {
@@ -8134,7 +8262,7 @@ function renderMoveOuts() {
     return;
   }
   var html = '';
-  moves.forEach(function(m) {
+  moves.forEach(function(m, idx) {
     var urgClass = m.daysLeft <= 14 ? 'moveout-urgent' : m.daysLeft <= 30 ? 'moveout-soon' : 'moveout-normal';
     html += '<tr data-woca-idx="' + idx + '">';
     html += '<td>' + escapeHtml(m.property) + '</td>';
@@ -10754,6 +10882,22 @@ function renderDashboardKPIs() {
     return days >= 0 ? days : null;
   }).filter(function(v) { return v !== null; });
 
+  // Supplement with completed historical turns from UNIT_TURN_HISTORY (SQLite turn_history table).
+  // Only use rows where both move_out_date and move_in_date are present and move_in >= move_out.
+  // Exclude anomalous spans > 365 days (data errors).
+  (UNIT_TURN_HISTORY || []).forEach(function(h) {
+    var start = new Date(h.move_out_date);
+    var end   = new Date(h.move_in_date);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
+    var days = daysBetween(start, end);
+    if (days < 0 || days > 365) return;
+    // Property group filter: use property_name field
+    if (currentPropertyGroup && currentPropertyGroup !== 'all') {
+      if (!isInPropertyGroup(null, h.property_name, currentPropertyGroup)) return;
+    }
+    turnDurations.push(days);
+  });
+
   var inspectionAges = INSPECTIONS.map(function(i) {
     if (!i.lastInspection) return null;
     if (!isInPropertyGroup(i.propertyId, i.propertyName, currentPropertyGroup)) return null;
@@ -11062,6 +11206,8 @@ function renderDashboardKPIs() {
   ensureDashboardKpiModeRotation();
   renderDashboardInsightCharts(openWOs, urgentWOs);
   renderDashboardGeoCharts();
+  fetchAndRenderPortfolioSunburst();
+  renderWoSankey();
 
   $('#woBadge').textContent = openWOs.length || '0';
   $('#turnBadge').textContent = activeTurns.length || '0';
@@ -11430,7 +11576,116 @@ function renderDashboardGeoCharts() {
         }, 300);
       }
     });
-  });
+   });
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio Health Sunburst
+// Fetches server-shaped hierarchy from ?action=chart_portfolio_pulse (2h cache
+// on the proxy side). Renders via buildPortfolioSunburstOption from dashboard.ts.
+// Click: Property ring → navigate to Properties tab filtered by name.
+// ---------------------------------------------------------------------------
+var _sunburstRendered = false;
+
+async function fetchAndRenderPortfolioSunburst() {
+  // Only fetch once per session — proxy caches for 2h anyway
+  if (_sunburstRendered) return;
+
+  var buildSunburst = window.buildPortfolioSunburstOption;
+  var echartsCore   = window.echartsCore;
+  if (!buildSunburst || !echartsCore) return; // dashboard.ts not yet loaded
+
+  var el   = document.getElementById('dashPortfolioSunburst');
+  var meta = document.getElementById('dashPortfolioSunburstMeta');
+  if (!el) return;
+
+  if (meta) meta.textContent = 'Fetching…';
+
+  try {
+    var data = await proxyAction('chart_portfolio_pulse', {});
+
+    // Proxy returns the shaped array directly (not wrapped in {ok, results})
+    if (!Array.isArray(data) || !data.length) {
+      if (meta) meta.textContent = data && data.error ? data.error : 'No data';
+      return;
+    }
+
+    _sunburstRendered = true;
+
+    var existing = echartsCore.getInstanceByDom(el);
+    if (existing) existing.dispose();
+
+    var chart = echartsCore.init(el, null, { renderer: 'canvas' });
+    chart.setOption(buildSunburst(data));
+
+    // Count properties and units for meta label
+    var propCount = data.length;
+    var unitCount = data.reduce(function(total, prop) {
+      return total + (prop.children || []).reduce(function(s, status) {
+        return s + (status.children || []).length;
+      }, 0);
+    }, 0);
+    if (meta) meta.textContent = propCount + ' properties · ' + unitCount + ' units';
+
+    // Click outer/status ring → navigate to Properties tab, filter by name
+    chart.on('click', function(params) {
+      if (!params || !params.treePathInfo) return;
+      var path = params.treePathInfo;
+      // path[0] is root (empty), path[1] is property name
+      var propName = path.length > 1 ? String(path[1].name || '') : '';
+      if (!propName) return;
+      if (typeof showTab === 'function') showTab('properties');
+      setTimeout(function() {
+        var search = document.getElementById('propSearch') ||
+                     document.getElementById('propertySearchInput');
+        if (search) {
+          search.value = propName;
+          search.dispatchEvent(new Event('input'));
+        }
+      }, 300);
+    });
+
+    // Resize with the rest of the dashboard charts
+    window.addEventListener('resize', function() { chart.resize(); });
+
+  } catch (e) {
+    console.warn('[Sunburst] fetch failed:', e.message || e);
+    if (meta) meta.textContent = 'Unavailable';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WO Sankey Flow — Property Group → Type → Status → Assignee
+// Renders via buildWoSankeyOption from dashboard.ts.
+// Uses WORK_ORDERS global (already loaded by loadWorkOrders).
+// ---------------------------------------------------------------------------
+var _sankeyRendered = false;
+
+function renderWoSankey() {
+  if (_sankeyRendered) return;
+
+  var buildSankey = window.buildWoSankeyOption;
+  var echartsCore = window.echartsCore;
+  if (!buildSankey || !echartsCore) return;
+
+  var el = document.getElementById('dashSankeyChart');
+  var meta = document.getElementById('dashSankeyMeta');
+  if (!el) return;
+
+  var wos = Array.isArray(WORK_ORDERS) ? WORK_ORDERS : [];
+  if (!wos.length) {
+    if (meta) meta.textContent = 'No work orders';
+    return;
+  }
+
+  var existing = echartsCore.getInstanceByDom(el);
+  if (existing) existing.dispose();
+  var chart = echartsCore.init(el, null, { renderer: 'canvas' });
+  chart.setOption(buildSankey(wos));
+  if (meta) meta.textContent = wos.length + ' work orders';
+  _sankeyRendered = true;
+
+  window.addEventListener('resize', function() { chart.resize(); });
 }
 
 function renderActivityFeed() {
@@ -13717,7 +13972,7 @@ function syncPropertiesToolbarForSubtab() {
 }
 
 function setPropertiesSubtab(tab) {
-  var allowed = { directory: true, performance: true, vacancies: true, renewals: true, bulk: true };
+  var allowed = { directory: true, performance: true, vacancies: true, renewals: true, bulk: true, reports: true };
   var target = allowed[tab] ? tab : 'directory';
   currentPropertiesSubtab = target;
 
@@ -13725,7 +13980,7 @@ function setPropertiesSubtab(tab) {
     btn.classList.toggle('active', btn.getAttribute('data-properties-subtab') === target);
   });
 
-  ['directory', 'performance', 'vacancies', 'renewals', 'bulk'].forEach(function(name) {
+  ['directory', 'performance', 'vacancies', 'renewals', 'bulk', 'reports'].forEach(function(name) {
     var panel = $('#properties-subpanel-' + name);
     if (!panel) return;
     var isActive = name === target;
@@ -13744,6 +13999,10 @@ function setPropertiesSubtab(tab) {
     loadPropertyVacancies();
     // Ensure chart re-measures after panel is visible
     setTimeout(function() { if (_vacancyKpiChart) _vacancyKpiChart.resize(); }, 80);
+    return;
+  }
+  if (target === 'reports') {
+    loadOwnerReports();
     return;
   }
   var scopeEl = $('#propertiesBulkScopeText');
@@ -13891,6 +14150,94 @@ function _renderVacancyKpiChart(dots) {
   _vacancyKpiChart.resize();
 
   _vacancyKpiChart.setOption(buildFn(dots), { notMerge: true });
+}
+
+async function loadOwnerReports() {
+  var body = $('#ownerReportsBody');
+  if (body) body.innerHTML = '<tr><td colspan="4" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading reports\u2026</td></tr>';
+  try {
+    var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+    var reports = [
+      { type: 'owner_withholdings', label: 'Owner Withholdings', description: 'Amounts being held back from owner distributions' }
+    ];
+    
+    var html = '';
+    reports.forEach(function(rpt) {
+      var groupLabel = effectiveGroup || 'All Groups';
+      html += '<tr>' +
+        '<td><strong>' + escHtml(rpt.label) + '</strong></td>' +
+        '<td>' + escHtml(rpt.description) + '</td>' +
+        '<td>' + escHtml(groupLabel) + '</td>' +
+        '<td><button class="action-btn u-action-btn-sm" onclick="runOwnerReport(\'' + escHtml(rpt.type) + '\')"><i class="fas fa-download"></i> Download</button></td>' +
+        '</tr>';
+    });
+    
+    if (body) body.innerHTML = html;
+  } catch(e) {
+    if (body) body.innerHTML = '<tr><td colspan="4" class="u-table-empty-cell u-text-danger">Error: ' + escHtml(String(e&&e.message||e)) + '</td></tr>';
+  }
+}
+
+async function runOwnerReport(reportType) {
+  try {
+    var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+    var payload = { report: reportType };
+    if (effectiveGroup) {
+      payload.property_group_uuid = effectiveGroup;
+    }
+    
+    showToast('Generating report\u2026', { kind: 'info' });
+    var data = await proxyAction('v2_report', payload);
+    
+    if (!data || !data.ok) {
+      throw new Error(data.error || 'Report generation failed');
+    }
+    
+    // Handle different response formats
+    var reportData = data.results || data.data || data;
+    if (!reportData || (!Array.isArray(reportData) && typeof reportData !== 'object')) {
+      throw new Error('Invalid report data format');
+    }
+    
+    // Convert to CSV and download
+    var csv = convertToCsv(reportData);
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = reportType + '_' + (effectiveGroup || 'all') + '_' + new Date().toISOString().split('T')[0] + '.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    showToast('Report downloaded successfully', { kind: 'success' });
+  } catch(e) {
+    console.error('Owner report error:', e);
+    showToast('Error: ' + (e.message || 'Report generation failed'), { kind: 'danger' });
+  }
+}
+
+function convertToCsv(data) {
+  if (!data || data.length === 0) return 'No data available';
+  
+  var headers = Object.keys(data[0]);
+  var csv = headers.join(',') + '\n';
+  
+  data.forEach(function(row) {
+    var values = headers.map(function(header) {
+      var val = row[header];
+      if (val === null || val === undefined) return '';
+      var strVal = String(val);
+      if (strVal.includes(',') || strVal.includes('"') || strVal.includes('\n')) {
+        strVal = '"' + strVal.replace(/"/g, '""') + '"';
+      }
+      return strVal;
+    });
+    csv += values.join(',') + '\n';
+  });
+  
+  return csv;
 }
 
 /* ─── Occupancy section ──────────────────────────────────────────── */
@@ -14962,6 +15309,15 @@ function showWODetail(id) {
   var woDbUuid = resolveWODbUuid(wo);
   var woRefForApi = woDbUuid || (isUuidString(wo.uuid || '') ? String(wo.uuid) : '') || String(wo.id || '');
   CURRENT_WO_MODAL = { woId: String(wo.id), woDbUuid: isUuidString(woRefForApi) ? woRefForApi : '' };
+
+  // Diagnostic: if v2 data and no UUID resolved, log candidate fields to console
+  if (wo._dataSource === 'v2' && !isUuidString(woDbUuid)) {
+    console.warn('[showWODetail] v2 WO #' + wo.id + ' — no v0 UUID resolved. ' +
+      'dbApiId=' + (wo.dbApiId || 'none') + ', ' +
+      'uuid=' + (wo.uuid || 'none') + ', ' +
+      'link=' + (wo.link || 'none'));
+  }
+
   var woAfUrl = appfolioUrl('work_order', wo.id || wo.uuid);
   $('#woModalTitle').innerHTML = '#' + escapeHtml(String(wo.id)) + ' \u2014 ' + escapeHtml(wo.propertyName) + ' ' + escapeHtml(wo.unit) + (woAfUrl ? ' <a href="' + escapeHtml(woAfUrl) + '" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:var(--accent);margin-left:8px;text-decoration:none" title="View in AppFolio"><i class="fas fa-external-link-alt"></i></a>' : '');
 
@@ -19544,6 +19900,76 @@ function wireUpUI() {
     } catch(_) {}
   });
 
+  // ═══════════════════════════════════════════════════════
+  // Sector Panel System — TV-style navigation with pin
+  // ═══════════════════════════════════════════════════════
+  var SECTOR_PANELS = [];
+  var ACTIVE_SECTOR = null;
+
+  function initSectorPanels() {
+    SECTOR_PANELS = Array.from(document.querySelectorAll('.sector-panel'));
+
+    SECTOR_PANELS.forEach(function(panel) {
+      var header = panel.querySelector('.sector-header');
+      var pinBtn = panel.querySelector('.sector-pin-btn');
+      var sectorId = panel.dataset.sector || panel.id;
+
+      // Restore pinned state from localStorage
+      try {
+        if (localStorage.getItem('sector-pin-' + sectorId) === '1') {
+          pinBtn && pinBtn.classList.add('pinned');
+          panel.classList.add('sector-panel--pinned');
+        }
+      } catch (e) {}
+
+      // Header click: toggle this sector, collapse others (unless pinned)
+      if (header) {
+        header.addEventListener('click', function(e) {
+          // Don't trigger if pin button was clicked
+          if (e.target.closest('.sector-pin-btn')) return;
+          toggleSector(panel);
+        });
+      }
+
+      // Pin button: toggle pinned state
+      if (pinBtn) {
+        pinBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          var isPinned = pinBtn.classList.toggle('pinned');
+          panel.classList.toggle('sector-panel--pinned', isPinned);
+          try {
+            localStorage.setItem('sector-pin-' + sectorId, isPinned ? '1' : '0');
+          } catch (e) {}
+        });
+      }
+    });
+  }
+
+  function toggleSector(panel) {
+    var isExpanded = panel.classList.contains('sector-panel--expanded');
+
+    if (isExpanded) {
+      // Collapse this panel
+      panel.classList.remove('sector-panel--expanded');
+      panel.classList.add('sector-panel--collapsed');
+      ACTIVE_SECTOR = null;
+    } else {
+      // Collapse all non-pinned panels first
+      SECTOR_PANELS.forEach(function(p) {
+        if (!p.classList.contains('sector-panel--pinned')) {
+          p.classList.remove('sector-panel--expanded');
+          p.classList.add('sector-panel--collapsed');
+        }
+      });
+      // Expand clicked panel
+      panel.classList.add('sector-panel--expanded');
+      panel.classList.remove('sector-panel--collapsed');
+      ACTIVE_SECTOR = panel;
+    }
+  }
+
+  initSectorPanels();
+
   if ($('#woCompletedHistoryToggle')) {
     $('#woCompletedHistoryToggle').addEventListener('change', async function() {
       showCompletedWOHistory = !!this.checked;
@@ -21002,6 +21428,17 @@ async function fetchAllLive() {
     loadClosedTurns().catch(function() {});
     fetchUnitTurnHistory().then(function() { renderTurnHistoryPanel(); }).catch(function() {});
 
+    // Inspections: non-blocking background fetch so the dashboard attention panel
+    // and inspection KPIs are populated without waiting for the user to click the tab.
+    if (INSPECTIONS.length === 0) {
+      fetchInspections().then(function(ok) {
+        if (ok) {
+          _inspLazyLoaded = true;
+          renderAll();
+        }
+      }).catch(function() {});
+    }
+
     // Final re-render: turns with all available correlated data
     renderTurnBoard();
 
@@ -21583,7 +22020,7 @@ renderDashboardKPIs = function() {
     }
     pmUsersBody.innerHTML = '<div class="dbadmin-msg">Loading PM users…</div>';
     if (!API_PROXY) {
-      try { var _sp = localStorage.getItem('hm_proxy_url'); if (_sp) API_PROXY = _sp; } catch (e) { /* */ }
+      try { var _sp = localStorage.getItem('hm_proxy_url'); if (_sp) API_PROXY = normalizeConfiguredProxy(_sp); } catch (e) { /* */ }
     }
     if (!API_PROXY) {
       pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-plug"></i> Proxy not configured. Connect via the vault first.</div>';
@@ -21629,7 +22066,7 @@ renderDashboardKPIs = function() {
     if (pmUserSaveBtn) pmUserSaveBtn.disabled = true;
     // Restore API_PROXY from localStorage if the session was reopened without full vault login
     if (!API_PROXY) {
-      try { var _savedProxy = localStorage.getItem('hm_proxy_url'); if (_savedProxy) API_PROXY = _savedProxy; } catch (e) { /* */ }
+      try { var _savedProxy = localStorage.getItem('hm_proxy_url'); if (_savedProxy) API_PROXY = normalizeConfiguredProxy(_savedProxy); } catch (e) { /* */ }
     }
     if (!API_PROXY) {
       showToast('Proxy not configured. Connect to the proxy first (enter URL in the vault).', 'error');
@@ -21665,7 +22102,7 @@ renderDashboardKPIs = function() {
     if (!userUuid) return;
     if (!await hmConfirm('Delete this PM login user?', { title: 'Delete PM User', okLabel: 'Delete', danger: true })) return;
     if (!API_PROXY) {
-      try { var _savedProxy2 = localStorage.getItem('hm_proxy_url'); if (_savedProxy2) API_PROXY = _savedProxy2; } catch (e) { /* */ }
+      try { var _savedProxy2 = localStorage.getItem('hm_proxy_url'); if (_savedProxy2) API_PROXY = normalizeConfiguredProxy(_savedProxy2); } catch (e) { /* */ }
     }
     if (!API_PROXY) { showToast('Proxy not configured.', 'error'); return; }
     proxyPost('pm_proxy_user_delete', { key: getAdminKey(), user_uuid: userUuid }).then(function() {
@@ -21723,7 +22160,7 @@ renderDashboardKPIs = function() {
   // Auto-load PM users on page load if proxy is available
   function autoLoadPmUsers() {
     if (!API_PROXY && !pmUsersBody) return;
-    try { var _sp = localStorage.getItem('hm_proxy_url'); if (_sp) API_PROXY = _sp; } catch (e) { /* */ }
+      try { var _sp = localStorage.getItem('hm_proxy_url'); if (_sp) API_PROXY = normalizeConfiguredProxy(_sp); } catch (e) { /* */ }
     if (API_PROXY) {
       loadPmUsers().catch(function() { /* silently ignore auto-load failures */ });
     }
@@ -22271,7 +22708,7 @@ function updateDispatchStats(d) {
 
 // ── Proxy POST helper ───────────────────────────────────────────
 function resolveDispatchProxyBaseUrl() {
-  var base = sanitizeProxy(API_PROXY || '');
+  var base = normalizeConfiguredProxy(API_PROXY || '');
   if (base) {
     API_PROXY = base;
     try { localStorage.setItem('hm_proxy_url', base); } catch (e) { /* */ }
@@ -22280,7 +22717,7 @@ function resolveDispatchProxyBaseUrl() {
 
   var proxyInput = $('#vaultProxy');
   if (proxyInput && proxyInput.value) {
-    base = sanitizeProxy(proxyInput.value || '');
+    base = normalizeConfiguredProxy(proxyInput.value || '');
     if (base) {
       API_PROXY = base;
       try { localStorage.setItem('hm_proxy_url', base); } catch (e2) { /* */ }
@@ -22289,7 +22726,7 @@ function resolveDispatchProxyBaseUrl() {
   }
 
   try {
-    base = sanitizeProxy(localStorage.getItem('hm_proxy_url') || '');
+    base = normalizeConfiguredProxy(localStorage.getItem('hm_proxy_url') || '');
     if (base) {
       API_PROXY = base;
       return base;

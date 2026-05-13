@@ -4,7 +4,7 @@
 // =============================================================================
 
 import * as echarts from 'echarts/core';
-import { BarChart, PieChart, RadarChart, TreemapChart, EffectScatterChart, FunnelChart } from 'echarts/charts';
+import { BarChart, PieChart, RadarChart, TreemapChart, EffectScatterChart, FunnelChart, SunburstChart, SankeyChart } from 'echarts/charts';
 import {
   GridComponent,
   TooltipComponent,
@@ -24,6 +24,8 @@ import type {
   TreemapSeriesOption,
   EffectScatterSeriesOption,
   FunnelSeriesOption,
+  SunburstSeriesOption,
+  SankeySeriesOption,
 } from 'echarts/charts';
 import type {
   GridComponentOption,
@@ -43,6 +45,8 @@ echarts.use([
   TreemapChart,
   EffectScatterChart,
   FunnelChart,
+  SunburstChart,
+  SankeyChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
@@ -58,9 +62,11 @@ type ECOption = ComposeOption<
   | BarSeriesOption
   | PieSeriesOption
   | RadarSeriesOption
+  | SunburstSeriesOption
   | TreemapSeriesOption
   | EffectScatterSeriesOption
   | FunnelSeriesOption
+  | SankeySeriesOption
   | GridComponentOption
   | TooltipComponentOption
   | LegendComponentOption
@@ -109,16 +115,28 @@ function mountChart(id: string): echarts.ECharts | null {
     console.warn(`[dashboard] mount point #${id} not found`);
     return null;
   }
+  
+  // If the element is hidden (e.g. inside a collapsed section), clientWidth/Height will be 0.
+  // We can temporarily ensure it has dimensions, or just rely on CSS and resize() later.
+  // ECharts warns if it initializes on a 0x0 element. 
+  // Let's provide an explicit width/height to init if clientWidth/Height is 0.
+  const width = el.clientWidth || 400;
+  const height = el.clientHeight || parseInt(getComputedStyle(el).minHeight, 10) || 300;
+  
   // Force the element to have a real height before init so ECharts doesn't
   // measure a 0-px container and produce a squished/invisible chart.
   if (!el.offsetHeight) {
-    const minH = parseInt(getComputedStyle(el).minHeight, 10) || 300;
-    el.style.height = `${minH}px`;
+    el.style.height = `${height}px`;
   }
-  return echarts.init(el, undefined, { renderer: 'canvas' });
+  
+  return echarts.init(el, undefined, { renderer: 'canvas', width, height });
 }
 
 // Chart instances — populated inside initDashboardCharts() after DOM ready.
+let chartOccupancy:   echarts.ECharts | null = null;
+let chartMoveOuts:    echarts.ECharts | null = null;
+let chartPortfolio:   echarts.ECharts | null = null;
+let chartVelocity:    echarts.ECharts | null = null;
 let chartPmBar:       echarts.ECharts | null = null;
 let chartStatusDonut: echarts.ECharts | null = null;
 let chartPmLoad:      echarts.ECharts | null = null;
@@ -332,10 +350,11 @@ window.addEventListener('resize', () => {
 
 // Resolved at runtime from localStorage (same key app.js uses).
 function resolveProxyUrl(): string {
+  const defaultProxy = 'https://afproxy.val.run';
   try {
-    return (localStorage.getItem('hm_proxy_url') || '').trim();
+    return (localStorage.getItem('hm_proxy_url') || '').trim() || defaultProxy;
   } catch {
-    return '';
+    return defaultProxy;
   }
 }
 
@@ -345,7 +364,7 @@ function buildWorkOrdersUrl(): string {
     const sep = proxy.includes('?') ? '&' : '?';
     return `${proxy}${sep}action=work_orders&days=180`;
   }
-  return 'https://flr-appfolio.val.run/?action=work_orders&days=180';
+  return 'https://afproxy.val.run/?action=work_orders&days=180';
 }
 
 // =============================================================================
@@ -354,8 +373,11 @@ function buildWorkOrdersUrl(): string {
 function proxyAuthHeaders(): Record<string, string> {
   try {
     const token =
-      sessionStorage.getItem('hm_access_token') ||
       localStorage.getItem('hm_access_token') ||
+      sessionStorage.getItem('hm_access_token') ||
+      localStorage.getItem('hm_auth_token') ||
+      localStorage.getItem('hm_device_token') ||
+      localStorage.getItem('hm_proxy_token') ||
       '';
     if (token) return { Authorization: `Bearer ${token}` };
   } catch { /* non-fatal */ }
@@ -1373,6 +1395,101 @@ export function buildTurnoverPipelineOption(turns: TurnPipeEntry[]): ECOption {
 (window as unknown as Record<string, unknown>).buildTurnoverPipelineOption = buildTurnoverPipelineOption;
 
 // =============================================================================
+// Portfolio Health Sunburst
+// Levels: Property (inner) → Tenant Status (middle) → Unit (outer)
+// Value: Market Rent (slice size); $0/vacant units use fallback 100 so they
+// remain visible — matching the server-side shapePortfolioPulse behaviour.
+// =============================================================================
+
+interface SunburstNode {
+  name: string;
+  value?: number;
+  children?: SunburstNode[];
+}
+
+// Status → color mapping (matches common AppFolio tenant_status values)
+const STATUS_COLORS: Record<string, string> = {
+  'Current':          '#22c55e',
+  'Occupied':         '#22c55e',
+  'Vacant':           '#ef4444',
+  'Notice':           '#f59e0b',
+  'Notice Unrented':  '#f59e0b',
+  'Notice Rented':    '#a3e635',
+  'Eviction':         '#dc2626',
+  'Past Due':         '#fb923c',
+  'Month-to-Month':   '#60a5fa',
+};
+
+function colorizeStatus(nodes: SunburstNode[]): SunburstNode[] {
+  return nodes.map(propNode => ({
+    ...propNode,
+    itemStyle: { color: '#6366f1', borderWidth: 2, borderColor: '#1e1b4b' },
+    children: (propNode.children || []).map(statusNode => ({
+      ...statusNode,
+      itemStyle: {
+        color: STATUS_COLORS[statusNode.name] ?? '#94a3b8',
+        borderWidth: 1,
+        borderColor: '#0f172a',
+      },
+      children: (statusNode.children || []).map(unitNode => ({
+        ...unitNode,
+        itemStyle: { opacity: 0.85 },
+      })),
+    })),
+  }));
+}
+
+export function buildPortfolioSunburstOption(data: SunburstNode[]): ECOption {
+  const colored = colorizeStatus(data);
+
+  return {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      formatter: (p: any) => {
+        const val = p.value != null ? `$${Number(p.value).toLocaleString()}` : '';
+        const path = (p.treePathInfo as Array<{ name: string }>)
+          ?.slice(1).map(n => n.name).join(' › ') ?? p.name;
+        return `<b>${path}</b>${val ? `<br/>Rent: ${val}` : ''}`;
+      },
+    },
+    series: [{
+      type: 'sunburst',
+      data: colored,
+      radius: ['8%', '95%'],
+      sort: 'desc',
+      emphasis: {
+        focus: 'ancestor',
+        itemStyle: { shadowBlur: 10, shadowColor: 'rgba(99,102,241,0.6)' },
+      },
+      levels: [
+        {},
+        // Level 1 — Property
+        {
+          r0: '8%', r: '35%',
+          label: { rotate: 'tangential', fontSize: 10, fontWeight: 700, color: '#e0e7ff' },
+          itemStyle: { borderWidth: 2 },
+        },
+        // Level 2 — Tenant Status
+        {
+          r0: '35%', r: '68%',
+          label: { fontSize: 9, color: '#fff', fontWeight: 600 },
+          itemStyle: { borderWidth: 1 },
+        },
+        // Level 3 — Unit (outer ring, labels outside)
+        {
+          r0: '68%', r: '72%',
+          label: { position: 'outside', fontSize: 8, color: '#94a3b8', silent: true },
+          itemStyle: { borderWidth: 0.5 },
+        },
+      ],
+    }],
+  };
+}
+
+(window as unknown as Record<string, unknown>).buildPortfolioSunburstOption = buildPortfolioSunburstOption;
+
+// =============================================================================
 // Main async data fetch + render
 // =============================================================================
 async function fetchAndRenderDashboardData(): Promise<void> {
@@ -1385,106 +1502,526 @@ async function fetchAndRenderDashboardData(): Promise<void> {
     })
   );
 
-  let results: WoRecord[] = [];
+  const baseUrl = resolveProxyUrl();
+  const headers = { Accept: 'application/json', ...proxyAuthHeaders() };
 
-  // Prefer the already-loaded, normalized WORK_ORDERS from app.js to avoid a
-  // duplicate network round-trip and ensure field names match what the proxy
-  // actually returned.
+  // ── 1. Occupancy Doughnut ─────────────────────────────────────────
+  try {
+    const resp = await fetch(`${baseUrl}?action=chart_occupancy`, { headers });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (chartOccupancy && Array.isArray(data) && data.length > 0) {
+        chartOccupancy.setOption((window as any).buildOccupancyDonutOption(data));
+        chartOccupancy.hideLoading();
+        const meta = document.getElementById('dashOccupancyMeta');
+        if (meta) meta.textContent = `Total: ${data.reduce((s: number, d: any) => s + (d.value || 0), 0)} units`;
+      } else if (chartOccupancy) {
+        chartOccupancy.hideLoading();
+        chartOccupancy.setOption((window as any).buildOccupancyDonutOption([]));
+        const meta = document.getElementById('dashOccupancyMeta');
+        if (meta) meta.textContent = 'No data';
+      }
+    } else if (chartOccupancy) {
+      chartOccupancy.hideLoading();
+    }
+  } catch (e) {
+    console.error('[dashboard] Occupancy fetch failed:', e);
+    if (chartOccupancy) chartOccupancy.hideLoading();
+  }
+
+  // ── 2. Move-Outs Bar ──────────────────────────────────────────────
+  try {
+    const resp = await fetch(`${baseUrl}?action=chart_moveouts`, { headers });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (chartMoveOuts && data && Array.isArray(data.labels)) {
+        chartMoveOuts.setOption((window as any).buildMoveOutsBarOption(data.labels, data.values || []));
+        chartMoveOuts.hideLoading();
+        const meta = document.getElementById('dashMoveOutsMeta');
+        const vals = data.values || [];
+        if (meta) meta.textContent = `Next 90 days: ${vals.reduce((a: number, b: number) => a + b, 0)} move-outs`;
+      } else if (chartMoveOuts) {
+        chartMoveOuts.hideLoading();
+        const meta = document.getElementById('dashMoveOutsMeta');
+        if (meta) meta.textContent = 'No data';
+      }
+    } else if (chartMoveOuts) {
+      chartMoveOuts.hideLoading();
+    }
+  } catch (e) {
+    console.error('[dashboard] Move-Outs fetch failed:', e);
+    if (chartMoveOuts) chartMoveOuts.hideLoading();
+  }
+
+  // ── 3. Portfolio Treemap ─────────────────────────────────────────
+  try {
+    const resp = await fetch(`${baseUrl}?action=chart_portfolio_owner`, { headers });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (chartPortfolio && Array.isArray(data) && data.length > 0) {
+        chartPortfolio.setOption((window as any).buildPortfolioTreemapOption(data));
+        chartPortfolio.hideLoading();
+        const meta = document.getElementById('dashPortfolioTreeMeta');
+        if (meta) meta.textContent = `${data.length} owners/groups`;
+      } else if (chartPortfolio) {
+        chartPortfolio.hideLoading();
+        const meta = document.getElementById('dashPortfolioTreeMeta');
+        if (meta) meta.textContent = 'No data';
+      }
+    } else if (chartPortfolio) {
+      chartPortfolio.hideLoading();
+    }
+  } catch (e) {
+    console.error('[dashboard] Portfolio fetch failed:', e);
+    if (chartPortfolio) chartPortfolio.hideLoading();
+  }
+
+  // ── 4. Leasing Velocity Area Chart ───────────────────────────────
+  try {
+    const resp = await fetch(`${baseUrl}?action=chart_leasing_velocity`, { headers });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (chartVelocity && data && Array.isArray(data.dates)) {
+        chartVelocity.setOption((window as any).buildLeasingVelocityOption(data.dates, data.moveIns || [], data.moveOuts || []));
+        chartVelocity.hideLoading();
+        const meta = document.getElementById('dashVelocityMeta');
+        if (meta) {
+          const totalIn = (data.moveIns || []).reduce((a: number, b: number) => a + b, 0);
+          const totalOut = (data.moveOuts || []).reduce((a: number, b: number) => a + b, 0);
+          meta.textContent = `In: ${totalIn} · Out: ${totalOut}`;
+        }
+      } else if (chartVelocity) {
+        chartVelocity.hideLoading();
+        const meta = document.getElementById('dashVelocityMeta');
+        if (meta) meta.textContent = 'No data';
+      }
+    } else if (chartVelocity) {
+      chartVelocity.hideLoading();
+    }
+  } catch (e) {
+    console.error('[dashboard] Velocity fetch failed:', e);
+    if (chartVelocity) chartVelocity.hideLoading();
+  }
+
+  // ===========================================================================
+  // Original WO Processing (re-integrated)
+  // ===========================================================================
+  let results: WoRecord[] = [];
   const appWOs = (window as unknown as Record<string, unknown>).WORK_ORDERS;
   if (Array.isArray(appWOs) && (appWOs as WoRecord[]).length > 0) {
     results = appWOs as WoRecord[];
     console.debug('[dashboard] using WORK_ORDERS from app.js (' + results.length + ' rows)');
-    if (results[0]) {
-      console.debug('[dashboard] WO sample keys:', Object.keys(results[0]).join(', '));
-    }
   } else {
     // Fallback: fetch raw data directly from the proxy.
     try {
+      // @ts-ignore - buildWorkOrdersUrl is defined earlier in the file
       const url = buildWorkOrdersUrl();
-      const resp = await fetch(url, {
-        headers: { Accept: 'application/json', ...proxyAuthHeaders() },
-      });
-
-      if (!resp.ok) {
-        throw new Error(`Proxy responded ${resp.status} ${resp.statusText}`);
-      }
-
-      const body = await resp.json() as { ok: boolean; results: WoRecord[]; count: number };
-
-      if (!body.ok) {
-        throw new Error('Proxy returned ok=false');
-      }
-
-      results = Array.isArray(body.results) ? body.results : [];
-      if (results[0]) {
-        console.debug('[dashboard] raw WO sample keys:', Object.keys(results[0]).join(', '));
+      const resp = await fetch(url, { headers });
+      if (resp.ok) {
+        const body = await resp.json() as { ok: boolean; results: WoRecord[]; count: number };
+        if (body.ok) results = Array.isArray(body.results) ? body.results : [];
       }
     } catch (err) {
-      console.error('[dashboard] fetchAndRenderDashboardData failed:', err);
-      ALL_CHARTS.forEach(c => c.hideLoading());
-      // Leave placeholder skeletons visible so the layout doesn't collapse.
-      return;
+      console.error('[dashboard] fetch WOs failed:', err);
     }
   }
 
-  // ── PM Performance Radar (multi-axis per PM from real WO data) ───────────────
-  if (chartPmBar) {
-    chartPmBar.setOption(buildPmRadarOption(results));
-    chartPmBar.hideLoading();
+  // If we have WO results, process and render them
+  if (results.length > 0) {
+    // ── PM Performance Radar (multi-axis per PM from real WO data) ───────────────
+    if (chartPmBar) {
+      // @ts-ignore - buildPmRadarOption is defined elsewhere
+      chartPmBar.setOption(buildPmRadarOption(results));
+      chartPmBar.hideLoading();
+    }
+
+    // ── Open WOs by Age (replaces WO Status donut) ───────────────────────────
+    if (chartStatusDonut) {
+      const today = new Date();
+      // @ts-ignore
+      const openRows = results.filter(r => !isClosedStatus(statusField(r)));
+      // @ts-ignore
+      const bucketCounts = WO_AGE_BUCKETS.map(bucket => {
+        return openRows.filter(r => {
+          const created = r.created_at || r.CreatedAt || r.created || r.date_created || '';
+          if (!created) return false;
+          const age = Math.floor((today.getTime() - new Date(String(created)).getTime()) / 86400000);
+          return age >= bucket.min && age <= bucket.max;
+        }).length;
+      });
+      const metaEl = document.getElementById('kpiVacancyGroupsSub');
+      if (metaEl) {
+        const total = bucketCounts.reduce((s: number, v: number) => s + v, 0);
+        const critical = bucketCounts[0]; // 60+ days bucket
+        metaEl.textContent = total > 0
+          ? `${total} open WO${total !== 1 ? 's' : ''}${critical > 0 ? ` · ${critical} critical (60+ d)` : ''}`
+          : 'No open work orders';
+      }
+      // @ts-ignore
+      chartStatusDonut.setOption(buildOpenWoByAgeOption(bucketCounts));
+      chartStatusDonut.hideLoading();
+    }
+
+    // ── PM Load Bar (ALL open WOs per PM, not just closed) ────────────────────
+    if (chartPmLoad) {
+      // @ts-ignore
+      const openRows = results.filter(r => !isClosedStatus(statusField(r)));
+      // @ts-ignore
+      const { names, counts } = groupCount(openRows, pmField, 15);
+      // @ts-ignore
+      chartPmLoad.setOption(buildPmLoadBarOption(names, counts));
+      chartPmLoad.hideLoading();
+    }
+
+    // ── WO Type Treemap (category × urgency) ──────────────────────────────────
+    if (chartWoType) {
+      // @ts-ignore
+      chartWoType.setOption(buildWoTypeTreemapOption(results));
+      chartWoType.hideLoading();
+    }
+
+    // ── Urgency Bar (WOs by priority) ─────────────────────────────────────────
+    if (chartUrgency) {
+      // @ts-ignore
+      const { names, counts } = groupCount(results, priorityField, 8);
+      // @ts-ignore
+      chartUrgency.setOption(buildUrgencyBarOption(names, counts));
+      chartUrgency.hideLoading();
+    }
   }
 
-  // ── Open WOs by Age (replaces WO Status donut) ───────────────────────────
-  if (chartStatusDonut) {
-    const today = new Date();
-    const openRows = results.filter(r => !isClosedStatus(statusField(r)));
-    const bucketCounts = WO_AGE_BUCKETS.map(bucket => {
-      return openRows.filter(r => {
-        const created = r.created_at || r.CreatedAt || r.created || r.date_created || '';
-        if (!created) return false;
-        const age = Math.floor((today.getTime() - new Date(String(created)).getTime()) / 86400000);
-        return age >= bucket.min && age <= bucket.max;
-      }).length;
+  // Force a resize pass after all options are set and rendering is complete
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      ALL_CHARTS.forEach(c => {
+        try { c.resize(); } catch (_) { /* ignore resize during render */ }
+      });
     });
-    // Update card meta text
-    const metaEl = document.getElementById('kpiVacancyGroupsSub');
-    if (metaEl) {
-      const total = bucketCounts.reduce((s, v) => s + v, 0);
-      const critical = bucketCounts[0]; // 60+ days bucket
-      metaEl.textContent = total > 0
-        ? `${total} open WO${total !== 1 ? 's' : ''}${critical > 0 ? ` · ${critical} critical (60+ d)` : ''}`
-        : 'No open work orders';
-    }
-    chartStatusDonut.setOption(buildOpenWoByAgeOption(bucketCounts));
-    chartStatusDonut.hideLoading();
-  }
-
-  // ── PM Load Bar (ALL open WOs per PM, not just closed) ────────────────────
-  if (chartPmLoad) {
-    const openRows = results.filter(r => !isClosedStatus(statusField(r)));
-    const { names, counts } = groupCount(openRows, pmField, 15);
-    chartPmLoad.setOption(buildPmLoadBarOption(names, counts));
-    chartPmLoad.hideLoading();
-  }
-
-  // ── WO Type Treemap (category × urgency) ──────────────────────────────────
-  if (chartWoType) {
-    chartWoType.setOption(buildWoTypeTreemapOption(results));
-    chartWoType.hideLoading();
-  }
-
-  // ── Urgency Bar (WOs by priority) ─────────────────────────────────────────
-  if (chartUrgency) {
-    const { names, counts } = groupCount(results, priorityField, 8);
-    chartUrgency.setOption(buildUrgencyBarOption(names, counts));
-    chartUrgency.hideLoading();
-  }
-
-  // Force a resize pass after all options are set so ECharts re-measures the
-  // now-visible, properly-sized containers (fixes the "squished chart" issue).
-  setTimeout(() => {
-    ALL_CHARTS.forEach(c => c.resize());
-  }, 150);
+  });
 }
+
+// =============================================================================
+// NEW PM CHART BUILDERS — Property Manager Dashboard
+// =============================================================================
+
+// ── 1. Real-Time Occupancy Doughnut ────────────────────────────────────────
+export function buildOccupancyDonutOption(
+  data: Array<{ name: string; value: number }>,
+): ECOption {
+  const colorMap: Record<string, string> = {
+    Occupied: "#00E676",
+    Notice: "#FFEA00",
+    "Vacant Unrented": "#FF1744",
+    "Vacant Rented": "#2979FF",
+  };
+  const safeData = Array.isArray(data) ? data : [];
+  const colors = safeData.map(d => colorMap[d.name] || "#888");
+
+  return {
+    backgroundColor: "transparent",
+    tooltip: { trigger: "item" as const },
+    color: colors,
+    series: [{
+      name: "Portfolio Occupancy",
+      type: "pie" as const,
+      radius: safeData.length > 0 ? ["40%", "70%"] : ["0%", "0%"],
+      avoidLabelOverlap: false,
+      itemStyle: { borderRadius: 10, borderColor: "#121212", borderWidth: 2 },
+      label: { show: safeData.length > 0, color: "#fff", formatter: "{b}\n{c}" },
+      data: safeData,
+    }],
+  };
+}
+
+// ── 2. Upcoming Move-Outs Forecast (Bar) ──────────────────────────────────
+export function buildMoveOutsBarOption(
+  labels: string[],
+  values: number[],
+): ECOption {
+  return {
+    backgroundColor: "transparent",
+    tooltip: { trigger: "axis" as const, backgroundColor: "rgba(20,20,20,0.9)" },
+    grid: { left: "5%", right: "5%", bottom: "10%", top: "15%", containLabel: true },
+    xAxis: {
+      type: "category" as const,
+      data: labels,
+      axisLabel: { color: "#888" },
+    },
+    yAxis: {
+      type: "value" as const,
+      splitLine: { lineStyle: { color: "#333" } },
+      axisLabel: { color: "#888" },
+    },
+    series: [{
+      data: values,
+      type: "bar" as const,
+      barWidth: "40%",
+      itemStyle: {
+        borderRadius: [5, 5, 0, 0],
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: "#FF9100" },
+          { offset: 1, color: "#FF3D00" },
+        ]),
+      },
+    }],
+  };
+}
+
+// ── 3. Portfolio Distribution Treemap ───────────────────────────────────────
+export function buildPortfolioTreemapOption(
+  data: Array<{ name: string; value: number }>,
+): ECOption {
+  const safeData = Array.isArray(data) ? data.filter(d => d && typeof d === 'object' && 'name' in d) : [];
+
+  return {
+    backgroundColor: "transparent",
+    tooltip: { formatter: "{b}: {c} Units" },
+    series: [{
+      type: "treemap" as const,
+      data: safeData,
+      roam: false,
+      nodeClick: false as any,
+      breadcrumb: { show: false },
+      itemStyle: { borderColor: "#121212", borderWidth: 2, gapWidth: 1 },
+      colorMappingBy: "value" as const,
+      color: ["#3F51B5", "#673AB7", "#9C27B0", "#E91E63"],
+    }],
+  };
+}
+
+// ── 4. Leasing Velocity (Area Chart) ───────────────────────────────────────
+export function buildLeasingVelocityOption(
+  dates: string[],
+  moveIns: number[],
+  moveOuts: number[],
+): ECOption {
+  return {
+    backgroundColor: "transparent",
+    tooltip: { trigger: "axis" as const, backgroundColor: "rgba(20,20,20,0.9)" },
+    legend: {
+      data: ["Move-Ins", "Move-Outs"],
+      textStyle: { color: "#e0e0e0" },
+      top: "0%",
+    },
+    grid: { left: "5%", right: "5%", bottom: "10%", top: "15%", containLabel: true },
+    xAxis: {
+      type: "category" as const,
+      boundaryGap: false,
+      data: dates,
+      axisLabel: { color: "#888" },
+    },
+    yAxis: {
+      type: "value" as const,
+      splitLine: { lineStyle: { color: "#333" } },
+      axisLabel: { color: "#888" },
+    },
+    series: [
+      {
+        name: "Move-Ins",
+        type: "line" as const,
+        smooth: true,
+        lineStyle: { width: 3, color: "#00E676" },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: "rgba(0,230,118,0.5)" },
+            { offset: 1, color: "rgba(0,230,118,0)" },
+          ]),
+        },
+        data: moveIns,
+      },
+      {
+        name: "Move-Outs",
+        type: "line" as const,
+        smooth: true,
+        lineStyle: { width: 3, color: "#FF1744" },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: "rgba(255,23,68,0.5)" },
+            { offset: 1, color: "rgba(255,23,68,0)" },
+          ]),
+        },
+        data: moveOuts,
+      },
+    ],
+  };
+}
+
+// =============================================================================
+// WO Sankey Flow — Property Group → Type → Status → Assigned
+// Shows how work orders flow through the operational pipeline.
+// =============================================================================
+
+interface WoRecord {
+  property_group_id?: string;
+  property_group?: string;
+  propertyGroupId?: string;
+  wo_type?: string;
+  work_order_type?: string;
+  Type?: string;
+  type?: string;
+  status?: string;
+  Status?: string;
+  vendor_id?: string;
+  vendorId?: string;
+  VendorId?: string;
+  assigned_to?: string;
+  assignedTo?: string;
+  assigned_user?: string;
+  assigned_users?: any;
+  AssignedUsers?: any;
+  vendor?: string;
+  vendor_name?: string;
+  vendorName?: string;
+  priority?: string;
+  Priority?: string;
+}
+
+const SANKEY_COLORS: Record<string, string> = {
+  // Property groups
+  Phoenix: '#3b82f6',
+  Tucson: '#8b5cf6',
+  // Types
+  Internal: '#6366f1',
+  Resident: '#f59e0b',
+  // Statuses
+  New: '#94a3b8',
+  Assigned: '#3b82f6',
+  Scheduled: '#6366f1',
+  Estimated: '#8b5cf6',
+  'In Progress': '#a855f7',
+  'Work Completed': '#22c55e',
+  Completed: '#22c55e',
+  Canceled: '#ef4444',
+  // Assignment
+  Unassigned: '#ef4444',
+  Urgent: '#dc2626',
+};
+
+function sankeyColor(key: string): string {
+  const k = String(key || '').trim();
+  return SANKEY_COLORS[k] || cssVar('--accent') || '#6366f1';
+}
+
+/**
+ * Builds a Sankey diagram showing WO flow:
+ *   Property Group → Type (Internal/Resident) → Status → Assignee
+ *
+ * Data comes from the v0-synced WORK_ORDERS global.
+ * Each node is a category; link thickness = count of WOs in that path.
+ */
+export function buildWoSankeyOption(wos: WoRecord[]): ECOption {
+  const nodes: { name: string; itemStyle: { color: string } }[] = [];
+  const links: { source: string; target: string; value: number }[] = [];
+  const nodeSet = new Set<string>();
+
+  function addNode(name: string, color: string): void {
+    if (nodeSet.has(name)) return;
+    nodeSet.add(name);
+    nodes.push({ name, itemStyle: { color } });
+  }
+
+  function addLink(source: string, target: string): void {
+    const key = `${source}→${target}`;
+    const existing = links.find(l => l.source === source && l.target === target);
+    if (existing) {
+      existing.value++;
+    } else {
+      links.push({ source, target, value: 1 });
+    }
+  }
+
+  const groupNames: Record<string, string> = {};
+
+  for (const wo of wos) {
+    // Layer 1: Property Group
+    const rawGroup = String(
+      wo.property_group || wo.property_group_id || wo.propertyGroupId || 'Unassigned Group',
+    ).trim();
+    const group = groupNames[rawGroup] || rawGroup.split('-')[0] || rawGroup;
+    if (!groupNames[rawGroup]) groupNames[rawGroup] = group;
+
+    // Layer 2: WO Type
+    const woType = String(wo.wo_type || wo.Type || wo.type || wo.work_order_type || 'Other').trim();
+
+    // Layer 3: Status
+    const status = String(wo.status || wo.Status || 'Unknown').trim();
+
+    // Layer 4: Assignee (vendor name or assigned user or Unassigned)
+    const assignedUsers = Array.isArray(wo.assigned_users || wo.AssignedUsers) ? (wo.assigned_users || wo.AssignedUsers) : [];
+    const vendorName = String(wo.vendor || wo.vendor_name || wo.vendorName || '').trim();
+    const primaryAssignee = assignedUsers.length > 0
+      ? String(assignedUsers[0]?.Name || [assignedUsers[0]?.FirstName, assignedUsers[0]?.LastName].filter(Boolean).join(' ')).trim()
+      : '';
+    const assignee = vendorName || primaryAssignee || wo.assigned_to || wo.assigned_user || 'Unassigned';
+
+    // Prefix layers to avoid name collisions across layers
+    const groupNode = `📁 ${group}`;
+    const typeNode = `🏷 ${woType}`;
+    const statusNode = `⚡ ${status}`;
+    const assigneeNode = `👤 ${assignee.length > 20 ? assignee.slice(0, 18) + '…' : assignee}`;
+
+    addNode(groupNode, sankeyColor(group));
+    addNode(typeNode, sankeyColor(woType));
+    addNode(statusNode, sankeyColor(status));
+    addNode(assigneeNode, assignee === 'Unassigned' ? '#ef4444' : '#6366f1');
+
+    addLink(groupNode, typeNode);
+    addLink(typeNode, statusNode);
+    addLink(statusNode, assigneeNode);
+  }
+
+  return {
+    tooltip: {
+      trigger: 'item' as const,
+      triggerOn: 'mousemove' as const,
+      formatter: (params: any) => {
+        if (params.dataType === 'edge') {
+          return `<div style="font-weight:600;color:#19202f">${params.data.source.split(' ').slice(1).join(' ')}</div>` +
+            `<div style="font-size:12px;color:rgba(0,0,0,0.5)">→ ${params.data.target.split(' ').slice(1).join(' ')}</div>` +
+            `<div style="margin-top:4px;font-size:14px;font-weight:700;color:#19202f">${params.data.value} WOs</div>`;
+        }
+        const name = params.name.split(' ').slice(1).join(' ');
+        return `<div style="font-weight:600;color:#19202f">${name}</div>`;
+      },
+      extraCssText: GLASS_TOOLTIP,
+    },
+    series: [{
+      type: 'sankey' as const,
+      data: nodes,
+      links,
+      emphasis: {
+        focus: 'adjacency' as const,
+        lineStyle: { opacity: 0.7 },
+      },
+      lineStyle: {
+        color: 'gradient' as const,
+        curveness: 0.5,
+        opacity: 0.35,
+      },
+      itemStyle: {
+        borderWidth: 0,
+        borderRadius: 4,
+      },
+      label: {
+        color: cssVar('--text') || '#e2e8f0',
+        fontSize: 11,
+        fontFamily: 'var(--font-mono, "Inconsolata", monospace)',
+      },
+      layoutIterations: 64,
+      nodeWidth: 20,
+      nodeGap: 12,
+    }],
+    animationDuration: 1200,
+    animationEasing: 'cubicInOut' as const,
+  };
+}
+
+// Expose all chart builders on window for use from app.js
+(window as any).buildOccupancyDonutOption = buildOccupancyDonutOption;
+(window as any).buildMoveOutsBarOption = buildMoveOutsBarOption;
+(window as any).buildPortfolioTreemapOption = buildPortfolioTreemapOption;
+(window as any).buildLeasingVelocityOption = buildLeasingVelocityOption;
+(window as any).buildWoSankeyOption = buildWoSankeyOption;
 
 // =============================================================================
 // Init — deferred to DOMContentLoaded so every chart container has its
@@ -1492,13 +2029,22 @@ async function fetchAndRenderDashboardData(): Promise<void> {
 // =============================================================================
 function initDashboardCharts(): void {
   // Mount chart instances now that the DOM is fully painted.
-  chartPmBar       = mountChart('dashPmBarChart');
-  chartStatusDonut = mountChart('dashStatusDonutChart');
+  // Note: These IDs may not exist on all routes/views - mountChart returns null if not found.
+  chartOccupancy   = mountChart('dashOccupancyDonut');
+  chartMoveOuts    = mountChart('dashMoveOutsBar');
+  chartPortfolio   = mountChart('dashPortfolioTreemap');
+  chartVelocity    = mountChart('dashLeasingVelocity');
+  chartPmBar       = mountChart('dashMainChart');
+  chartStatusDonut = mountChart('dashAgingChart');
   chartPmLoad      = mountChart('dashPmLoadChart');
   chartWoType      = mountChart('dashWoTypeChart');
   chartUrgency     = mountChart('dashUrgencyChart');
 
   ALL_CHARTS = [
+    chartOccupancy,
+    chartMoveOuts,
+    chartPortfolio,
+    chartVelocity,
     chartPmBar,
     chartStatusDonut,
     chartPmLoad,
@@ -1507,6 +2053,10 @@ function initDashboardCharts(): void {
   ].filter(Boolean) as echarts.ECharts[];
 
   // Show lightweight placeholders while the API call is in-flight.
+  chartOccupancy?.setOption(makePlaceholderDonut());
+  chartMoveOuts?.setOption(makePlaceholderBar());
+  chartPortfolio?.setOption(makePlaceholderBar());
+  chartVelocity?.setOption(makePlaceholderBar());
   chartPmBar?.setOption(makePlaceholderBar());
   chartStatusDonut?.setOption(makePlaceholderBar());
   chartPmLoad?.setOption(makePlaceholderBar());

@@ -613,74 +613,208 @@ body.theme-neo {
 
 /* ===================== BENTO GRID SYSTEM ===================== */
 
-/* ── Grid container ─────────────────────────────────────────── */
-.bento-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: auto;
-  gap: clamp(10px, 1.4vw, 18px);
-  margin-bottom: clamp(14px, 2vw, 22px);
+/* ── Dashboard Hero Section ─────────────────────────────────────────── */
+.dashboard-hero {
+  margin-bottom: 20px;
 }
 
-/* ── Pill summary cards (top row, cols 1-4) ─────────────────── */
+/* Metrics Bar */
+.metrics-bar {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.metric-card {
+  background: var(--neo-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--info) 100%);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+}
+
+.metric-card:hover::before {
+  opacity: 1;
+}
+
+.metric-card.urgent {
+  background: linear-gradient(135deg, 
+    color-mix(in srgb, var(--danger) 5%, var(--neo-surface)) 0%, 
+    var(--neo-surface) 100%);
+}
+
+.metric-value {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  line-height: 1;
+  margin-bottom: 8px;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.metric-delta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Chart Row */
+.chart-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  height: 380px;
+}
+
+.chart-panel {
+  background: var(--neo-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-panel.main {
+  /* Main chart takes 2/3 width */
+}
+
+.chart-panel.side {
+  /* Side chart takes 1/3 width */
+}
+
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chart-header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chart-header h3 i {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+}
+
+.chart-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+  .metrics-bar {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
+  .chart-row {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  
+  .chart-panel {
+    height: 320px;
+  }
+}
+
+@media (max-width: 768px) {
+  .metrics-bar {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ── Pill summary cards (top row, cols 1-5) ─────────────────── */
 .bento-pill {
   display: flex;
   align-items: center;
-  gap: clamp(10px, 1.2vw, 16px);
-  padding: clamp(12px, 1.4vw, 18px) clamp(14px, 1.6vw, 22px);
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: linear-gradient(135deg,
-    color-mix(in srgb, var(--neo-surface) 94%, var(--bg-secondary)) 0%,
-    var(--neo-surface-strong) 100%);
+  gap: clamp(8px, 1vw, 12px);
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--neo-surface);
   box-shadow: var(--neo-shadow-raised);
   cursor: default;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
   position: relative;
-  overflow: hidden;
-  min-height: 80px;
+  min-height: 68px;
 }
 .bento-pill.kpi-clickable { cursor: pointer; }
 .bento-pill:hover {
-  transform: translateY(-2px);
-  box-shadow: 14px 14px 28px rgba(181,192,214,0.52), -10px -10px 22px rgba(255,255,255,0.94);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  border-color: color-mix(in srgb, var(--border) 60%, var(--accent) 40%);
 }
 html.dark .bento-pill:hover {
-  box-shadow: 14px 14px 26px rgba(3,8,16,0.58), -10px -10px 22px rgba(28,39,57,0.68);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 
-/* Color accent strip on left edge */
-.bento-pill::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 4px;
-  border-radius: 999px 0 0 999px;
-}
-.bento-pill.amber::before { background: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
-.bento-pill.red::before   { background: var(--danger);  border-color: color-mix(in srgb, var(--danger)  30%, var(--border)); }
-.bento-pill.blue::before  { background: var(--info);    border-color: color-mix(in srgb, var(--info)    30%, var(--border)); }
-.bento-pill.green::before { background: var(--success); border-color: color-mix(in srgb, var(--success) 30%, var(--border)); }
-.bento-pill.purple::before { background: var(--purple); border-color: color-mix(in srgb, var(--purple)  30%, var(--border)); }
-.bento-pill.teal::before  { background: var(--teal, #0d9488); }
-
-/* Bottom glow */
-.bento-pill.amber { box-shadow: var(--neo-shadow-raised), inset 0 -2px 0 var(--kpi-glow-amber); }
-.bento-pill.red   { box-shadow: var(--neo-shadow-raised), inset 0 -2px 0 var(--kpi-glow-red);   }
-.bento-pill.blue  { box-shadow: var(--neo-shadow-raised), inset 0 -2px 0 var(--kpi-glow-blue);  }
-.bento-pill.green { box-shadow: var(--neo-shadow-raised), inset 0 -2px 0 var(--kpi-glow-green); }
-.bento-pill.purple { box-shadow: var(--neo-shadow-raised), inset 0 -2px 0 var(--kpi-glow-purple); }
+/* Subtle left border accent */
+.bento-pill.amber { border-left: 3px solid var(--accent); }
+.bento-pill.red   { border-left: 3px solid var(--danger); }
+.bento-pill.blue  { border-left: 3px solid var(--info); }
+.bento-pill.green { border-left: 3px solid var(--success); }
+.bento-pill.purple { border-left: 3px solid var(--purple); }
+.bento-pill.teal  { border-left: 3px solid var(--teal, #0d9488); }
 
 .bento-pill__icon {
-  font-size: clamp(18px, 2vw, 24px);
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
+  font-size: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 50%, transparent);
   color: var(--accent);
 }
 .bento-pill.red    .bento-pill__icon { color: var(--danger);  }
@@ -689,12 +823,13 @@ html.dark .bento-pill:hover {
 .bento-pill.purple .bento-pill__icon { color: var(--purple);  }
 .bento-pill.teal   .bento-pill__icon { color: var(--teal, #0d9488); }
 
-.bento-pill__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bento-pill__body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .bento-pill__label {
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -702,14 +837,14 @@ html.dark .bento-pill:hover {
 }
 .bento-pill__value {
   font-family: var(--font-mono);
-  font-size: clamp(22px, 2.4vw, 30px);
+  font-size: 24px;
   font-weight: 700;
   line-height: 1;
   color: var(--text-primary);
 }
 .bento-pill__sub {
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -867,6 +1002,11 @@ html.dark .bento-pill:hover {
   /* already spans col 1 via grid-template-columns: 2fr 1fr 1fr */
 }
 
+/* Full-width card: spans all columns of the insights grid */
+.bento-insight-card--full {
+  grid-column: 1 / -1;
+}
+
 .bento-insight-card__header {
   display: flex;
   align-items: center;
@@ -919,7 +1059,10 @@ html.dark .bento-pill:hover {
   .bento-grid {
     grid-template-columns: 1fr;
   }
-  .bento-pill { border-radius: 16px; }
+  .bento-pill { 
+    border-radius: 10px;
+    min-height: 64px;
+  }
   .bento-card--chart-main,
   .bento-card--chart-side {
     grid-column: span 1;
@@ -1307,6 +1450,24 @@ html.dark .bento-pill:hover {
 .vault-advanced-toggle:hover { color: var(--vault-accent); border-color: var(--vault-accent-strong); }
 .vault-advanced-toggle i { transition: transform 0.2s ease; font-size: 10px; }
 .vault-advanced-toggle.open i { transform: rotate(180deg); }
+.vault-resume-toggle {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  border-color: #16a34a;
+  color: #ffffff;
+  font-weight: 700;
+  margin-bottom: 14px;
+  padding: 10px;
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.35);
+  order: -1;
+}
+.vault-resume-toggle:hover {
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+  border-color: #15803d;
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(34, 197, 94, 0.45);
+  transform: translateY(-1px);
+}
+.vault-resume-toggle i { color: #ffffff; }
 .vault-pm-toggle {
   background: var(--vault-pm-bg);
   border-color: var(--vault-pm-border);
@@ -1438,6 +1599,37 @@ html.dark .bento-pill:hover {
   text-align: center;
   padding-left: 18px;
   padding-right: 18px;
+}
+.vault-otp-countdown {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  font-size: 11px;
+  color: var(--vault-text);
+  font-family: var(--font-mono);
+}
+.vault-otp-countdown-icon {
+  color: #22c55e;
+  font-size: 12px;
+}
+.vault-otp-countdown-text strong {
+  color: #22c55e;
+  font-weight: 700;
+  font-size: 12px;
+}
+.vault-otp-countdown.expired {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+.vault-otp-countdown.expired .vault-otp-countdown-icon,
+.vault-otp-countdown.expired .vault-otp-countdown-text strong {
+  color: #ef4444;
 }
 
 .login-info {
@@ -2366,7 +2558,24 @@ html.dark .kpi-card--neo:hover {
 .action-btn.primary { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 84%, #ff9f68) 0%, var(--accent) 100%); color: #fff; border-color: color-mix(in srgb, var(--accent) 78%, #0000); font-weight: 600; box-shadow: 0 6px 14px color-mix(in srgb, var(--accent) 30%, transparent); }
 .action-btn.primary:hover { filter: brightness(1.08); }
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.data-table thead th { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap; }
+.data-table thead th {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-secondary);
+}
 .data-table thead th:hover { color: var(--text-secondary); }
 .data-table tbody tr { border-bottom: 1px solid var(--border); transition: var(--transition); }
 .data-table tbody tr:hover { background: var(--bg-card-hover); }
@@ -3105,6 +3314,123 @@ html.dark .vendor-trade-cat-select option {
 .collapse-indicator { margin-left: auto; font-size: 10px; color: var(--text-muted); transition: transform var(--transition); }
 .collapsible-panel.collapsed .collapse-indicator { transform: rotate(-90deg); }
 .collapsible-panel.collapsed .panel-body { display: none; }
+
+/* ═══════════════════════════════════════════════════════
+   Sector Panel System — TV-style navigation
+   ═══════════════════════════════════════════════════════ */
+.sector-panel {
+  margin-bottom: 12px;
+  border-radius: 20px;
+  background: var(--neo-surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--neo-shadow-raised);
+  overflow: hidden;
+  transition: margin 0.3s ease, box-shadow 0.3s ease;
+}
+
+.sector-panel--expanded {
+  /* full content visible */
+}
+
+.sector-panel--collapsed .sector-body {
+  max-height: 0;
+  opacity: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.sector-panel--expanded .sector-body {
+  max-height: 5000px; /* large enough for any content */
+  opacity: 1;
+  transition: max-height 0.35s ease, opacity 0.25s ease 0.05s;
+}
+
+.sector-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid transparent;
+  transition: background 0.18s ease, border-color 0.3s ease;
+}
+
+.sector-panel--expanded .sector-header {
+  border-bottom-color: var(--border);
+}
+
+.sector-header:hover {
+  background: var(--bg-card-hover);
+}
+
+.sector-header__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex: 1;
+}
+
+.sector-pin-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+  flex-shrink: 0;
+}
+
+.sector-pin-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border);
+}
+
+.sector-pin-btn.pinned {
+  color: var(--accent);
+}
+
+.sector-pin-btn.pinned .fa-thumbtack {
+  transform: rotate(45deg);
+}
+
+.sector-pin-btn .fa-thumbtack {
+  transition: transform 0.18s ease;
+}
+
+.sector-indicator {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.3s ease;
+  flex-shrink: 0;
+}
+
+.sector-panel--collapsed .sector-indicator {
+  transform: rotate(-90deg);
+}
+
+.sector-body {
+  padding: 0;
+  transition: max-height 0.35s ease, opacity 0.25s ease, padding 0.3s ease;
+}
+
+/* Mobile: stack sectors vertically, reduce padding */
+@media (max-width: 768px) {
+  .sector-header {
+    padding: 12px;
+    gap: 8px;
+  }
+  .sector-header__title {
+    font-size: 12px;
+  }
+}
 
 #woModal .modal { max-height: 85vh; }
 #woModal .modal-body { max-height: calc(85vh - 132px); overflow-y: auto; }

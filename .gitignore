@@ -1,2 +1,6 @@
 node_modules/
 dist/
+afproxy/
+db/
+agewf.jsx
+.DS_Store
