@@ -38,6 +38,7 @@ import type {
   DataZoomComponentOption,
   RadarComponentOption,
 } from 'echarts/components';
+import type { CallbackDataParams } from 'echarts/types/dist/shared';
 
 echarts.use([
   BarChart,
@@ -969,7 +970,11 @@ function buildOpenWoByAgeOption(
         label: {
           show: true,
           position: 'right' as const,
-          formatter: (p: { value: unknown }) => (typeof p.value === 'number' && p.value > 0 ? String(p.value) : ''),
+          formatter: (p: CallbackDataParams) => {
+            const rawValue = Array.isArray(p.value) ? p.value[0] : p.value;
+            const value = typeof rawValue === 'number' ? rawValue : Number(rawValue);
+            return Number.isFinite(value) && value > 0 ? String(value) : '';
+          },
           color: 'rgba(0,0,0,0.45)',
           fontSize: 10,
           fontFamily: axisLabelStyle().fontFamily,

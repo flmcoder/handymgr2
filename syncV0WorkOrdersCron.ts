@@ -9,6 +9,7 @@ declare const Deno: {
 
 const PRIMARY_PROXY_URL = (Deno.env.get("HANDYMGR_PROXY_URL") || "").trim();
 const INTERNAL_SYNC_TOKEN = (Deno.env.get("HANDYMGR_INTERNAL_TOKEN") || "").trim();
+const MS_PER_DAY = 86_400_000;
 const DEFAULT_LOOKBACK_DAYS = Math.max(
   1,
   Math.min(365, parseInt(Deno.env.get("HANDYMGR_SYNC_LOOKBACK_DAYS") || "180", 10)),
@@ -45,7 +46,7 @@ async function triggerSync(): Promise<any> {
   // Use v0 sync endpoint (preferred — paginates DB API directly to Turso)
   const target = new URL(PRIMARY_PROXY_URL);
   target.searchParams.set("action", "sync-v0-work-orders");
-  const fromDate = new Date(Date.now() - (DEFAULT_LOOKBACK_DAYS * 86_400_000))
+  const fromDate = new Date(Date.now() - (DEFAULT_LOOKBACK_DAYS * MS_PER_DAY))
     .toISOString()
     .slice(0, 10);
   target.searchParams.set("from_date", fromDate);
