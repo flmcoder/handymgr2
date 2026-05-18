@@ -113,7 +113,11 @@ const CHART_BY_DOM_ID: Record<string, echarts.ECharts> = {};
 let dashboardResizeObserver: ResizeObserver | null = null;
 
 function ensureDashboardResizeObserver(): void {
-  if (dashboardResizeObserver || typeof ResizeObserver === 'undefined') return;
+  if (dashboardResizeObserver) return;
+  if (typeof ResizeObserver === 'undefined') {
+    console.warn('[dashboard] ResizeObserver unavailable; using window resize fallback only.');
+    return;
+  }
   dashboardResizeObserver = new ResizeObserver((entries) => {
     for (const entry of entries) {
       const id = entry.target && (entry.target as HTMLElement).id;

@@ -403,9 +403,9 @@ function setVaultResumePriorityMode(active) {
   if (manualBtn) {
     manualBtn.style.display = active ? '' : 'none';
     manualBtn.setAttribute('aria-expanded', active && _manualVaultOptionsVisible ? 'true' : 'false');
-    var icon = manualBtn.querySelector('i');
-    if (icon) icon.className = _manualVaultOptionsVisible ? 'fas fa-angle-up' : 'fas fa-sliders-h';
-    manualBtn.innerHTML = (icon ? icon.outerHTML + ' ' : '') + (_manualVaultOptionsVisible ? 'Hide Other Sign-In Options' : 'Show Other Sign-In Options');
+    var iconClass = _manualVaultOptionsVisible ? 'fas fa-angle-up' : 'fas fa-sliders-h';
+    var labelText = _manualVaultOptionsVisible ? 'Hide Other Sign-In Options' : 'Show Other Sign-In Options';
+    manualBtn.innerHTML = '<i class="' + iconClass + '"></i> ' + labelText;
   }
 }
 
@@ -8014,7 +8014,11 @@ function resolveWODbUuid(wo) {
 async function resolveWorkOrderApiUuid(woIdOrUuid, woContext) {
   if (!woIdOrUuid) return '';
   var woRef = String(woIdOrUuid || '').trim().replace(/^#/, '');
-  var contextCacheKey = woRef + '|' + String((woContext && woContext.unitTurnId) || '') + '|' + String((woContext && woContext.unitId) || '');
+  var contextCacheKey = JSON.stringify({
+    woRef: woRef,
+    unitTurnId: String((woContext && woContext.unitTurnId) || ''),
+    unitId: String((woContext && woContext.unitId) || '')
+  });
   if (WO_UUID_RESOLVE_CACHE[contextCacheKey] && isUuidString(WO_UUID_RESOLVE_CACHE[contextCacheKey])) {
     return WO_UUID_RESOLVE_CACHE[contextCacheKey];
   }
@@ -11476,7 +11480,8 @@ function setDashboardInsightCardText(title1, title2, title3, subtitle) {
 
 function parseSpendMoney(raw) {
   if (raw == null || raw === '') return 0;
-  var cleaned = String(raw).replace(/[^0-9.\-]/g, '');
+  var m = String(raw).match(/-?\d+(?:\.\d+)?/);
+  var cleaned = m ? m[0] : '';
   var n = Number(cleaned);
   return Number.isFinite(n) ? n : 0;
 }
@@ -11530,8 +11535,9 @@ function renderDashboardSpendFlowInsight() {
   var metaEl = document.getElementById('dashSpendFlowMeta');
   if (!rangeEl || !vendorEl) return;
 
-  var rows = getSpendFlowRows(rangeEl.value, String(vendorEl.value || ''));
-  var allVendors = getSpendFlowRows(rangeEl.value, '').map(function(r) { return r.label; });
+  var parsedRange = Math.max(1, Number(rangeEl.value || 90) || 90);
+  var rows = getSpendFlowRows(parsedRange, String(vendorEl.value || ''));
+  var allVendors = getSpendFlowRows(parsedRange, '').map(function(r) { return r.label; });
   var opts = ['<option value="">All Vendors</option>'];
   allVendors.forEach(function(v) {
     opts.push('<option value="' + escapeHtml(v) + '"' + (String(vendorEl.value || '') === v ? ' selected' : '') + '>' + escapeHtml(v) + '</option>');
@@ -22965,13 +22971,14 @@ function updateDispatchStats(d) {
 function renderDispatchSimulationSummary() {
   var host = document.getElementById('dispatchSimSummaryBody');
   if (!host) return;
+  var cronSecret = getDispatchCronSecret();
   var checks = [];
   var add = function(ok, label, detail) {
     checks.push({ ok: !!ok, label: label, detail: detail || '' });
   };
 
   add(!DISPATCH.paused, 'Automation state', DISPATCH.paused ? 'Paused — resume before 24/7 trial.' : 'Running');
-  add(!!getDispatchCronSecret(), 'CRON secret', getDispatchCronSecret() ? 'Configured for manual trial runs.' : 'Missing — set CRON_SECRET in config.');
+  add(!!cronSecret, 'CRON secret', cronSecret ? 'Configured for manual trial runs.' : 'Missing — set CRON_SECRET in config.');
   add(!!(DISPATCH.tier1GroupUuid && DISPATCH.tier2GroupUuid), 'Tier group UUIDs', (DISPATCH.tier1GroupUuid && DISPATCH.tier2GroupUuid) ? 'Tier 1/2 UUID targets saved.' : 'Tier 1/2 UUID targets are required.');
   add(Array.isArray(DISPATCH.techs) && DISPATCH.techs.length > 0, 'Roster sync', (DISPATCH.techs || []).length ? ((DISPATCH.techs || []).length + ' roster entries loaded.') : 'No roster entries loaded.');
   add(Array.isArray(DISPATCH.queue), 'Queue endpoint', Array.isArray(DISPATCH.queue) ? ((DISPATCH.queue || []).length + ' queue rows fetched.') : 'Queue payload unavailable.');
