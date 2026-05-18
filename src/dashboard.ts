@@ -1162,16 +1162,20 @@ function buildVacancyBarOption(dots: VacancyDot[]): ECOption {
       axisPointer: { type: 'shadow' },
       extraCssText: GLASS_TOOLTIP,
       formatter: (params: unknown) => {
-        const list = params as Array<{ seriesName: string; value: number; color: string }>;
-        const prop = properties[list[0] ? (list[0] as unknown as { dataIndex: number }).dataIndex : 0] || '';
+        const list = (Array.isArray(params) ? params : []) as Array<
+          Pick<CallbackDataParams, 'seriesName' | 'value' | 'color' | 'dataIndex'>
+        >;
+        const dataIndex = typeof list[0]?.dataIndex === 'number' ? list[0].dataIndex : 0;
+        const prop = properties[dataIndex] || '';
         const total = (propMap[prop]?.fresh ?? 0) + (propMap[prop]?.elevated ?? 0) + (propMap[prop]?.critical ?? 0);
         let html = `<div style="font-weight:700;font-size:12px;color:#19202f;margin-bottom:6px">${prop}</div>`;
         for (const p of list) {
-          if (!p.value) continue;
+          const value = Number(p.value ?? 0);
+          if (!Number.isFinite(value) || value <= 0) continue;
           html += `<div style="display:flex;align-items:center;gap:6px;margin:2px 0">` +
             `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${p.color};flex-shrink:0"></span>` +
             `<span style="font-size:11px;color:rgba(0,0,0,0.6)">${p.seriesName}:</span>` +
-            `<span style="font-weight:700;font-size:11px;color:#19202f">${p.value}</span>` +
+            `<span style="font-weight:700;font-size:11px;color:#19202f">${value}</span>` +
           `</div>`;
         }
         html += `<div style="font-size:11px;color:rgba(0,0,0,0.45);margin-top:4px;border-top:1px solid rgba(0,0,0,0.07);padding-top:4px">${total} unit${total !== 1 ? 's' : ''} vacant</div>`;

@@ -3876,6 +3876,7 @@ html.dark .vendor-trade-cat-select option {
 .pipe-dot.waiting-gate { opacity: 0.22; }
 .pipe-section-head { display: flex; align-items: center; gap: 8px; padding: 7px 14px; background: var(--bg-secondary); border: 1px solid var(--border); border-bottom: none; font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted); margin-top: 12px; }
 .pipe-section-head.active-section { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-dim); }
+.pipe-section-head.radar-section,
 .pipe-section-head.on-radar-section { color: var(--accent); border-color: var(--accent-dim); }
 .pipe-section-head.completed-section { color: var(--success); border-color: var(--success-dim); background: var(--success-dim); }
 

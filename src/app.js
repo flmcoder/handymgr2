@@ -17173,23 +17173,23 @@ function renderTurnPipelineUI() {
 
   var html = '';
   // Track distinct groups to decide whether to render section dividers
-  var groupCounts = { active: 0, on_radar: 0, completed: 0 };
+  var groupCounts = { active: 0, onRadar: 0, completed: 0 };
   filtered.forEach(function(p) {
-    var g = p.isCompleted ? 'completed' : p.isConfirmed ? 'active' : 'on_radar';
+    var g = p.isCompleted ? 'completed' : p.isConfirmed ? 'active' : 'onRadar';
     groupCounts[g]++;
   });
-  var multiGroup = (groupCounts.active > 0 ? 1 : 0) + (groupCounts.on_radar > 0 ? 1 : 0) + (groupCounts.completed > 0 ? 1 : 0) > 1;
+  var multiGroup = (groupCounts.active > 0 ? 1 : 0) + (groupCounts.onRadar > 0 ? 1 : 0) + (groupCounts.completed > 0 ? 1 : 0) > 1;
   var prevGroup = null;
   filtered.forEach(function(p, idx) {
     if (multiGroup) {
-      var thisGroup = p.isCompleted ? 'completed' : p.isConfirmed ? 'active' : 'on_radar';
+      var thisGroup = p.isCompleted ? 'completed' : p.isConfirmed ? 'active' : 'onRadar';
       if (thisGroup !== prevGroup) {
         var secLabels = {
           active:    '<i class="fas fa-exchange-alt" style="margin-right:6px"></i>Active Turns \u2014 ' + groupCounts.active,
-          on_radar:  '<i class="fas fa-satellite-dish" style="margin-right:6px"></i>On Radar \u2014 ' + groupCounts.on_radar + ' possible',
+          onRadar:   '<i class="fas fa-satellite-dish" style="margin-right:6px"></i>On Radar \u2014 ' + groupCounts.onRadar + ' possible',
           completed: '<i class="fas fa-check-circle" style="margin-right:6px"></i>Completed \u2014 ' + groupCounts.completed
         };
-        var secCls = thisGroup === 'active' ? 'active-section' : thisGroup === 'on_radar' ? 'on-radar-section' : 'completed-section';
+        var secCls = thisGroup === 'active' ? 'active-section' : thisGroup === 'onRadar' ? 'radar-section' : 'completed-section';
         html += '<div class="pipe-section-head ' + secCls + '">' + secLabels[thisGroup] + '</div>';
         prevGroup = thisGroup;
       }
