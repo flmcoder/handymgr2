@@ -109,6 +109,22 @@ const GLASS_TOOLTIP =
 // Mount chart instances — deferred until DOM is ready so containers have
 // their CSS-driven dimensions before ECharts measures them.
 // =============================================================================
+const CHART_BY_DOM_ID: Record<string, echarts.ECharts> = {};
+let dashboardResizeObserver: ResizeObserver | null = null;
+
+function ensureDashboardResizeObserver(): void {
+  if (dashboardResizeObserver || typeof ResizeObserver === 'undefined') return;
+  dashboardResizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const id = entry.target && (entry.target as HTMLElement).id;
+      if (!id) continue;
+      const chart = CHART_BY_DOM_ID[id];
+      if (!chart) continue;
+      try { chart.resize(); } catch { /* noop */ }
+    }
+  });
+}
+
 function mountChart(id: string): echarts.ECharts | null {
   const el = document.getElementById(id);
   if (!el) {
@@ -128,8 +144,18 @@ function mountChart(id: string): echarts.ECharts | null {
   if (!el.offsetHeight) {
     el.style.height = `${height}px`;
   }
-  
-  return echarts.init(el, undefined, { renderer: 'canvas', width, height });
+
+  const existing = CHART_BY_DOM_ID[id];
+  if (existing) {
+    try { existing.dispose(); } catch { /* noop */ }
+  }
+  const chart = echarts.init(el, undefined, { renderer: 'canvas', width, height });
+  CHART_BY_DOM_ID[id] = chart;
+  ensureDashboardResizeObserver();
+  if (dashboardResizeObserver) {
+    try { dashboardResizeObserver.observe(el); } catch { /* noop */ }
+  }
+  return chart;
 }
 
 // Chart instances — populated inside initDashboardCharts() after DOM ready.

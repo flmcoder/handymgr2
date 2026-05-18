@@ -39,7 +39,10 @@ async function triggerSync(): Promise<any> {
   // Use v0 sync endpoint (preferred — paginates DB API directly to Turso)
   const target = new URL(PRIMARY_PROXY_URL);
   target.searchParams.set("action", "sync-v0-work-orders");
-  target.searchParams.set("from_date", "2025-06-01");
+  const fromDate = new Date(Date.now() - (DEFAULT_LOOKBACK_DAYS * 86_400_000))
+    .toISOString()
+    .slice(0, 10);
+  target.searchParams.set("from_date", fromDate);
 
   let attempt = 0;
   let lastErr: unknown = undefined;

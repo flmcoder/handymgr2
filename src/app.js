@@ -97,7 +97,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.7.6b';
+var APP_VERSION = 'v9.7.7b';
 var DEFAULT_PROXY_URL = 'https://afproxy.val.run';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
@@ -360,6 +360,8 @@ var escHtml = escapeHtml;
 var SESSION_IDLE_TIMEOUT_MS = 3 * 60 * 60 * 1000;
 var _pendingResumeSession = null;
 var _sessionActivityBound = false;
+var _manualVaultOptionsVisible = false;
+var ALERTS_SEEN_STORAGE_KEY = 'hm_seen_oper_alerts';
 
 function readLastActivityTimestamp() {
   try {
@@ -389,6 +391,24 @@ function startSessionActivityTracking() {
   });
 }
 
+function setVaultResumePriorityMode(active) {
+  var mainPanel = $('#vaultMainPanel');
+  var manualBtn = $('#vaultManualOptionsBtn');
+  if (!mainPanel) return;
+  mainPanel.classList.toggle('resume-priority', !!active);
+  if (!active) {
+    mainPanel.classList.remove('show-manual');
+    _manualVaultOptionsVisible = false;
+  }
+  if (manualBtn) {
+    manualBtn.style.display = active ? '' : 'none';
+    manualBtn.setAttribute('aria-expanded', active && _manualVaultOptionsVisible ? 'true' : 'false');
+    var icon = manualBtn.querySelector('i');
+    if (icon) icon.className = _manualVaultOptionsVisible ? 'fas fa-angle-up' : 'fas fa-sliders-h';
+    manualBtn.innerHTML = (icon ? icon.outerHTML + ' ' : '') + (_manualVaultOptionsVisible ? 'Hide Other Sign-In Options' : 'Show Other Sign-In Options');
+  }
+}
+
 function setResumeSessionState(sessionPayload) {
   _pendingResumeSession = sessionPayload || null;
   var resumeBtn = $('#vaultResumeBtn');
@@ -399,14 +419,16 @@ function setResumeSessionState(sessionPayload) {
     resumeBtn.style.display = 'none';
     hint.style.display = 'none';
     hint.textContent = '';
+    setVaultResumePriorityMode(false);
     return;
   }
 
   var roleLabel = String(_pendingResumeSession.role || 'session');
-  hint.textContent = 'Verified ' + roleLabel + ' session found. Click Resume Session to continue.';
+  hint.textContent = 'Verified ' + roleLabel + ' session found. Resume Session is ready.';
   hint.style.display = '';
   resumeBtn.style.display = '';
   resumeBtn.classList.remove('vault-advanced-toggle');
+  setVaultResumePriorityMode(true);
 }
 
 async function resumeFromPendingSession() {
@@ -2593,13 +2615,13 @@ var rateLimiter = {
       }
 
       function renderAlertsSection() {
-        var operAlerts = generateOperationalAlerts();
+        var operAlerts = getUnreadOperationalAlerts();
         if (!operAlerts.length) return '';
         var html = '<div class="pager-alert-inline">';
         html += '<div class="pager-alert-inline__label">🚨 Operational Alerts</div>';
         operAlerts.forEach(function(alert) {
           var tone = alert.type === 'danger' ? 'danger' : (alert.type === 'warning' ? 'warning' : 'info');
-          html += '<div class="alert-item alert-item--' + tone + '" data-alert-tab="' + escapeHtml(alert.actionTab || '') + '">';
+          html += '<div class="alert-item alert-item--' + tone + '" data-alert-id="' + escapeHtml(alert.id || '') + '" data-alert-tab="' + escapeHtml(alert.actionTab || '') + '">';
           html += '<div class="alert-item__title"><i class="fas ' + escapeHtml(alert.icon) + '"></i> ' + escapeHtml(alert.title) + '</div>';
           html += '<div class="alert-item__body">' + escapeHtml(alert.message) + '</div>';
           html += '</div>';
@@ -2754,9 +2776,12 @@ var rateLimiter = {
           }
           var alertItem = e.target.closest('[data-alert-tab]');
           if (alertItem) {
+            var alertId = String(alertItem.getAttribute('data-alert-id') || '').trim();
+            if (alertId) markOperationalAlertSeen(alertId);
             var tabName = String(alertItem.getAttribute('data-alert-tab') || '').trim();
             if (tabName) {
               drawer.classList.remove('open');
+              updateMessagesAlerts();
               setTimeout(function() {
                 var tabBtn = document.querySelector('.nav-tab[data-tab="' + escapeHtml(tabName) + '"]');
                 if (tabBtn) tabBtn.click();
@@ -2804,6 +2829,45 @@ function updateRateBadge() {
     el.textContent = (rateLimiter.maxPerSec - rateLimiter.inFlight) + '/' + rateLimiter.maxPerSec + ' req/s';
     el.style.color = '';
   }
+}
+
+function readSeenOperationalAlerts() {
+  try {
+    var raw = localStorage.getItem(ALERTS_SEEN_STORAGE_KEY) || '{}';
+    var parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function writeSeenOperationalAlerts(map) {
+  try { localStorage.setItem(ALERTS_SEEN_STORAGE_KEY, JSON.stringify(map || {})); } catch (e) { /* */ }
+}
+
+function markOperationalAlertSeen(alertId) {
+  if (!alertId) return;
+  var seen = readSeenOperationalAlerts();
+  seen[String(alertId)] = Date.now();
+  writeSeenOperationalAlerts(seen);
+}
+
+function getUnreadOperationalAlerts() {
+  var alerts = generateOperationalAlerts();
+  if (!alerts.length) return [];
+  var seen = readSeenOperationalAlerts();
+  return alerts.filter(function(alert) { return !seen[String(alert.id || '')]; });
+}
+
+function markAllOperationalAlertsSeen() {
+  var alerts = generateOperationalAlerts();
+  if (!alerts.length) return;
+  var seen = readSeenOperationalAlerts();
+  alerts.forEach(function(alert) {
+    if (!alert || !alert.id) return;
+    seen[String(alert.id)] = Date.now();
+  });
+  writeSeenOperationalAlerts(seen);
 }
 
 // Operational Alerts Engine
@@ -2901,23 +2965,31 @@ function renderDashboardSignalPanel() {
         ? (pendingBillsAmt / 1000).toFixed(1) + 'k'
         : pendingBillsAmt.toFixed(0))
     : '—';
-  var unreadAlerts = generateOperationalAlerts().length;
+  var unreadAlerts = getUnreadOperationalAlerts().length;
 
   headline.textContent = urgentOpen > 0
     ? urgentOpen + ' urgent work order' + (urgentOpen === 1 ? '' : 's') + ' need eyes now.'
     : 'Operations are steady. Nothing screaming for immediate intervention.';
   meta.textContent = 'The dashboard is prioritizing urgent work, pending inspections, approvals, and active follow-up signals.';
   chips.innerHTML = [
-    { label: 'Urgent WOs', value: urgentOpen },
-    { label: 'Pending Insp', value: pendingInspections },
-    { label: 'Pending $', value: pendingBillsLabel },
-    { label: 'Alert Load', value: unreadAlerts }
+    { label: 'Urgent WOs', value: urgentOpen, tab: 'workorders' },
+    { label: 'Pending Insp', value: pendingInspections, tab: 'inspections' },
+    { label: 'Pending $', value: pendingBillsLabel, tab: 'billing' },
+    { label: 'Alert Load', value: unreadAlerts, tab: 'dashboard' }
   ].map(function(item) {
-    return '<div class="signal-chip">' +
+    return '<button class="signal-chip" type="button" data-alert-tab="' + escapeHtml(item.tab || '') + '">' +
       '<div class="signal-chip__label">' + escapeHtml(item.label) + '</div>' +
       '<div class="signal-chip__value">' + escapeHtml(String(item.value || 0)) + '</div>' +
-    '</div>';
+    '</button>';
   }).join('');
+  chips.onclick = function(evt) {
+    var target = evt && evt.target && evt.target.closest ? evt.target.closest('[data-alert-tab]') : null;
+    if (!target) return;
+    var tabName = String(target.getAttribute('data-alert-tab') || '').trim();
+    if (!tabName) return;
+    var tabBtn = document.querySelector('.nav-tab[data-tab="' + escapeHtml(tabName) + '"]');
+    if (tabBtn) tabBtn.click();
+  };
 }
 
 function renderDashboardFollowupQueue() {
@@ -2969,7 +3041,7 @@ function renderDashboardFollowupQueue() {
 function renderPagerPreviewPanel() {
   var list = document.getElementById('pagerPreviewList');
   if (!list) return;
-  var alerts = generateOperationalAlerts().slice(0, 3);
+  var alerts = getUnreadOperationalAlerts().slice(0, 3);
   if (!alerts.length) {
     list.innerHTML = '<div class="u-empty-state"><i class="fas fa-hard-hat" style="margin-right:6px"></i> Under construction — No Messages. Items will appear here.</div>';
     return;
@@ -2993,9 +3065,9 @@ function refreshDashboardNeoPanels() {
 }
 
 function updateMessagesAlerts() {
-  var badges = document.querySelectorAll('#messagesBadge, #pm-inbox-badge');
+  var badges = document.querySelectorAll('#messagesBadge');
   if (!badges.length) return;
-  var count = generateOperationalAlerts().length;
+  var count = getUnreadOperationalAlerts().length;
   badges.forEach(function(b) {
     b.textContent = count;
     b.style.display = count > 0 ? '' : 'none';
@@ -4644,6 +4716,16 @@ if ($('#advancedToggle')) {
   });
 }
 
+if ($('#vaultManualOptionsBtn')) {
+  $('#vaultManualOptionsBtn').addEventListener('click', function() {
+    var mainPanel = $('#vaultMainPanel');
+    if (!mainPanel) return;
+    _manualVaultOptionsVisible = !_manualVaultOptionsVisible;
+    mainPanel.classList.toggle('show-manual', _manualVaultOptionsVisible);
+    setVaultResumePriorityMode(!!_pendingResumeSession);
+  });
+}
+
 function setVaultPanel(panel) {
   var main = $('#vaultMainPanel');
   var pm = $('#vaultPmPanel');
@@ -4656,6 +4738,7 @@ function setVaultPanel(panel) {
 
 if ($('#pmLoginToggle')) {
   $('#pmLoginToggle').addEventListener('click', function() {
+    setVaultResumePriorityMode(false);
     setVaultPanel('pm');
     setPmOtpStep('request');
     if ($('#vaultOtpEmail')) $('#vaultOtpEmail').focus();
@@ -4671,6 +4754,8 @@ if ($('#btnRefreshOwnerReports')) {
 
 if ($('#pmLoginBackBtn')) {
   $('#pmLoginBackBtn').addEventListener('click', function() {
+    setVaultPanel('main');
+    setVaultResumePriorityMode(!!_pendingResumeSession);
     setPmOtpStep('request');
     stopOtpCountdown();
     setVaultFeedback('', '');
@@ -4844,6 +4929,7 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   if (!$('#vaultRememberConfig') || $('#vaultRememberConfig').checked) {
     await saveVaultConfig(getVaultConfigFromInputs());
   }
+  setResumeSessionState(null);
   $('#vaultPassphrase').value = '';
   $('#vaultScreen').style.display = 'none';
   $('#appShell').classList.add('unlocked');
@@ -7888,6 +7974,8 @@ async function fetchPropertyDetail(propId) {
 
 // Resolve a WO's DB API UUID — needed because Reports API returns numeric IDs
 // while DB API v0 endpoints require UUIDs
+var WO_UUID_RESOLVE_CACHE = {};
+
 function resolveWODbUuid(wo) {
   if (!wo) return '';
   if (isUuidString(wo.dbApiId || '')) return String(wo.dbApiId);
@@ -7926,6 +8014,10 @@ function resolveWODbUuid(wo) {
 async function resolveWorkOrderApiUuid(woIdOrUuid, woContext) {
   if (!woIdOrUuid) return '';
   var woRef = String(woIdOrUuid || '').trim().replace(/^#/, '');
+  var contextCacheKey = woRef + '|' + String((woContext && woContext.unitTurnId) || '') + '|' + String((woContext && woContext.unitId) || '');
+  if (WO_UUID_RESOLVE_CACHE[contextCacheKey] && isUuidString(WO_UUID_RESOLVE_CACHE[contextCacheKey])) {
+    return WO_UUID_RESOLVE_CACHE[contextCacheKey];
+  }
   if (isUuidString(woRef)) return woRef;
 
   var requiredUnitTurnId = String((woContext && woContext.unitTurnId) || '').trim();
@@ -7971,7 +8063,9 @@ async function resolveWorkOrderApiUuid(woIdOrUuid, woContext) {
     }
   }
 
-  return isUuidString(woRef) ? woRef : '';
+  var resolved = isUuidString(woRef) ? woRef : '';
+  if (resolved) WO_UUID_RESOLVE_CACHE[contextCacheKey] = resolved;
+  return resolved;
 }
 
 async function fetchWONotes(woIdOrUuid, woContext) {
@@ -11245,42 +11339,68 @@ function renderDashboardKPIs() {
 
 var _dashboardInsightCharts = {};
 var _dashboardInsightsResizeWired = false;
+var _dashboardInsightsResizeObserver = null;
+var _dashboardInsightsObserved = {};
+var _dashboardSpendFlowFilterWired = false;
 
 function destroyDashboardInsightChart(elId) {
   var chart = _dashboardInsightCharts[elId];
   if (chart && typeof chart.dispose === 'function') {
     try { chart.dispose(); } catch (e) { /* noop */ }
   }
+  if (_dashboardInsightsResizeObserver && _dashboardInsightsObserved[elId]) {
+    var oldEl = document.getElementById(elId);
+    if (oldEl) {
+      try { _dashboardInsightsResizeObserver.unobserve(oldEl); } catch (e2) { /* noop */ }
+    }
+  }
+  delete _dashboardInsightsObserved[elId];
   delete _dashboardInsightCharts[elId];
+}
+
+function ensureDashboardInsightResizeObserver(elId, el) {
+  if (!el) return;
+  if (!_dashboardInsightsResizeObserver && typeof ResizeObserver === 'function') {
+    _dashboardInsightsResizeObserver = new ResizeObserver(function(entries) {
+      entries.forEach(function(entry) {
+        if (!entry || !entry.target || !entry.target.id) return;
+        var c = _dashboardInsightCharts[entry.target.id];
+        if (c && typeof c.resize === 'function') {
+          try { c.resize(); } catch (e) { /* noop */ }
+        }
+      });
+    });
+  }
+  if (_dashboardInsightsResizeObserver && !_dashboardInsightsObserved[elId]) {
+    try {
+      _dashboardInsightsResizeObserver.observe(el);
+      _dashboardInsightsObserved[elId] = true;
+    } catch (e) { /* noop */ }
+  }
+}
+
+function getDashboardInsightChart(elId, el) {
+  if (!(window.echarts && typeof window.echarts.init === 'function')) return null;
+  var chart = _dashboardInsightCharts[elId];
+  if (!chart) {
+    var w = Math.max(240, Number(el && el.clientWidth) || 0);
+    var h = Math.max(180, Number(el && el.clientHeight) || 0);
+    chart = window.echarts.init(el, null, { renderer: 'canvas', width: w, height: h });
+    _dashboardInsightCharts[elId] = chart;
+  }
+  ensureDashboardInsightResizeObserver(elId, el);
+  return chart;
 }
 
 function renderDashboardInsightChart(elId, rows, title) {
   var el = document.getElementById(elId);
   if (!el) return false;
-  if (!(window.echarts && typeof window.echarts.init === 'function')) {
-    destroyDashboardInsightChart(elId);
-    return false;
-  }
-  if (!rows || !rows.length) {
-    destroyDashboardInsightChart(elId);
-    return false;
-  }
-
-  var chart = _dashboardInsightCharts[elId];
+  var chart = getDashboardInsightChart(elId, el);
   if (!chart) {
-    chart = window.echarts.init(el);
-    _dashboardInsightCharts[elId] = chart;
+    destroyDashboardInsightChart(elId);
+    return false;
   }
-
-  // Ensure container has layout before first paint.
-  if (!el.offsetWidth || !el.offsetHeight) {
-    setTimeout(function() {
-      var c = _dashboardInsightCharts[elId];
-      if (c && typeof c.resize === 'function') {
-        try { c.resize(); } catch (e) { /* noop */ }
-      }
-    }, 80);
-  }
+  var chartRows = Array.isArray(rows) ? rows : [];
 
   chart.setOption({
     animationDuration: 380,
@@ -11302,11 +11422,22 @@ function renderDashboardInsightChart(elId, rows, title) {
       },
       labelLine: { length: 8, length2: 6 },
       itemStyle: { borderColor: 'rgba(15,23,42,0.35)', borderWidth: 1 },
-      data: rows.map(function(row) {
+      data: chartRows.map(function(row) {
         return { name: row.label, value: Number(row.value || 0) };
       })
+    }],
+    graphic: chartRows.length ? [] : [{
+      type: 'text',
+      left: 'center',
+      top: 'middle',
+      style: {
+        text: 'No data yet',
+        fill: '#9aa6b2',
+        fontSize: 12,
+        fontFamily: 'var(--font-mono)'
+      }
     }]
-  });
+  }, { notMerge: true });
 
   if (!_dashboardInsightsResizeWired) {
     _dashboardInsightsResizeWired = true;
@@ -11320,7 +11451,7 @@ function renderDashboardInsightChart(elId, rows, title) {
     });
   }
 
-  return true;
+  return chartRows.length > 0;
 }
 
 function setDashboardInsightCardText(title1, title2, title3, subtitle) {
@@ -11341,6 +11472,105 @@ function setDashboardInsightCardText(title1, title2, title3, subtitle) {
     if (h4c) h4c.textContent = String(title3 || 'Insight 3');
   }
   if (subEl) subEl.textContent = String(subtitle || 'Comparative snapshots from indexed work order and turn data.');
+}
+
+function parseSpendMoney(raw) {
+  if (raw == null || raw === '') return 0;
+  var cleaned = String(raw).replace(/[^0-9.\-]/g, '');
+  var n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function getSpendFlowRows(daysRange, vendorFilter) {
+  var days = Math.max(1, Number(daysRange || 90) || 90);
+  var cutoffMs = Date.now() - (days * 86400000);
+  var map = {};
+  var sourceRows = Array.isArray(WORK_ORDERS) ? WORK_ORDERS : [];
+  sourceRows.forEach(function(wo) {
+    var createdRaw = wo.created || wo.createdAt || wo.created_at || wo.statusDate || wo.updatedAt || '';
+    var createdMs = Date.parse(String(createdRaw || ''));
+    if (Number.isFinite(createdMs) && createdMs < cutoffMs) return;
+    if (!isInPropertyGroup(wo.propertyId || wo.property_id || '', wo.propertyName || wo.property_name || '', currentPropertyGroup)) return;
+    var vendor = String(wo.vendorName || wo.vendor_name || wo.vendor || wo.assignedVendor || 'Unassigned Vendor').trim() || 'Unassigned Vendor';
+    if (vendorFilter && vendor !== vendorFilter) return;
+    var estimateAmount = parseSpendMoney(
+      wo.estimateAmount || wo.estimate_amount || wo.estimated_amount || wo.estimate || wo.amount || wo.total || wo.billAmount || wo.bill_amount
+    );
+    if (estimateAmount <= 0) return;
+    var statusText = String(wo.status || wo.statusLabel || '').toLowerCase();
+    var isApproved = !!(wo.estimate_approved || wo.estimateApproved || wo.approved_at || statusText.indexOf('approved') !== -1);
+    if (!isApproved) return;
+    if (!map[vendor]) map[vendor] = { amount: 0, count: 0 };
+    map[vendor].amount += estimateAmount;
+    map[vendor].count += 1;
+  });
+  return Object.keys(map).map(function(vendor) {
+    return {
+      label: vendor,
+      value: Number((map[vendor].amount || 0).toFixed(2)),
+      count: map[vendor].count || 0
+    };
+  }).sort(function(a, b) { return b.value - a.value; });
+}
+
+function wireDashboardSpendFlowFilters() {
+  if (_dashboardSpendFlowFilterWired) return;
+  var rangeEl = document.getElementById('dashSpendFlowRange');
+  var vendorEl = document.getElementById('dashSpendFlowVendor');
+  if (!rangeEl || !vendorEl) return;
+  _dashboardSpendFlowFilterWired = true;
+  rangeEl.addEventListener('change', function() { renderDashboardKPIs(); });
+  vendorEl.addEventListener('change', function() { renderDashboardKPIs(); });
+}
+
+function renderDashboardSpendFlowInsight() {
+  wireDashboardSpendFlowFilters();
+  var rangeEl = document.getElementById('dashSpendFlowRange');
+  var vendorEl = document.getElementById('dashSpendFlowVendor');
+  var metaEl = document.getElementById('dashSpendFlowMeta');
+  if (!rangeEl || !vendorEl) return;
+
+  var rows = getSpendFlowRows(rangeEl.value, String(vendorEl.value || ''));
+  var allVendors = getSpendFlowRows(rangeEl.value, '').map(function(r) { return r.label; });
+  var opts = ['<option value="">All Vendors</option>'];
+  allVendors.forEach(function(v) {
+    opts.push('<option value="' + escapeHtml(v) + '"' + (String(vendorEl.value || '') === v ? ' selected' : '') + '>' + escapeHtml(v) + '</option>');
+  });
+  vendorEl.innerHTML = opts.join('');
+
+  var chartRows = rows.slice(0, 6).map(function(r) {
+    return { label: r.label, value: Number(r.value || 0) };
+  });
+  if (!renderDashboardInsightChart('dashSpendFlowChart', chartRows, 'Approved Estimate Spend by Vendor')) {
+    renderKpiMiniChart('dashSpendFlowChart', chartRows, {
+      valueFormatter: function(v) { return '$' + Number(v || 0).toLocaleString(); },
+    });
+  }
+  if (metaEl) {
+    var totalAmt = rows.reduce(function(sum, row) { return sum + Number(row.value || 0); }, 0);
+    var totalCount = rows.reduce(function(sum, row) { return sum + Number(row.count || 0); }, 0);
+    var top = rows[0];
+    metaEl.textContent = totalCount
+      ? (totalCount + ' approvals · $' + Math.round(totalAmt).toLocaleString() + (top ? (' · Top: ' + top.label) : ''))
+      : 'No approved estimate spend in selected window';
+  }
+
+  var spendChart = _dashboardInsightCharts.dashSpendFlowChart;
+  if (spendChart && typeof spendChart.off === 'function' && typeof spendChart.on === 'function') {
+    spendChart.off('click');
+    spendChart.on('click', function(params) {
+      if (!params || !params.name) return;
+      var tabBtn = document.querySelector('.nav-tab[data-tab="workorders"]');
+      if (tabBtn) tabBtn.click();
+      setTimeout(function() {
+        var search = document.getElementById('woSearch');
+        if (search) {
+          search.value = String(params.name || '');
+          search.dispatchEvent(new Event('input'));
+        }
+      }, 220);
+    });
+  }
 }
 
 function renderDashboardInsightCharts(openWOs, urgentWOs) {
@@ -11366,6 +11596,12 @@ function renderDashboardInsightCharts(openWOs, urgentWOs) {
       'Comparative PM snapshots from indexed work order and turn data.'
     );
   }
+  var subtitleEl = document.getElementById('dashInsightsSubtitle');
+  if (subtitleEl) {
+    var src = String((document.getElementById('cacheBadgeText') && document.getElementById('cacheBadgeText').textContent) || '').trim();
+    var baseText = String(subtitleEl.textContent || '').replace(/\s+Source:.*$/i, '').trim();
+    subtitleEl.textContent = src ? (baseText + ' Source: ' + src + '.') : baseText;
+  }
 
   if (!openList.length) {
     if (pmMeta) pmMeta.textContent = 'No open workload';
@@ -11377,6 +11613,7 @@ function renderDashboardInsightCharts(openWOs, urgentWOs) {
     renderKpiMiniChart('dashPmLoadChart', []);
     renderKpiMiniChart('dashWoTypeChart', []);
     renderKpiMiniChart('dashUrgencyChart', []);
+    renderDashboardSpendFlowInsight();
     return;
   }
 
@@ -11484,6 +11721,7 @@ function renderDashboardInsightCharts(openWOs, urgentWOs) {
       valueFormatter: function(v) { return Number(v || 0).toLocaleString(); },
     });
   }
+  renderDashboardSpendFlowInsight();
 }
 
 // ---------------------------------------------------------------------------
@@ -11492,6 +11730,31 @@ function renderDashboardInsightCharts(openWOs, urgentWOs) {
 // server-side in SQLite), then renders EffectScatter + Funnel via dashboard.ts.
 // ---------------------------------------------------------------------------
 var _geoChartsRendered = false;
+var _dashboardChartInstances = {};
+var _dashboardChartResizeWired = {};
+
+function getDashboardChartInstance(chartKey, el, echartsCore) {
+  if (!el || !echartsCore) return null;
+  var chart = _dashboardChartInstances[chartKey];
+  if (chart && chart.getDom && chart.getDom() === el) return chart;
+  if (chart && typeof chart.dispose === 'function') {
+    try { chart.dispose(); } catch (e) { /* noop */ }
+  }
+  chart = echartsCore.init(el, null, { renderer: 'canvas' });
+  _dashboardChartInstances[chartKey] = chart;
+  return chart;
+}
+
+function wireDashboardChartResize(chartKey, chart) {
+  if (!chart || _dashboardChartResizeWired[chartKey]) return;
+  _dashboardChartResizeWired[chartKey] = true;
+  window.addEventListener('resize', function() {
+    var current = _dashboardChartInstances[chartKey];
+    if (current && typeof current.resize === 'function') {
+      try { current.resize(); } catch (e) { /* noop */ }
+    }
+  });
+}
 
 function renderDashboardGeoCharts() {
   var buildInspMap = window.buildInspectionMapOption;
@@ -11503,10 +11766,9 @@ function renderDashboardGeoCharts() {
   var funnelEl = document.getElementById('dashTurnoverFunnel');
   var funnelMeta = document.getElementById('dashTurnoverFunnelMeta');
   if (funnelEl && typeof TURN_PIPE_DATA !== 'undefined' && TURN_PIPE_DATA.length > 0) {
-    var existingFunnel = echartsCore.getInstanceByDom(funnelEl);
-    if (existingFunnel) existingFunnel.dispose();
-    var funnelChart = echartsCore.init(funnelEl, null, { renderer: 'canvas' });
+    var funnelChart = getDashboardChartInstance('dashTurnoverFunnel', funnelEl, echartsCore);
     funnelChart.setOption(buildFunnel(TURN_PIPE_DATA));
+    wireDashboardChartResize('dashTurnoverFunnel', funnelChart);
     if (funnelMeta) funnelMeta.textContent = TURN_PIPE_DATA.filter(function(p) { return !p.isClosed; }).length + ' active turns';
   } else if (funnelEl && funnelMeta) {
     funnelMeta.textContent = 'No turn data';
@@ -11557,13 +11819,13 @@ function renderDashboardGeoCharts() {
       if (mapMeta) mapMeta.textContent = 'Geocoding failed';
       return;
     }
-    var existingMap = echartsCore.getInstanceByDom(mapEl);
-    if (existingMap) existingMap.dispose();
-    var mapChart = echartsCore.init(mapEl, null, { renderer: 'canvas' });
+    var mapChart = getDashboardChartInstance('dashInspectionMap', mapEl, echartsCore);
     mapChart.setOption(buildInspMap(withCoords));
+    wireDashboardChartResize('dashInspectionMap', mapChart);
     if (mapMeta) mapMeta.textContent = withCoords.length + ' properties mapped';
 
     // Click on a dot → navigate to Inspections tab filtered by property
+    if (typeof mapChart.off === 'function') mapChart.off('click');
     mapChart.on('click', function(params) {
       if (!params || !params.value) return;
       var propertyId = params.value[3];
@@ -11612,11 +11874,9 @@ async function fetchAndRenderPortfolioSunburst() {
 
     _sunburstRendered = true;
 
-    var existing = echartsCore.getInstanceByDom(el);
-    if (existing) existing.dispose();
-
-    var chart = echartsCore.init(el, null, { renderer: 'canvas' });
+    var chart = getDashboardChartInstance('dashPortfolioSunburst', el, echartsCore);
     chart.setOption(buildSunburst(data));
+    wireDashboardChartResize('dashPortfolioSunburst', chart);
 
     // Count properties and units for meta label
     var propCount = data.length;
@@ -11628,6 +11888,7 @@ async function fetchAndRenderPortfolioSunburst() {
     if (meta) meta.textContent = propCount + ' properties · ' + unitCount + ' units';
 
     // Click outer/status ring → navigate to Properties tab, filter by name
+    if (typeof chart.off === 'function') chart.off('click');
     chart.on('click', function(params) {
       if (!params || !params.treePathInfo) return;
       var path = params.treePathInfo;
@@ -11644,9 +11905,6 @@ async function fetchAndRenderPortfolioSunburst() {
         }
       }, 300);
     });
-
-    // Resize with the rest of the dashboard charts
-    window.addEventListener('resize', function() { chart.resize(); });
 
   } catch (e) {
     console.warn('[Sunburst] fetch failed:', e.message || e);
@@ -11678,14 +11936,11 @@ function renderWoSankey() {
     return;
   }
 
-  var existing = echartsCore.getInstanceByDom(el);
-  if (existing) existing.dispose();
-  var chart = echartsCore.init(el, null, { renderer: 'canvas' });
+  var chart = getDashboardChartInstance('dashSankeyChart', el, echartsCore);
   chart.setOption(buildSankey(wos));
+  wireDashboardChartResize('dashSankeyChart', chart);
   if (meta) meta.textContent = wos.length + ' work orders';
   _sankeyRendered = true;
-
-  window.addEventListener('resize', function() { chart.resize(); });
 }
 
 function renderActivityFeed() {
@@ -20397,6 +20652,7 @@ function wireUpUI() {
       var drawer = document.getElementById('pm-inbox-drawer');
       if (drawer) {
         drawer.classList.toggle('open');
+        if (drawer.classList.contains('open')) markAllOperationalAlertsSeen();
         updateMessagesAlerts();
         if (window.PmInbox && typeof window.PmInbox.refresh === 'function') {
           window.PmInbox.refresh();
@@ -22706,6 +22962,33 @@ function updateDispatchStats(d) {
   }
 }
 
+function renderDispatchSimulationSummary() {
+  var host = document.getElementById('dispatchSimSummaryBody');
+  if (!host) return;
+  var checks = [];
+  var add = function(ok, label, detail) {
+    checks.push({ ok: !!ok, label: label, detail: detail || '' });
+  };
+
+  add(!DISPATCH.paused, 'Automation state', DISPATCH.paused ? 'Paused — resume before 24/7 trial.' : 'Running');
+  add(!!getDispatchCronSecret(), 'CRON secret', getDispatchCronSecret() ? 'Configured for manual trial runs.' : 'Missing — set CRON_SECRET in config.');
+  add(!!(DISPATCH.tier1GroupUuid && DISPATCH.tier2GroupUuid), 'Tier group UUIDs', (DISPATCH.tier1GroupUuid && DISPATCH.tier2GroupUuid) ? 'Tier 1/2 UUID targets saved.' : 'Tier 1/2 UUID targets are required.');
+  add(Array.isArray(DISPATCH.techs) && DISPATCH.techs.length > 0, 'Roster sync', (DISPATCH.techs || []).length ? ((DISPATCH.techs || []).length + ' roster entries loaded.') : 'No roster entries loaded.');
+  add(Array.isArray(DISPATCH.queue), 'Queue endpoint', Array.isArray(DISPATCH.queue) ? ((DISPATCH.queue || []).length + ' queue rows fetched.') : 'Queue payload unavailable.');
+  add(!SYSTEM_HEALTH_STATE.lastError, 'System health', SYSTEM_HEALTH_STATE.lastError ? SYSTEM_HEALTH_STATE.lastError : 'No checker error flagged.');
+
+  var blockers = checks.filter(function(c) { return !c.ok; }).length;
+  var header = blockers
+    ? '<div style="color:var(--warning);margin-bottom:6px;font-weight:700">Simulation readiness: needs attention (' + blockers + ' blocker' + (blockers === 1 ? '' : 's') + ')</div>'
+    : '<div style="color:var(--success);margin-bottom:6px;font-weight:700">Simulation readiness: ready for controlled 24/7 mock trial</div>';
+  host.innerHTML = header + checks.map(function(c) {
+    return '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:4px">' +
+      '<i class="fas ' + (c.ok ? 'fa-check-circle" style="color:var(--success)' : 'fa-triangle-exclamation" style="color:var(--warning)') + '"></i>' +
+      '<span><strong>' + escapeHtml(c.label) + ':</strong> ' + escapeHtml(c.detail) + '</span>' +
+    '</div>';
+  }).join('');
+}
+
 // ── Proxy POST helper ───────────────────────────────────────────
 function resolveDispatchProxyBaseUrl() {
   var base = normalizeConfiguredProxy(API_PROXY || '');
@@ -23030,6 +23313,7 @@ function renderDispatchConfig(configRows) {
   });
   var topBranch = document.getElementById('dispatchBranchSelect');
   if (topBranch) topBranch.value = DISPATCH.activeBranch;
+  renderDispatchSimulationSummary();
 }
 
 function renderDispatchAudit(auditRows) {
@@ -23815,12 +24099,14 @@ var DispatchControl = {
       if (branchSel) branchSel.value = DISPATCH.activeBranch || 'all';
       DispatchConfig.applyPauseUi();
       this._renderActivePanel();
+      renderDispatchSimulationSummary();
       if(dot)dot.style.background='var(--success)';
       if(lbl)lbl.textContent='Live · '+new Date().toLocaleTimeString();
     }catch(e){
       if(dot)dot.style.background='var(--danger)';
       if(lbl)lbl.textContent='Error: '+(e.message||'refresh failed');
       v9Toast('Dispatch refresh failed',e.message,'danger');
+      renderDispatchSimulationSummary();
     }
   },
   _renderActivePanel: function() {
