@@ -4,7 +4,7 @@
 // =============================================================================
 
 import * as echarts from 'echarts/core';
-import { BarChart, PieChart, RadarChart, TreemapChart, EffectScatterChart, FunnelChart, SunburstChart, SankeyChart } from 'echarts/charts';
+import { BarChart, PieChart, RadarChart, TreemapChart, EffectScatterChart, FunnelChart, SunburstChart, SankeyChart, LineChart } from 'echarts/charts';
 import {
   GridComponent,
   TooltipComponent,
@@ -26,6 +26,7 @@ import type {
   FunnelSeriesOption,
   SunburstSeriesOption,
   SankeySeriesOption,
+  LineSeriesOption,
 } from 'echarts/charts';
 import type {
   GridComponentOption,
@@ -47,6 +48,7 @@ echarts.use([
   FunnelChart,
   SunburstChart,
   SankeyChart,
+  LineChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
@@ -67,6 +69,7 @@ type ECOption = ComposeOption<
   | EffectScatterSeriesOption
   | FunnelSeriesOption
   | SankeySeriesOption
+  | LineSeriesOption
   | GridComponentOption
   | TooltipComponentOption
   | LegendComponentOption
@@ -667,7 +670,7 @@ function buildPmRadarOption(results: WoRecord[]): ECOption {
         color: ['rgba(0,0,0,0.015)', 'rgba(0,0,0,0.03)'],
       }},
       axisLine: { lineStyle: { color: 'rgba(0,0,0,0.1)' } },
-    } as RadarComponentOption['radar'],
+    } as RadarComponentOption,
     series: [
       {
         type: 'radar',
@@ -966,7 +969,7 @@ function buildOpenWoByAgeOption(
         label: {
           show: true,
           position: 'right' as const,
-          formatter: (p: { value: number }) => p.value > 0 ? String(p.value) : '',
+          formatter: (p: { value: unknown }) => (typeof p.value === 'number' && p.value > 0 ? String(p.value) : ''),
           color: 'rgba(0,0,0,0.45)',
           fontSize: 10,
           fontFamily: axisLabelStyle().fontFamily,

@@ -9,7 +9,7 @@
     "build": "vite build",
     "deploy": "npm run build && gh-pages -d dist",
 	"preview": "vite preview",
-    "typecheck": "tsx --noSwc npx tsc --noEmit"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "keywords": [],
   "author": "",

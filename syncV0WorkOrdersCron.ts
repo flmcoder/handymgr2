@@ -1,6 +1,12 @@
 // syncV0WorkOrdersCron.ts — Triggers the v0 Database API → Turso sync
 // as a background task on the proxy. Returns immediately (202 Accepted)
 // so the cron val doesn't time out on Val Town's 1-minute free-tier limit.
+declare const Deno: {
+  env: {
+    get(name: string): string | undefined;
+  };
+};
+
 const PRIMARY_PROXY_URL = (Deno.env.get("HANDYMGR_PROXY_URL") || "").trim();
 const INTERNAL_SYNC_TOKEN = (Deno.env.get("HANDYMGR_INTERNAL_TOKEN") || "").trim();
 const DEFAULT_LOOKBACK_DAYS = Math.max(
