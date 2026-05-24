@@ -750,6 +750,27 @@ body.theme-neo {
   position: relative;
 }
 
+body[data-dashboard-chart-density="compact"] .chart-row {
+  gap: 12px;
+  height: 300px;
+}
+body[data-dashboard-chart-density="compact"] .chart-panel {
+  padding: 12px;
+}
+body[data-dashboard-chart-density="compact"] .bento-insight-chart-host {
+  min-height: 170px;
+}
+
+body[data-dashboard-chart-density="large"] .chart-row {
+  height: 440px;
+}
+body[data-dashboard-chart-density="large"] .chart-panel {
+  padding: 18px;
+}
+body[data-dashboard-chart-density="large"] .bento-insight-chart-host {
+  min-height: 260px;
+}
+
 /* Responsive */
 @media (max-width: 1200px) {
   .metrics-bar {

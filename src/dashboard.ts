@@ -4,7 +4,7 @@
 // =============================================================================
 
 import * as echarts from 'echarts/core';
-import { BarChart, PieChart, RadarChart, TreemapChart, EffectScatterChart, FunnelChart, SunburstChart, SankeyChart } from 'echarts/charts';
+import { BarChart, PieChart, RadarChart, TreemapChart, EffectScatterChart, FunnelChart, SunburstChart, SankeyChart, LineChart } from 'echarts/charts';
 import {
   GridComponent,
   TooltipComponent,
@@ -19,6 +19,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import type { ComposeOption } from 'echarts/core';
 import type {
   BarSeriesOption,
+  LineSeriesOption,
   PieSeriesOption,
   RadarSeriesOption,
   TreemapSeriesOption,
@@ -47,6 +48,7 @@ echarts.use([
   FunnelChart,
   SunburstChart,
   SankeyChart,
+  LineChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
@@ -60,6 +62,7 @@ echarts.use([
 
 type ECOption = ComposeOption<
   | BarSeriesOption
+  | LineSeriesOption
   | PieSeriesOption
   | RadarSeriesOption
   | SunburstSeriesOption
@@ -105,6 +108,9 @@ const GLASS_TOOLTIP =
   'border: 1px solid rgba(255, 255, 255, 0.4); ' +
   'box-shadow: 0 8px 16px rgba(0,0,0,0.08);';
 
+const DASH_CACHE_PREFIX = 'hm_dash_cache_v1:';
+const CHART_CACHE_STALE_MS = 30 * 60 * 1000;
+
 // =============================================================================
 // Mount chart instances — deferred until DOM is ready so containers have
 // their CSS-driven dimensions before ECharts measures them.
@@ -143,6 +149,108 @@ let chartPmLoad:      echarts.ECharts | null = null;
 let chartWoType:      echarts.ECharts | null = null;
 let chartUrgency:     echarts.ECharts | null = null;
 let ALL_CHARTS:       echarts.ECharts[]      = [];
+const chartResizeObservers = new WeakMap<HTMLElement, ResizeObserver>();
+
+function normalizeSelectionValue(value: string): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.toLowerCase() === 'all properties' ? '' : raw;
+}
+
+function readSelectedGroupFilter(): string {
+  const select = document.getElementById('globalGroupFilter') as HTMLSelectElement | null;
+  return normalizeSelectionValue(select?.value || '');
+}
+
+function readGroupCandidates(record: WoRecord): string[] {
+  const nested = (record.property && typeof record.property === 'object') ? record.property as Record<string, unknown> : {};
+  return [
+    record.property_group,
+    record.propertyGroup,
+    record._propertyGroup,
+    record.group_name,
+    record.groupName,
+    record.portfolio,
+    nested.property_group,
+    nested.group_name,
+    nested.groupName,
+  ].map(v => String(v || '').trim()).filter(Boolean);
+}
+
+function matchesGroupFilter(record: WoRecord, selectedGroup: string): boolean {
+  if (!selectedGroup) return true;
+  const wanted = selectedGroup.toLowerCase();
+  return readGroupCandidates(record).some(v => v.toLowerCase() === wanted);
+}
+
+function setDashboardDensityClass(): void {
+  const host = document.getElementById('sec-dashboard');
+  const width = host?.clientWidth || window.innerWidth || 0;
+  const mode = width <= 980 ? 'compact' : width >= 1680 ? 'large' : 'normal';
+  document.body.setAttribute('data-dashboard-chart-density', mode);
+}
+
+function makeCacheKey(action: string): string {
+  return `${DASH_CACHE_PREFIX}${action}:${readSelectedGroupFilter() || 'all'}`;
+}
+
+function readCachedJson(action: string): unknown | null {
+  try {
+    const raw = localStorage.getItem(makeCacheKey(action));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { ts?: number; data?: unknown };
+    if (!parsed || typeof parsed.ts !== 'number') return null;
+    if ((Date.now() - parsed.ts) > CHART_CACHE_STALE_MS) return null;
+    return parsed.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedJson(action: string, data: unknown): void {
+  try {
+    localStorage.setItem(makeCacheKey(action), JSON.stringify({ ts: Date.now(), data }));
+  } catch {
+    /* non-fatal cache miss */
+  }
+}
+
+async function fetchChartData(action: string, headers: Record<string, string>): Promise<unknown | null> {
+  const baseUrl = resolveProxyUrl();
+  const cached = readCachedJson(action);
+  if (cached != null) return cached;
+  const resp = await fetch(`${baseUrl}?action=${encodeURIComponent(action)}`, { headers });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  writeCachedJson(action, data);
+  return data;
+}
+
+async function fetchChartDataFresh(action: string, headers: Record<string, string>): Promise<unknown | null> {
+  const baseUrl = resolveProxyUrl();
+  const resp = await fetch(`${baseUrl}?action=${encodeURIComponent(action)}`, { headers });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  writeCachedJson(action, data);
+  return data;
+}
+
+function queueChartBackgroundRefresh(
+  action: string,
+  headers: Record<string, string>,
+  onFreshData: (payload: unknown | null) => void,
+): void {
+  const run = () => {
+    fetchChartDataFresh(action, headers)
+      .then(onFreshData)
+      .catch((err) => console.warn(`[dashboard] background refresh failed (${action})`, err));
+  };
+  if (typeof (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback === 'function') {
+    (window as unknown as { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(run, { timeout: 1200 });
+  } else {
+    setTimeout(run, 0);
+  }
+}
 
 // =============================================================================
 // Shared axis / grid style helpers
@@ -341,10 +449,22 @@ function makePlaceholderDonut(): ECOption {
   };
 }
 
-// =============================================================================
-// Resize handler (registered once; ALL_CHARTS populated by initDashboardCharts)
-// =============================================================================
+function attachContainerResize(chart: echarts.ECharts | null): void {
+  if (!chart) return;
+  const el = chart.getDom() as HTMLElement;
+  if (!el) return;
+  const host = el.parentElement as HTMLElement | null;
+  if (!host || chartResizeObservers.has(host)) return;
+  const observer = new ResizeObserver(() => {
+    try { chart.resize(); } catch { /* ignore transient resize errors */ }
+    setDashboardDensityClass();
+  });
+  observer.observe(host);
+  chartResizeObservers.set(host, observer);
+}
+
 window.addEventListener('resize', () => {
+  setDashboardDensityClass();
   ALL_CHARTS.forEach(c => c.resize());
 });
 
@@ -493,6 +613,52 @@ function toPieData(
     .map(([name, value]) => ({ name, value }));
 }
 
+interface DashboardAggregates {
+  pmRadarRows: WoRecord[];
+  ageBuckets: number[];
+  pmLoad: { names: string[]; counts: number[] };
+  urgency: { names: string[]; counts: number[] };
+}
+
+const dashboardAggregateMemo = new Map<string, DashboardAggregates>();
+
+function rowsMemoSignature(rows: WoRecord[]): string {
+  const head = rows.slice(0, 12).map((r) => `${String((r as Record<string, unknown>).id || (r as Record<string, unknown>).uuid || '')}:${statusField(r)}:${priorityField(r)}`).join('|');
+  const tail = rows.slice(-4).map((r) => `${String((r as Record<string, unknown>).id || (r as Record<string, unknown>).uuid || '')}:${statusField(r)}`).join('|');
+  return `${rows.length}:${head}:${tail}`;
+}
+
+function computeDashboardAggregates(rows: WoRecord[]): DashboardAggregates {
+  const scoped = rows.filter(r => !isClosedStatus(statusField(r)));
+  const today = new Date();
+  const ageBuckets = WO_AGE_BUCKETS.map(bucket => scoped.filter(r => {
+    const created = r.created_at || r.CreatedAt || r.created || r.date_created || '';
+    if (!created) return false;
+    const age = Math.floor((today.getTime() - new Date(String(created)).getTime()) / 86400000);
+    return age >= bucket.min && age <= bucket.max;
+  }).length);
+
+  return {
+    pmRadarRows: rows,
+    ageBuckets,
+    pmLoad: groupCount(scoped, pmField, 15),
+    urgency: groupCount(rows, priorityField, 8),
+  };
+}
+
+function selectDashboardAggregates(rows: WoRecord[]): DashboardAggregates {
+  const key = `route:dashboard|group:${readSelectedGroupFilter() || 'all'}|range:180d|rows:${rowsMemoSignature(rows)}`;
+  const existing = dashboardAggregateMemo.get(key);
+  if (existing) return existing;
+  const built = computeDashboardAggregates(rows);
+  dashboardAggregateMemo.set(key, built);
+  if (dashboardAggregateMemo.size > 16) {
+    const oldestKey = dashboardAggregateMemo.keys().next().value;
+    if (oldestKey) dashboardAggregateMemo.delete(oldestKey);
+  }
+  return built;
+}
+
 // =============================================================================
 // Chart option builders — Advanced Analytics edition
 // =============================================================================
@@ -637,7 +803,7 @@ function buildPmRadarOption(results: WoRecord[]): ECOption {
         color: ['rgba(0,0,0,0.015)', 'rgba(0,0,0,0.03)'],
       }},
       axisLine: { lineStyle: { color: 'rgba(0,0,0,0.1)' } },
-    } as RadarComponentOption['radar'],
+    } as RadarComponentOption,
     series: [
       {
         type: 'radar',
@@ -936,7 +1102,7 @@ function buildOpenWoByAgeOption(
         label: {
           show: true,
           position: 'right' as const,
-          formatter: (p: { value: number }) => p.value > 0 ? String(p.value) : '',
+          formatter: (p: { value: unknown }) => Number(p.value) > 0 ? String(p.value) : '',
           color: 'rgba(0,0,0,0.45)',
           fontSize: 10,
           fontFamily: axisLabelStyle().fontFamily,
@@ -1492,6 +1658,144 @@ export function buildPortfolioSunburstOption(data: SunburstNode[]): ECOption {
 // =============================================================================
 // Main async data fetch + render
 // =============================================================================
+function emitDashboardDrilldown(detail: Record<string, unknown>): void {
+  document.dispatchEvent(new CustomEvent('dashboardChartDrilldown', { detail }));
+}
+
+function wireDashboardChartInteractions(): void {
+  chartStatusDonut?.off('click');
+  chartStatusDonut?.on('click', (params: unknown) => {
+    const p = params as { name?: string };
+    const ageMap: Record<string, string> = {
+      '60+ days': '60',
+      '31–60 days': '30',
+      '15–30 days': '14',
+      '8–14 days': '7',
+      '0–7 days': '',
+    };
+    emitDashboardDrilldown({
+      tab: 'workorders',
+      woAgeMin: ageMap[String(p?.name || '')] ?? '',
+      message: `Filtered work orders from ${String(p?.name || 'chart')} bucket`,
+    });
+  });
+
+  chartPmLoad?.off('click');
+  chartPmLoad?.on('click', (params: unknown) => {
+    const p = params as { name?: string };
+    if (!p?.name) return;
+    emitDashboardDrilldown({
+      tab: 'workorders',
+      search: p.name,
+      message: `Filtered work orders for PM "${p.name}"`,
+    });
+  });
+
+  chartPmBar?.off('click');
+  chartPmBar?.on('click', (params: unknown) => {
+    const p = params as { name?: string };
+    if (!p?.name) return;
+    emitDashboardDrilldown({
+      tab: 'workorders',
+      search: p.name,
+      message: `Opened work orders for PM "${p.name}"`,
+    });
+  });
+
+  chartUrgency?.off('click');
+  chartUrgency?.on('click', (params: unknown) => {
+    const p = params as { name?: string };
+    if (!p?.name) return;
+    emitDashboardDrilldown({
+      tab: 'workorders',
+      woPriority: p.name,
+      message: `Applied priority filter "${p.name}"`,
+    });
+  });
+
+  chartWoType?.off('click');
+  chartWoType?.on('click', (params: unknown) => {
+    const p = params as { name?: string };
+    if (!p?.name) return;
+    emitDashboardDrilldown({
+      tab: 'workorders',
+      search: p.name,
+      message: `Searching work orders for "${p.name}"`,
+    });
+  });
+
+  chartPortfolio?.off('click');
+  chartPortfolio?.on('click', (params: unknown) => {
+    const p = params as { name?: string };
+    if (!p?.name) return;
+    emitDashboardDrilldown({
+      tab: 'properties',
+      search: p.name,
+      message: `Drilled into portfolio segment "${p.name}"`,
+    });
+  });
+
+  chartOccupancy?.off('click');
+  chartOccupancy?.on('click', (params: unknown) => {
+    const p = params as { name?: string };
+    emitDashboardDrilldown({
+      tab: 'occupancy',
+      occupancySubtab: 'tenant-transactions',
+      search: p?.name || '',
+      message: p?.name ? `Opened occupancy for "${p.name}"` : 'Opened occupancy',
+    });
+  });
+}
+
+function renderOccupancyChart(payload: unknown): void {
+  const data = Array.isArray(payload) ? payload as Array<{ name: string; value: number }> : [];
+  if (chartOccupancy) {
+    chartOccupancy.setOption((window as any).buildOccupancyDonutOption(data));
+    chartOccupancy.hideLoading();
+  }
+  const meta = document.getElementById('dashOccupancyMeta');
+  if (meta) meta.textContent = data.length ? `Total: ${data.reduce((s, d) => s + (Number(d.value) || 0), 0)} units` : 'No data';
+}
+
+function renderMoveOutsChart(payload: unknown): void {
+  const data = (payload && typeof payload === 'object') ? payload as { labels?: string[]; values?: number[] } : {};
+  const labels = Array.isArray(data.labels) ? data.labels : [];
+  const values = Array.isArray(data.values) ? data.values : [];
+  if (chartMoveOuts) {
+    chartMoveOuts.setOption((window as any).buildMoveOutsBarOption(labels, values));
+    chartMoveOuts.hideLoading();
+  }
+  const meta = document.getElementById('dashMoveOutsMeta');
+  if (meta) meta.textContent = labels.length ? `Next 90 days: ${values.reduce((a, b) => a + (Number(b) || 0), 0)} move-outs` : 'No data';
+}
+
+function renderPortfolioChart(payload: unknown): void {
+  const data = Array.isArray(payload) ? payload : [];
+  if (chartPortfolio) {
+    chartPortfolio.setOption((window as any).buildPortfolioTreemapOption(data));
+    chartPortfolio.hideLoading();
+  }
+  const meta = document.getElementById('dashPortfolioTreeMeta');
+  if (meta) meta.textContent = data.length ? `${data.length} owners/groups` : 'No data';
+}
+
+function renderVelocityChart(payload: unknown): void {
+  const data = (payload && typeof payload === 'object') ? payload as { dates?: string[]; moveIns?: number[]; moveOuts?: number[] } : {};
+  const dates = Array.isArray(data.dates) ? data.dates : [];
+  const moveIns = Array.isArray(data.moveIns) ? data.moveIns : [];
+  const moveOuts = Array.isArray(data.moveOuts) ? data.moveOuts : [];
+  if (chartVelocity) {
+    chartVelocity.setOption((window as any).buildLeasingVelocityOption(dates, moveIns, moveOuts));
+    chartVelocity.hideLoading();
+  }
+  const meta = document.getElementById('dashVelocityMeta');
+  if (meta) {
+    const totalIn = moveIns.reduce((a, b) => a + (Number(b) || 0), 0);
+    const totalOut = moveOuts.reduce((a, b) => a + (Number(b) || 0), 0);
+    meta.textContent = dates.length ? `In: ${totalIn} · Out: ${totalOut}` : 'No data';
+  }
+}
+
 async function fetchAndRenderDashboardData(): Promise<void> {
   // Show loading spinners on all charts.
   ALL_CHARTS.forEach(c =>
@@ -1502,106 +1806,21 @@ async function fetchAndRenderDashboardData(): Promise<void> {
     })
   );
 
-  const baseUrl = resolveProxyUrl();
   const headers = { Accept: 'application/json', ...proxyAuthHeaders() };
 
-  // ── 1. Occupancy Doughnut ─────────────────────────────────────────
-  try {
-    const resp = await fetch(`${baseUrl}?action=chart_occupancy`, { headers });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (chartOccupancy && Array.isArray(data) && data.length > 0) {
-        chartOccupancy.setOption((window as any).buildOccupancyDonutOption(data));
-        chartOccupancy.hideLoading();
-        const meta = document.getElementById('dashOccupancyMeta');
-        if (meta) meta.textContent = `Total: ${data.reduce((s: number, d: any) => s + (d.value || 0), 0)} units`;
-      } else if (chartOccupancy) {
-        chartOccupancy.hideLoading();
-        chartOccupancy.setOption((window as any).buildOccupancyDonutOption([]));
-        const meta = document.getElementById('dashOccupancyMeta');
-        if (meta) meta.textContent = 'No data';
-      }
-    } else if (chartOccupancy) {
-      chartOccupancy.hideLoading();
-    }
-  } catch (e) {
-    console.error('[dashboard] Occupancy fetch failed:', e);
-    if (chartOccupancy) chartOccupancy.hideLoading();
-  }
+  await Promise.all([
+    fetchChartData('chart_occupancy', headers).then(renderOccupancyChart).catch((e) => console.error('[dashboard] Occupancy fetch failed:', e)),
+    fetchChartData('chart_moveouts', headers).then(renderMoveOutsChart).catch((e) => console.error('[dashboard] Move-Outs fetch failed:', e)),
+  ]);
+  queueChartBackgroundRefresh('chart_occupancy', headers, renderOccupancyChart);
+  queueChartBackgroundRefresh('chart_moveouts', headers, renderMoveOutsChart);
 
-  // ── 2. Move-Outs Bar ──────────────────────────────────────────────
-  try {
-    const resp = await fetch(`${baseUrl}?action=chart_moveouts`, { headers });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (chartMoveOuts && data && Array.isArray(data.labels)) {
-        chartMoveOuts.setOption((window as any).buildMoveOutsBarOption(data.labels, data.values || []));
-        chartMoveOuts.hideLoading();
-        const meta = document.getElementById('dashMoveOutsMeta');
-        const vals = data.values || [];
-        if (meta) meta.textContent = `Next 90 days: ${vals.reduce((a: number, b: number) => a + b, 0)} move-outs`;
-      } else if (chartMoveOuts) {
-        chartMoveOuts.hideLoading();
-        const meta = document.getElementById('dashMoveOutsMeta');
-        if (meta) meta.textContent = 'No data';
-      }
-    } else if (chartMoveOuts) {
-      chartMoveOuts.hideLoading();
-    }
-  } catch (e) {
-    console.error('[dashboard] Move-Outs fetch failed:', e);
-    if (chartMoveOuts) chartMoveOuts.hideLoading();
-  }
-
-  // ── 3. Portfolio Treemap ─────────────────────────────────────────
-  try {
-    const resp = await fetch(`${baseUrl}?action=chart_portfolio_owner`, { headers });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (chartPortfolio && Array.isArray(data) && data.length > 0) {
-        chartPortfolio.setOption((window as any).buildPortfolioTreemapOption(data));
-        chartPortfolio.hideLoading();
-        const meta = document.getElementById('dashPortfolioTreeMeta');
-        if (meta) meta.textContent = `${data.length} owners/groups`;
-      } else if (chartPortfolio) {
-        chartPortfolio.hideLoading();
-        const meta = document.getElementById('dashPortfolioTreeMeta');
-        if (meta) meta.textContent = 'No data';
-      }
-    } else if (chartPortfolio) {
-      chartPortfolio.hideLoading();
-    }
-  } catch (e) {
-    console.error('[dashboard] Portfolio fetch failed:', e);
-    if (chartPortfolio) chartPortfolio.hideLoading();
-  }
-
-  // ── 4. Leasing Velocity Area Chart ───────────────────────────────
-  try {
-    const resp = await fetch(`${baseUrl}?action=chart_leasing_velocity`, { headers });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (chartVelocity && data && Array.isArray(data.dates)) {
-        chartVelocity.setOption((window as any).buildLeasingVelocityOption(data.dates, data.moveIns || [], data.moveOuts || []));
-        chartVelocity.hideLoading();
-        const meta = document.getElementById('dashVelocityMeta');
-        if (meta) {
-          const totalIn = (data.moveIns || []).reduce((a: number, b: number) => a + b, 0);
-          const totalOut = (data.moveOuts || []).reduce((a: number, b: number) => a + b, 0);
-          meta.textContent = `In: ${totalIn} · Out: ${totalOut}`;
-        }
-      } else if (chartVelocity) {
-        chartVelocity.hideLoading();
-        const meta = document.getElementById('dashVelocityMeta');
-        if (meta) meta.textContent = 'No data';
-      }
-    } else if (chartVelocity) {
-      chartVelocity.hideLoading();
-    }
-  } catch (e) {
-    console.error('[dashboard] Velocity fetch failed:', e);
-    if (chartVelocity) chartVelocity.hideLoading();
-  }
+  await Promise.all([
+    fetchChartData('chart_portfolio_owner', headers).then(renderPortfolioChart).catch((e) => console.error('[dashboard] Portfolio fetch failed:', e)),
+    fetchChartData('chart_leasing_velocity', headers).then(renderVelocityChart).catch((e) => console.error('[dashboard] Velocity fetch failed:', e)),
+  ]);
+  queueChartBackgroundRefresh('chart_portfolio_owner', headers, renderPortfolioChart);
+  queueChartBackgroundRefresh('chart_leasing_velocity', headers, renderVelocityChart);
 
   // ===========================================================================
   // Original WO Processing (re-integrated)
@@ -1626,50 +1845,39 @@ async function fetchAndRenderDashboardData(): Promise<void> {
     }
   }
 
+  const selectedGroup = readSelectedGroupFilter();
+  if (selectedGroup) results = results.filter(row => matchesGroupFilter(row, selectedGroup));
+
   // If we have WO results, process and render them
   if (results.length > 0) {
+    const aggregates = selectDashboardAggregates(results);
+
     // ── PM Performance Radar (multi-axis per PM from real WO data) ───────────────
     if (chartPmBar) {
       // @ts-ignore - buildPmRadarOption is defined elsewhere
-      chartPmBar.setOption(buildPmRadarOption(results));
+      chartPmBar.setOption(buildPmRadarOption(aggregates.pmRadarRows));
       chartPmBar.hideLoading();
     }
 
     // ── Open WOs by Age (replaces WO Status donut) ───────────────────────────
     if (chartStatusDonut) {
-      const today = new Date();
-      // @ts-ignore
-      const openRows = results.filter(r => !isClosedStatus(statusField(r)));
-      // @ts-ignore
-      const bucketCounts = WO_AGE_BUCKETS.map(bucket => {
-        return openRows.filter(r => {
-          const created = r.created_at || r.CreatedAt || r.created || r.date_created || '';
-          if (!created) return false;
-          const age = Math.floor((today.getTime() - new Date(String(created)).getTime()) / 86400000);
-          return age >= bucket.min && age <= bucket.max;
-        }).length;
-      });
       const metaEl = document.getElementById('kpiVacancyGroupsSub');
       if (metaEl) {
-        const total = bucketCounts.reduce((s: number, v: number) => s + v, 0);
-        const critical = bucketCounts[0]; // 60+ days bucket
+        const total = aggregates.ageBuckets.reduce((s: number, v: number) => s + v, 0);
+        const critical = aggregates.ageBuckets[0]; // 60+ days bucket
         metaEl.textContent = total > 0
           ? `${total} open WO${total !== 1 ? 's' : ''}${critical > 0 ? ` · ${critical} critical (60+ d)` : ''}`
           : 'No open work orders';
       }
       // @ts-ignore
-      chartStatusDonut.setOption(buildOpenWoByAgeOption(bucketCounts));
+      chartStatusDonut.setOption(buildOpenWoByAgeOption(aggregates.ageBuckets));
       chartStatusDonut.hideLoading();
     }
 
     // ── PM Load Bar (ALL open WOs per PM, not just closed) ────────────────────
     if (chartPmLoad) {
       // @ts-ignore
-      const openRows = results.filter(r => !isClosedStatus(statusField(r)));
-      // @ts-ignore
-      const { names, counts } = groupCount(openRows, pmField, 15);
-      // @ts-ignore
-      chartPmLoad.setOption(buildPmLoadBarOption(names, counts));
+      chartPmLoad.setOption(buildPmLoadBarOption(aggregates.pmLoad.names, aggregates.pmLoad.counts));
       chartPmLoad.hideLoading();
     }
 
@@ -1683,9 +1891,7 @@ async function fetchAndRenderDashboardData(): Promise<void> {
     // ── Urgency Bar (WOs by priority) ─────────────────────────────────────────
     if (chartUrgency) {
       // @ts-ignore
-      const { names, counts } = groupCount(results, priorityField, 8);
-      // @ts-ignore
-      chartUrgency.setOption(buildUrgencyBarOption(names, counts));
+      chartUrgency.setOption(buildUrgencyBarOption(aggregates.urgency.names, aggregates.urgency.counts));
       chartUrgency.hideLoading();
     }
   }
@@ -1698,6 +1904,7 @@ async function fetchAndRenderDashboardData(): Promise<void> {
       });
     });
   });
+  wireDashboardChartInteractions();
 }
 
 // =============================================================================
@@ -2051,6 +2258,9 @@ function initDashboardCharts(): void {
     chartWoType,
     chartUrgency,
   ].filter(Boolean) as echarts.ECharts[];
+
+  setDashboardDensityClass();
+  ALL_CHARTS.forEach(c => attachContainerResize(c));
 
   // Show lightweight placeholders while the API call is in-flight.
   chartOccupancy?.setOption(makePlaceholderDonut());
