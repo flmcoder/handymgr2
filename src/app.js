@@ -20832,6 +20832,60 @@ function wireUpUI() {
     });
   }
 
+  document.addEventListener('dashboardChartDrilldown', function(evt) {
+    var detail = evt && evt.detail ? evt.detail : {};
+    if (!detail || typeof detail !== 'object') return;
+
+    var targetGroup = normalizeGroupSelectionValue(String(detail.propertyGroup || ''));
+    if (targetGroup && !forcedPropertyGroupUuid) {
+      currentPropertyGroup = targetGroup;
+      _isInGroupMissLogCount = 0;
+      if (globalGrpEl) globalGrpEl.value = targetGroup;
+      applyGroupFilterChange();
+    }
+
+    var tabName = String(detail.tab || 'workorders');
+    if (tabName) forceActiveTab(tabName);
+
+    requestAnimationFrame(function() {
+      if (tabName === 'workorders') {
+        if ($('#woSearch') && detail.search != null) $('#woSearch').value = String(detail.search || '');
+        if ($('#woAgeFilter') && detail.woAgeMin != null) {
+          currentWOAgeFilter = String(detail.woAgeMin || '');
+          $('#woAgeFilter').value = currentWOAgeFilter;
+        }
+        if ($('#woPriorityFilter') && detail.woPriority != null) {
+          currentWOPriority = String(detail.woPriority || '');
+          $('#woPriorityFilter').value = currentWOPriority;
+        }
+        if ($('#woTypeFilter') && detail.woType != null) {
+          currentWOType = String(detail.woType || '');
+          $('#woTypeFilter').value = currentWOType;
+        }
+        renderWorkOrders();
+      } else if (tabName === 'vendors') {
+        if ($('#vendorSearch') && detail.search != null) $('#vendorSearch').value = String(detail.search || '');
+        renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+      } else if (tabName === 'properties') {
+        if ($('#propertySearch') && detail.search != null) $('#propertySearch').value = String(detail.search || '');
+        renderPropertiesSection();
+      } else if (tabName === 'occupancy') {
+        if (detail.occupancySubtab && typeof setOccupancySubtab === 'function') {
+          setOccupancySubtab(String(detail.occupancySubtab || 'tenant-transactions'));
+        } else {
+          renderOccupancySubtab(currentOccupancySubtab || 'tenant-transactions');
+        }
+        if (detail.search != null) {
+          ['tenantTxSearch', 'tenantDirSearch', 'delinquencySearch', 'applicationsSearch', 'showingsSearch', 'guestCardsSearch'].forEach(function(id) {
+            if ($('#' + id)) $('#' + id).value = String(detail.search || '');
+          });
+        }
+        renderOccupancySubtab(currentOccupancySubtab || 'tenant-transactions');
+      }
+      if (detail.message && typeof showToast === 'function') showToast(String(detail.message), { kind: 'info' });
+    });
+  });
+
   // Wire up the "Reload Groups" button in the global filter bar
   // Shift+Click shows detailed diagnostics toast for debugging
   var btnGlobalLoadGroups = $('#btnGlobalLoadGroups');
