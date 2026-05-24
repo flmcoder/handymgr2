@@ -20872,8 +20872,6 @@ function wireUpUI() {
       } else if (tabName === 'occupancy') {
         if (detail.occupancySubtab && typeof setOccupancySubtab === 'function') {
           setOccupancySubtab(String(detail.occupancySubtab || 'tenant-transactions'));
-        } else {
-          renderOccupancySubtab(currentOccupancySubtab || 'tenant-transactions');
         }
         if (detail.search != null) {
           ['tenantTxSearch', 'tenantDirSearch', 'delinquencySearch', 'applicationsSearch', 'showingsSearch', 'guestCardsSearch'].forEach(function(id) {
