@@ -1102,7 +1102,7 @@ function buildOpenWoByAgeOption(
         label: {
           show: true,
           position: 'right' as const,
-          formatter: (p: any) => Number(p.value) > 0 ? String(p.value) : '',
+          formatter: (p: { value: unknown }) => Number(p.value) > 0 ? String(p.value) : '',
           color: 'rgba(0,0,0,0.45)',
           fontSize: 10,
           fontFamily: axisLabelStyle().fontFamily,
