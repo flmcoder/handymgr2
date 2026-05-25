@@ -97,7 +97,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.7.6b';
+var APP_VERSION = 'v9.7.7B';
 var DEFAULT_PROXY_URL = 'https://afproxy.val.run';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
@@ -2042,13 +2042,30 @@ function normalizeOtpEmail(raw) {
   return m ? email : '';
 }
 
-function normalizeOtpPhone(raw) {
+function extractUsPhoneDigits(raw) {
+  var digits = String(raw || '').replace(/\D+/g, '');
+  if (!digits) return '';
+  if (digits.length === 11 && digits.charAt(0) === '1') digits = digits.slice(1);
+  if (digits.length > 10) digits = digits.slice(0, 10);
+  return digits;
+}
+
+function formatUsPhoneDisplay(raw) {
+  var digits = extractUsPhoneDigits(raw);
+  if (!digits) return '';
+  if (digits.length <= 3) return '(' + digits;
+  if (digits.length <= 6) return '(' + digits.slice(0, 3) + ') ' + digits.slice(3);
+  return '(' + digits.slice(0, 3) + ') ' + digits.slice(3, 6) + '-' + digits.slice(6, 10);
+}
+
+function shouldTreatOtpInputAsEmail(raw) {
   var val = String(raw || '').trim();
-  if (!val) return '';
-  var digits = val.replace(/\D+/g, '');
-  if (digits.length === 11 && digits.charAt(0) === '1') return '+' + digits;
+  return val.indexOf('@') !== -1 || /[a-z]/i.test(val);
+}
+
+function normalizeOtpPhone(raw) {
+  var digits = extractUsPhoneDigits(raw);
   if (digits.length === 10) return '+1' + digits;
-  if (val.charAt(0) === '+' && digits.length >= 10 && digits.length <= 15) return '+' + digits;
   return '';
 }
 
@@ -2266,7 +2283,9 @@ async function _proxyActionDirect(action, params, options) {
     var attemptTimeoutMs = Math.min(baseTimeoutMs + (attempt * 15000), 150000);
     var res;
     try {
-      res = await fetchWithTimeout(url, { headers: reqHeaders }, attemptTimeoutMs);
+      res = await rateLimiter.enqueue(function() {
+        return fetchWithTimeout(url, { headers: reqHeaders }, attemptTimeoutMs);
+      });
     } catch (abortErr) {
       if (abortErr.name === 'AbortError') {
         if (attempt < maxRetries) {
@@ -2287,6 +2306,17 @@ async function _proxyActionDirect(action, params, options) {
         continue;
       }
       throw abortErr;
+    }
+    if (res.status === 429) {
+      var actionRetryAfter = parseInt(res.headers.get('Retry-After') || '5', 10);
+      if (!isFinite(actionRetryAfter) || actionRetryAfter < 1) actionRetryAfter = 5;
+      rateLimiter.backpressure(actionRetryAfter * 1000);
+      logApiError(429, 'Proxy action=' + action + ' rate limited — pausing ' + actionRetryAfter + 's', 'retry');
+      if (attempt < maxRetries) {
+        await sleep(actionRetryAfter * 1000);
+        continue;
+      }
+      throw new Error('Proxy action=' + action + ' failed: HTTP 429 after retries');
     }
     // Retryable server errors: 502, 503, 504
     if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < maxRetries) {
@@ -2395,11 +2425,13 @@ async function proxyPost(action, bodyObj, extraHeaders) {
   if (token) headers['Authorization'] = 'Bearer ' + token;
   var maxRetries = 2;
   for (var attempt = 0; attempt <= maxRetries; attempt++) {
-    var res = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: headers,
-      body: JSON.stringify(bodyObj || {})
-    }, 30000);
+    var res = await rateLimiter.enqueue(function() {
+      return fetchWithTimeout(url, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(bodyObj || {})
+      }, 30000);
+    });
     if (res.status === 429) {
       var retryAfter = parseInt(res.headers.get('Retry-After') || '5', 10);
       rateLimiter.backpressure(retryAfter * 1000);
@@ -2464,8 +2496,8 @@ function resolveUrl(path, method) {
 var rateLimiter = {
   queue: [],
   inFlight: 0,
-  maxPerSec: 4,
-  _defaultMaxPerSec: 4,
+  maxPerSec: 3,
+  _defaultMaxPerSec: 3,
   windowStart: 0,
   windowCount: 0,
   processing: false,
@@ -4626,6 +4658,13 @@ $('#vaultVhost').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') { $('#vaultUnlockBtn').click(); }
 });
 if ($('#vaultOtpEmail')) {
+  $('#vaultOtpEmail').addEventListener('input', function() {
+    var raw = this.value || '';
+    if (!raw) return;
+    // Preserve email entry; auto-format only phone-like input.
+    if (shouldTreatOtpInputAsEmail(raw)) return;
+    this.value = formatUsPhoneDisplay(raw);
+  });
   $('#vaultOtpEmail').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') { $('#btnSendOtp').click(); }
   });
@@ -4701,7 +4740,7 @@ if ($('#btnSendOtp')) {
     var identifierRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
     var identifier = normalizeOtpIdentifier(identifierRaw);
     if (!identifier) {
-      setVaultFeedback('Enter a valid PM email or phone number to start PM login. US numbers work with or without +1.', '');
+      setVaultFeedback('Enter a valid PM email or phone number to start PM login. For phone, just type 10 digits and formatting is automatic.', '');
       return;
     }
     API_PROXY = normalizeConfiguredProxy($('#vaultProxy').value || '');
@@ -11266,6 +11305,13 @@ function renderDashboardInsightChart(elId, rows, title) {
     return false;
   }
 
+  var styles = getComputedStyle(document.documentElement);
+  var textPrimary = (styles.getPropertyValue('--text-primary') || '').trim() || '#19202f';
+  var textMuted = (styles.getPropertyValue('--text-muted') || '').trim() || 'rgba(0,0,0,0.45)';
+  var borderColor = (styles.getPropertyValue('--border') || '').trim() || 'rgba(15,23,42,0.15)';
+  var accent = (styles.getPropertyValue('--accent') || '').trim() || '#0f8d91';
+  var total = rows.reduce(function(sum, r) { return sum + Number(r.value || 0); }, 0);
+
   var chart = _dashboardInsightCharts[elId];
   if (!chart) {
     chart = window.echarts.init(el);
@@ -11283,25 +11329,87 @@ function renderDashboardInsightChart(elId, rows, title) {
   }
 
   chart.setOption({
-    animationDuration: 380,
+    animationDuration: 460,
     animationEasing: 'cubicOut',
-    grid: { left: 8, right: 8, top: 30, bottom: 6, containLabel: true },
-    tooltip: { trigger: 'item', confine: true },
+    tooltip: {
+      trigger: 'item',
+      confine: true,
+      backgroundColor: 'rgba(255,255,255,0.86)',
+      borderColor: borderColor,
+      borderWidth: 1,
+      textStyle: { color: textPrimary, fontSize: 12 },
+      formatter: function(p) {
+        var value = Number(p.value || 0);
+        var pct = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+        return '<div style="font-weight:700;margin-bottom:4px">' + escapeHtml(String(p.name || '')) + '</div>' +
+          '<div style="display:flex;gap:8px;align-items:baseline">' +
+          '<span style="font-size:15px;font-weight:700">' + value.toLocaleString() + '</span>' +
+          '<span style="font-size:11px;color:' + textMuted + '">' + pct + '%</span>' +
+          '</div>';
+      }
+    },
+    legend: {
+      bottom: 0,
+      icon: 'circle',
+      itemWidth: 8,
+      itemHeight: 8,
+      textStyle: { color: textMuted, fontSize: 10 },
+      selectedMode: true
+    },
+    graphic: total > 0 ? [
+      {
+        type: 'text',
+        left: 'center',
+        top: '46%',
+        style: {
+          text: total.toLocaleString(),
+          fill: textPrimary,
+          fontSize: 22,
+          fontWeight: 700,
+          textAlign: 'center'
+        }
+      },
+      {
+        type: 'text',
+        left: 'center',
+        top: '56%',
+        style: {
+          text: 'total',
+          fill: textMuted,
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: 0.6,
+          textAlign: 'center'
+        }
+      }
+    ] : undefined,
     series: [{
       name: title,
       type: 'pie',
-      radius: ['42%', '72%'],
-      center: ['50%', '58%'],
+      radius: ['50%', '76%'],
+      center: ['50%', '46%'],
       avoidLabelOverlap: true,
       label: {
-        color: '#9aa6b2',
+        show: false,
+        color: textMuted,
         fontSize: 10,
         formatter: function(p) {
           return String(p.name || '') + '\n' + String(p.value || 0);
         }
       },
-      labelLine: { length: 8, length2: 6 },
-      itemStyle: { borderColor: 'rgba(15,23,42,0.35)', borderWidth: 1 },
+      labelLine: { show: false },
+      padAngle: 2,
+      itemStyle: { borderColor: borderColor, borderWidth: 1.5 },
+      emphasis: {
+        scale: true,
+        scaleSize: 7,
+        itemStyle: {
+          borderColor: accent,
+          borderWidth: 2,
+          shadowBlur: 14,
+          shadowColor: accent + '66'
+        }
+      },
       data: rows.map(function(row) {
         return { name: row.label, value: Number(row.value || 0) };
       })

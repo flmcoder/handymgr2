@@ -1,20 +1,26 @@
 {
   "name": "handymgr2",
-  "version": "9.7.6b",
+  "version": "9.7.7B",
   "description": "HandyManager Dashboard",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "deploy": "npm run build && gh-pages -d dist",
-	"preview": "vite preview",
+    "build:gh": "vite build --base=/handymgr2/",
+    "prepare:preview-subdir": "node scripts/prepare-preview-subdir.mjs",
+    "db:health": "node scripts/turso-healthcheck.mjs",
+    "deploy": "npm run build:gh && gh-pages -d dist",
+    "preview": "vite preview",
+    "preview:4173": "vite preview --host 0.0.0.0 --port 4173 --strictPort",
+    "live": "npm run build && npm run prepare:preview-subdir && npm run preview:4173",
     "typecheck": "tsx --noSwc npx tsc --noEmit"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@libsql/client": "^0.17.3",
     "echarts": "^6.0.0"
   },
   "devDependencies": {

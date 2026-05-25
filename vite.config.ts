@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  // The base URL for GitHub Pages
-  base: '/handymgr2/', 
+  // Use relative asset paths so the build works from either / or /handymgr2/.
+  base: './',
   
   build: {
     // This is the folder GitHub Pages will actually serve

@@ -95,6 +95,18 @@ function palette(): string[] {
   ];
 }
 
+function themeTextPrimary(): string {
+  return cssVar('--text-primary') || '#19202f';
+}
+
+function themeTextMuted(): string {
+  return cssVar('--text-muted') || 'rgba(0,0,0,0.45)';
+}
+
+function themeBorder(): string {
+  return cssVar('--border') || 'rgba(15,23,42,0.16)';
+}
+
 // =============================================================================
 // Shared tooltip extraCssText (glassmorphism)
 // =============================================================================
@@ -1708,26 +1720,48 @@ async function fetchAndRenderDashboardData(): Promise<void> {
 export function buildOccupancyDonutOption(
   data: Array<{ name: string; value: number }>,
 ): ECOption {
+  const colors = palette();
   const colorMap: Record<string, string> = {
-    Occupied: "#00E676",
-    Notice: "#FFEA00",
-    "Vacant Unrented": "#FF1744",
-    "Vacant Rented": "#2979FF",
+    Occupied: colors[2],
+    Notice: colors[5],
+    "Vacant Unrented": colors[3],
+    "Vacant Rented": colors[0],
   };
   const safeData = Array.isArray(data) ? data : [];
-  const colors = safeData.map(d => colorMap[d.name] || "#888");
+  const seriesColors = safeData.map(d => colorMap[d.name] || themeTextMuted());
+  const total = safeData.reduce((sum, d) => sum + Number(d.value || 0), 0);
 
   return {
     backgroundColor: "transparent",
-    tooltip: { trigger: "item" as const },
-    color: colors,
+    tooltip: {
+      trigger: "item" as const,
+      extraCssText: GLASS_TOOLTIP,
+      formatter: (p: { name: string; value: number; percent: number }) =>
+        `<div style="font-weight:700;color:${themeTextPrimary()}">${p.name}</div>` +
+        `<div style="margin-top:4px;font-size:13px;font-weight:700;color:${themeTextPrimary()}">` +
+        `${Number(p.value || 0).toLocaleString()} <span style="font-size:11px;color:${themeTextMuted()}">(${Number(p.percent || 0).toFixed(1)}%)</span>` +
+        `</div>`,
+    },
+    color: seriesColors,
+    graphic: total > 0 ? donutCenterGraphic(total, '50%', 'Units') : undefined,
     series: [{
       name: "Portfolio Occupancy",
       type: "pie" as const,
-      radius: safeData.length > 0 ? ["40%", "70%"] : ["0%", "0%"],
+      radius: safeData.length > 0 ? ["52%", "76%"] : ["0%", "0%"],
+      center: ['50%', '48%'],
       avoidLabelOverlap: false,
-      itemStyle: { borderRadius: 10, borderColor: "#121212", borderWidth: 2 },
-      label: { show: safeData.length > 0, color: "#fff", formatter: "{b}\n{c}" },
+      padAngle: 2,
+      itemStyle: { borderRadius: 10, borderColor: themeBorder(), borderWidth: 1.5 },
+      label: { show: false, color: themeTextPrimary(), formatter: "{b}\n{c}" },
+      labelLine: { show: false },
+      emphasis: {
+        scale: true,
+        scaleSize: 7,
+        itemStyle: {
+          shadowBlur: 18,
+          shadowColor: (cssVar('--accent') || '#0f8d91') + '66',
+        },
+      },
       data: safeData,
     }],
   };
@@ -1738,19 +1772,24 @@ export function buildMoveOutsBarOption(
   labels: string[],
   values: number[],
 ): ECOption {
+  const warn = cssVar('--warning') || '#f7a816';
+  const danger = cssVar('--danger') || '#f14232';
   return {
     backgroundColor: "transparent",
-    tooltip: { trigger: "axis" as const, backgroundColor: "rgba(20,20,20,0.9)" },
+    tooltip: { trigger: "axis" as const, extraCssText: GLASS_TOOLTIP },
     grid: { left: "5%", right: "5%", bottom: "10%", top: "15%", containLabel: true },
     xAxis: {
       type: "category" as const,
       data: labels,
-      axisLabel: { color: "#888" },
+      axisLabel: { color: themeTextMuted(), rotate: labels.length > 6 ? 28 : 0, fontSize: 11 },
+      axisTick: { show: false },
+      axisLine: { show: false },
     },
     yAxis: {
       type: "value" as const,
-      splitLine: { lineStyle: { color: "#333" } },
-      axisLabel: { color: "#888" },
+      splitLine: { lineStyle: { color: 'rgba(0,0,0,0.08)', type: 'dashed' as const } },
+      axisLabel: { color: themeTextMuted(), fontSize: 11 },
+      axisLine: { show: false },
     },
     series: [{
       data: values,
@@ -1759,10 +1798,13 @@ export function buildMoveOutsBarOption(
       itemStyle: {
         borderRadius: [5, 5, 0, 0],
         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-          { offset: 0, color: "#FF9100" },
-          { offset: 1, color: "#FF3D00" },
+          { offset: 0, color: warn },
+          { offset: 1, color: danger },
         ]),
+        shadowBlur: 12,
+        shadowColor: danger + '55',
       },
+      emphasis: { focus: 'self' as const },
     }],
   };
 }
@@ -1771,20 +1813,32 @@ export function buildMoveOutsBarOption(
 export function buildPortfolioTreemapOption(
   data: Array<{ name: string; value: number }>,
 ): ECOption {
+  const colors = palette();
   const safeData = Array.isArray(data) ? data.filter(d => d && typeof d === 'object' && 'name' in d) : [];
 
   return {
     backgroundColor: "transparent",
-    tooltip: { formatter: "{b}: {c} Units" },
+    tooltip: {
+      extraCssText: GLASS_TOOLTIP,
+      formatter: "{b}: {c} Units",
+    },
     series: [{
       type: "treemap" as const,
       data: safeData,
       roam: false,
       nodeClick: false as any,
       breadcrumb: { show: false },
-      itemStyle: { borderColor: "#121212", borderWidth: 2, gapWidth: 1 },
+      itemStyle: { borderColor: themeBorder(), borderWidth: 1, gapWidth: 2, borderRadius: 6 },
+      label: {
+        show: true,
+        color: '#ffffff',
+        fontSize: 11,
+        fontWeight: 700,
+        formatter: (p: { name: string; value: number }) => `${p.name}\n${p.value}`,
+      },
+      upperLabel: { show: false },
       colorMappingBy: "value" as const,
-      color: ["#3F51B5", "#673AB7", "#9C27B0", "#E91E63"],
+      color: [colors[0], colors[1], colors[4], colors[3], colors[2], colors[5]],
     }],
   };
 }
@@ -1795,12 +1849,14 @@ export function buildLeasingVelocityOption(
   moveIns: number[],
   moveOuts: number[],
 ): ECOption {
+  const success = cssVar('--success') || '#2eb880';
+  const danger = cssVar('--danger') || '#f14232';
   return {
     backgroundColor: "transparent",
-    tooltip: { trigger: "axis" as const, backgroundColor: "rgba(20,20,20,0.9)" },
+    tooltip: { trigger: "axis" as const, extraCssText: GLASS_TOOLTIP },
     legend: {
       data: ["Move-Ins", "Move-Outs"],
-      textStyle: { color: "#e0e0e0" },
+      textStyle: { color: themeTextMuted(), fontSize: 11 },
       top: "0%",
     },
     grid: { left: "5%", right: "5%", bottom: "10%", top: "15%", containLabel: true },
@@ -1808,23 +1864,27 @@ export function buildLeasingVelocityOption(
       type: "category" as const,
       boundaryGap: false,
       data: dates,
-      axisLabel: { color: "#888" },
+      axisLabel: { color: themeTextMuted(), fontSize: 11 },
+      axisTick: { show: false },
+      axisLine: { show: false },
     },
     yAxis: {
       type: "value" as const,
-      splitLine: { lineStyle: { color: "#333" } },
-      axisLabel: { color: "#888" },
+      splitLine: { lineStyle: { color: 'rgba(0,0,0,0.08)', type: 'dashed' as const } },
+      axisLabel: { color: themeTextMuted(), fontSize: 11 },
+      axisLine: { show: false },
     },
     series: [
       {
         name: "Move-Ins",
         type: "line" as const,
         smooth: true,
-        lineStyle: { width: 3, color: "#00E676" },
+        showSymbol: false,
+        lineStyle: { width: 3, color: success },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: "rgba(0,230,118,0.5)" },
-            { offset: 1, color: "rgba(0,230,118,0)" },
+            { offset: 0, color: success + '88' },
+            { offset: 1, color: success + '08' },
           ]),
         },
         data: moveIns,
@@ -1833,11 +1893,12 @@ export function buildLeasingVelocityOption(
         name: "Move-Outs",
         type: "line" as const,
         smooth: true,
-        lineStyle: { width: 3, color: "#FF1744" },
+        showSymbol: false,
+        lineStyle: { width: 3, color: danger },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: "rgba(255,23,68,0.5)" },
-            { offset: 1, color: "rgba(255,23,68,0)" },
+            { offset: 0, color: danger + '88' },
+            { offset: 1, color: danger + '08' },
           ]),
         },
         data: moveOuts,
@@ -2003,7 +2064,7 @@ export function buildWoSankeyOption(wos: WoRecord[]): ECOption {
         borderRadius: 4,
       },
       label: {
-        color: cssVar('--text') || '#e2e8f0',
+        color: themeTextPrimary(),
         fontSize: 11,
         fontFamily: 'var(--font-mono, "Inconsolata", monospace)',
       },
