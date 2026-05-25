@@ -1553,6 +1553,27 @@ html.dark .bento-pill:hover {
 .vault-proxy-preset.active { background: var(--vault-accent-dim); border-color: var(--vault-accent-strong); color: var(--vault-accent); }
 .vault-inline-actions { display: flex; gap: 8px; margin: 8px 0 10px; }
 .vault-inline-actions .vault-proxy-preset { flex: 1; text-align: center; }
+/* Blue CTA button — used for Send OTP and Verify OTP buttons */
+.vault-cta-btn {
+  flex: 1;
+  min-height: 40px;
+  padding: 8px 14px;
+  background: linear-gradient(135deg, var(--vault-accent-strong), var(--vault-accent-alt));
+  color: #eff6ff;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  text-align: center;
+  transition: var(--transition);
+  box-shadow: 0 3px 10px rgba(55, 114, 255, 0.28);
+}
+.vault-cta-btn:hover { filter: brightness(1.12); box-shadow: 0 5px 14px rgba(55, 114, 255, 0.42); }
+.vault-cta-btn:disabled { opacity: 0.5; cursor: not-allowed; filter: none; box-shadow: none; }
 .vault-otp-verify-row.hidden { display: none; }
 .vault-otp-summary.hidden,
 .vault-otp-request-row.hidden,
