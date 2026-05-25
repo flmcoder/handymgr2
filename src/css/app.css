@@ -1260,7 +1260,7 @@ html.dark .bento-pill:hover {
 }
 .vault-logo {
   display: block;
-  max-width: 360px;
+  max-width: min(100%, 390px);
   max-height: 84px;
   width: 100%;
   height: auto;
@@ -1286,11 +1286,25 @@ html.dark .bento-pill:hover {
   margin-bottom: 6px;
 }
 .vault-subtitle {
-  font-size: 13px;
-  color: var(--vault-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: color-mix(in srgb, var(--vault-text) 82%, var(--vault-text-muted));
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: 18px;
   line-height: 1.5;
+}
+.vault-user-hint {
+  margin: -4px 0 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--vault-accent) 44%, transparent);
+  background: color-mix(in srgb, var(--vault-accent-dim) 80%, transparent);
+  color: var(--vault-text);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
 }
 .vault-input-wrap {
   position: relative;
@@ -1441,30 +1455,40 @@ html.dark .bento-pill:hover {
 .vault-back-btn:hover { color: var(--vault-accent); border-color: var(--vault-accent-strong); }
 .vault-advanced-toggle {
   display: flex; align-items: center; justify-content: center; gap: 6px;
-  font-family: var(--font-mono); font-size: 11px; color: var(--vault-text-muted);
-  cursor: pointer; margin-bottom: 12px; padding: 6px;
-  border: 1px solid var(--vault-input-border); background: var(--vault-input-bg); width: 100%;
-  border-radius: var(--radius);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--vault-text);
+  cursor: pointer;
+  margin-bottom: 12px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--vault-accent) 36%, var(--vault-input-border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--vault-input-bg) 92%, transparent) 0%, color-mix(in srgb, var(--vault-input-bg) 80%, var(--vault-accent-dim) 20%) 100%);
+  width: 100%;
+  border-radius: 12px;
   transition: var(--transition);
 }
-.vault-advanced-toggle:hover { color: var(--vault-accent); border-color: var(--vault-accent-strong); }
+.vault-advanced-toggle:hover {
+  color: #ffffff;
+  border-color: var(--vault-accent-strong);
+  box-shadow: 0 8px 18px rgba(0, 173, 234, 0.24);
+  transform: translateY(-1px);
+}
 .vault-advanced-toggle i { transition: transform 0.2s ease; font-size: 10px; }
 .vault-advanced-toggle.open i { transform: rotate(180deg); }
 .vault-resume-toggle {
-  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-  border-color: #16a34a;
-  color: #ffffff;
-  font-weight: 700;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--vault-accent-alt) 76%, #0b1221) 0%, color-mix(in srgb, var(--vault-accent-strong) 82%, #0b1221) 100%);
+  border-color: color-mix(in srgb, var(--vault-accent-strong) 72%, white 28%);
+  color: #eff6ff;
   margin-bottom: 14px;
-  padding: 10px;
-  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.35);
+  box-shadow: 0 8px 18px rgba(2, 132, 199, 0.34);
   order: -1;
 }
 .vault-resume-toggle:hover {
-  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
-  border-color: #15803d;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--vault-accent-alt) 62%, #0b1221) 0%, color-mix(in srgb, var(--vault-accent-strong) 74%, #0b1221) 100%);
+  border-color: color-mix(in srgb, var(--vault-accent-strong) 82%, white 18%);
   color: #ffffff;
-  box-shadow: 0 6px 16px rgba(34, 197, 94, 0.45);
+  box-shadow: 0 10px 22px rgba(2, 132, 199, 0.46);
   transform: translateY(-1px);
 }
 .vault-resume-toggle i { color: #ffffff; }
@@ -1556,23 +1580,29 @@ html.dark .bento-pill:hover {
 /* Blue CTA button — used for Send OTP and Verify OTP buttons */
 .vault-cta-btn {
   flex: 1;
-  min-height: 40px;
-  padding: 8px 14px;
-  background: linear-gradient(135deg, var(--vault-accent-strong), var(--vault-accent-alt));
+  min-height: 46px;
+  padding: 11px 16px;
+  background: linear-gradient(140deg, color-mix(in srgb, var(--vault-accent-strong) 82%, #0f172a) 0%, color-mix(in srgb, var(--vault-accent-alt) 78%, #0f172a) 100%);
   color: #eff6ff;
-  border: none;
-  border-radius: var(--radius);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  border: 1px solid color-mix(in srgb, var(--vault-accent-strong) 72%, white 28%);
+  border-radius: 12px;
+  font-family: var(--font-sans);
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
+  text-transform: none;
+  letter-spacing: 0.01em;
   text-align: center;
   transition: var(--transition);
-  box-shadow: 0 3px 10px rgba(55, 114, 255, 0.28);
+  box-shadow: 0 8px 18px rgba(2, 132, 199, 0.32);
 }
-.vault-cta-btn:hover { filter: brightness(1.12); box-shadow: 0 5px 14px rgba(55, 114, 255, 0.42); }
+.vault-cta-btn:hover { filter: brightness(1.1); box-shadow: 0 10px 22px rgba(2, 132, 199, 0.46); transform: translateY(-1px); }
+.vault-cta-btn:focus-visible,
+.vault-advanced-toggle:focus-visible,
+.vault-unlock-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--vault-accent-strong) 82%, white 18%);
+  outline-offset: 2px;
+}
 .vault-cta-btn:disabled { opacity: 0.5; cursor: not-allowed; filter: none; box-shadow: none; }
 .vault-otp-verify-row.hidden { display: none; }
 .vault-otp-summary.hidden,
@@ -1702,6 +1732,8 @@ html.dark .bento-pill:hover {
 
 @media (max-width: 768px) {
   .vault-unlock-btn,
+  .vault-resume-toggle,
+  .vault-cta-btn,
   .vault-pm-toggle {
     min-height: 50px;
     padding: 13px;
@@ -1728,6 +1760,11 @@ html.dark .bento-pill:hover {
     right: auto;
     left: 10px;
   }
+}
+
+/* Remove repeated descriptive subtitles beneath section titles for cleaner pages. */
+.section-subtitle {
+  display: none !important;
 }
 
 /* ===================== APP SHELL (hidden until unlock) ===================== */
@@ -1776,8 +1813,8 @@ html.dark .bento-pill:hover {
 .topbar-logo {
   display: flex;
   align-items: center;
-  flex: 0 1 clamp(132px, 18vw, 240px);
-  min-width: 110px;
+  flex: 0 1 clamp(150px, 21vw, 280px);
+  min-width: 128px;
 }
 .topbar-logo i { font-size: 18px; }
 .topbar-divider { width: 1px; height: 24px; background: var(--border); }
@@ -2042,8 +2079,8 @@ html.dark .messages-btn:hover {
   box-shadow: var(--shadow-sm);
 }
 .sidebar-brand-logo {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   display: block;
   object-fit: contain;
 }

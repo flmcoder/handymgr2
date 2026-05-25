@@ -93,7 +93,9 @@ function resetAppScrollToTop() {
 }
 
 var BRAND_NAME_DEFAULT = 'Fort Lowell Realty & Maintenance';
-var BRAND_LOGO_DEFAULT = 'assets/logo.png';
+var BRAND_BANNER_DEFAULT = 'assets/logo.png';
+var BRAND_ICON_DEFAULT = 'assets/favico.png';
+var BRAND_ICON_FALLBACK = 'assets/favicon.svg';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
@@ -137,7 +139,14 @@ function applyBrandConfig(brand) {
   if (!brand || typeof brand !== 'object') return;
   try {
     if (brand.logo_url !== undefined) {
+      localStorage.setItem('hm_brand_banner', String(brand.logo_url || '').trim());
       localStorage.setItem('hm_brand_logo', String(brand.logo_url || '').trim());
+    }
+    if (brand.banner_url !== undefined) {
+      localStorage.setItem('hm_brand_banner', String(brand.banner_url || '').trim());
+    }
+    if (brand.icon_url !== undefined) {
+      localStorage.setItem('hm_brand_icon', String(brand.icon_url || '').trim());
     }
     if (brand.name !== undefined) {
       localStorage.setItem('hm_brand_name', String(brand.name || '').trim());
@@ -146,24 +155,58 @@ function applyBrandConfig(brand) {
   applyBrandLogo();
 }
 
-function resolveBrandLogo() {
+function resolveBrandBanner() {
   var logoFromQuery = '';
   try {
     var params = new URLSearchParams(window.location.search || '');
-    logoFromQuery = String(params.get('logo') || '').trim();
+    logoFromQuery = String(params.get('banner') || params.get('logo') || '').trim();
   } catch (_) {}
 
   var logoFromStorage = '';
   try {
-    logoFromStorage = String(localStorage.getItem('hm_brand_logo') || '').trim();
+    logoFromStorage = String(localStorage.getItem('hm_brand_banner') || localStorage.getItem('hm_brand_logo') || '').trim();
   } catch (_) {}
 
-  return logoFromQuery || logoFromStorage || BRAND_LOGO_DEFAULT;
+  return logoFromQuery || logoFromStorage || BRAND_BANNER_DEFAULT;
+}
+
+function resolveBrandIcon() {
+  var iconFromQuery = '';
+  try {
+    var params = new URLSearchParams(window.location.search || '');
+    iconFromQuery = String(params.get('icon') || params.get('favicon') || '').trim();
+  } catch (_) {}
+
+  var iconFromStorage = '';
+  try {
+    iconFromStorage = String(localStorage.getItem('hm_brand_icon') || '').trim();
+  } catch (_) {}
+
+  return iconFromQuery || iconFromStorage || BRAND_ICON_DEFAULT;
+}
+
+function setFaviconHref(href) {
+  var link = document.getElementById('appFavicon');
+  if (!link || !href) return;
+  link.setAttribute('href', href);
+}
+
+function applyBrandFavicon(iconSrc) {
+  if (!iconSrc) {
+    setFaviconHref(BRAND_ICON_FALLBACK);
+    return;
+  }
+  var probe = new Image();
+  probe.onload = function() { setFaviconHref(iconSrc); };
+  probe.onerror = function() { setFaviconHref(BRAND_ICON_FALLBACK); };
+  probe.src = iconSrc;
 }
 
 function applyBrandLogo() {
-  var src = resolveBrandLogo();
-  ['vaultLogoImg', 'topbarLogoImg'].forEach(function(id) {
+  var bannerSrc = resolveBrandBanner();
+  var iconSrc = resolveBrandIcon();
+
+  ['vaultLogoImg', 'vaultLogoImgPm', 'topbarLogoImg'].forEach(function(id) {
     var img = document.getElementById(id);
     if (!img) return;
 
@@ -176,8 +219,26 @@ function applyBrandLogo() {
       img.src = BRAND_LOGO_FALLBACK;
     };
 
-    img.src = src;
+    img.src = bannerSrc;
   });
+
+  ['sidebarLogoImg'].forEach(function(id) {
+    var img = document.getElementById(id);
+    if (!img) return;
+
+    img.onerror = function() {
+      if (img.dataset.fallbackApplied === '1') {
+        img.style.display = 'none';
+        return;
+      }
+      img.dataset.fallbackApplied = '1';
+      img.src = BRAND_ICON_FALLBACK;
+    };
+
+    img.src = iconSrc;
+  });
+
+  applyBrandFavicon(iconSrc);
 
   try {
     var storedName = String(localStorage.getItem('hm_brand_name') || '').trim();
@@ -403,7 +464,7 @@ function setResumeSessionState(sessionPayload) {
   }
 
   var roleLabel = String(_pendingResumeSession.role || 'session');
-  hint.textContent = 'Verified ' + roleLabel + ' session found. Click Resume Session to continue.';
+  hint.textContent = 'Authenticated ' + roleLabel + ' session available. Use Resume Previous Session to continue.';
   hint.style.display = '';
   resumeBtn.style.display = '';
   resumeBtn.classList.remove('vault-advanced-toggle');

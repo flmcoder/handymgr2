@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#3578e5">
 <title>HandyManager - An AppFolio Utility</title>
-<link rel="icon" href="assets/favicon.svg" />
+<link rel="icon" id="appFavicon" href="assets/favicon.svg" />
 <link rel="manifest" href="manifest.webmanifest" />
 
 
@@ -21,8 +21,8 @@
     <button class="vault-config-btn vault-theme-btn" id="vaultThemeToggle" type="button" title="Toggle light/dark mode" aria-label="Toggle light/dark mode"><i class="fas fa-moon"></i></button>
     <button class="vault-config-btn" id="advancedToggle" type="button" title="Proxy settings" aria-label="Proxy settings"><i class="fas fa-cog"></i></button>
     <div class="vault-panel" id="vaultMainPanel">
-      <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
-      <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Sign in to continue.</div>
+      <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg" decoding="async" fetchpriority="high">
+      <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Secure Sign-In</div>
       <div class="vault-user-hint" id="vaultUserHint" style="display:none"></div>
       <div style="display:flex;justify-content:center;margin:-10px 0 14px">
         <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
@@ -38,13 +38,13 @@
       </div>
       <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
       <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
-      <button class="vault-advanced-toggle vault-resume-toggle" id="vaultResumeBtn" type="button" style="display:none"><i class="fas fa-history"></i> Restore Session</button>
+      <button class="vault-advanced-toggle vault-resume-toggle" id="vaultResumeBtn" type="button" style="display:none"><i class="fas fa-history"></i> Resume Previous Session</button>
       <button class="vault-advanced-toggle vault-pm-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
     </div>
 
     <div class="vault-panel hidden" id="vaultPmPanel" aria-hidden="true">
       <button type="button" class="vault-back-btn" id="pmLoginBackBtn"><i class="fas fa-arrow-left"></i> Back to standard login</button>
-      <img src="assets/logo.png" alt="HandyManager" class="vault-logo">
+      <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImgPm" decoding="async">
       <div class="vault-subtitle" style="margin-top:4px">PM Login via OTP</div>
       <div class="vault-vhost-hint">URL: <code><span id="vhostPreviewPm">flraz</span>.appfolio.com</code></div>
       <div class="vault-otp-route" id="vaultOtpRoute" aria-hidden="false">
@@ -95,7 +95,7 @@
 <!-- Top Bar -->
 <div class="topbar">
   <div class="topbar-left">
-    <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
+    <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg" decoding="async"></div>
     <div class="topbar-divider"></div>
     <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.7.7B</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
@@ -122,7 +122,7 @@
 <nav class="nav-tabs" id="navTabs">
   <!-- Sidebar Brand -->
   <div class="sidebar-brand">
-    <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
+    <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo" id="sidebarLogoImg" decoding="async"></div>
     <div>
       <div class="sidebar-brand-text">HandyMgr</div>
       <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.7.7B</div>
