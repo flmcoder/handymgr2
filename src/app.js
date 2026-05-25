@@ -4744,6 +4744,12 @@ if ($('#advancedToggle')) {
   });
 }
 
+// Bind vault theme toggle during vault setup so it works before full app init.
+if ($('#vaultThemeToggle') && $('#vaultThemeToggle').dataset.bound !== '1') {
+  $('#vaultThemeToggle').addEventListener('click', function() { toggleTheme(); });
+  $('#vaultThemeToggle').dataset.bound = '1';
+}
+
 function setVaultPanel(panel) {
   var main = $('#vaultMainPanel');
   var pm = $('#vaultPmPanel');
@@ -4771,6 +4777,7 @@ if ($('#btnRefreshOwnerReports')) {
 
 if ($('#pmLoginBackBtn')) {
   $('#pmLoginBackBtn').addEventListener('click', function() {
+    setVaultPanel('main');
     setPmOtpStep('request');
     stopOtpCountdown();
     setVaultFeedback('', '');
@@ -20860,8 +20867,9 @@ function wireUpUI() {
 
   // Theme toggle
   $('#themeToggle').addEventListener('click', function() { toggleTheme(); });
-  if ($('#vaultThemeToggle')) {
+  if ($('#vaultThemeToggle') && $('#vaultThemeToggle').dataset.bound !== '1') {
     $('#vaultThemeToggle').addEventListener('click', function() { toggleTheme(); });
+    $('#vaultThemeToggle').dataset.bound = '1';
   }
   updateThemeIcon(); // sync icon with initial state
 

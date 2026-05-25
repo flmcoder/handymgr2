@@ -1422,6 +1422,7 @@ html.dark .bento-pill:hover {
   color: var(--vault-text-muted);
   cursor: pointer;
   transition: var(--transition);
+  touch-action: manipulation;
   z-index: 3;
 }
 .vault-theme-btn {
@@ -1432,6 +1433,10 @@ html.dark .bento-pill:hover {
   color: var(--vault-accent);
   border-color: var(--vault-accent-strong);
   background: rgba(15, 23, 42, 0.9);
+}
+.vault-config-btn:active {
+  transform: translateY(1px) scale(0.98);
+  filter: brightness(0.96);
 }
 .vault-config-btn.open {
   color: var(--vault-accent);
@@ -1450,9 +1455,15 @@ html.dark .bento-pill:hover {
   border-radius: var(--radius);
   padding: 6px 10px;
   cursor: pointer;
+  touch-action: manipulation;
+  transition: var(--transition);
   margin-bottom: 12px;
 }
 .vault-back-btn:hover { color: var(--vault-accent); border-color: var(--vault-accent-strong); }
+.vault-back-btn:active {
+  transform: translateY(1px) scale(0.99);
+  filter: brightness(0.96);
+}
 .vault-advanced-toggle {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   font-family: var(--font-sans);
