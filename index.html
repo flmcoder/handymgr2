@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#3578e5">
 <title>HandyManager - An AppFolio Utility</title>
-<link rel="icon" href="./assets/favicon.svg" />
-<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="icon" href="assets/favicon.svg" />
+<link rel="manifest" href="manifest.webmanifest" />
 
 
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=Karla:wght@400;500;600;700&family=Inconsolata:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <script type="module" crossorigin src="/handymgr2/assets/index-BHPc9_na.js"></script>
-  <link rel="stylesheet" crossorigin href="/handymgr2/assets/index-DiWwpqZQ.css">
+  <script type="module" crossorigin src="/handymgr2/assets/index.js"></script>
+  <link rel="stylesheet" crossorigin href="/handymgr2/assets/index.css">
 </head>
 <body class="theme-neo dashboard-skin-neo-on">
 <div id="topLoadBar" aria-hidden="true"></div>
@@ -24,7 +24,7 @@
     <button class="vault-config-btn" id="advancedToggle" type="button" title="Proxy settings" aria-label="Proxy settings"><i class="fas fa-cog"></i></button>
     <div class="vault-panel" id="vaultMainPanel">
       <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
-      <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Sign in to continue.</div>
+      <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Secure Sign-In</div>
       <div class="vault-user-hint" id="vaultUserHint" style="display:none"></div>
       <div style="display:flex;justify-content:center;margin:-10px 0 14px">
         <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
@@ -40,7 +40,7 @@
       </div>
       <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
       <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
-      <button class="vault-advanced-toggle" id="vaultResumeBtn" type="button" style="display:none"><i class="fas fa-history"></i> Resume Session</button>
+      <button class="vault-advanced-toggle vault-resume-toggle" id="vaultResumeBtn" type="button" style="display:none"><i class="fas fa-history"></i> Resume Previous Session</button>
       <button class="vault-advanced-toggle vault-pm-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
     </div>
 
@@ -55,7 +55,7 @@
           <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="text">
         </div>
         <div class="vault-inline-actions vault-otp-request-row" id="vaultOtpRequestActions">
-          <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
+          <button type="button" class="vault-cta-btn" id="btnSendOtp">Send OTP</button>
         </div>
         <div class="vault-otp-summary hidden" id="vaultOtpSentSummary">
           <div class="vault-otp-summary-label">OTP sent to</div>
@@ -69,8 +69,12 @@
           <input type="text" class="vault-input" id="vaultOtpCode" placeholder="Enter 6-digit OTP" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
         </div>
         <div class="vault-inline-actions">
-          <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify OTP</button>
+          <button type="button" class="vault-cta-btn" id="btnVerifyOtp">Verify OTP</button>
         </div>
+        </div>
+        <div class="vault-otp-countdown" id="vaultOtpCountdown" style="display:none">
+          <span class="vault-otp-countdown-icon"><i class="fas fa-clock"></i></span>
+          <span class="vault-otp-countdown-text">Code expires in <strong id="vaultOtpCountdownTime">10:00</strong></span>
         </div>
         <div class="vault-proxy-hint">We send your one-time code to your RingCentral phone number on file.</div>
       </div>
@@ -78,12 +82,12 @@
     <div class="vault-advanced-panel vault-shared-settings" id="advancedPanel">
       <label class="vault-proxy-label">Proxy Relay URL</label>
       <div class="vault-input-wrap">
-        <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
+    <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
       </div>
       <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.7.5</span></div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.7.7B</span></div>
   </div>
 </div>
 
@@ -95,7 +99,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.7.5</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.7.7B</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -123,7 +127,7 @@
     <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
     <div>
       <div class="sidebar-brand-text">HandyMgr</div>
-      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.7.5</div>
+      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.7.7B</div>
     </div>
   </div>
 
@@ -195,174 +199,105 @@
 
 <section class="section active hm-neo-dashboard" id="sec-dashboard">
   <div id="filterIndicator" class="u-hidden"></div>
-  <!-- ── Bento KPI Grid ─────────────────────────────────────────────────── -->
-  <div class="bento-grid stagger" id="dashBentoGrid">
-
-    <!-- Top row: 4 compact pill summary cards -->
-    <div class="bento-pill amber kpi-clickable" data-kpi="open">
-      <div class="bento-pill__icon"><i class="fas fa-clipboard-list"></i></div>
-      <div class="bento-pill__body">
-        <div class="bento-pill__label">Open Work Orders</div>
-        <div class="bento-pill__value" id="kpiOpen">—</div>
-        <div class="bento-pill__sub" id="kpiOpenSub">Loading…</div>
+  <!-- ── Dashboard Hero Section ─────────────────────────────────────────── -->
+  <div class="dashboard-hero">
+    <!-- KPI Metrics Bar -->
+    <div class="metrics-bar">
+      <div class="metric-card" data-kpi="open">
+        <div class="metric-value" id="kpiOpen">—</div>
+        <div class="metric-label">Open Work Orders</div>
+        <div class="metric-delta" id="kpiOpenSub">Loading…</div>
       </div>
-    </div>
-    <div class="bento-pill red kpi-clickable" data-kpi="urgent">
-      <div class="bento-pill__icon"><i class="fas fa-bolt"></i></div>
-      <div class="bento-pill__body">
-        <div class="bento-pill__label">Urgent / Critical</div>
-        <div class="bento-pill__value" id="kpiUrgent">—</div>
-        <div class="bento-pill__sub" id="kpiUrgentSub">Loading…</div>
+      <div class="metric-card urgent" data-kpi="urgent">
+        <div class="metric-value" id="kpiUrgent">—</div>
+        <div class="metric-label">Urgent / Critical</div>
+        <div class="metric-delta" id="kpiUrgentSub">Loading…</div>
       </div>
-    </div>
-    <div class="bento-pill blue kpi-clickable" data-kpi="turns">
-      <div class="bento-pill__icon"><i class="fas fa-film"></i></div>
-      <div class="bento-pill__body">
-        <div class="bento-pill__label">Active Turns</div>
-        <div class="bento-pill__value" id="kpiTurns">—</div>
-        <div class="bento-pill__sub" id="kpiTurnsSub">Loading…</div>
+      <div class="metric-card" data-kpi="turns">
+        <div class="metric-value" id="kpiTurns">—</div>
+        <div class="metric-label">Active Turns</div>
+        <div class="metric-delta" id="kpiTurnsSub">Loading…</div>
       </div>
-    </div>
-    <div class="bento-pill green kpi-clickable" data-kpi="moveouts">
-      <div class="bento-pill__icon"><i class="fas fa-door-open"></i></div>
-      <div class="bento-pill__body">
-        <div class="bento-pill__label">Upcoming Move-Outs</div>
-        <div class="bento-pill__value" id="kpiMoveOuts">—</div>
-        <div class="bento-pill__sub" id="kpiMoveOutsSub">Loading…</div>
+      <div class="metric-card" data-kpi="moveouts">
+        <div class="metric-value" id="kpiMoveOuts">—</div>
+        <div class="metric-label">Move-Outs (60d)</div>
+        <div class="metric-delta" id="kpiMoveOutsSub">Loading…</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value" id="kpiVacancyGroups">—</div>
+        <div class="metric-label">Vacancies</div>
+        <div class="metric-delta">By group</div>
       </div>
     </div>
 
-    <!-- Middle row: large chart card spanning 3 cols — PM grouped bar chart -->
-    <div class="bento-card bento-card--chart-main" id="managerOverviewSection">
-      <div class="bento-card__header">
-        <div class="bento-card__title">
-          <i class="fas fa-chart-bar" style="color:var(--info)"></i>
-          PM Performance Comparison
+    <!-- Main Chart Area -->
+    <div class="chart-row">
+      <div class="chart-panel main">
+        <div class="chart-header">
+          <h3><i class="fas fa-chart-bar"></i> Work Order Analytics</h3>
+          <div class="chart-legend" id="dashMainLegend"></div>
         </div>
-        <div class="bento-card__meta" id="kpiMgrChartMeta">Fort Lowell Realty &amp; Property Management</div>
+        <div class="chart-body" id="dashMainChart"></div>
       </div>
-      <div class="bento-card__kpi-strip">
-        <div class="bento-stat red">
-          <div class="bento-stat__label">Avg Turnover</div>
-          <div class="bento-stat__value" id="kpiMgrAvgTurnCompletion">—</div>
-          <div class="bento-stat__sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div>
-        </div>
-        <div class="bento-stat amber">
-          <div class="bento-stat__label">Avg Inspection Age</div>
-          <div class="bento-stat__value" id="kpiMgrAvgInspectionAge">—</div>
-          <div class="bento-stat__sub" id="kpiMgrAvgInspectionAgeSub">Loading…</div>
-        </div>
-        <div class="bento-stat blue">
-          <div class="bento-stat__label">Avg WO Open Days</div>
-          <div class="bento-stat__value" id="kpiMgrAvgWOCompletion">—</div>
-          <div class="bento-stat__sub" id="kpiMgrAvgWOCompletionSub">Loading…</div>
-        </div>
-        <div class="bento-stat green">
-          <div class="bento-stat__label">Completed Turns</div>
-          <div class="bento-stat__value" id="kpiMgrCompletedTurns">—</div>
-          <div class="bento-stat__sub" id="kpiMgrCompletedTurnsSub">Loading…</div>
-        </div>
-      </div>
-      <!-- ECharts grouped bar chart target -->
-      <div class="bento-chart-host" id="dashPmBarChart" aria-label="PM Performance Grouped Bar Chart"></div>
-    </div>
 
-    <!-- Side column: open WOs by age chart card -->
-    <div class="bento-card bento-card--chart-side collapsible-panel collapsed" id="kpiVacancyCard">
-      <div class="bento-card__header">
-        <div class="bento-card__title">
-          <i class="fas fa-hourglass-half" style="color:var(--warning)"></i>
-          Open WOs by Age
+      <div class="chart-panel side">
+        <div class="chart-header">
+          <h3><i class="fas fa-hourglass-half"></i> Aging Distribution</h3>
         </div>
-        <div class="bento-card__meta" id="kpiVacancyGroupsSub">Loading…</div>
-        <i class="fas fa-chevron-down collapse-indicator"></i>
-      </div>
-      <div class="panel-body">
-        <!-- ECharts bar chart target — open WO age buckets -->
-        <div class="bento-chart-host" id="dashStatusDonutChart" aria-label="Open WOs by Age Chart"></div>
-        <div class="bento-donut-legend" id="dashDonutLegend"></div>
+        <div class="chart-body" id="dashAgingChart"></div>
       </div>
     </div>
 
-    <!-- Bottom row: remaining two pill cards -->
-    <div class="bento-pill purple kpi-clickable" data-kpi="flagged">
-      <div class="bento-pill__icon"><i class="fas fa-flag"></i></div>
-      <div class="bento-pill__body">
-        <div class="bento-pill__label">Flagged for Follow-Up</div>
-        <div class="bento-pill__value" id="kpiFlagged">—</div>
-        <div class="bento-pill__sub" id="kpiFlaggedSub">Loading…</div>
+    <!-- Portfolio Charts Row -->
+    <div class="chart-row">
+      <div class="chart-panel">
+        <div class="chart-header">
+          <h3><i class="fas fa-building"></i> Occupancy</h3>
+          <div class="chart-legend" id="dashOccupancyMeta">Loading…</div>
+        </div>
+        <div class="chart-body" id="dashOccupancyDonut"></div>
       </div>
-    </div>
-    <div class="bento-pill amber">
-      <div class="bento-pill__icon"><i class="fas fa-file-invoice-dollar"></i></div>
-      <div class="bento-pill__body">
-        <div class="bento-pill__label">Pending Bill Approvals</div>
-        <div class="bento-pill__value" id="kpiPendingBills">—</div>
-        <div class="bento-pill__sub" id="kpiPendingBillsSub">Loading…</div>
-      </div>
-    </div>
-    <div class="bento-pill teal" id="kpiVacancyPill">
-      <div class="bento-pill__icon"><i class="fas fa-building"></i></div>
-      <div class="bento-pill__body">
-        <div class="bento-pill__label">Vacancies by Group</div>
-        <div class="bento-pill__value" id="kpiVacancyGroups">—</div>
-        <div class="bento-pill__sub">Active vacancy snapshot</div>
-      </div>
-    </div>
 
-  </div>
-  <!-- ── /Bento KPI Grid ──────────────────────────────────────────────────── -->
+      <div class="chart-panel">
+        <div class="chart-header">
+          <h3><i class="fas fa-door-open"></i> Move-Outs</h3>
+          <div class="chart-legend" id="dashMoveOutsMeta">Loading…</div>
+        </div>
+        <div class="chart-body" id="dashMoveOutsBar"></div>
+      </div>
 
-  <div class="dashboard-visual-lane">
-    <div class="table-wrapper visual-panel visual-panel--signal neo-surface-raised" id="dashboardSignalPanel">
-      <div class="table-header visual-panel__header">
-        <div>
-          <div class="table-title"><i class="fas fa-wave-square" style="color:var(--accent)"></i> Operations Pulse</div>
-          <div class="section-subtitle">A quick mission-control read on what needs attention now.</div>
+      <div class="chart-panel">
+        <div class="chart-header">
+          <h3><i class="fas fa-chart-pie"></i> Portfolio</h3>
+          <div class="chart-legend" id="dashPortfolioTreeMeta">Loading…</div>
         </div>
+        <div class="chart-body" id="dashPortfolioTreemap"></div>
       </div>
-      <div class="visual-panel__body">
-        <div class="signal-headline" id="dashSignalHeadline">Loading operational signal…</div>
-        <div class="signal-meta" id="dashSignalMeta">Checking work orders, inspections, turns, bills, and alerts…</div>
-        <div class="signal-chip-grid" id="dashSignalChips"></div>
-      </div>
-    </div>
 
-    <div class="table-wrapper visual-panel visual-panel--followup neo-surface-raised" id="staleDataPanel">
-      <div class="table-header visual-panel__header">
-        <div>
-          <div class="table-title"><i class="fas fa-hourglass-half" style="color:var(--warning)"></i> Follow-Up Queue</div>
-          <div class="section-subtitle">Old data, missing actions, and compliance drift worth chasing down.</div>
+      <div class="chart-panel">
+        <div class="chart-header">
+          <h3><i class="fas fa-tachometer-alt"></i> Leasing Velocity</h3>
+          <div class="chart-legend" id="dashVelocityMeta">Loading…</div>
         </div>
-      </div>
-      <div class="visual-panel__body">
-        <div class="stale-data-list" id="staleDataList">
-          <div class="u-empty-state">Loading follow-up items…</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="table-wrapper visual-panel visual-panel--pager neo-surface-raised collapsible-panel collapsed" id="pagerPreviewPanel">
-      <div class="table-header visual-panel__header">
-        <div>
-          <div class="table-title"><i class="fas fa-inbox" style="color:var(--info)"></i> Inbox</div>
-          <div class="section-subtitle">Messages and operational alerts will appear here.</div>
-        </div>
-        <span class="coming-soon-badge">Coming Soon</span>
-        <i class="fas fa-chevron-down collapse-indicator"></i>
-      </div>
-      <div class="panel-body visual-panel__body">
-        <div class="pager-preview" id="pagerPreviewList">
-          <div class="u-empty-state"><i class="fas fa-hard-hat" style="margin-right:6px"></i> Under construction — No Messages. Items will appear here.</div>
-        </div>
-        <div class="pager-preview__actions">
-          <button class="action-btn primary pager-open-btn" id="dashOpenPager" type="button"><i class="fas fa-inbox"></i> Open Inbox</button>
-        </div>
+        <div class="chart-body" id="dashLeasingVelocity"></div>
       </div>
     </div>
   </div>
+  <!-- ── /Dashboard Hero ────────────────────────────────────────────── -->
 
-  <div class="table-wrapper neo-surface-raised" style="margin-bottom:20px" id="turnDashboardSection">
+  <!-- ═══════════════════════════════════════════════════════
+     Sector: Turn Progress (Collapsed by default)
+     ═══════════════════════════════════════════════════════ -->
+  <div class="sector-panel sector-panel--collapsed" id="sector-turns" data-sector="turns">
+    <div class="sector-header">
+      <div class="sector-header__title">
+        <i class="fas fa-film" style="color:var(--accent)"></i>
+        <span>Turn Progress Dashboard</span>
+      </div>
+      <button class="sector-pin-btn" title="Pin section open"><i class="fas fa-thumbtack"></i></button>
+      <i class="fas fa-chevron-down sector-indicator"></i>
+    </div>
+    <div class="sector-body"><div class="table-wrapper neo-surface-raised" style="margin-bottom:20px" id="turnDashboardSection">
     <div class="table-header">
       <div>
         <div class="table-title"><i class="fas fa-film" style="color:var(--accent)"></i> Turn Progress Dashboard</div>
@@ -393,12 +328,27 @@
     </div>
   </div>
 
-  <!-- Attention Required — Stalled Turns + Overdue Inspections + Vendor Alerts -->
-  <div class="table-wrapper neo-surface-raised action-board-shell" style="margin-bottom:20px" id="attentionSection">
-    <div class="table-header">
-      <div class="table-title"><i class="fas fa-exclamation-circle" style="color:var(--danger)"></i> Attention Required</div>
     </div>
-    <div id="attentionGrid" class="action-board">
+  </div> <!-- /sector-turns -->
+
+  <!-- ═════════════════════════════════════════════════════
+     Sector: Attention Required (Expanded by default)
+     ═════════════════════════════════════════════════════ -->
+  <div class="sector-panel sector-panel--expanded" id="sector-attention" data-sector="attention">
+    <div class="sector-header">
+      <div class="sector-header__title">
+        <i class="fas fa-exclamation-circle" style="color:var(--danger)"></i>
+        <span>Attention Required</span>
+      </div>
+      <button class="sector-pin-btn" title="Pin section open"><i class="fas fa-thumbtack"></i></button>
+      <i class="fas fa-chevron-down sector-indicator"></i>
+    </div>
+    <div class="sector-body">
+      <div class="table-wrapper neo-surface-raised action-board-shell">
+        <div class="table-header">
+          <div class="table-title"><i class="fas fa-exclamation-circle" style="color:var(--danger)"></i> Attention Required</div>
+        </div>
+        <div id="attentionGrid" class="action-board">
       <div id="attentionStalled" class="attention-card attention-card--danger">
         <div class="attention-card-title"><i class="fas fa-hourglass-half" style="color:var(--warning)"></i> Stalled Turns</div>
         <div id="attentionStalledBody" class="attention-card__body">Loading…</div>
@@ -420,9 +370,23 @@
         <div id="attentionBillsBody" class="attention-card__body">Loading…</div>
       </div>
     </div>
-  </div>
+      </div>
+    </div>
+  </div> <!-- /sector-attention -->
 
-  <div class="table-wrapper neo-surface-raised collapsible-panel collapsed" style="margin-bottom:20px" id="dashboardInsightsSection">
+  <!-- ═══════════════════════════════════════════════════════
+     Sector: Portfolio Insights (Collapsed by default)
+     ═══════════════════════════════════════════════════════ -->
+  <div class="sector-panel sector-panel--collapsed" id="sector-insights" data-sector="insights">
+    <div class="sector-header">
+      <div class="sector-header__title">
+        <i class="fas fa-chart-pie" style="color:var(--info)"></i>
+        <span>Portfolio Insights</span>
+      </div>
+      <button class="sector-pin-btn" title="Pin section open"><i class="fas fa-thumbtack"></i></button>
+      <i class="fas fa-chevron-down sector-indicator"></i>
+    </div>
+    <div class="sector-body">
     <div class="table-header">
       <div>
         <div class="table-title"><i class="fas fa-chart-pie" style="color:var(--info)"></i> Portfolio Insights</div>
@@ -460,20 +424,40 @@
            </header>
            <div class="bento-insight-chart-host" id="dashInspectionMap"></div>
          </article>
-         <article class="bento-insight-card" id="dashInsightTurnFunnelCard">
+          <article class="bento-insight-card" id="dashInsightTurnFunnelCard">
+            <header class="bento-insight-card__header">
+              <h4>Turnover Pipeline</h4>
+              <span class="bento-insight-card__meta" id="dashTurnoverFunnelMeta">Loading…</span>
+            </header>
+            <div class="bento-insight-chart-host" id="dashTurnoverFunnel"></div>
+          </article>
+
+         <article class="bento-insight-card bento-insight-card--wide" id="dashInsightSankeyCard">
            <header class="bento-insight-card__header">
-             <h4>Turnover Pipeline</h4>
-             <span class="bento-insight-card__meta" id="dashTurnoverFunnelMeta">Loading…</span>
+             <h4>WO Flow</h4>
+             <span class="bento-insight-card__meta" id="dashSankeyMeta">Loading…</span>
            </header>
-           <div class="bento-insight-chart-host" id="dashTurnoverFunnel"></div>
+           <div class="bento-insight-chart-host" id="dashSankeyChart" style="min-height:320px"></div>
          </article>
-      </div>
+       </div>
     </div>
   </div>
+  </div> <!-- /sector-insights -->
 
-  <!-- Two-Column: Move-Outs + Activity Feed -->
-  <div class="dash-columns dashboard-support-grid">
-    <div class="table-wrapper neo-surface-raised" id="moveOutSection">
+  <!-- ═══════════════════════════════════════════════════════
+     Sector: Move-Outs & Activity (Collapsed by default)
+     ═══════════════════════════════════════════════════════ -->
+  <div class="sector-panel sector-panel--collapsed" id="sector-moveouts" data-sector="moveouts">
+    <div class="sector-header">
+      <div class="sector-header__title">
+        <i class="fas fa-door-open" style="color:var(--warning)"></i>
+        <span>Move-Outs & Activity</span>
+      </div>
+      <button class="sector-pin-btn" title="Pin section open"><i class="fas fa-thumbtack"></i></button>
+      <i class="fas fa-chevron-down sector-indicator"></i>
+    </div>
+    <div class="sector-body">
+      <div class="table-wrapper neo-surface-raised" id="moveOutSection">
       <div class="table-header">
         <div class="table-title"><i class="fas fa-door-open" style="color:var(--warning)"></i> Upcoming Move-Outs (60 days)</div>
       </div>
@@ -500,7 +484,9 @@
       </div>
       <div class="table-scroll"><table class="data-table" id="activityTable"><thead><tr><th>Time</th><th>Event</th><th>Entity</th><th>Details</th></tr></thead><tbody id="activityBody"></tbody></table></div>
     </div>
-  </div>
+    </div>
+  </div> <!-- /sector-moveouts -->
+
 </section>
 
 <section class="section" id="sec-workorders">
@@ -1101,11 +1087,30 @@
       </div>
     </div>
     <div class="section-subtabs" id="propertiesSubtabs">
+      <button class="section-subtab" data-properties-subtab="reports"><i class="fas fa-file-invoice-dollar"></i> Owner Reports</button>
       <button class="section-subtab active" data-properties-subtab="directory"><i class="fas fa-table"></i> Directory</button>
       <button class="section-subtab" data-properties-subtab="performance"><i class="fas fa-chart-line"></i> Performance</button>
       <button class="section-subtab" data-properties-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
       <button class="section-subtab" data-properties-subtab="renewals"><i class="fas fa-file-signature"></i> Renewals</button>
       <button class="section-subtab" data-properties-subtab="bulk"><i class="fas fa-pen-to-square"></i> Bulk Notes</button>
+    </div>
+    <div class="section-subpanel" id="properties-subpanel-reports" style="display:none">
+      <div class="table-wrapper">
+        <div class="table-header">
+          <div class="table-title"><i class="fas fa-file-invoice-dollar" style="color:var(--accent)"></i> Owner Reports</div>
+          <div class="u-toolbar-row">
+            <button class="action-btn" id="btnRefreshOwnerReports"><i class="fas fa-sync-alt"></i> Refresh</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="ownerReportsTable">
+            <thead><tr>
+              <th>Report Type</th><th>Description</th><th>Property Group</th><th>Actions</th>
+            </tr></thead>
+            <tbody id="ownerReportsBody"><tr><td colspan="4" class="u-table-empty-cell">Click Refresh to load available reports</td></tr></tbody>
+          </table>
+        </div>
+      </div>
     </div>
     <div class="section-subpanel active" id="properties-subpanel-directory">
     <div class="table-scroll">
