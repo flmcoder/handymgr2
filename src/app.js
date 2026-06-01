@@ -4947,7 +4947,9 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   $('#vaultScreen').style.display = 'none';
   $('#appShell').classList.add('unlocked');
   applyAccessRole();
-  await initApp();
+  initApp().catch(function(err) {
+    console.warn('initApp background bootstrap failed:', err && (err.message || err));
+  });
   maybeAutoRunSystemHealthCheck();
   if (_accessRole === 'pm_readonly') {
     try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (eScope) { /* */ }
