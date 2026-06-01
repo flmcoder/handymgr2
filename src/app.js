@@ -93,14 +93,12 @@ function resetAppScrollToTop() {
 }
 
 var BRAND_NAME_DEFAULT = 'Fort Lowell Realty & Maintenance';
-var BRAND_BANNER_DEFAULT = 'assets/logo.png';
-var BRAND_ICON_DEFAULT = 'assets/favico.png';
-var BRAND_ICON_FALLBACK = 'assets/favicon.svg';
+var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
 var APP_VERSION = 'v9.7.7B';
-var DEFAULT_PROXY_URL = 'https://afproxy.val.run';
+var DEFAULT_PROXY_URL = 'https://flr-appfolio.val.run';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 var DASHBOARD_KPI_HISTORY = [];
@@ -139,14 +137,7 @@ function applyBrandConfig(brand) {
   if (!brand || typeof brand !== 'object') return;
   try {
     if (brand.logo_url !== undefined) {
-      localStorage.setItem('hm_brand_banner', String(brand.logo_url || '').trim());
       localStorage.setItem('hm_brand_logo', String(brand.logo_url || '').trim());
-    }
-    if (brand.banner_url !== undefined) {
-      localStorage.setItem('hm_brand_banner', String(brand.banner_url || '').trim());
-    }
-    if (brand.icon_url !== undefined) {
-      localStorage.setItem('hm_brand_icon', String(brand.icon_url || '').trim());
     }
     if (brand.name !== undefined) {
       localStorage.setItem('hm_brand_name', String(brand.name || '').trim());
@@ -155,58 +146,24 @@ function applyBrandConfig(brand) {
   applyBrandLogo();
 }
 
-function resolveBrandBanner() {
+function resolveBrandLogo() {
   var logoFromQuery = '';
   try {
     var params = new URLSearchParams(window.location.search || '');
-    logoFromQuery = String(params.get('banner') || params.get('logo') || '').trim();
+    logoFromQuery = String(params.get('logo') || '').trim();
   } catch (_) {}
 
   var logoFromStorage = '';
   try {
-    logoFromStorage = String(localStorage.getItem('hm_brand_banner') || localStorage.getItem('hm_brand_logo') || '').trim();
+    logoFromStorage = String(localStorage.getItem('hm_brand_logo') || '').trim();
   } catch (_) {}
 
-  return logoFromQuery || logoFromStorage || BRAND_BANNER_DEFAULT;
-}
-
-function resolveBrandIcon() {
-  var iconFromQuery = '';
-  try {
-    var params = new URLSearchParams(window.location.search || '');
-    iconFromQuery = String(params.get('icon') || params.get('favicon') || '').trim();
-  } catch (_) {}
-
-  var iconFromStorage = '';
-  try {
-    iconFromStorage = String(localStorage.getItem('hm_brand_icon') || '').trim();
-  } catch (_) {}
-
-  return iconFromQuery || iconFromStorage || BRAND_ICON_DEFAULT;
-}
-
-function setFaviconHref(href) {
-  var link = document.getElementById('appFavicon');
-  if (!link || !href) return;
-  link.setAttribute('href', href);
-}
-
-function applyBrandFavicon(iconSrc) {
-  if (!iconSrc) {
-    setFaviconHref(BRAND_ICON_FALLBACK);
-    return;
-  }
-  var probe = new Image();
-  probe.onload = function() { setFaviconHref(iconSrc); };
-  probe.onerror = function() { setFaviconHref(BRAND_ICON_FALLBACK); };
-  probe.src = iconSrc;
+  return logoFromQuery || logoFromStorage || BRAND_LOGO_DEFAULT;
 }
 
 function applyBrandLogo() {
-  var bannerSrc = resolveBrandBanner();
-  var iconSrc = resolveBrandIcon();
-
-  ['vaultLogoImg', 'vaultLogoImgPm', 'topbarLogoImg'].forEach(function(id) {
+  var src = resolveBrandLogo();
+  ['vaultLogoImg', 'topbarLogoImg'].forEach(function(id) {
     var img = document.getElementById(id);
     if (!img) return;
 
@@ -219,26 +176,8 @@ function applyBrandLogo() {
       img.src = BRAND_LOGO_FALLBACK;
     };
 
-    img.src = bannerSrc;
+    img.src = src;
   });
-
-  ['sidebarLogoImg'].forEach(function(id) {
-    var img = document.getElementById(id);
-    if (!img) return;
-
-    img.onerror = function() {
-      if (img.dataset.fallbackApplied === '1') {
-        img.style.display = 'none';
-        return;
-      }
-      img.dataset.fallbackApplied = '1';
-      img.src = BRAND_ICON_FALLBACK;
-    };
-
-    img.src = iconSrc;
-  });
-
-  applyBrandFavicon(iconSrc);
 
   try {
     var storedName = String(localStorage.getItem('hm_brand_name') || '').trim();
@@ -677,6 +616,42 @@ var _isInGroupMissLogCount = 0; // throttle miss logs
 
 function normalizePropertyLookupKey(value) {
   return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function parseIsoDateSafe(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return null;
+  var d = new Date(raw);
+  if (isNaN(d.getTime())) return null;
+  return d;
+}
+
+function isPropertyManagedState(state) {
+  if (!state) return true;
+  var visibility = String(state.visibility || '').trim().toLowerCase();
+  if (visibility && visibility !== 'active') return false;
+
+  var endDate = parseIsoDateSafe(state.managementEndDate);
+  if (endDate) {
+    var now = new Date();
+    now.setHours(0, 0, 0, 0);
+    endDate.setHours(0, 0, 0, 0);
+    if (endDate <= now) return false;
+  }
+
+  return true;
+}
+
+function getPropertyManagementState(propertyId, propertyName) {
+  var idKey = String(propertyId || '').trim();
+  if (idKey && _propertyManagementStateById[idKey]) return _propertyManagementStateById[idKey];
+  var nameKey = normalizePropertyLookupKey(propertyName || '');
+  if (nameKey && _propertyManagementStateByName[nameKey]) return _propertyManagementStateByName[nameKey];
+  return null;
+}
+
+function isManagedPropertyRef(propertyId, propertyName) {
+  return isPropertyManagedState(getPropertyManagementState(propertyId, propertyName));
 }
 
 function groupsByPropertyName(propertyName) {
@@ -2107,7 +2082,7 @@ function extractUsPhoneDigits(raw) {
   var digits = String(raw || '').replace(/\D+/g, '');
   if (!digits) return '';
   if (digits.length === 11 && digits.charAt(0) === '1') digits = digits.slice(1);
-  if (digits.length > 10) digits = digits.slice(0, 10);
+  else if (digits.length > 10) digits = digits.slice(-10);
   return digits;
 }
 
@@ -2373,11 +2348,7 @@ async function _proxyActionDirect(action, params, options) {
       if (!isFinite(actionRetryAfter) || actionRetryAfter < 1) actionRetryAfter = 5;
       rateLimiter.backpressure(actionRetryAfter * 1000);
       logApiError(429, 'Proxy action=' + action + ' rate limited — pausing ' + actionRetryAfter + 's', 'retry');
-      if (attempt < maxRetries) {
-        await sleep(actionRetryAfter * 1000);
-        continue;
-      }
-      throw new Error('Proxy action=' + action + ' failed: HTTP 429 after retries');
+      throw new Error('Proxy action=' + action + ' failed: HTTP 429 (cooldown ' + actionRetryAfter + 's)');
     }
     // Retryable server errors: 502, 503, 504
     if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < maxRetries) {
@@ -2426,10 +2397,17 @@ async function _proxyActionDirect(action, params, options) {
       if (action === 'wo_notes' && dataStatus === 404) {
         return { ok: true, results: [], warning: data.error || 'wo_notes not found' };
       }
+      if (dataStatus === 429) {
+        var dataRetryAfter = parseInt(String(data.retry_after || data.retry_after_seconds || data.retry_after_ms || '5000'), 10);
+        if (!isFinite(dataRetryAfter) || dataRetryAfter < 1) dataRetryAfter = 5000;
+        if (dataRetryAfter > 1000) rateLimiter.backpressure(dataRetryAfter);
+        else rateLimiter.backpressure(dataRetryAfter * 1000);
+        var msg429 = 'Proxy action=' + action + ': ' + (data.error || 'Rate limited');
+        logApiError(429, msg429, 'retry');
+        throw new Error(msg429);
+      }
       if (attempt < maxRetries && isRetryable) {
         var retryWait = Math.pow(2, attempt + 1) * 1000;
-        // If the proxy itself hit a 429 upstream, pause the shared queue
-        if (dataStatus === 429) { rateLimiter.backpressure(retryWait); }
         logApiError(dataStatus || 502, 'Proxy action=' + action + ': ' + (data.error || 'Unknown') + ' — retrying in ' + (retryWait / 1000) + 's', 'retry');
         await sleep(retryWait);
         continue;
@@ -2557,13 +2535,18 @@ function resolveUrl(path, method) {
 var rateLimiter = {
   queue: [],
   inFlight: 0,
-  maxPerSec: 3,
-  _defaultMaxPerSec: 3,
+  maxPerSec: 1,
+  _defaultMaxPerSec: 1,
+  minIntervalMs: 850,
+  _defaultMinIntervalMs: 850,
+  lastDispatchAt: 0,
   windowStart: 0,
   windowCount: 0,
   processing: false,
   // Global pause gate: epoch-ms when queue may resume after a 429
   pauseUntil: 0,
+  // Tracks recent 429 windows so non-critical fetches can defer.
+  recent429Until: 0,
 
   // Called whenever any request sees a 429. Freezes the queue and halves
   // dispatch rate for the pause window to reduce burst pressure.
@@ -2572,13 +2555,18 @@ var rateLimiter = {
     if (resumeAt > rateLimiter.pauseUntil) {
       rateLimiter.pauseUntil = resumeAt;
     }
-    // Halve rate during backpressure, floor at 1 req/s
-    rateLimiter.maxPerSec = Math.max(1, Math.floor(rateLimiter._defaultMaxPerSec / 2));
+    if (resumeAt > rateLimiter.recent429Until) {
+      rateLimiter.recent429Until = resumeAt;
+    }
+    // Clamp to single-lane mode during backpressure and add stronger spacing.
+    rateLimiter.maxPerSec = 1;
+    rateLimiter.minIntervalMs = Math.max(rateLimiter._defaultMinIntervalMs, Math.min(2500, Math.floor(ms / 2)));
     updateRateBadge();
     // Restore rate automatically after pause window clears
     setTimeout(function() {
       if (Date.now() >= rateLimiter.pauseUntil) {
         rateLimiter.maxPerSec = rateLimiter._defaultMaxPerSec;
+        rateLimiter.minIntervalMs = rateLimiter._defaultMinIntervalMs;
         updateRateBadge();
       }
     }, ms + 150);
@@ -2610,6 +2598,15 @@ var rateLimiter = {
         return;
       }
 
+      // Always keep a minimum delay between dispatches to prevent burst spikes.
+      if (rateLimiter.lastDispatchAt > 0) {
+        var sinceLast = now - rateLimiter.lastDispatchAt;
+        if (sinceLast < rateLimiter.minIntervalMs) {
+          setTimeout(tick, rateLimiter.minIntervalMs - sinceLast + 10);
+          return;
+        }
+      }
+
       if (now - rateLimiter.windowStart >= 1000) {
         rateLimiter.windowStart = now;
         rateLimiter.windowCount = 0;
@@ -2624,6 +2621,7 @@ var rateLimiter = {
       var item = rateLimiter.queue.shift();
       rateLimiter.windowCount++;
       rateLimiter.inFlight++;
+      rateLimiter.lastDispatchAt = Date.now();
       updateRateBadge();
 
       item.fn().then(function(r) {
@@ -3151,8 +3149,7 @@ async function apiFetch(path, options) {
         // Freeze the shared queue so all concurrent requests back off together
         rateLimiter.backpressure(retryAfter * 1000);
         logApiError(429, 'Rate limit exceeded — Retry-After: ' + retryAfter + 's (queue paused)', 'retry');
-        if (attempt < maxRetries) { await sleep(retryAfter * 1000); continue; }
-        throw new Error('429: Rate limited after retries');
+        throw new Error('429: Rate limited (cooldown ' + retryAfter + 's)');
       }
       if (res.status === 533) {
         var backoff = Math.pow(2, attempt + 2) * 1000; // 4s, 8s, 16s, 32s
@@ -3166,8 +3163,7 @@ async function apiFetch(path, options) {
         logApiError(401, 'Unauthorized — proxy may have wrong credentials. Verify the deployed proxy has the correct Client ID, Client Secret, and Developer ID.', 'resolved');
         showCorsError('401 Unauthorized — AppFolio rejected the credentials. Verify the deployed proxy has the correct Client ID, Client Secret, and Developer ID configured server-side.');
         throw new Error('401: Unauthorized — check proxy credentials');
-      }
-      if (res.status === 404) {
+        throw new Error('429: Rate limited on POST ' + action + ' (cooldown ' + retryAfter + 's)');
         logApiError(404, 'Not Found — endpoint does not exist or credentials are invalid. URL: ' + path, 'resolved');
         showCorsError('404 Not Found — The endpoint may not exist or credentials may be rejected. Verify the deployed proxy URL and server-side credentials.');
         throw new Error('404: Not Found — ' + path);
@@ -3821,6 +3817,8 @@ var _inspLazyLoaded = false;   // lazy-load flag — inspections fetched on tab 
 var _whLazyLoaded = false;     // lazy-load flag — webhook data loaded on tab click
 var _groupFilterDirty = {};    // tabs that need re-render after group filter change
 var _proxyVersion = 'v7';     // detected on ping; default is legacy-safe if version is omitted
+var _propertyManagementStateById = {};
+var _propertyManagementStateByName = {};
 // UUID-based property group lookup maps (built by resolvePropertyGroupNames)
 var _nameToGroups = {};        // property name (lowercase) → [group names]
 var _idToGroups = {};          // Reports API property_id (string) → [group names]
@@ -4742,12 +4740,6 @@ if ($('#advancedToggle')) {
     this.classList.toggle('open');
     $('#advancedPanel').classList.toggle('show');
   });
-}
-
-// Bind vault theme toggle during vault setup so it works before full app init.
-if ($('#vaultThemeToggle') && $('#vaultThemeToggle').dataset.bound !== '1') {
-  $('#vaultThemeToggle').addEventListener('click', function() { toggleTheme(); });
-  $('#vaultThemeToggle').dataset.bound = '1';
 }
 
 function setVaultPanel(panel) {
@@ -5892,6 +5884,8 @@ async function fetchProperties() {
     setApiStatus('loading', 'Loading properties (server-side)…');
     var data = await proxyAction('properties');
     var results = data.results || data.data || [];
+    _propertyManagementStateById = {};
+    _propertyManagementStateByName = {};
     PROPERTIES = results.map(function(p) {
       var siteManager = '';
       if (p.site_manager && typeof p.site_manager === 'object') {
@@ -5900,9 +5894,21 @@ async function fetchProperties() {
       if (!siteManager && p.SiteManager && typeof p.SiteManager === 'object') {
         siteManager = [p.SiteManager.FirstName, p.SiteManager.LastName].filter(Boolean).join(' ').trim();
       }
+      var id = p.property_id || p.id || '';
+      var name = p.property_name || p.property || p.name || '';
+      var state = {
+        visibility: p.visibility || p.Visibility || '',
+        managementEndDate: p.management_end_date || p.managementEndDate || p.ManagementEndDate || '',
+        managementEndReason: p.management_end_reason || p.managementEndReason || p.ManagementEndReason || ''
+      };
+      var idKey = String(id || '').trim();
+      if (idKey) _propertyManagementStateById[idKey] = state;
+      var normName = normalizePropertyLookupKey(name);
+      if (normName) _propertyManagementStateByName[normName] = state;
+
       return {
-        id: p.property_id || p.id || '',
-        name: p.property_name || p.property || p.name || '',
+        id: id,
+        name: name,
         address: ((p.property_street || p.street || '') + (p.property_street2 ? ' ' + p.property_street2 : '')).trim(),
         city: p.property_city || p.city || '',
         state: p.property_state || p.state || '',
@@ -5918,17 +5924,28 @@ async function fetchProperties() {
         maintenanceLimit: p.maintenance_limit || p.maintenanceLimit || '',
         maintenanceNotes: p.maintenance_notes || p.maintenanceNotes || '',
         siteManager: siteManager || p.site_manager || p.siteManager || p.SiteManager || '',
+        visibility: state.visibility,
+        managementEndDate: state.managementEndDate,
+        managementEndReason: state.managementEndReason,
         units: p.units || '',
         sqft: p.sqft || '',
         marketRent: p.market_rent || p.marketRent || '',
         owners: p.owners || '',
         link: ''
       };
+    }).filter(function(prop) {
+      return isPropertyManagedState({
+        visibility: prop.visibility,
+        managementEndDate: prop.managementEndDate,
+        managementEndReason: prop.managementEndReason
+      });
     });
     buildReferenceMaps(VENDORS, PROPERTIES);
     return true;
   } catch (err) {
     PROPERTIES = [];
+    _propertyManagementStateById = {};
+    _propertyManagementStateByName = {};
     buildReferenceMaps(VENDORS, PROPERTIES);
     return false;
   }
@@ -8509,8 +8526,14 @@ function applyTvMode(enabled) {
   renderTurnDashboardStrip();
 }
 
+function isManagedTurnEntry(entry) {
+  if (!entry) return false;
+  return isManagedPropertyRef(entry.propertyId, entry.property);
+}
+
 function getDashboardTurnEntries() {
   return TURN_PIPE_DATA.filter(function(p) {
+    if (!isManagedTurnEntry(p)) return false;
     if (p.isClosed || p.isCompleted) return false;
     if (!isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup)) return false;
     var pmName = String(p.siteManager || 'Unassigned PM').trim() || 'Unassigned PM';
@@ -8585,6 +8608,7 @@ function renderTurnDashboardStrip() {
   if (!strip || !summary || !pageLabel || !prevBtn || !nextBtn) return;
 
   var baseEntries = TURN_PIPE_DATA.filter(function(p) {
+    if (!isManagedTurnEntry(p)) return false;
     return !p.isClosed && !p.isCompleted && isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup);
   });
   syncDashboardTurnPmFilter(baseEntries);
@@ -16056,6 +16080,16 @@ function buildTurnPipeline() {
     var requiredUnitName = String(unit || '').trim().toLowerCase();
     var requiredPropertyName = String(property || '').trim().toLowerCase();
 
+    function normalizeUnitToken(value) {
+      var raw = String(value || '').trim().toLowerCase();
+      if (!raw) return '';
+      var m = raw.match(/([a-z]?\d{1,4}[a-z]?)$/i);
+      if (m && m[1]) return String(m[1]).toLowerCase();
+      return raw.replace(/\s+/g, '');
+    }
+
+    var requiredUnitToken = normalizeUnitToken(requiredUnitName);
+
     var winStart = moveOutDate ? new Date(moveOutDate.getTime() - 45 * 86400000) : null;
 
     function inWindow(dateLike) {
@@ -16070,19 +16104,35 @@ function buildTurnPipeline() {
     }
 
     function isLikelyMatch(woUnitId, woUnitTurnId, woPropertyId, woUnitName, woPropertyName, woCreated) {
+      if (requiredUnitTurnId && woUnitTurnId && String(woUnitTurnId) !== requiredUnitTurnId) return false;
+      if (requiredUnitId && woUnitId && String(woUnitId) !== requiredUnitId) return false;
+
+      var woUnitToken = normalizeUnitToken(woUnitName || '');
+      if (requiredUnitToken && woUnitToken && requiredUnitToken !== woUnitToken) return false;
+
       var score = 0;
       if (requiredUnitId && woUnitId && String(woUnitId) === requiredUnitId) score += 4;
       if (requiredUnitTurnId && woUnitTurnId && String(woUnitTurnId) === requiredUnitTurnId) score += 5;
       if (requiredPropertyId && woPropertyId && String(woPropertyId) === requiredPropertyId) score += 2;
       if (requiredUnitName && woUnitName && String(woUnitName).toLowerCase() === requiredUnitName) score += 2;
+      if (requiredUnitToken && woUnitToken && woUnitToken === requiredUnitToken) score += 3;
       if (requiredPropertyName && woPropertyName && String(woPropertyName).toLowerCase() === requiredPropertyName) score += 1;
       if (inWindow(woCreated)) score += 2;
 
-      // If there is an official unit_turn_id, still allow fallback via strong unit/property/date signals.
+      // Never match a WO to a turn purely on property/date: require at least one unit-level signal.
+      var hasUnitSignal = false;
+      if (requiredUnitTurnId && woUnitTurnId && String(woUnitTurnId) === requiredUnitTurnId) hasUnitSignal = true;
+      if (requiredUnitId && woUnitId && String(woUnitId) === requiredUnitId) hasUnitSignal = true;
+      if (requiredUnitToken && woUnitToken && woUnitToken === requiredUnitToken) hasUnitSignal = true;
+      if (requiredUnitName && woUnitName && String(woUnitName).toLowerCase() === requiredUnitName) hasUnitSignal = true;
+      if (!hasUnitSignal) return false;
+
+      // If there is an official unit_turn_id, prefer direct turn-id equality.
       if (requiredUnitTurnId) {
-        return score >= 5;
+        if (woUnitTurnId && String(woUnitTurnId) === requiredUnitTurnId) return true;
+        return score >= 10;
       }
-      return score >= 4;
+      return score >= 5;
     }
 
     var wos = [];
@@ -16153,6 +16203,38 @@ function buildTurnPipeline() {
       tracked.linkedWorkOrders.forEach(function(w) {
         var idVal = String(w.id || '').trim();
         if (!idVal) return;
+
+        // Re-validate persisted tracker links against current unit/turn/property signals.
+        // This prevents stale bad links from surviving matcher improvements.
+        var reportWo = WORK_ORDERS.find(function(rw) {
+          return String(rw.id || '').trim() === idVal || String(rw.uuid || '').trim() === idVal;
+        }) || null;
+        var dbWo = TURN_WORK_ORDERS.find(function(dw) {
+          return String(dw.woNumber || '').trim() === idVal || String(dw.id || '').trim() === String(w.dbApiId || '').trim() || String(dw.id || '').trim() === idVal;
+        }) || null;
+
+        if (reportWo) {
+          var reportOk = isLikelyMatch(
+            String(reportWo.unitId || '').trim(),
+            String(reportWo.unitTurnId || '').trim(),
+            String(reportWo.propertyId || '').trim(),
+            reportWo.unit || '',
+            reportWo.propertyName || '',
+            reportWo.created || reportWo.updated || ''
+          );
+          if (!reportOk) return;
+        } else if (dbWo) {
+          var dbOk = isLikelyMatch(
+            String(dbWo.unitId || '').trim(),
+            String(dbWo.unitTurnId || '').trim(),
+            String(dbWo.propertyId || '').trim(),
+            dbWo.unit || '',
+            dbWo.property || '',
+            dbWo.createdAt || dbWo.lastUpdated || ''
+          );
+          if (!dbOk) return;
+        }
+
         upsertWO({
           source: 'tracker',
           id: idVal,
@@ -16250,6 +16332,20 @@ function buildTurnPipeline() {
   // Helper: build a pipeline entry
   function addEntry(key, unit, property, propId, unitId, moveOut, turnData, moveoutTenant) {
     if (!key || seenKeys[key]) return;
+    if (!isManagedPropertyRef(propId, property)) return;
+
+    // Extra safety: if active property catalog is loaded, require the turn property
+    // to exist in the active list by ID or normalized name.
+    if (Array.isArray(PROPERTIES) && PROPERTIES.length > 0) {
+      var normProperty = normalizePropertyLookupKey(property || '');
+      var inActiveCatalog = PROPERTIES.some(function(p) {
+        if (propId && String(p.id || '').trim() === String(propId || '').trim()) return true;
+        if (normProperty && normalizePropertyLookupKey(p.name || '') === normProperty) return true;
+        return false;
+      });
+      if (!inActiveCatalog) return;
+    }
+
     seenKeys[key] = true;
 
     // Exclude units that already have a confirmed move-in — the turn is over.
@@ -16990,6 +17086,7 @@ function renderTurnBoard() {
 
 function renderTurnKPIs() {
   var inScope = TURN_PIPE_DATA.filter(function(p) {
+    if (!isManagedTurnEntry(p)) return false;
     return isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup);
   });
 
@@ -17060,6 +17157,7 @@ function renderTurnPipelineUI() {
   if (turnGfSel && turnGfSel.value !== currentPropertyGroup) turnGfSel.value = currentPropertyGroup;
 
   var filtered = TURN_PIPE_DATA.filter(function(p) {
+    if (!isManagedTurnEntry(p)) return false;
     // Closed turns only show in 'closed' filter
     if (p.isClosed && filter !== 'closed') return false;
     if (filter === 'closed' && !p.isClosed) return false;
@@ -17086,29 +17184,39 @@ function renderTurnPipelineUI() {
     return;
   }
 
-  var html = '';
-  // Track distinct groups to decide whether to render section dividers
-  var groupCounts = { active: 0, on_radar: 0, completed: 0 };
-  filtered.forEach(function(p) {
-    var g = p.isCompleted ? 'completed' : p.isConfirmed ? 'active' : 'on_radar';
-    groupCounts[g]++;
+  function turnPipelineSortRank(p) {
+    if (p.isCompleted) return 4;
+    if (p.isUpcoming) return 3;
+    if (p.sla && p.sla.breached) return 0;
+    if (p.isStalled) return 0;
+    if (!p.isConfirmed && !p.isOnRadar) return 2;
+    if (p.elapsed > p.target || p.elapsed > CONFIG.TURN_WARNING_DAYS) return 1;
+    return 2;
+  }
+
+  filtered.sort(function(a, b) {
+    var ar = turnPipelineSortRank(a);
+    var br = turnPipelineSortRank(b);
+    if (ar !== br) return ar - br;
+
+    var ae = a.isUpcoming ? -Math.abs(a.elapsed || 0) : (a.elapsed || 0);
+    var be = b.isUpcoming ? -Math.abs(b.elapsed || 0) : (b.elapsed || 0);
+    if (ae !== be) return be - ae;
+
+    var ap = String(a.property || '').toLowerCase();
+    var bp = String(b.property || '').toLowerCase();
+    if (ap < bp) return -1;
+    if (ap > bp) return 1;
+
+    var au = String(a.unit || '').toLowerCase();
+    var bu = String(b.unit || '').toLowerCase();
+    if (au < bu) return -1;
+    if (au > bu) return 1;
+    return 0;
   });
-  var multiGroup = (groupCounts.active > 0 ? 1 : 0) + (groupCounts.on_radar > 0 ? 1 : 0) + (groupCounts.completed > 0 ? 1 : 0) > 1;
-  var prevGroup = null;
+
+  var html = '';
   filtered.forEach(function(p, idx) {
-    if (multiGroup) {
-      var thisGroup = p.isCompleted ? 'completed' : p.isConfirmed ? 'active' : 'on_radar';
-      if (thisGroup !== prevGroup) {
-        var secLabels = {
-          active:    '<i class="fas fa-exchange-alt" style="margin-right:6px"></i>Active Turns \u2014 ' + groupCounts.active,
-          on_radar:  '<i class="fas fa-satellite-dish" style="margin-right:6px"></i>On Radar \u2014 ' + groupCounts.on_radar + ' possible',
-          completed: '<i class="fas fa-check-circle" style="margin-right:6px"></i>Completed \u2014 ' + groupCounts.completed
-        };
-        var secCls = thisGroup === 'active' ? 'active-section' : thisGroup === 'on_radar' ? 'on-radar-section' : 'completed-section';
-        html += '<div class="pipe-section-head ' + secCls + '">' + secLabels[thisGroup] + '</div>';
-        prevGroup = thisGroup;
-      }
-    }
     var slaBreach = p.sla && p.sla.breached && !p.isCompleted;
     var cardClass = p.isCompleted ? 'completed' : p.isUpcoming ? 'upcoming' : p.isOnRadar ? 'on-radar' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
     html += '<div class="pipe-card ' + cardClass + '" data-pipeidx="' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
@@ -20867,9 +20975,8 @@ function wireUpUI() {
 
   // Theme toggle
   $('#themeToggle').addEventListener('click', function() { toggleTheme(); });
-  if ($('#vaultThemeToggle') && $('#vaultThemeToggle').dataset.bound !== '1') {
+  if ($('#vaultThemeToggle')) {
     $('#vaultThemeToggle').addEventListener('click', function() { toggleTheme(); });
-    $('#vaultThemeToggle').dataset.bound = '1';
   }
   updateThemeIcon(); // sync icon with initial state
 
@@ -21545,7 +21652,11 @@ async function fetchAllLive() {
     updateProgress(0, 'active', 'Fetching properties\u2026');
     var propOk = await withStepTimeout(fetchProperties, 60000);
     updateProgress(0, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
-    if (propOk) { populateDropdowns(); renderWorkOrders(); }
+    if (propOk) {
+      anySuccess = true;
+      populateDropdowns();
+      renderWorkOrders();
+    }
 
     // Step 1: Property Groups (proxy action — DB API v0)
     updateProgress(1, 'active', 'Fetching property groups\u2026');
@@ -21560,14 +21671,23 @@ async function fetchAllLive() {
     updateProgress(2, 'active', 'Fetching work orders\u2026');
     var woOk = await withStepTimeout(fetchWorkOrders, 60000);
     updateProgress(2, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
-    if (woOk) { renderWorkOrders(); renderDashboardKPIs(); renderActivityFeed(); }
+    if (woOk) {
+      anySuccess = true;
+      renderWorkOrders();
+      renderDashboardKPIs();
+      renderActivityFeed();
+    }
 
     // Step 3: Turns — In Progress only, 60-day window (proxy action — Reports API)
     // Short timeout (20s) — turns are supplementary; pipeline works from WOs + move-outs too
     updateProgress(3, 'active', 'Fetching in-progress turns\u2026');
     var turnOk = await withStepTimeout(function() { return fetchTurns(); }, 20000);
     updateProgress(3, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns skipped (timeout)');
-    if (turnOk) { renderTurnBoard(); renderActivityFeed(); }
+    if (turnOk) {
+      anySuccess = true;
+      renderTurnBoard();
+      renderActivityFeed();
+    }
 
     // Step 2b: Unit Turns (DB API) — live deposit / scheduling data to augment Reports API turns
     fetchUnitTurnsDB().then(function(ok) { if (ok && turnOk) renderTurnBoard(); }).catch(function(){});
@@ -21624,7 +21744,7 @@ async function fetchAllLive() {
       try { await withStepTimeout(function() { return fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS); }, 30000); } catch (e) { /* ignore */ }
     }
 
-    anySuccess = woOk || propOk || turnOk;
+    anySuccess = anySuccess || woOk || propOk || turnOk;
   } catch (e) {
     // individual errors already logged
   }
