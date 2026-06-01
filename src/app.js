@@ -16808,10 +16808,12 @@ function renderPropertiesSection(opts) {
 
   Promise.all([
     fetchProperties(),
-    fetchPropertyStats(),
-    fetchUnits()
+    fetchPropertyStats()
   ]).then(function() {
     renderPropertiesRowsFromCache();
+    fetchUnits().then(function() {
+      if (currentMainTab === 'properties') renderPropertiesRowsFromCache();
+    }).catch(function() {});
   }).catch(function(err) {
     tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--danger);">Failed to load properties: ' + escapeHtml(String(err && (err.message || err) || 'Unknown error')) + '</td></tr>';
   }).finally(function() {
