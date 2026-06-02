@@ -97,7 +97,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v5.7.8';
+var APP_VERSION = 'v9.7.8';
 var DEFAULT_PROXY_URL = 'https://flr-appfolio.val.run';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
