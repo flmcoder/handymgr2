@@ -1315,6 +1315,10 @@
       <select class="form-select" id="turnPipeGroup" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
         <option value="">All Properties</option>
       </select>
+      <select class="form-select" id="turnPipeSort" style="font-size:12px;padding:5px 10px;min-width:180px;font-family:var(--font-mono)">
+        <option value="oldest_risk">Oldest + Red First (Default)</option>
+        <option value="property_group">Group by Property</option>
+      </select>
       <div class="search-box" style="width:180px"><i class="fas fa-search"></i><input type="text" placeholder="Search turns…" id="turnPipeSearch"></div>
       <div class="pipe-view-toggle" title="Switch between list and kanban view">
         <button class="pipe-view-btn active" id="btnTurnViewList" onclick="toggleTurnView('list')"><i class="fas fa-list"></i> List</button>

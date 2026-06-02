@@ -5135,7 +5135,9 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     $('#vaultScreen').style.display = 'none';
     $('#appShell').classList.add('unlocked');
     applyAccessRole();
-    await initApp();
+    initApp().catch(function(err) {
+      console.warn('initApp background bootstrap failed:', err && (err.message || err));
+    });
     maybeAutoRunSystemHealthCheck();
     if (_accessRole === 'pm_readonly') {
       try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (eScope) { /* */ }
@@ -14221,7 +14223,13 @@ async function loadPropertyPerformance() {
   var body = $('#propPerfBody');
   if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
-    var data = await proxyAction('v2_report', { report: 'property_performance' });
+    var perfParams = { report: 'property_performance' };
+    var perfScope = getEffectiveGroupUuid();
+    if (perfScope) {
+      perfParams.group_uuid = perfScope;
+      perfParams.property_group_uuid = perfScope;
+    }
+    var data = await proxyAction('v2_report', perfParams);
     var rows = getReportRows(data, 'results');
     var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
     if (effectiveGroup) {
@@ -14270,7 +14278,13 @@ async function loadPropertyVacancies() {
   var body = $('#propVacBody');
   if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
-    var data = await proxyAction('v2_report', { report: 'unit_vacancy' });
+    var vacancyParams = { report: 'unit_vacancy' };
+    var vacancyScope = getEffectiveGroupUuid();
+    if (vacancyScope) {
+      vacancyParams.group_uuid = vacancyScope;
+      vacancyParams.property_group_uuid = vacancyScope;
+    }
+    var data = await proxyAction('v2_report', vacancyParams);
     var rows = getReportRows(data, 'results');
     var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
     if (effectiveGroup) {
@@ -14653,8 +14667,14 @@ async function loadOccupancySubtab(subtab) {
   var body = $('#' + cfg.bodyId);
   if (body) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
-    var data = await proxyAction(cfg.action, { report: cfg.report });
-    var rows = (data && data.results) ? data.results : [];
+    var payload = { report: cfg.report };
+    var scopeUuid = getEffectiveGroupUuid();
+    if (scopeUuid) {
+      payload.group_uuid = scopeUuid;
+      payload.property_group_uuid = scopeUuid;
+    }
+    var data = await proxyAction(cfg.action, payload);
+    var rows = getReportRows(data, 'results');
     _occupancyRowsBySubtab[subtab] = rows;
     if (_occupancyPageState[subtab]) _occupancyPageState[subtab].page = 1;
     renderOccupancySubtab(subtab);
@@ -15754,6 +15774,14 @@ var DASH_TURN_LAST_SYNC_AT = '';
 var DASH_TURN_SYNC_TIMER = null;
 var currentTurnPipeFilter = 'active';
 var currentTurnPipeGroup = '';
+var currentTurnPipeSortMode = (function() {
+  try {
+    var saved = localStorage.getItem('hm_turn_pipe_sort_mode') || '';
+    return saved === 'property_group' ? 'property_group' : 'oldest_risk';
+  } catch (e) {
+    return 'oldest_risk';
+  }
+})();
 var _inspSortCol = 'daysSince'; // default sort column
 var _inspSortDir = 'desc';      // 'asc' or 'desc'
 
@@ -17198,7 +17226,7 @@ function renderTurnPipelineUI() {
     return 2;
   }
 
-  filtered.sort(function(a, b) {
+  function compareTurnItems(a, b) {
     var ar = turnPipelineSortRank(a);
     var br = turnPipelineSortRank(b);
     if (ar !== br) return ar - br;
@@ -17207,20 +17235,40 @@ function renderTurnPipelineUI() {
     var be = b.isUpcoming ? -Math.abs(b.elapsed || 0) : (b.elapsed || 0);
     if (ae !== be) return be - ae;
 
-    var ap = String(a.property || '').toLowerCase();
-    var bp = String(b.property || '').toLowerCase();
-    if (ap < bp) return -1;
-    if (ap > bp) return 1;
-
     var au = String(a.unit || '').toLowerCase();
     var bu = String(b.unit || '').toLowerCase();
     if (au < bu) return -1;
     if (au > bu) return 1;
     return 0;
+  }
+
+  var sortMode = currentTurnPipeSortMode === 'property_group'
+    ? 'property_group'
+    : 'oldest_risk';
+
+  filtered.sort(function(a, b) {
+    if (sortMode === 'property_group') {
+      var ap = String(a.property || '').toLowerCase();
+      var bp = String(b.property || '').toLowerCase();
+      if (ap < bp) return -1;
+      if (ap > bp) return 1;
+    }
+    return compareTurnItems(a, b);
   });
 
   var html = '';
+  var lastPropertyGroup = '';
   filtered.forEach(function(p, idx) {
+    if (sortMode === 'property_group') {
+      var propLabel = String(p.property || '\u2014');
+      if (propLabel !== lastPropertyGroup) {
+        lastPropertyGroup = propLabel;
+        html += '<div class="pipe-section-head" style="margin:12px 0 6px;padding:6px 8px;border-left:3px solid var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)">' +
+          '<strong style="font-size:12px">' + escapeHtml(propLabel) + '</strong>' +
+          '</div>';
+      }
+    }
+
     var slaBreach = p.sla && p.sla.breached && !p.isCompleted;
     var cardClass = p.isCompleted ? 'completed' : p.isUpcoming ? 'upcoming' : p.isOnRadar ? 'on-radar' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
     html += '<div class="pipe-card ' + cardClass + '" data-pipeidx="' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
@@ -20330,6 +20378,18 @@ function wireUpUI() {
   if ($('#turnPipeGroup')) {
     $('#turnPipeGroup').addEventListener('change', function() {
       currentTurnPipeGroup = this.value;
+      renderTurnPipelineUI();
+    });
+  }
+  if ($('#turnPipeSort')) {
+    $('#turnPipeSort').value = currentTurnPipeSortMode;
+    $('#turnPipeSort').addEventListener('change', function() {
+      currentTurnPipeSortMode = this.value === 'property_group'
+        ? 'property_group'
+        : 'oldest_risk';
+      try {
+        localStorage.setItem('hm_turn_pipe_sort_mode', currentTurnPipeSortMode);
+      } catch (e) { /* */ }
       renderTurnPipelineUI();
     });
   }
