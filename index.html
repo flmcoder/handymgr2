@@ -85,7 +85,7 @@
       <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.7.7B</span></div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v5.7.8</span></div>
   </div>
 </div>
 
@@ -97,7 +97,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.7.7B</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">5.7.8</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -125,7 +125,7 @@
     <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
     <div>
       <div class="sidebar-brand-text">HandyMgr</div>
-      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.7.7B</div>
+      <div class="sidebar-brand-ver" id="sidebarBrandVer">v5.7.8</div>
     </div>
   </div>
 
@@ -140,8 +140,9 @@
     <div class="nav-section" id="navGroupOperations">
       <div class="nav-section-label">Operations</div>
       <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="badge" id="woBadge">—</span></button>
-      <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
+      <button class="nav-tab" data-tab="estimates"><i class="fas fa-file-signature"></i> Estimates <span class="badge" id="estBadge">—</span></button>
       <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
+      <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
       <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Billing <span class="badge" id="billingBadge" style="display:none">0</span></button>
       <button class="nav-tab nav-role-gm" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
     </div>
@@ -613,6 +614,33 @@
         </table>
       </div>
     </div>
+  </div>
+</section>
+
+<section class="section" id="sec-estimates">
+  <div class="section-header">
+    <div>
+      <div class="section-title"><i class="fas fa-file-signature" style="color:var(--accent)"></i> Estimates</div>
+      <div class="section-subtitle">Flattened estimate records from cached Work Orders (v0 Estimates + v2 current approval status)</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search estimate rows…" id="estSearch"></div>
+      <button class="sec-refresh" id="btnRefreshEst"><i class="fas fa-sync-alt"></i> Refresh</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="wo-table">
+      <thead>
+        <tr>
+          <th>Work Order #</th>
+          <th>Property / Unit Address</th>
+          <th>Vendor Name</th>
+          <th>Estimate Amount</th>
+          <th>Approval Status</th>
+        </tr>
+      </thead>
+      <tbody id="estBody"></tbody>
+    </table>
   </div>
 </section>
 
