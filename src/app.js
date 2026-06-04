@@ -5413,7 +5413,7 @@ async function fetchEstimates(forceRefresh) {
         vendorName: String(r.vendor_name || r.vendorName || '').trim(),
         estimateAmount: r.estimate_amount,
         approvalStatus: normalizeEstimateStatus(r.approval_status || r.current_estimate_approval_status || 'Pending'),
-        propertyGroupId: String(r.property_group_id || '').trim(),
+        propertyGroupId: String(r.property_group_id || r.property_group_uuid || r.uuid_prop_group || r.group_uuid || '').trim(),
       };
     });
 
