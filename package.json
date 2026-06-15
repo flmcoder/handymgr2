@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "start": "npx tsx backend/server.ts",
+    "server:dev": "npx tsx backend/server.ts",
     "build:gh": "vite build --base=/handymgr2/",
     "prepare:preview-subdir": "node scripts/prepare-preview-subdir.mjs",
     "db:health": "node scripts/turso-healthcheck.mjs",
@@ -20,6 +22,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "drizzle-orm": "^0.44.2",
+    "express": "^5.1.0",
+    "postgres": "^3.4.7",
     "@libsql/client": "^0.17.3",
     "echarts": "^6.0.0"
   },
