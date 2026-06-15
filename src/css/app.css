@@ -1260,7 +1260,7 @@ html.dark .bento-pill:hover {
 }
 .vault-logo {
   display: block;
-  max-width: min(100%, 390px);
+  max-width: 360px;
   max-height: 84px;
   width: 100%;
   height: auto;
@@ -1422,7 +1422,6 @@ html.dark .bento-pill:hover {
   color: var(--vault-text-muted);
   cursor: pointer;
   transition: var(--transition);
-  touch-action: manipulation;
   z-index: 3;
 }
 .vault-theme-btn {
@@ -1433,10 +1432,6 @@ html.dark .bento-pill:hover {
   color: var(--vault-accent);
   border-color: var(--vault-accent-strong);
   background: rgba(15, 23, 42, 0.9);
-}
-.vault-config-btn:active {
-  transform: translateY(1px) scale(0.98);
-  filter: brightness(0.96);
 }
 .vault-config-btn.open {
   color: var(--vault-accent);
@@ -1455,15 +1450,9 @@ html.dark .bento-pill:hover {
   border-radius: var(--radius);
   padding: 6px 10px;
   cursor: pointer;
-  touch-action: manipulation;
-  transition: var(--transition);
   margin-bottom: 12px;
 }
 .vault-back-btn:hover { color: var(--vault-accent); border-color: var(--vault-accent-strong); }
-.vault-back-btn:active {
-  transform: translateY(1px) scale(0.99);
-  filter: brightness(0.96);
-}
 .vault-advanced-toggle {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   font-family: var(--font-sans);
@@ -1824,8 +1813,8 @@ html.dark .bento-pill:hover {
 .topbar-logo {
   display: flex;
   align-items: center;
-  flex: 0 1 clamp(150px, 21vw, 280px);
-  min-width: 128px;
+  flex: 0 1 clamp(132px, 18vw, 240px);
+  min-width: 110px;
 }
 .topbar-logo i { font-size: 18px; }
 .topbar-divider { width: 1px; height: 24px; background: var(--border); }
@@ -2090,8 +2079,8 @@ html.dark .messages-btn:hover {
   box-shadow: var(--shadow-sm);
 }
 .sidebar-brand-logo {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: block;
   object-fit: contain;
 }
@@ -2796,6 +2785,21 @@ html.dark .kpi-card--neo:hover {
 .status-badge.status-void {
   background: var(--bg-input);
   color: var(--text-muted);
+}
+
+.estimate-status.estimate-status-pending {
+  background: var(--warning-dim);
+  color: var(--warning);
+}
+
+.estimate-status.estimate-status-approved {
+  background: var(--success-dim);
+  color: var(--success);
+}
+
+.estimate-status.estimate-status-rejected {
+  background: var(--danger-dim);
+  color: var(--danger);
 }
 
 /* Tags */

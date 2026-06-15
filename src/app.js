@@ -97,8 +97,11 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.7.7B';
-var DEFAULT_PROXY_URL = 'https://flr-appfolio.val.run';
+var APP_VERSION = 'v9.7.8';
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:3000'
+  : 'https://YOUR_RENDER_SERVICE_NAME.onrender.com';
+var DEFAULT_PROXY_URL = API_BASE_URL;
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 var DASHBOARD_KPI_HISTORY = [];
@@ -1526,7 +1529,7 @@ function isVendorManuallyCompliant(vendorId) {
 }
 
 /* =================================================================
-   AUTH GLOBALS — role verified server-side via Val.town proxy.
+  AUTH GLOBALS — role verified server-side via backend proxy.
    GUI_ADMIN / GUI_GM / GUI_VENDORS env vars are checked on the proxy.
    ================================================================= */
 var API_CREDS = null;
@@ -1561,12 +1564,12 @@ function getStoredAccessRole() {
 function isTabAllowedForRole(tabName) {
   if (_accessRole === 'vendors') return tabName === 'vendors';
   if (_accessRole === 'pm_readonly') {
-    var pmAllowedTabs = ['dashboard', 'workorders', 'billing', 'occupancy', 'properties', 'turnboard', 'vendors', 'inspections', 'errors'];
+    var pmAllowedTabs = ['dashboard', 'workorders', 'estimates', 'billing', 'occupancy', 'properties', 'turnboard', 'vendors', 'inspections', 'errors'];
     return pmAllowedTabs.indexOf(tabName) !== -1;
   }
   if (_accessRole === 'manager') {
     // GM role: all PM tabs + routing + payroll
-    var gmAllowedTabs = ['dashboard', 'workorders', 'routing', 'billing', 'occupancy', 'properties', 'turnboard', 'vendors', 'inspections', 'payroll', 'errors'];
+    var gmAllowedTabs = ['dashboard', 'workorders', 'estimates', 'routing', 'billing', 'occupancy', 'properties', 'turnboard', 'vendors', 'inspections', 'payroll', 'errors'];
     return gmAllowedTabs.indexOf(tabName) !== -1;
   }
   // full / admin: all tabs
@@ -2509,6 +2512,8 @@ async function proxyPost(action, bodyObj, extraHeaders) {
 function resolveUrl(path, method) {
   method = (method || 'GET').toUpperCase();
   if (API_PROXY) {
+    var normalizedProxy = String(API_PROXY || '').replace(/\/+$/, '');
+    var normalizedApiBase = String(API_BASE_URL || '').replace(/\/+$/, '');
     // Server-side proxy: send only the API path, not the full URL
     var apiPath = path;
     if (path.indexOf('http') === 0) {
@@ -2518,6 +2523,11 @@ function resolveUrl(path, method) {
         apiPath = u.pathname + u.search;
       } catch (e) { /* use as-is */ }
     }
+
+    if (normalizedProxy === normalizedApiBase) {
+      return apiPath.indexOf('http') === 0 ? apiPath : normalizedApiBase + apiPath;
+    }
+
     var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
     // Always use explicit passthrough action so v2 report calls do not fall back to compat defaults.
     return API_PROXY + sep + 'action=passthrough&path=' + encodeURIComponent(apiPath);
@@ -3760,6 +3770,7 @@ function maybeAutoRunSystemHealthCheck() {
    DATA STORES — populated from live API
    ================================================================= */
 var WORK_ORDERS = [];
+var ESTIMATES = [];
 var VENDORS = [];
 var PROPERTIES = [];
 var PROPERTY_GROUPS = [];
@@ -3814,6 +3825,7 @@ var _webhookPollTimer = null;
 var _autoSyncTimer = null;      // 30-min background selective refresh
 var _vendorsLazyLoaded = false; // lazy-load flag — vendors fetched on tab click
 var _inspLazyLoaded = false;   // lazy-load flag — inspections fetched on tab click
+var _estimatesLazyLoaded = false; // lazy-load flag — estimates fetched on tab click
 var _whLazyLoaded = false;     // lazy-load flag — webhook data loaded on tab click
 var _groupFilterDirty = {};    // tabs that need re-render after group filter change
 var _proxyVersion = 'v7';     // detected on ping; default is legacy-safe if version is omitted
@@ -4580,7 +4592,10 @@ function sanitizeProxy(raw) {
 function normalizeConfiguredProxy(raw) {
   var proxy = sanitizeProxy(raw);
   if (!proxy) return DEFAULT_PROXY_URL;
-  return proxy.indexOf('afproxy.val.run') !== -1 ? DEFAULT_PROXY_URL : proxy;
+  if (proxy.indexOf('afproxy.val.run') !== -1 || proxy.indexOf('val.run') !== -1 || proxy.indexOf('val.town') !== -1) {
+    return DEFAULT_PROXY_URL;
+  }
+  return proxy;
 }
 
 function applyVaultConfigToInputs(cfg) {
@@ -5065,7 +5080,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     return;
   }
   if (!proxyUrl) {
-    $('#vaultError').textContent = 'Proxy URL is required \u2014 enter your Val.town proxy URL.';
+    $('#vaultError').textContent = 'Proxy URL is required \u2014 enter your backend API base URL.';
     $('#vaultError').classList.add('show');
     return;
   }
@@ -5349,6 +5364,131 @@ async function fetchWorkOrders() {
     setDataSourceState('work_orders', 'no_response', { count: null, error: String((err && err.message) || err || 'work orders unavailable') });
     return false;
   }
+}
+
+function normalizeEstimateStatus(raw) {
+  var s = String(raw || '').trim().toLowerCase();
+  if (!s) return 'Pending';
+  if (s.indexOf('approve') !== -1) return 'Approved';
+  if (s.indexOf('reject') !== -1 || s.indexOf('declin') !== -1) return 'Rejected';
+  if (s.indexOf('pending') !== -1 || s.indexOf('request') !== -1) return 'Pending';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function estimateStatusClass(status) {
+  var s = String(status || '').trim().toLowerCase();
+  if (s.indexOf('approve') !== -1) return 'approved';
+  if (s.indexOf('reject') !== -1 || s.indexOf('declin') !== -1) return 'rejected';
+  return 'pending';
+}
+
+function estimateAmountText(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  var n = amountToNumber(value);
+  if (!isFinite(n)) return '—';
+  return currency(n, 2);
+}
+
+async function fetchEstimates(forceRefresh) {
+  try {
+    setApiStatus('loading', 'Loading estimates…');
+    var token = getProxyAccessToken();
+    var reqHeaders = { 'Accept': 'application/json' };
+    if (token) reqHeaders['Authorization'] = 'Bearer ' + token;
+
+    // Prefer clean REST endpoint; fallback to action endpoint for legacy deployments.
+    var base = String(API_PROXY || '').replace(/\/+$/, '');
+    var directUrl = base + '/api/estimates';
+    var res = await rateLimiter.enqueue(function() {
+      return fetchWithTimeout(directUrl, { headers: reqHeaders }, 60000);
+    });
+
+    var data = null;
+    if (res.ok) {
+      data = await res.json();
+    } else if (res.status === 404 || res.status === 400) {
+      data = await proxyAction('estimates', {});
+    } else {
+      var errText = '';
+      try { errText = await res.text(); } catch (e) { /* noop */ }
+      throw new Error('Estimates endpoint failed: HTTP ' + res.status + (errText ? (' — ' + errText.substring(0, 200)) : ''));
+    }
+
+    if (!data || data.ok === false) {
+      throw new Error(String((data && data.error) || 'Estimates unavailable'));
+    }
+
+    var rows = Array.isArray(data.results) ? data.results : [];
+    ESTIMATES = rows.map(function(r) {
+      return {
+        workOrderNumber: String(r.work_order_number || r.wo_number || r.workOrderNumber || '').trim(),
+        propertyUnitAddress: String(r.property_unit_address || r.propertyUnitAddress || '').trim(),
+        vendorName: String(r.vendor_name || r.vendorName || '').trim(),
+        estimateAmount: r.estimate_amount,
+        approvalStatus: normalizeEstimateStatus(r.approval_status || r.current_estimate_approval_status || 'Pending'),
+        propertyGroupId: String(r.property_group_id || r.property_group_uuid || r.uuid_prop_group || r.group_uuid || '').trim(),
+      };
+    });
+
+    var estBadge = $('#estBadge');
+    if (estBadge) estBadge.textContent = String(ESTIMATES.length || 0);
+    setApiStatus('ok', 'Estimates loaded: ' + ESTIMATES.length);
+    return true;
+  } catch (err) {
+    logApiError(0, 'estimates unavailable — ' + String((err && err.message) || err || 'unknown error'), 'queued');
+    if (forceRefresh) {
+      ESTIMATES = [];
+      var estBadge = $('#estBadge');
+      if (estBadge) estBadge.textContent = '0';
+    }
+    setApiStatus('warn', 'Estimates unavailable');
+    throw err;
+  }
+}
+
+function renderEstimates() {
+  var tbody = $('#estBody');
+  if (!tbody) return;
+
+  var searchTerm = String(($('#estSearch') && $('#estSearch').value) || '').trim().toLowerCase();
+  var groupUuid = String(forcedPropertyGroupUuid || '').trim().toLowerCase();
+
+  var filtered = ESTIMATES.filter(function(row) {
+    if (groupUuid) {
+      var rowGroup = String(row.propertyGroupId || '').trim().toLowerCase();
+      if (!rowGroup || rowGroup !== groupUuid) return false;
+    }
+    if (!searchTerm) return true;
+    var hay = [
+      row.workOrderNumber,
+      row.propertyUnitAddress,
+      row.vendorName,
+      row.approvalStatus,
+      estimateAmountText(row.estimateAmount)
+    ].join(' ').toLowerCase();
+    return hay.indexOf(searchTerm) !== -1;
+  });
+
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted);">No estimates found for the current filter.</td></tr>';
+    var estBadgeNone = $('#estBadge');
+    if (estBadgeNone) estBadgeNone.textContent = '0';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(function(row) {
+    var stClass = estimateStatusClass(row.approvalStatus);
+    return '<tr>' +
+      '<td>' + escapeHtml(row.workOrderNumber || '—') + '</td>' +
+      '<td>' + escapeHtml(row.propertyUnitAddress || '—') + '</td>' +
+      '<td>' + escapeHtml(row.vendorName || '—') + '</td>' +
+      '<td>' + escapeHtml(estimateAmountText(row.estimateAmount)) + '</td>' +
+      '<td><span class="status-badge estimate-status estimate-status-' + escapeHtml(stClass) + '">' + escapeHtml(row.approvalStatus || 'Pending') + '</span></td>' +
+      '</tr>';
+  }).join('');
+
+  var estBadge = $('#estBadge');
+  if (estBadge) estBadge.textContent = String(filtered.length);
 }
 
 async function fetchCompletedWorkOrdersHistory(days) {
@@ -6775,6 +6915,7 @@ async function fetchUnitTurnsDB() {
     }
     return true;
   } catch (err) {
+    logApiError(0, 'unit_turns unavailable — ' + String((err && err.message) || err || 'unknown error'), 'queued');
     console.log('fetchUnitTurnsDB error: ' + (err.message || err));
     UNIT_TURNS_DB = [];
     return false;
@@ -19599,6 +19740,7 @@ function renderAll() {
   // Each render is wrapped in try/catch so one crash doesn't kill the others
   var fns = [
     function() { renderWorkOrders(); },
+    function() { renderEstimates(); },
     function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); },
     function() { renderTurnBoard(); },
     function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
@@ -19934,6 +20076,7 @@ function wireUpUI() {
       // (they'll re-render when next activated)
       var heavyTabs = {
         workorders: '#kanbanBoard',
+        estimates: '#estBody',
         vendors: '#vendorGrid',
         inspections: '#inspBody',
         webhooks: '#whDataBody'
@@ -19954,6 +20097,7 @@ function wireUpUI() {
         if (el && el._needsRerender) {
           el._needsRerender = false;
           if (tabName === 'workorders') renderWorkOrders();
+          else if (tabName === 'estimates') renderEstimates();
           else if (tabName === 'vendors') renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
           else if (tabName === 'inspections') renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
           else if (tabName === 'webhooks') loadWebhookData();
@@ -20023,6 +20167,23 @@ function wireUpUI() {
             showToast('Inspections loaded \u2014 ' + INSPECTIONS.length);
           }
         } catch (e) { showToast('Inspection load failed: ' + (e.message || e)); }
+      }
+
+      // Lazy-load Estimates on first tab click
+      if (tabName === 'estimates' && !_estimatesLazyLoaded && ESTIMATES.length === 0) {
+        _estimatesLazyLoaded = true;
+        var estBody = $('#estBody');
+        if (estBody) estBody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px">' + loadingHtml('Loading estimates\u2026') + '</td></tr>';
+        try {
+          var estOk = await fetchEstimates(false);
+          if (estOk) {
+            renderEstimates();
+            await saveAllToCache();
+            showToast('Estimates loaded \u2014 ' + ESTIMATES.length);
+          }
+        } catch (e) {
+          showToast('Estimates load failed: ' + (e.message || e));
+        }
       }
 
       // Lazy-load Webhook Data on first tab click
@@ -20760,6 +20921,14 @@ function wireUpUI() {
   $('#inspSearch').addEventListener('input', debounce(function() { renderInspections(this.value); }, CONFIG.DEBOUNCE_MS));
   $('#btnRefreshInsp').addEventListener('click', function() { sectionRefresh('inspections', this); });
 
+  // Estimates search
+  if ($('#estSearch')) {
+    $('#estSearch').addEventListener('input', debounce(function() { renderEstimates(); }, CONFIG.DEBOUNCE_MS));
+  }
+  if ($('#btnRefreshEst')) {
+    $('#btnRefreshEst').addEventListener('click', function() { sectionRefresh('estimates', this); });
+  }
+
   // Per-section refresh buttons
   $('#btnRefreshDash').addEventListener('click', function() { sectionRefresh('dashboard', this); });
   $('#btnRefreshWO').addEventListener('click', function() { sectionRefresh('workorders', this); });
@@ -21099,6 +21268,7 @@ function wireUpUI() {
   var _tabRenderMap = {
     dashboard: function() { renderDashboardKPIs(); },
     workorders: function() { renderWorkOrders(); },
+    estimates: function() { renderEstimates(); },
     routing: function() { loadRoutingEventsAndStats().catch(function() {}); loadRoutingCapabilities().catch(function() {}); },
     payroll: function() { renderPayroll(); },
     billing: function() { renderBillingSection(); },
@@ -21450,6 +21620,11 @@ async function sectionRefresh(section, btn) {
       showToast('Refreshing inspections\u2026');
       await fetchInspections();
       renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+    }
+    if (section === 'estimates' || section === 'dashboard') {
+      showToast('Refreshing estimates\u2026');
+      await fetchEstimates(true);
+      renderEstimates();
     }
     renderDashboardKPIs();
     renderActivityFeed();
@@ -24515,12 +24690,13 @@ function decodeWebhookEventV9(evt) {
       if(keyArr.length){
         window.dispatchEvent(new CustomEvent('handymgr:webhook-invalidate',{detail:{keys:keyArr,eventCount:decoded.length,at:new Date().toISOString()}}));
         requestAnimationFrame(function(){
-          var SECMAP={'sec-workorders':['work_orders','turn_work_orders','recent_tasks'],'sec-turnboard':['turns','turn_work_orders'],'sec-dashboard':['work_orders','turns','upcoming_moveouts','bills'],'sec-billing':['bills'],'sec-inspections':['inspections'],'sec-vendors':['vendors']};
+          var SECMAP={'sec-workorders':['work_orders','turn_work_orders','recent_tasks'],'sec-estimates':['work_orders'],'sec-turnboard':['turns','turn_work_orders'],'sec-dashboard':['work_orders','turns','upcoming_moveouts','bills'],'sec-billing':['bills'],'sec-inspections':['inspections'],'sec-vendors':['vendors']};
           Object.keys(SECMAP).forEach(function(secId){
             var sec=document.getElementById(secId);
             if(!sec||!sec.classList.contains('active'))return;
             if(!keyArr.some(function(k){return SECMAP[secId].indexOf(k)!==-1;}))return;
             if(secId==='sec-workorders'){try{renderWorkOrders();}catch(e){}}
+            else if(secId==='sec-estimates'){try{renderEstimates();}catch(e){}}
             else if(secId==='sec-turnboard'){try{renderTurnBoard();}catch(e){}}
             else if(secId==='sec-dashboard'){try{renderDashboardKPIs();}catch(e){} try{renderTurnDashboardStrip();}catch(e){} try{renderActivityFeed();}catch(e){}}
             else if(secId==='sec-billing'){try{renderBillingSection();}catch(e){}}
