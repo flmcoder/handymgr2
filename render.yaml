@@ -1,0 +1,30 @@
+# Exported from Render on 2026-06-16T07:01:28Z
+version: "1"
+projects:
+- name: My project
+  environments:
+  - name: Production
+    services:
+    - type: web
+      name: handymgr2
+      runtime: node
+      repo: https://github.com/flmcoder/handymgr2
+      branch: R1
+      plan: starter
+      envVars:
+      - key: DB_SSL
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: SQL_SE
+        sync: false
+      - key: DBI
+        sync: false
+      - key: DB_PORT
+        sync: false
+      region: oregon
+      buildCommand: npm install
+      startCommand: npx tsx backend/server.js
+      autoDeployTrigger: commit
