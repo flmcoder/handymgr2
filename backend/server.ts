@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
+import path from 'node:path';
 import { pingDatabase } from './db';
 
 function ensureDenoCompat(): void {
@@ -125,6 +126,7 @@ function wrapDenoHandler(handler: any, mode: Mode = 'params') {
 }
 
 const app = express();
+const DIST_DIR = path.resolve(process.cwd(), 'dist');
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -150,6 +152,11 @@ app.get('/health', async (_req: Request, res: Response) => {
   const dbOk = await pingDatabase();
   res.status(dbOk ? 200 : 503).json({ ok: dbOk, service: 'handymgr-backend', database: dbOk ? 'up' : 'down' });
 });
+
+// Serve built frontend assets when running monolith mode on Render.
+app.use(express.static(DIST_DIR, {
+  index: 'index.html',
+}));
 
 // Units
 app.post('/api/units', wrapDenoHandler(unitsHandlers.handleUnits, 'params'));
@@ -200,6 +207,14 @@ app.get('/api/session_info', async (req: Request, res: Response) => {
     logTunnelError(error, '/api/session_info');
     res.status(500).json({ ok: false, error: 'Session validation failed' });
   }
+});
+
+// SPA fallback: non-API routes should return the built frontend entrypoint.
+app.get('*', (req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith('/api') || req.path === '/health') {
+    return next();
+  }
+  return res.sendFile(path.join(DIST_DIR, 'index.html'));
 });
 
 app.use((_req: Request, res: Response) => {

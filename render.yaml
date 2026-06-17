@@ -25,6 +25,6 @@ projects:
       - key: DB_PASSWORD
         sync: false
       region: oregon
-      buildCommand: npm install
+      buildCommand: npm install && npm run build
       startCommand: npm start
       autoDeployTrigger: commit
