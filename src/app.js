@@ -80,6 +80,57 @@ function updateThemeIcon() {
 function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
 
+// ---- Maintenance UI Config ----
+// Toggle/override by setting window.HM_MAINTENANCE_CONFIG before app.js loads.
+// Example disable: window.HM_MAINTENANCE_CONFIG = { enabled: false }
+var MAINTENANCE_CONFIG = Object.assign({
+  enabled: true,
+  showDialogOnLogin: true,
+  brandHost: 'handymgr.app',
+  progressPercent: 80,
+  bannerHeadline: 'BACK ONLINE - UNDER CONSTRUCTION',
+  bannerDetail: 'App works but is undergoing maintenance - some features may not work as intended.',
+  bannerProgressText: 'Migration 80% complete - performance will improve once finished.',
+  dialogTitle: 'Under Construction',
+  dialogBodyLead: 'Welcome back! HandyManager is online but currently undergoing a data migration.',
+  dialogBodyDetail: 'App works in hybrid mode, so some features may not work as intended.',
+  dialogCta: 'Got it, continue ->'
+}, (window && window.HM_MAINTENANCE_CONFIG) || {});
+
+function isMaintenanceEnabled() {
+  return !!(MAINTENANCE_CONFIG && MAINTENANCE_CONFIG.enabled);
+}
+
+function hideMaintenanceUi() {
+  ['maintenanceBanner', 'maintDialog', 'maintenanceInlineVault', 'maintenanceInlineApp'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el && el.parentNode) {
+      el.parentNode.removeChild(el);
+    }
+  });
+}
+
+function getMaintenanceBannerHtml() {
+  var host = MAINTENANCE_CONFIG.brandHost;
+  var head = MAINTENANCE_CONFIG.bannerHeadline;
+  var detail = MAINTENANCE_CONFIG.bannerDetail;
+  var progress = MAINTENANCE_CONFIG.bannerProgressText;
+  return '<div class="maint-banner-track">'
+    + '<span class="maint-banner-item">🚧  ' + head + '  🚧</span><span class="maint-banner-sep">|</span>'
+    + '<span class="maint-banner-item">Now available at <strong>' + host + '</strong></span><span class="maint-banner-sep">|</span>'
+    + '<span class="maint-banner-item">⚠️ ' + detail + '</span><span class="maint-banner-sep">|</span>'
+    + '<span class="maint-banner-item">🔄 ' + progress + '</span><span class="maint-banner-sep">|</span>'
+    + '<span class="maint-banner-item">🚧  ' + head + '  🚧</span><span class="maint-banner-sep">|</span>'
+    + '<span class="maint-banner-item">Now available at <strong>' + host + '</strong></span><span class="maint-banner-sep">|</span>'
+    + '</div>';
+}
+
+function getMaintenanceInlineHtml() {
+  return '🚧 <strong>BACK ONLINE @ ' + MAINTENANCE_CONFIG.brandHost + '</strong> · '
+    + MAINTENANCE_CONFIG.bannerDetail + ' '
+    + 'Migration ' + String(MAINTENANCE_CONFIG.progressPercent) + '% complete.';
+}
+
 function ensureMaintenanceStyles() {
   if (document.getElementById('maintInlineStyles')) return;
   var style = document.createElement('style');
@@ -102,21 +153,21 @@ function ensureMaintenanceStyles() {
 }
 
 function ensureMaintenanceUi() {
+  if (!isMaintenanceEnabled()) {
+    hideMaintenanceUi();
+    return;
+  }
+
   ensureMaintenanceStyles();
 
   if (!document.getElementById('maintenanceBanner')) {
     var banner = document.createElement('div');
     banner.id = 'maintenanceBanner';
     banner.className = 'maint-banner';
-    banner.innerHTML = '<div class="maint-banner-track">'
-      + '<span class="maint-banner-item">🚧  BACK ONLINE — UNDER CONSTRUCTION  🚧</span><span class="maint-banner-sep">|</span>'
-      + '<span class="maint-banner-item">Now available at <strong>handymgr.app</strong></span><span class="maint-banner-sep">|</span>'
-      + '<span class="maint-banner-item">⚠️ App works but is undergoing maintenance — some features may not work as intended</span><span class="maint-banner-sep">|</span>'
-      + '<span class="maint-banner-item">🔄 Migration 80% complete — performance will improve once finished</span><span class="maint-banner-sep">|</span>'
-      + '<span class="maint-banner-item">🚧  BACK ONLINE — UNDER CONSTRUCTION  🚧</span><span class="maint-banner-sep">|</span>'
-      + '<span class="maint-banner-item">Now available at <strong>handymgr.app</strong></span><span class="maint-banner-sep">|</span>'
-      + '</div>';
+    banner.innerHTML = getMaintenanceBannerHtml();
     document.body.insertBefore(banner, document.body.firstChild);
+  } else {
+    document.getElementById('maintenanceBanner').innerHTML = getMaintenanceBannerHtml();
   }
 
   if (!document.getElementById('maintDialog')) {
@@ -129,12 +180,30 @@ function ensureMaintenanceUi() {
     dialog.innerHTML = ''
       + '<div class="maint-dialog-box">'
       + '<div style="font-size:36px;margin-bottom:10px">🚧</div>'
-      + '<h2 class="maint-dialog-title">Under Construction</h2>'
-      + '<p class="maint-dialog-body">Welcome back! <strong>HandyManager is online</strong> but currently undergoing a data migration.<br><br>App works but as a hybrid — some features may not work as intended.<br><span class="maint-progress-bar"><span class="maint-progress-fill"></span></span>Migration 80% complete. Thank you for your patience.</p>'
-      + '<button class="maint-dialog-btn" id="maintDialogClose">Got it, continue →</button>'
+      + '<h2 class="maint-dialog-title">' + MAINTENANCE_CONFIG.dialogTitle + '</h2>'
+      + '<p class="maint-dialog-body">'
+      + MAINTENANCE_CONFIG.dialogBodyLead + '<br><br>'
+      + MAINTENANCE_CONFIG.dialogBodyDetail + '<br>'
+      + '<span class="maint-progress-bar"><span class="maint-progress-fill" style="width:' + String(MAINTENANCE_CONFIG.progressPercent) + '%"></span></span>'
+      + 'Migration ' + String(MAINTENANCE_CONFIG.progressPercent) + '% complete. Thank you for your patience.</p>'
+      + '<button class="maint-dialog-btn" id="maintDialogClose">' + MAINTENANCE_CONFIG.dialogCta + '</button>'
       + '</div>';
     document.body.appendChild(dialog);
   }
+
+  function ensureInlineBanner(targetSelector, bannerId) {
+    var target = document.querySelector(targetSelector);
+    if (!target) return;
+    if (document.getElementById(bannerId)) return;
+    var inline = document.createElement('div');
+    inline.id = bannerId;
+    inline.className = 'maint-inline-banner';
+    inline.innerHTML = getMaintenanceInlineHtml();
+    target.insertBefore(inline, target.firstChild);
+  }
+
+  ensureInlineBanner('#vaultScreen', 'maintenanceInlineVault');
+  ensureInlineBanner('#appShell', 'maintenanceInlineApp');
 }
 
 if (document.readyState === 'loading') {
@@ -24916,6 +24985,7 @@ function decodeWebhookEventV9(evt) {
 // ---- Maintenance dialog ----
 var _maintShownThisSession = false;
 function showMaintenanceDialog() {
+  if (!isMaintenanceEnabled() || !MAINTENANCE_CONFIG.showDialogOnLogin) return;
   ensureMaintenanceUi();
   if (_maintShownThisSession) return;
   _maintShownThisSession = true;
