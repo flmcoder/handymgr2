@@ -12,6 +12,46 @@
 </head>
 <body class="theme-neo dashboard-skin-neo-on">
 
+<!-- ==================== MAINTENANCE BANNER ==================== -->
+<div id="maintenanceBanner" class="maint-banner">
+  <div class="maint-banner-track">
+    <span class="maint-banner-item">🚧&nbsp;&nbsp;BACK ONLINE — UNDER CONSTRUCTION&nbsp;&nbsp;🚧</span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">Now available at&nbsp;<strong>handymgr.app</strong></span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">⚠️&nbsp;App works but is undergoing maintenance — some features may not work as intended</span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">🔄&nbsp;Migration 80% complete — performance will improve once finished</span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">🚧&nbsp;&nbsp;BACK ONLINE — UNDER CONSTRUCTION&nbsp;&nbsp;🚧</span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">Now available at&nbsp;<strong>handymgr.app</strong></span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">⚠️&nbsp;App works but is undergoing maintenance — some features may not work as intended</span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">🔄&nbsp;Migration 80% complete — performance will improve once finished</span>
+    <span class="maint-banner-sep">|</span>
+  </div>
+</div>
+
+<!-- ==================== POST-LOGIN MAINTENANCE DIALOG ==================== -->
+<div id="maintDialog" class="maint-dialog-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="maintDialogTitle">
+  <div class="maint-dialog-box">
+    <div class="maint-dialog-cones">🚧</div>
+    <h2 class="maint-dialog-title" id="maintDialogTitle">Under Construction</h2>
+    <p class="maint-dialog-body">
+      Welcome back! <strong>HandyManager is online</strong> but currently undergoing a data migration.<br><br>
+      <span class="maint-dialog-status">
+        <span class="maint-progress-bar"><span class="maint-progress-fill" style="width:80%"></span></span>
+        <span class="maint-progress-label">Migration 80% complete</span>
+      </span><br>
+      Some features may behave unexpectedly until the migration is finished.<br>
+      Thank you for your patience — performance will improve soon! 🙏
+    </p>
+    <button class="maint-dialog-btn" id="maintDialogClose">Got it, continue&nbsp;→</button>
+  </div>
+</div>
+
 <!-- ==================== VAULT UNLOCK SCREEN ==================== -->
 <div id="vaultScreen">
   <div class="vault-box">

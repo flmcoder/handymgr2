@@ -5165,6 +5165,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     } else {
       showToast('Connected \u2014 ' + vhost + '.appfolio.com via proxy');
     }
+    showMaintenanceDialog();
   } catch (err) {
     var errMsg = (err && (err.message || String(err))) || '';
     var schemaErr = /no such table|no such column|SQLITE_UNKNOWN|SQL_INPUT_ERROR/i.test(errMsg);
@@ -24847,3 +24848,23 @@ function decodeWebhookEventV9(evt) {
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_boot);
   else _boot();
 })();
+
+// ---- Maintenance dialog ----
+var _maintShownThisSession = false;
+function showMaintenanceDialog() {
+  if (_maintShownThisSession) return;
+  _maintShownThisSession = true;
+  var overlay = $('#maintDialog');
+  if (!overlay) return;
+  overlay.style.display = 'flex';
+  var closeBtn = $('#maintDialogClose');
+  if (closeBtn) {
+    closeBtn.focus();
+    closeBtn.addEventListener('click', function() {
+      overlay.style.display = 'none';
+    }, { once: true });
+  }
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) overlay.style.display = 'none';
+  });
+}
