@@ -214,6 +214,14 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   if (req.path.startsWith('/api') || req.path === '/health') {
     return next();
   }
+
+  // Only serve SPA shell for browser navigations, not for missing static assets.
+  const acceptsHtml = String(req.headers.accept || '').includes('text/html');
+  const hasFileExtension = /\.[a-zA-Z0-9]+$/.test(req.path);
+  if (!acceptsHtml || hasFileExtension) {
+    return next();
+  }
+
   return res.sendFile(path.join(DIST_DIR, 'index.html'));
 });
 
