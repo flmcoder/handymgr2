@@ -12,6 +12,7 @@
     "build:gh": "vite build --base=/handymgr2/",
     "prepare:preview-subdir": "node scripts/prepare-preview-subdir.mjs",
     "db:health": "node scripts/turso-healthcheck.mjs",
+    "db:migrate": "node scripts/apply-pg-sql.mjs",
     "deploy": "npm run build:gh && gh-pages -d dist",
     "preview": "vite preview",
     "preview:4173": "vite preview --host 0.0.0.0 --port 4173 --strictPort",
