@@ -36,7 +36,11 @@ function applyTunnelTarget(config: DbConfig): DbConfig {
 
 async function resolveDbConfig(): Promise<DbConfig> {
   if (isSshDbTunnelEnabled()) {
-    await ensureDbSshTunnel();
+    try {
+      await ensureDbSshTunnel();
+    } catch (err) {
+      console.error('[db] ⚠️ SSH tunnel failed to start — app will run without tunnel (DB queries may fail):', String((err as Error).message || err));
+    }
   }
 
   if (SQL_SE && /^postgres(ql)?:\/\//i.test(SQL_SE)) {
