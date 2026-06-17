@@ -210,7 +210,7 @@ app.get('/api/session_info', async (req: Request, res: Response) => {
 });
 
 // SPA fallback: non-API routes should return the built frontend entrypoint.
-app.get(/.*/, (req: Request, res: Response, next: NextFunction) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   if (req.path.startsWith('/api') || req.path === '/health') {
     return next();
   }
