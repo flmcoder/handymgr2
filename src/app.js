@@ -79,6 +79,138 @@ function updateThemeIcon() {
 // ---- Helpers ----
 function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
+
+// ---- Maintenance UI Config ----
+// Toggle/override by setting window.HM_MAINTENANCE_CONFIG before app.js loads.
+// Example disable: window.HM_MAINTENANCE_CONFIG = { enabled: false }
+var MAINTENANCE_CONFIG = Object.assign({
+  enabled: true,
+  showDialogOnLogin: true,
+  brandHost: 'handymgr.app',
+  progressPercent: 80,
+  bannerHeadline: 'BACK ONLINE - UNDER CONSTRUCTION',
+  bannerDetail: 'App works but is undergoing maintenance - some features may not work as intended.',
+  bannerProgressText: 'Migration 80% complete - performance will improve once finished.',
+  dialogTitle: 'Under Construction',
+  dialogBodyLead: 'Welcome back! HandyManager is online but currently undergoing a data migration.',
+  dialogBodyDetail: 'App works in hybrid mode, so some features may not work as intended.',
+  dialogCta: 'Got it, continue ->'
+}, (window && window.HM_MAINTENANCE_CONFIG) || {});
+
+function isMaintenanceEnabled() {
+  return !!(MAINTENANCE_CONFIG && MAINTENANCE_CONFIG.enabled);
+}
+
+function hideMaintenanceUi() {
+  ['maintenanceBanner', 'maintDialog', 'maintenanceInlineVault', 'maintenanceInlineApp'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el && el.parentNode) {
+      el.parentNode.removeChild(el);
+    }
+  });
+}
+
+function getMaintenanceBannerHtml() {
+  var host = MAINTENANCE_CONFIG.brandHost;
+  var head = MAINTENANCE_CONFIG.bannerHeadline;
+  var detail = MAINTENANCE_CONFIG.bannerDetail;
+  var progress = MAINTENANCE_CONFIG.bannerProgressText;
+  return '<div class="maint-banner-track">'
+    + '<span class="maint-banner-item">🚧  ' + head + '  🚧</span><span class="maint-banner-sep">|</span>'
+    + '<span class="maint-banner-item">Now available at <strong>' + host + '</strong></span><span class="maint-banner-sep">|</span>'
+    + '<span class="maint-banner-item">⚠️ ' + detail + '</span><span class="maint-banner-sep">|</span>'
+    + '<span class="maint-banner-item">🔄 ' + progress + '</span><span class="maint-banner-sep">|</span>'
+    + '<span class="maint-banner-item">🚧  ' + head + '  🚧</span><span class="maint-banner-sep">|</span>'
+    + '<span class="maint-banner-item">Now available at <strong>' + host + '</strong></span><span class="maint-banner-sep">|</span>'
+    + '</div>';
+}
+
+function getMaintenanceInlineHtml() {
+  return '🚧 <strong>BACK ONLINE @ ' + MAINTENANCE_CONFIG.brandHost + '</strong> · '
+    + MAINTENANCE_CONFIG.bannerDetail + ' '
+    + 'Migration ' + String(MAINTENANCE_CONFIG.progressPercent) + '% complete.';
+}
+
+function ensureMaintenanceStyles() {
+  if (document.getElementById('maintInlineStyles')) return;
+  var style = document.createElement('style');
+  style.id = 'maintInlineStyles';
+  style.textContent = [
+    '.maint-banner{position:fixed;top:0;left:0;width:100%;z-index:9999;background:linear-gradient(90deg,#f97316,#fb923c,#f97316);color:#fff;font-size:13px;font-weight:700;font-family:Karla,sans-serif;letter-spacing:.03em;overflow:hidden;white-space:nowrap;height:32px;display:flex;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.25)}',
+    '.maint-banner-track{display:inline-flex;align-items:center;gap:14px;animation:maint-scroll 35s linear infinite;will-change:transform;padding-left:100%}',
+    '.maint-banner-sep{opacity:.5;font-weight:400}.maint-banner-item{white-space:nowrap}',
+    '@keyframes maint-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}',
+    'body.theme-neo #vaultScreen{padding-top:32px}#mainTopbar,.dash-topbar{top:32px!important}',
+    '.maint-dialog-overlay{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}',
+    '.maint-dialog-box{background:#1e293b;color:#f1f5f9;border:2px solid #f97316;border-radius:16px;padding:36px 40px 32px;max-width:480px;width:90%;text-align:center;box-shadow:0 24px 64px rgba(0,0,0,.5)}',
+    '.maint-dialog-title{font-family:"Bricolage Grotesque",sans-serif;font-size:22px;font-weight:800;color:#f97316;margin:0 0 14px}',
+    '.maint-dialog-body{font-family:Karla,sans-serif;font-size:14px;line-height:1.7;color:#cbd5e1;margin:0 0 24px}',
+    '.maint-progress-bar{width:100%;max-width:300px;height:10px;background:#334155;border-radius:99px;overflow:hidden;display:block;margin:8px auto}',
+    '.maint-progress-fill{height:100%;width:80%;background:linear-gradient(90deg,#f97316,#fbbf24);display:block}',
+    '.maint-dialog-btn{background:linear-gradient(135deg,#f97316,#fb923c);color:#fff;border:none;border-radius:8px;padding:11px 28px;font-size:15px;font-weight:700;font-family:Karla,sans-serif;cursor:pointer}'
+  ].join('');
+  document.head.appendChild(style);
+}
+
+function ensureMaintenanceUi() {
+  if (!isMaintenanceEnabled()) {
+    hideMaintenanceUi();
+    return;
+  }
+
+  ensureMaintenanceStyles();
+
+  if (!document.getElementById('maintenanceBanner')) {
+    var banner = document.createElement('div');
+    banner.id = 'maintenanceBanner';
+    banner.className = 'maint-banner';
+    banner.innerHTML = getMaintenanceBannerHtml();
+    document.body.insertBefore(banner, document.body.firstChild);
+  } else {
+    document.getElementById('maintenanceBanner').innerHTML = getMaintenanceBannerHtml();
+  }
+
+  if (!document.getElementById('maintDialog')) {
+    var dialog = document.createElement('div');
+    dialog.id = 'maintDialog';
+    dialog.className = 'maint-dialog-overlay';
+    dialog.style.display = 'none';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.innerHTML = ''
+      + '<div class="maint-dialog-box">'
+      + '<div style="font-size:36px;margin-bottom:10px">🚧</div>'
+      + '<h2 class="maint-dialog-title">' + MAINTENANCE_CONFIG.dialogTitle + '</h2>'
+      + '<p class="maint-dialog-body">'
+      + MAINTENANCE_CONFIG.dialogBodyLead + '<br><br>'
+      + MAINTENANCE_CONFIG.dialogBodyDetail + '<br>'
+      + '<span class="maint-progress-bar"><span class="maint-progress-fill" style="width:' + String(MAINTENANCE_CONFIG.progressPercent) + '%"></span></span>'
+      + 'Migration ' + String(MAINTENANCE_CONFIG.progressPercent) + '% complete. Thank you for your patience.</p>'
+      + '<button class="maint-dialog-btn" id="maintDialogClose">' + MAINTENANCE_CONFIG.dialogCta + '</button>'
+      + '</div>';
+    document.body.appendChild(dialog);
+  }
+
+  function ensureInlineBanner(targetSelector, bannerId) {
+    var target = document.querySelector(targetSelector);
+    if (!target) return;
+    if (document.getElementById(bannerId)) return;
+    var inline = document.createElement('div');
+    inline.id = bannerId;
+    inline.className = 'maint-inline-banner';
+    inline.innerHTML = getMaintenanceInlineHtml();
+    target.insertBefore(inline, target.firstChild);
+  }
+
+  ensureInlineBanner('#vaultScreen', 'maintenanceInlineVault');
+  ensureInlineBanner('#appShell', 'maintenanceInlineApp');
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', ensureMaintenanceUi);
+} else {
+  ensureMaintenanceUi();
+}
 function resetAppScrollToTop() {
   var main = document.querySelector('.main-content');
   if (main && typeof main.scrollTo === 'function') {
@@ -24832,3 +24964,36 @@ function decodeWebhookEventV9(evt) {
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_boot);
   else _boot();
 })();
+
+// ---- Maintenance dialog ----
+var _maintShownThisSession = false;
+function showMaintenanceDialog() {
+  if (!isMaintenanceEnabled() || !MAINTENANCE_CONFIG.showDialogOnLogin) return;
+  ensureMaintenanceUi();
+  if (_maintShownThisSession) return;
+  _maintShownThisSession = true;
+  var overlay = $('#maintDialog');
+  if (!overlay) return;
+  overlay.style.display = 'flex';
+  var closeBtn = $('#maintDialogClose');
+  if (closeBtn) {
+    closeBtn.focus();
+    closeBtn.addEventListener('click', function() {
+      overlay.style.display = 'none';
+    }, { once: true });
+  }
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) overlay.style.display = 'none';
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', function() {
+    // Session-restore path can bypass the unlock button handler.
+    if ($('#appShell') && $('#appShell').classList.contains('unlocked')) {
+      showMaintenanceDialog();
+    }
+  });
+} else if ($('#appShell') && $('#appShell').classList.contains('unlocked')) {
+  showMaintenanceDialog();
+}
