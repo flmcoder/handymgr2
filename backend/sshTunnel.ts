@@ -37,7 +37,11 @@ function readEnv(name: string): string {
 function readPrivateKeyText(): string | undefined {
   const rawBase64 = readEnv('SSH_DB_TUNNEL_PRIVATE_KEY_B64');
   if (rawBase64) {
-    return Buffer.from(rawBase64, 'base64').toString('utf8').trim();
+    const decoded = Buffer.from(rawBase64, 'base64').toString('utf8').trim();
+    if (!decoded.includes('BEGIN OPENSSH PRIVATE KEY')) {
+      throw new Error('SSH_DB_TUNNEL_PRIVATE_KEY_B64 did not decode to an OpenSSH private key');
+    }
+    return decoded;
   }
 
   const raw = readEnv('SSH_DB_TUNNEL_PRIVATE_KEY');
@@ -45,7 +49,11 @@ function readPrivateKeyText(): string | undefined {
     return undefined;
   }
 
-  return raw.replace(/\\n/g, '\n').trim();
+  const decoded = raw.replace(/\\n/g, '\n').trim();
+  if (!decoded.includes('BEGIN OPENSSH PRIVATE KEY')) {
+    throw new Error('SSH_DB_TUNNEL_PRIVATE_KEY did not contain an OpenSSH private key');
+  }
+  return decoded;
 }
 
 function resolveConfig(): TunnelConfig {
@@ -82,6 +90,7 @@ async function ensureIdentityFile(config: TunnelConfig): Promise<string | undefi
   await mkdir(dir, { recursive: true });
   await writeFile(file, `${config.privateKeyText}\n`, { mode: 0o600 });
   await chmod(file, 0o600);
+  console.log('[ssh-tunnel] Created ephemeral SSH identity file from env key');
   return file;
 }
 
@@ -252,6 +261,16 @@ export async function ensureDbSshTunnel(): Promise<void> {
 
   if (!startPromise) {
     const config = resolveConfig();
+    console.log('[ssh-tunnel] Config resolved:', {
+      host: config.host,
+      port: config.port,
+      user: config.user,
+      localPort: config.localPort,
+      remoteHost: config.remoteHost,
+      remotePort: config.remotePort,
+      hasIdentityFile: Boolean(config.identityFile),
+      hasInlinePrivateKey: Boolean(config.privateKeyText),
+    });
     startPromise = startTunnel(config).finally(() => {
       startPromise = null;
     });
