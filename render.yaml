@@ -18,13 +18,13 @@ projects:
         sync: false
       - key: DB_NAME
         sync: false
-      - key: SQL_SE
-        sync: false
       - key: DBI
         sync: false
       - key: DB_PORT
         sync: false
+      - key: DB_PASSWORD
+        sync: false
       region: oregon
       buildCommand: npm install
-      startCommand: npx tsx backend/server.js
+      startCommand: npm start
       autoDeployTrigger: commit
