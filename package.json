@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node -e \"const fs=require('fs');fs.mkdirSync('dist/css',{recursive:true});fs.copyFileSync('src/css/app.css','dist/css/app.css');console.log('CSS copied to dist/css/app.css');\"",
     "start": "npx tsx backend/server.ts",
     "server:dev": "npx tsx backend/server.ts",
     "build:gh": "vite build --base=/handymgr2/",
