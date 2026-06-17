@@ -212,8 +212,9 @@ app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 const PORT = Number(process.env.PORT || 3000);
+const HOST = '0.0.0.0';
 
-app.listen(PORT, () => {
-  console.log(`[server] Express backend listening on :${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`[server] Express backend listening on ${HOST}:${PORT}`);
   console.log('[server] Runtime command: npx tsx backend/server.ts');
 });
