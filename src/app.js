@@ -100,7 +100,7 @@ var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c0
 var APP_VERSION = 'v9.7.8';
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
-  : 'https://YOUR_RENDER_SERVICE_NAME.onrender.com';
+  : (window.location.origin || 'https://handymgr2.onrender.com');
 var DEFAULT_PROXY_URL = API_BASE_URL;
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;

@@ -1,13 +1,12 @@
 node_modules/git
 .env
 .env.*
-db/
+# db/ — intentionally tracked for migrations
 agewf.jsx
 .DS_Store
 afproxy3
 .github
 .vscode
-db
 node_modules/
 workOrders.old.ts
 chart.mmd

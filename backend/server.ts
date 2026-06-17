@@ -197,6 +197,34 @@ app.post('/api/device_otp_request', wrapDenoHandler(deviceAuthHandlers.handleDev
 app.post('/api/device_otp_verify', wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpVerify, 'request'));
 app.post('/api/verify_role', wrapDenoHandler(deviceAuthHandlers.handleVerifyRole, 'request'));
 
+// ── Sync admin routes ────────────────────────────────────────────────────────
+// Trigger a sync run. Protected by INTERNAL_SYNC_TOKEN.
+app.post('/api/admin/sync', async (req: Request, res: Response) => {
+  try {
+    const expectedToken = String(process.env.INTERNAL_SYNC_TOKEN || '').trim();
+    const provided = String(req.headers['x-sync-token'] || req.headers['x-cron-secret'] || '').trim();
+    if (!expectedToken || provided !== expectedToken) {
+      res.status(401).json({ ok: false, error: 'Unauthorized' });
+      return;
+    }
+
+    const endpointKey = String(req.body?.endpoint ?? 'v0:units').trim();
+    const triggerType = String(req.body?.triggerType ?? 'manual').trim();
+    const maxPages    = Number(req.body?.maxPages ?? 0);
+
+    // Respond 202 immediately; sync runs async.
+    res.status(202).json({ ok: true, accepted: true, endpointKey, triggerType });
+
+    const { runSync } = await import('./sync/syncRunner.ts');
+    runSync({ endpointKey, triggerType, maxPages }).catch((err: unknown) => {
+      console.error('[server:sync] uncaught sync error', String((err as any)?.message ?? err));
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/admin/sync');
+    res.status(500).json({ ok: false, error: String((error as any)?.message ?? 'sync trigger failed') });
+  }
+});
+
 app.get('/api/session_info', async (req: Request, res: Response) => {
   try {
     const auth = req.headers.authorization || '';

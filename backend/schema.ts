@@ -300,3 +300,139 @@ export const appSettings = pgTable('app_settings', {
   value: text('value'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+// ── Sync Control Plane ────────────────────────────────────────────────────────
+
+// One row per sync job execution (backfill run or scheduled sync).
+export const syncJobRuns = pgTable(
+  'sync_job_runs',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    runId: text('run_id').notNull(),           // UUID assigned at job start
+    endpointKey: text('endpoint_key').notNull(), // e.g. 'v0:units', 'v2:work_orders'
+    apiVersion: text('api_version').notNull(),   // 'v0' | 'v2'
+    triggerType: text('trigger_type').notNull(), // 'backfill' | 'nightly' | 'incremental' | 'webhook' | 'manual'
+    status: text('status').notNull().default('running'), // 'running' | 'completed' | 'failed' | 'paused'
+    filtersFingerprint: text('filters_fingerprint'), // SHA-256 of sorted filter params
+    pagesCompleted: integer('pages_completed').default(0).notNull(),
+    rowsUpserted: integer('rows_upserted').default(0).notNull(),
+    rowsSkipped: integer('rows_skipped').default(0).notNull(),
+    lastError: text('last_error'),
+    startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    executionStartCursor: text('execution_start_cursor'), // timestamp recorded at job START (not last record) for incremental use
+  },
+  (table) => ({
+    runIdIdx: index('sync_job_runs_run_id_idx').on(table.runId),
+    endpointStatusIdx: index('sync_job_runs_endpoint_status_idx').on(table.endpointKey, table.status),
+  }),
+);
+
+// Persists the exact cursor value between pages/runs so jobs are resumable.
+export const syncJobCursors = pgTable(
+  'sync_job_cursors',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    runId: text('run_id').notNull(),
+    endpointKey: text('endpoint_key').notNull(),
+    pageIndex: integer('page_index').notNull().default(0),
+    cursorIn: text('cursor_in'),              // cursor used to fetch this page
+    cursorOut: text('cursor_out'),            // next_page_path or next_page_url from response
+    cursorExpiresAt: timestamp('cursor_expires_at', { withTimezone: true }), // v2 URLs expire after 30 min
+    fetchedAt: timestamp('fetched_at', { withTimezone: true }).defaultNow().notNull(),
+    recordCount: integer('record_count').default(0),
+    retriesUsed: integer('retries_used').default(0),
+    isTerminal: boolean('is_terminal').default(false), // true when cursor_out is null (last page)
+  },
+  (table) => ({
+    runPageIdx: index('sync_job_cursors_run_page_idx').on(table.runId, table.pageIndex),
+    endpointIdx: index('sync_job_cursors_endpoint_idx').on(table.endpointKey),
+  }),
+);
+
+// Universal raw response archive — written before any mapping/upsert step.
+export const appfolioRawResponses = pgTable(
+  'appfolio_raw_responses',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    runId: text('run_id').notNull(),
+    endpointKey: text('endpoint_key').notNull(),
+    pageIndex: integer('page_index').notNull().default(0),
+    cursorIn: text('cursor_in'),
+    cursorOut: text('cursor_out'),
+    statusCode: integer('status_code'),
+    recordCount: integer('record_count').default(0),
+    responseJson: jsonb('response_json').notNull().default({}),
+    fetchedAt: timestamp('fetched_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    runIdx: index('appfolio_raw_responses_run_idx').on(table.runId),
+    endpointIdx: index('appfolio_raw_responses_endpoint_idx').on(table.endpointKey),
+    fetchedAtIdx: index('appfolio_raw_responses_fetched_at_idx').on(table.fetchedAt),
+  }),
+);
+
+// Per-call request log for observability, 429 forensics, and rate budget tracking.
+export const appfolioRequestLog = pgTable(
+  'appfolio_request_log',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    runId: text('run_id'),
+    endpointKey: text('endpoint_key').notNull(),
+    apiVersion: text('api_version'),
+    method: text('method').default('GET'),
+    statusCode: integer('status_code'),
+    latencyMs: integer('latency_ms'),
+    retryAfterSeconds: integer('retry_after_seconds'),
+    attemptNumber: integer('attempt_number').default(1),
+    errorText: text('error_text'),
+    cursorSnapshot: text('cursor_snapshot'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    endpointTimeIdx: index('appfolio_request_log_endpoint_time_idx').on(table.endpointKey, table.requestedAt),
+    runIdx: index('appfolio_request_log_run_idx').on(table.runId),
+  }),
+);
+
+// Rate counters per window type — used by the token-bucket rate limiter.
+export const appfolioRateCounters = pgTable(
+  'appfolio_rate_counters',
+  {
+    apiVersion: text('api_version').notNull(),
+    endpointKey: text('endpoint_key').notNull(),
+    windowType: text('window_type').notNull(), // 'second' | 'minute' | 'hour'
+    windowStart: text('window_start').notNull(), // ISO timestamp truncated to window
+    requestCount: integer('request_count').notNull().default(0),
+    status429Count: integer('status_429_count').notNull().default(0),
+  },
+  (table) => ({
+    pk: unique('appfolio_rate_counters_pk').on(table.apiVersion, table.endpointKey, table.windowType, table.windowStart),
+    windowIdx: index('appfolio_rate_counters_window_idx').on(table.windowType, table.windowStart),
+  }),
+);
+
+// Serialized PATCH queue — ensures no two concurrent PATCHes to the same resource.
+export const appfolioPatchQueue = pgTable(
+  'appfolio_patch_queue',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    resourceId: text('resource_id').notNull(),   // AppFolio entity UUID / WO number
+    resourceType: text('resource_type').notNull(), // 'work_order' | 'estimate' | 'turn'
+    method: text('method').default('PATCH'),
+    endpointPath: text('endpoint_path').notNull(),
+    payloadJson: jsonb('payload_json').notNull().default({}),
+    status: text('status').notNull().default('pending'), // 'pending' | 'in_flight' | 'done' | 'failed'
+    priority: integer('priority').default(100),
+    attemptCount: integer('attempt_count').default(0),
+    lastError: text('last_error'),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    lockOwner: text('lock_owner'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    resourcePendingIdx: index('appfolio_patch_queue_resource_pending_idx').on(table.resourceId, table.status),
+    statusPriorityIdx: index('appfolio_patch_queue_status_priority_idx').on(table.status, table.priority, table.id),
+  }),
+);
