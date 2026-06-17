@@ -132,8 +132,18 @@ app.use(express.json({ limit: '10mb' }));
 
 const allowedOrigins = new Set([
   'https://handymgr.app',
+  'https://handymgr2.onrender.com',
   'http://localhost:5173',
 ]);
+
+[
+  process.env.RENDER_EXTERNAL_URL,
+  process.env.APP_ORIGIN,
+  process.env.FRONTEND_ORIGIN,
+].forEach((origin) => {
+  const value = String(origin || '').trim();
+  if (value) allowedOrigins.add(value);
+});
 
 app.use(cors({
   origin(origin, callback) {
