@@ -1,6 +1,14 @@
-node_modules/
-dist/
-afproxy/
+node_modules/git
+.env
+.env.*
 db/
 agewf.jsx
 .DS_Store
+afproxy3
+.github
+.vscode
+db
+node_modules/
+workOrders.old.ts
+chart.mmd
+chart.svg
