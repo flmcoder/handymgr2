@@ -24,6 +24,28 @@ projects:
         sync: false
       - key: DB_PASSWORD
         sync: false
+      - key: SSH_DB_TUNNEL_ENABLED
+        sync: false
+      - key: SSH_DB_TUNNEL_HOST
+        sync: false
+      - key: SSH_DB_TUNNEL_PORT
+        sync: false
+      - key: SSH_DB_TUNNEL_USER
+        sync: false
+      - key: SSH_DB_TUNNEL_LOCAL_PORT
+        sync: false
+      - key: SSH_DB_TUNNEL_REMOTE_HOST
+        sync: false
+      - key: SSH_DB_TUNNEL_REMOTE_PORT
+        sync: false
+      - key: SSH_DB_TUNNEL_PRIVATE_KEY
+        sync: false
+      - key: SSH_DB_TUNNEL_PRIVATE_KEY_B64
+        sync: false
+      - key: SSH_DB_TUNNEL_IDENTITY_FILE
+        sync: false
+      - key: SSH_DB_TUNNEL_READY_TIMEOUT_MS
+        sync: false
       region: oregon
       buildCommand: npm install && npm run build
       startCommand: npm start

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import * as schema from './schema';
+import { ensureDbSshTunnel, getSshDbTunnelTarget, isSshDbTunnelEnabled } from './sshTunnel';
 
 const SQL_SE = String(process.env.SQL_SE || '').trim();
 const DBI = String(process.env.DBI || process.env.PGHOST || '127.0.0.1').trim();
@@ -20,18 +21,35 @@ type DbConfig = {
   ssl: 'require' | false;
 };
 
-function resolveDbConfig(): DbConfig {
+function applyTunnelTarget(config: DbConfig): DbConfig {
+  const tunnelTarget = getSshDbTunnelTarget();
+  if (!tunnelTarget) {
+    return config;
+  }
+
+  return {
+    ...config,
+    host: tunnelTarget.host,
+    port: tunnelTarget.port,
+  };
+}
+
+async function resolveDbConfig(): Promise<DbConfig> {
+  if (isSshDbTunnelEnabled()) {
+    await ensureDbSshTunnel();
+  }
+
   if (SQL_SE && /^postgres(ql)?:\/\//i.test(SQL_SE)) {
     try {
       const parsed = new URL(SQL_SE);
-      return {
+      return applyTunnelTarget({
         host: parsed.hostname || DBI,
         port: parsed.port ? Number(parsed.port) : DB_PORT,
         database: (parsed.pathname || '').replace(/^\//, '') || DB_NAME,
         username: decodeURIComponent(parsed.username || DB_USER),
         password: decodeURIComponent(parsed.password || DB_PASSWORD),
         ssl: DB_SSL === 'true' ? 'require' : false,
-      };
+      });
     } catch (err) {
       console.warn('[db] SQL_SE is present but invalid; falling back to discrete env vars:', String((err as Error).message || err));
     }
@@ -41,17 +59,17 @@ function resolveDbConfig(): DbConfig {
     throw new Error('Missing DB_NAME (or valid SQL_SE) for PostgreSQL connection');
   }
 
-  return {
+  return applyTunnelTarget({
     host: DBI,
     port: DB_PORT,
     database: DB_NAME,
     username: DB_USER,
     password: DB_PASSWORD,
     ssl: DB_SSL === 'true' ? 'require' : false,
-  };
+  });
 }
 
-const dbConfig = resolveDbConfig();
+const dbConfig = await resolveDbConfig();
 
 console.log('[db] PostgreSQL config resolved:', {
   host: dbConfig.host,
@@ -59,6 +77,7 @@ console.log('[db] PostgreSQL config resolved:', {
   database: dbConfig.database,
   username: dbConfig.username,
   ssl: dbConfig.ssl,
+  sshTunnel: isSshDbTunnelEnabled(),
 });
 
 export const queryClient = postgres({
