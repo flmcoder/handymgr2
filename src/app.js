@@ -2390,6 +2390,42 @@ async function proxyAction(action, params, options) {
   var opts = options || {};
   if (!API_PROXY) throw new Error('No proxy configured');
 
+  // Local-first read path for captured Postgres datasets.
+  // If these endpoints are unavailable, we fall back to legacy proxy actions.
+  var LOCAL_READ_ACTIONS = {
+    work_orders: '/api/local/work_orders',
+    turns: '/api/local/turns',
+    turn_work_orders: '/api/local/turn_work_orders',
+    work_orders_completed_history: '/api/local/work_orders_completed_history'
+  };
+
+  if (LOCAL_READ_ACTIONS[action] && !opts.skipLocalRead) {
+    try {
+      var localPath = LOCAL_READ_ACTIONS[action];
+      var localUrl = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '') + localPath;
+      var localParams = params || {};
+      var localQuery = Object.keys(localParams).map(function(k) {
+        return encodeURIComponent(k) + '=' + encodeURIComponent(localParams[k]);
+      }).join('&');
+      if (localQuery) localUrl += '?' + localQuery;
+
+      var localToken = getProxyAccessToken();
+      var localHeaders = { 'Accept': 'application/json' };
+      if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
+
+      var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 45000);
+      if (localRes.ok) {
+        var localData = await localRes.json();
+        var localRows = (localData && (localData.results || localData.data)) || [];
+        if (localData && localData.ok !== false && Array.isArray(localRows) && localRows.length > 0) {
+          return Object.assign({}, localData, { _source: 'postgres_local' });
+        }
+      }
+    } catch (localErr) {
+      console.log('Local postgres read for ' + action + ' unavailable, falling back: ' + (localErr.message || localErr));
+    }
+  }
+
   // Actions that should use SQL/Turso backend when available (avoids AppFolio 429s)
   var SQL_FALLBACK_ACTIONS = {
     work_orders: 'sql_work_orders',

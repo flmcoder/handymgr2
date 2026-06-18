@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import path from 'node:path';
-import { pingDatabase } from './db';
+import { pingDatabase, queryClient } from './db';
 
 function ensureDenoCompat(): void {
   const globalAny = globalThis as any;
@@ -125,6 +125,63 @@ function wrapDenoHandler(handler: any, mode: Mode = 'params') {
   };
 }
 
+function parseDays(value: unknown, fallback: number, max = 3650): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(1, Math.min(max, parsed));
+}
+
+function parseLimit(value: unknown, fallback: number, max = 5000): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(1, Math.min(max, parsed));
+}
+
+function asIso(value: unknown): string {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+}
+
+function pickRaw(obj: any, keys: string[]): any {
+  for (const key of keys) {
+    const val = obj?.[key];
+    if (val !== undefined && val !== null && String(val).trim() !== '') {
+      return val;
+    }
+  }
+  return '';
+}
+
+function normalizeWorkOrderRow(row: any): Record<string, any> {
+  const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
+  const createdAt = asIso(row?.created_at) || String(pickRaw(raw, ['CreatedAt', 'created_at', 'created_date']) || '');
+  const updatedAt = asIso(row?.updated_at) || String(pickRaw(raw, ['LastUpdatedAt', 'last_updated_at', 'updated_at']) || '');
+  const status = String(row?.status || pickRaw(raw, ['Status', 'status']) || '');
+  const normalized: Record<string, any> = {
+    ...raw,
+    db_api_id: String(row?.id || pickRaw(raw, ['db_api_id', 'dbApiId', 'UUID', 'Id']) || ''),
+    work_order_id: String(row?.id || pickRaw(raw, ['work_order_id', 'WorkOrderId', 'Id']) || ''),
+    work_order_number: String(row?.wo_number || pickRaw(raw, ['work_order_number', 'WorkOrderNumber', 'Number']) || ''),
+    property_id: String(row?.property_id || pickRaw(raw, ['property_id', 'PropertyId']) || ''),
+    unit_id: String(row?.unit_id || pickRaw(raw, ['unit_id', 'UnitId']) || ''),
+    property_group_id: String(row?.property_group_id || pickRaw(raw, ['property_group_id', 'PropertyGroupId']) || ''),
+    status,
+    priority: String(row?.priority || pickRaw(raw, ['priority', 'Priority']) || ''),
+    vendor_id: String(row?.vendor_id || pickRaw(raw, ['vendor_id', 'VendorId']) || ''),
+    vendor_name: String(row?.vendor_name || pickRaw(raw, ['vendor_name', 'VendorName']) || ''),
+    vendor: String(row?.vendor_name || pickRaw(raw, ['vendor_name', 'VendorName']) || ''),
+    description: String(row?.description || pickRaw(raw, ['description', 'Description', 'subject', 'Subject']) || ''),
+    created_at: createdAt,
+    completed_on: updatedAt,
+    work_completed_on: updatedAt,
+    estimated_amount: row?.estimated_amount,
+    total_cost: row?.total_cost,
+    _source: 'postgres_local',
+  };
+  return normalized;
+}
+
 const app = express();
 const DIST_DIR = path.resolve(process.cwd(), 'dist');
 
@@ -161,6 +218,221 @@ app.use(cors({
 app.get('/health', async (_req: Request, res: Response) => {
   const dbOk = await pingDatabase();
   res.status(dbOk ? 200 : 503).json({ ok: dbOk, service: 'handymgr-backend', database: dbOk ? 'up' : 'down' });
+});
+
+app.get('/api/local/work_orders', async (req: Request, res: Response) => {
+  try {
+    const days = parseDays(req.query.days, 180);
+    const limit = parseLimit(req.query.limit, 2500);
+    const rows = await queryClient`
+      select id, wo_number, property_id, unit_id, property_group_id, description,
+             category, priority, status, assigned_user_id, assigned_user_name,
+             vendor_id, vendor_name, estimated_amount, total_cost,
+             created_at, updated_at, raw_json
+      from appfolio_work_orders
+      where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
+        and (
+          coalesce(lower(status), '') not like '%completed%'
+          and coalesce(lower(status), '') not like '%cancel%'
+          and coalesce(lower(status), '') not like '%no need to bill%'
+        )
+      order by coalesce(updated_at, created_at) desc
+      limit ${limit}
+    `;
+
+    const results = (rows as any[]).map(normalizeWorkOrderRow);
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/work_orders');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local work orders query failed') });
+  }
+});
+
+app.get('/api/local/work_orders_completed_history', async (req: Request, res: Response) => {
+  try {
+    const days = parseDays(req.query.days, 180, 3650);
+    const limit = parseLimit(req.query.limit, 3000);
+    const rows = await queryClient`
+      select id, wo_number, property_id, unit_id, property_group_id, description,
+             category, priority, status, assigned_user_id, assigned_user_name,
+             vendor_id, vendor_name, estimated_amount, total_cost,
+             created_at, updated_at, raw_json
+      from appfolio_work_orders
+      where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
+        and (
+          coalesce(lower(status), '') like '%completed%'
+          or coalesce(lower(status), '') like '%no need to bill%'
+        )
+      order by coalesce(updated_at, created_at) desc
+      limit ${limit}
+    `;
+
+    const results = (rows as any[]).map(normalizeWorkOrderRow);
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/work_orders_completed_history');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local work order history query failed') });
+  }
+});
+
+app.get('/api/local/turns', async (req: Request, res: Response) => {
+  try {
+    const days = parseDays(req.query.days, 90);
+    const limit = parseLimit(req.query.limit, 3000);
+    const statusFilter = String(req.query.status || '').trim().toLowerCase();
+
+    const rows = await queryClient`
+      select
+        t.tracking_uuid,
+        t.tracking_code,
+        t.turn_key,
+        t.unit_turn_id,
+        t.unit_id,
+        t.property_id,
+        t.unit_name,
+        t.property_name,
+        t.status,
+        t.confidence_score,
+        t.confidence_label,
+        t.source_flags,
+        t.metadata,
+        t.closed_at,
+        t.created_at,
+        t.updated_at,
+        coalesce((
+          select jsonb_object_agg(m.milestone_key, jsonb_build_object(
+            'date', m.milestone_date,
+            'source', m.source,
+            'notes', m.notes
+          ))
+          from unit_turn_milestones m
+          where m.tracking_uuid = t.tracking_uuid
+        ), '{}'::jsonb) as milestones,
+        coalesce((
+          select jsonb_agg(jsonb_build_object(
+            'wo_id', w.wo_id,
+            'wo_db_uuid', w.wo_db_uuid,
+            'source', w.source,
+            'status', w.status,
+            'created_at', w.created_at
+          ) order by w.created_at asc)
+          from unit_turn_work_orders w
+          where w.tracking_uuid = t.tracking_uuid and coalesce(w.removed, false) = false
+        ), '[]'::jsonb) as linked_work_orders
+      from unit_turn_tracker t
+      where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
+      order by coalesce(t.updated_at, t.created_at) desc
+      limit ${limit}
+    `;
+
+    const filtered = (rows as any[]).filter((row) => {
+      if (!statusFilter) return true;
+      const status = String(row?.status || '').toLowerCase();
+      return status.includes(statusFilter);
+    });
+
+    const results = filtered.map((row) => ({
+      tracking_uuid: row.tracking_uuid,
+      tracking_code: row.tracking_code,
+      turn_key: row.turn_key,
+      unit_turn_id: row.unit_turn_id,
+      unit_id: row.unit_id,
+      property_id: row.property_id,
+      unit_name: row.unit_name,
+      property_name: row.property_name,
+      status: row.status,
+      confidence_score: row.confidence_score,
+      confidence_label: row.confidence_label,
+      source_flags: row.source_flags || {},
+      metadata: row.metadata || {},
+      closed_at: asIso(row.closed_at),
+      created_at: asIso(row.created_at),
+      updated_at: asIso(row.updated_at),
+      milestones: row.milestones || {},
+      linked_work_orders: Array.isArray(row.linked_work_orders) ? row.linked_work_orders : [],
+      _source: 'postgres_local',
+    }));
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/turns');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local turns query failed') });
+  }
+});
+
+app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
+  try {
+    const days = parseDays(req.query.days, 90);
+    const limit = parseLimit(req.query.limit, 3000);
+    const rows = await queryClient`
+      select
+        tw.wo_id,
+        tw.wo_db_uuid,
+        tw.source,
+        tw.status as tracker_status,
+        tw.created_at as linked_at,
+        wo.id as work_order_id,
+        wo.wo_number,
+        wo.unit_id,
+        wo.unit_id as "UnitId",
+        wo.unit_id as unit_id,
+        wo.unit_id as unit_uuid,
+        wo.unit_id as "unit_id",
+        wo.property_id,
+        wo.status,
+        wo.priority,
+        wo.category,
+        wo.description,
+        wo.vendor_id,
+        wo.vendor_name,
+        wo.created_at,
+        wo.updated_at,
+        wo.raw_json
+      from unit_turn_work_orders tw
+      left join appfolio_work_orders wo
+        on wo.id = coalesce(tw.wo_db_uuid, tw.wo_id)
+           or wo.wo_number = tw.wo_id
+      where coalesce(tw.removed, false) = false
+        and coalesce(tw.created_at, now()) >= now() - (${days}::int * interval '1 day')
+      order by coalesce(wo.updated_at, tw.created_at) desc
+      limit ${limit}
+    `;
+
+    const results = (rows as any[]).map((row) => {
+      const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
+      return {
+        ...raw,
+        Id: row.work_order_id || row.wo_db_uuid || row.wo_id || pickRaw(raw, ['Id', 'id']) || '',
+        id: row.work_order_id || row.wo_db_uuid || row.wo_id || pickRaw(raw, ['Id', 'id']) || '',
+        WorkOrderNumber: row.wo_number || pickRaw(raw, ['WorkOrderNumber', 'work_order_number']) || row.wo_id || '',
+        work_order_number: row.wo_number || pickRaw(raw, ['work_order_number', 'WorkOrderNumber']) || row.wo_id || '',
+        UnitTurnId: pickRaw(raw, ['UnitTurnId', 'unit_turn_id']) || '',
+        unit_turn_id: pickRaw(raw, ['unit_turn_id', 'UnitTurnId']) || '',
+        UnitId: row.unit_id || pickRaw(raw, ['UnitId', 'unit_id']) || '',
+        unit_id: row.unit_id || pickRaw(raw, ['unit_id', 'UnitId']) || '',
+        PropertyId: row.property_id || pickRaw(raw, ['PropertyId', 'property_id']) || '',
+        property_id: row.property_id || pickRaw(raw, ['property_id', 'PropertyId']) || '',
+        Status: row.status || row.tracker_status || pickRaw(raw, ['Status', 'status']) || '',
+        status: row.status || row.tracker_status || pickRaw(raw, ['status', 'Status']) || '',
+        Priority: row.priority || pickRaw(raw, ['Priority', 'priority']) || '',
+        priority: row.priority || pickRaw(raw, ['priority', 'Priority']) || '',
+        VendorId: row.vendor_id || pickRaw(raw, ['VendorId', 'vendor_id']) || '',
+        vendor_id: row.vendor_id || pickRaw(raw, ['vendor_id', 'VendorId']) || '',
+        VendorName: row.vendor_name || pickRaw(raw, ['VendorName', 'vendor_name']) || '',
+        vendor_name: row.vendor_name || pickRaw(raw, ['vendor_name', 'VendorName']) || '',
+        JobDescription: row.description || pickRaw(raw, ['JobDescription', 'Description', 'description']) || '',
+        description: row.description || pickRaw(raw, ['description', 'Description', 'JobDescription']) || '',
+        LastUpdatedAt: asIso(row.updated_at) || asIso(row.linked_at),
+        last_updated_at: asIso(row.updated_at) || asIso(row.linked_at),
+        _source: 'postgres_local',
+      };
+    });
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/turn_work_orders');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local turn work orders query failed') });
+  }
 });
 
 // Serve built frontend assets when running monolith mode on Render.
