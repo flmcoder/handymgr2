@@ -213,10 +213,16 @@ console.log(`[apply-pg-sql] Connecting to ${config.host}:${config.port}/${config
 const sql = postgres({ ...config, max: 1, connect_timeout: 15, prepare: false });
 
 const raw = await readFile(sqlFile, 'utf8');
-const statements = raw
+// Strip comment lines first so they don't cause CREATE TABLE/INDEX chunks to be
+// incorrectly dropped when a comment block precedes the first SQL keyword.
+const stripped = raw
+  .split('\n')
+  .filter((line) => !line.trim().startsWith('--'))
+  .join('\n');
+const statements = stripped
   .split(/;\s*\n/)
   .map((s) => s.trim())
-  .filter((s) => s && !s.startsWith('--'));
+  .filter((s) => s.length > 0);
 
 let applied = 0;
 for (const stmt of statements) {
