@@ -54,8 +54,12 @@ const ENDPOINTS: Record<string, EndpointDef> = {
 
   'v0:properties': {
     apiVersion: 'v0',
-    buildFirstUrl: ({ baseUrl }) =>
-      `${baseUrl}/api/v0/properties?page%5Bsize%5D=100`,
+    buildFirstUrl: ({ baseUrl, incrementalFrom }) => {
+      const from = incrementalFrom
+        ? new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z'
+        : new Date(Date.now() - 5 * 365 * 86400_000).toISOString().slice(0, 19) + 'Z';
+      return `${baseUrl}/api/v0/properties?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
+    },
     extractRows: (data) => data?.data ?? data?.results ?? [],
     upsert: upsertProperties,
   },
@@ -64,9 +68,9 @@ const ENDPOINTS: Record<string, EndpointDef> = {
     apiVersion: 'v0',
     buildFirstUrl: ({ baseUrl, incrementalFrom }) => {
       const from = incrementalFrom
-        ? new Date(incrementalFrom).toISOString().slice(0, 10)
-        : new Date(Date.now() - 180 * 86400_000).toISOString().slice(0, 10);
-      return `${baseUrl}/api/v0/maintenance_requests?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
+        ? new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z'
+        : new Date(Date.now() - 180 * 86400_000).toISOString().slice(0, 19) + 'Z';
+      return `${baseUrl}/api/v0/work_orders?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
     },
     extractRows: (data) => data?.data ?? data?.results ?? [],
     upsert: upsertWorkOrders,
