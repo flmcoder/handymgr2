@@ -1,3 +1,4 @@
+// @ts-nocheck - Deno code, type checking disabled
 import { rowsAsObjects, sqlite } from "../db.ts";
 
 function parseJson(raw: unknown, fallback: any) {

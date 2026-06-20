@@ -230,7 +230,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.7.8';
+var APP_VERSION = 'v9.7.9:R1';
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
   : (window.location.origin || 'https://handymgr2.onrender.com');
@@ -978,6 +978,8 @@ function showItemDetail(title, fields, afLink) {
   if (!modal) return;
   document.getElementById('itemDetailTitle').textContent = title;
   var html = '';
+    html = tabsHtml + html;
+  
   fields.forEach(function(f) {
     if (f.section) {
       html += '<div class="detail-section-title" style="margin-top:' + (html ? '14px' : '0') + '"><i class="fas ' + (f.icon || 'fa-info-circle') + '"></i> ' + escapeHtml(f.section) + '</div>';
@@ -2382,48 +2384,42 @@ async function fetchWithTimeout(url, opts, timeoutMsOrRetries, baseBackoffMs) {
 // Proxy does all pagination server-side and returns complete dataset
 // Includes 45-second timeout — never hangs forever
 //
-// HYBRID DATA STRATEGY:
-// - v2_report actions: Always go to v1 proxy (live AppFolio data)
-// - v0 data actions (work_orders, turns, turn_work_orders): Try SQL/Turso first,
-//   fallback to v1 proxy if SQL unavailable or stale
+// LOCAL-FIRST STRICT MODE (high-volume tables):
+// - work_orders, turns, turn_work_orders must resolve from /api/local/*
+// - no SQL/proxy fallback for these actions; fail fast if local read is unavailable
 async function proxyAction(action, params, options) {
   var opts = options || {};
   if (!API_PROXY) throw new Error('No proxy configured');
 
-  // Local-first read path for captured Postgres datasets.
-  // If these endpoints are unavailable, we fall back to legacy proxy actions.
+  // Local-only read path for captured Postgres datasets.
   var LOCAL_READ_ACTIONS = {
     work_orders: '/api/local/work_orders',
     turns: '/api/local/turns',
-    turn_work_orders: '/api/local/turn_work_orders',
-    work_orders_completed_history: '/api/local/work_orders_completed_history'
+    turn_work_orders: '/api/local/turn_work_orders'
   };
 
   if (LOCAL_READ_ACTIONS[action] && !opts.skipLocalRead) {
-    try {
-      var localPath = LOCAL_READ_ACTIONS[action];
-      var localUrl = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '') + localPath;
-      var localParams = params || {};
-      var localQuery = Object.keys(localParams).map(function(k) {
-        return encodeURIComponent(k) + '=' + encodeURIComponent(localParams[k]);
-      }).join('&');
-      if (localQuery) localUrl += '?' + localQuery;
+    var localPath = LOCAL_READ_ACTIONS[action];
+    var localUrl = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '') + localPath;
+    var localParams = params || {};
+    var localQuery = Object.keys(localParams).map(function(k) {
+      return encodeURIComponent(k) + '=' + encodeURIComponent(localParams[k]);
+    }).join('&');
+    if (localQuery) localUrl += '?' + localQuery;
 
-      var localToken = getProxyAccessToken();
-      var localHeaders = { 'Accept': 'application/json' };
-      if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
+    var localToken = getProxyAccessToken();
+    var localHeaders = { 'Accept': 'application/json' };
+    if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
 
-      var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 45000);
-      if (localRes.ok) {
-        var localData = await localRes.json();
-        var localRows = (localData && (localData.results || localData.data)) || [];
-        if (localData && localData.ok !== false && Array.isArray(localRows) && localRows.length > 0) {
-          return Object.assign({}, localData, { _source: 'postgres_local' });
-        }
-      }
-    } catch (localErr) {
-      console.log('Local postgres read for ' + action + ' unavailable, falling back: ' + (localErr.message || localErr));
+    var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 45000);
+    var localData = {};
+    try { localData = await localRes.json(); } catch (e) { localData = {}; }
+
+    if (!localRes.ok || localData.ok === false) {
+      throw new Error(String((localData && (localData.error || localData.message)) || ('Local read failed for ' + action + ': HTTP ' + localRes.status)));
     }
+
+    return Object.assign({}, localData, { _source: 'postgres_local' });
   }
 
   // Actions that should use SQL/Turso backend when available (avoids AppFolio 429s)
@@ -3938,7 +3934,9 @@ function maybeAutoRunSystemHealthCheck() {
 /* =================================================================
    DATA STORES — populated from live API
    ================================================================= */
-var WORK_ORDERS = [];
+var WORK_ORDERS_ACTIVE = [];
+var WORK_ORDERS_INACTIVE = [];
+var WORK_ORDERS = []; // for backward compat, synced with WORK_ORDERS_ACTIVE
 var ESTIMATES = [];
 var VENDORS = [];
 var PROPERTIES = [];
@@ -5481,20 +5479,54 @@ function hideProgress() {
 // Open statuses: 0=New, 1=EstReq, 2=Estimated, 9=Assigned, 3=Scheduled,
 //   6=Waiting, 8=WorkDone, 12=ReadyToBill
 // Excludes: 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill
+async function fetchLocalWorkOrders(days) {
+  var lookback = Math.max(1, Math.min(3650, parseInt(days || DATA_WINDOW_DAYS, 10) || DATA_WINDOW_DAYS));
+  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  var url = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(lookback)) + '&limit=2500';
+  var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
+  var data = {};
+  try { data = await res.json(); } catch (e) { data = {}; }
+  if (!res.ok || data.ok === false) {
+    throw new Error(String((data && (data.error || data.message)) || ('Local work orders failed: HTTP ' + res.status)));
+  }
+  return data;
+}
+
 async function fetchWorkOrders() {
   setDataSourceState('work_orders', 'loading', { error: '' });
   try {
-    setApiStatus('loading', 'Loading work orders (server-side)\u2026');
-    var data = await proxyAction('work_orders', { days: DATA_WINDOW_DAYS });
-    var results = data.results || [];
-    WORK_ORDERS = results.map(function(r) {
+    setApiStatus('loading', 'Loading work orders (active & inactive)…');
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    
+    // Fetch active work orders
+    var urlActive = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(DATA_WINDOW_DAYS)) + '&limit=2500';
+    var resActive = await fetchWithTimeout(urlActive, { headers: { 'Accept': 'application/json' } }, 45000);
+    var dataActive = {};
+    try { dataActive = await resActive.json(); } catch (e) { dataActive = {}; }
+    if (!resActive.ok || dataActive.ok === false) {
+      throw new Error(String((dataActive && (dataActive.error || dataActive.message)) || ('Local active work orders failed: HTTP ' + resActive.status)));
+    }
+    var activeResults = (dataActive.results || dataActive.data || []);
+    
+    // Fetch inactive work orders
+    var urlInactive = localBase + '/api/local/work_orders/inactive?days=3650&limit=5000';
+    var resInactive = await fetchWithTimeout(urlInactive, { headers: { 'Accept': 'application/json' } }, 45000);
+    var dataInactive = {};
+    try { dataInactive = await resInactive.json(); } catch (e) { dataInactive = {}; }
+    if (!resInactive.ok || dataInactive.ok === false) {
+      throw new Error(String((dataInactive && (dataInactive.error || dataInactive.message)) || ('Local inactive work orders failed: HTTP ' + resInactive.status)));
+    }
+    var inactiveResults = (dataInactive.results || dataInactive.data || []);
+    
+    // Normalize work order row
+    var normalizeWo = function(r) {
       var rawUuid = r.work_order_id || r.Id || '';
       var dbApiId = r.db_api_id || r.dbApiId || r.v0_uuid || r.v0_id || r.uuid || r.UUID || '';
       return {
         id: r.work_order_number || r.WorkOrderNumber || r.service_request_number || '',
         uuid: rawUuid,
         dbApiId: dbApiId,
-        _dataSource: data._source || (isUuidString(rawUuid) ? 'v0' : 'v2'),
+        _dataSource: r._source || (isUuidString(rawUuid) ? 'v0' : 'v2'),
         propertyId: r.property_id || r.PropertyId || '',
         propertyName: r.property_name || r.property || r.PropertyName || '',
         propertyAddress: ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
@@ -5524,12 +5556,19 @@ async function fetchWorkOrders() {
         maintenanceLimit: r.maintenance_limit || r.MaintenanceLimit || '',
         link: r.Link || r.link || ''
       };
-    });
-    var cacheNote = (data.from_cache && data.cached_at) ? ' (cached)' : '';
-    setApiStatus('loading', 'Work orders: ' + WORK_ORDERS.length + ' loaded' + cacheNote);
-    setDataSourceState('work_orders', 'ok', { count: WORK_ORDERS.length, error: '' });
+    };
+    
+    WORK_ORDERS_ACTIVE = activeResults.map(normalizeWo);
+    WORK_ORDERS_INACTIVE = inactiveResults.map(normalizeWo);
+    WORK_ORDERS = WORK_ORDERS_ACTIVE; // backward compat
+    
+    var totalCount = WORK_ORDERS_ACTIVE.length + WORK_ORDERS_INACTIVE.length;
+    setApiStatus('loading', 'Work orders: ' + WORK_ORDERS_ACTIVE.length + ' active, ' + WORK_ORDERS_INACTIVE.length + ' inactive');
+    setDataSourceState('work_orders', 'ok', { count: totalCount, active: WORK_ORDERS_ACTIVE.length, inactive: WORK_ORDERS_INACTIVE.length, error: '' });
     return true;
   } catch (err) {
+    WORK_ORDERS_ACTIVE = [];
+    WORK_ORDERS_INACTIVE = [];
     WORK_ORDERS = [];
     setDataSourceState('work_orders', 'no_response', { count: null, error: String((err && err.message) || err || 'work orders unavailable') });
     return false;
@@ -6192,11 +6231,18 @@ async function fetchVendors() {
   }
 }
 
-// Properties: Proxy ?action=properties — server-side pagination, one request
+// Properties: local PostgreSQL read
 async function fetchProperties() {
   try {
-    setApiStatus('loading', 'Loading properties (server-side)…');
-    var data = await proxyAction('properties');
+    setApiStatus('loading', 'Loading properties (local)…');
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var url = localBase + '/api/local/properties?limit=5000';
+    var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
+    var data = {};
+    try { data = await res.json(); } catch (e) { data = {}; }
+    if (!res.ok || data.ok === false) {
+      throw new Error(String((data && (data.error || data.message)) || ('Local properties failed: HTTP ' + res.status)));
+    }
     var results = data.results || data.data || [];
     _propertyManagementStateById = {};
     _propertyManagementStateByName = {};
@@ -6208,12 +6254,12 @@ async function fetchProperties() {
       if (!siteManager && p.SiteManager && typeof p.SiteManager === 'object') {
         siteManager = [p.SiteManager.FirstName, p.SiteManager.LastName].filter(Boolean).join(' ').trim();
       }
-      var id = p.property_id || p.id || '';
-      var name = p.property_name || p.property || p.name || '';
+      var id = p.id || '';
+      var name = p.name || '';
       var state = {
-        visibility: p.visibility || p.Visibility || '',
-        managementEndDate: p.management_end_date || p.managementEndDate || p.ManagementEndDate || '',
-        managementEndReason: p.management_end_reason || p.managementEndReason || p.ManagementEndReason || ''
+        visibility: p.visibility || '',
+        managementEndDate: p.management_end_date || '',
+        managementEndReason: p.management_end_reason || ''
       };
       var idKey = String(id || '').trim();
       if (idKey) _propertyManagementStateById[idKey] = state;
@@ -6223,27 +6269,27 @@ async function fetchProperties() {
       return {
         id: id,
         name: name,
-        address: ((p.property_street || p.street || '') + (p.property_street2 ? ' ' + p.property_street2 : '')).trim(),
-        city: p.property_city || p.city || '',
-        state: p.property_state || p.state || '',
-        zip: p.property_zip || p.zip || '',
-        propertyType: p.property_type || p.type || '',
-        portfolioId: p.portfolio_id || p.portfolioId || '',
-        portfolio: p.portfolio || p.portfolio_name || p.portfolioName || p.group_name || p.property_group || '',
-        portfolioName: p.portfolio_name || p.portfolioName || '',
-        propertyGroup: p.property_group || p.group_name || p.group || '',
-        propertyGroupId: p.property_group_id || p.PropertyGroupId || p.property_group_uuid || p.PropertyGroupUuid || '',
+        address: ((p.address || p.street || '') + (p.property_street2 ? ' ' + p.property_street2 : '')).trim(),
+        city: p.city || '',
+        state: p.state || '',
+        zip: p.zip || '',
+        propertyType: p.property_type || '',
+        portfolioId: p.portfolio_id || '',
+        portfolio: p.portfolio || '',
+        portfolioName: p.portfolio_name || '',
+        propertyGroup: p.property_group || '',
+        propertyGroupId: p.property_group_id || '',
         group: p.group || '',
         groupName: p.group_name || '',
-        maintenanceLimit: p.maintenance_limit || p.maintenanceLimit || '',
-        maintenanceNotes: p.maintenance_notes || p.maintenanceNotes || '',
-        siteManager: siteManager || p.site_manager || p.siteManager || p.SiteManager || '',
+        maintenanceLimit: p.maintenance_limit || '',
+        maintenanceNotes: p.maintenance_notes || '',
+        siteManager: siteManager || p.site_manager || '',
         visibility: state.visibility,
         managementEndDate: state.managementEndDate,
         managementEndReason: state.managementEndReason,
         units: p.units || '',
         sqft: p.sqft || '',
-        marketRent: p.market_rent || p.marketRent || '',
+        marketRent: p.market_rent || '',
         owners: p.owners || '',
         link: ''
       };
@@ -6474,21 +6520,17 @@ async function fetchInspections() {
 // DB API returns { data: [ { Id, Name, PropertyIds, Type, LastUpdatedAt } ] }
 // UUID→Name resolution via separate ?action=property_map (non-blocking)
 async function fetchPropertyGroups() {
-  var previousGroups = Array.isArray(PROPERTY_GROUPS) ? PROPERTY_GROUPS.slice() : [];
   try {
     setApiStatus('loading', 'Loading property groups\u2026');
-    var pgParams = buildPropertyGroupsQueryParams();
-    var data;
-    try {
-      data = await proxyAction('property_groups', pgParams);
-    } catch (actionErr) {
-      // Fallback for proxies that do not forward DB API filters for this action.
-      var pgPath = '/api/v0/property_groups?filters[LastUpdatedAtFrom]=' +
-        encodeURIComponent(PROPERTY_GROUPS_LAST_UPDATED_FROM) +
-        '&page[size]=' + encodeURIComponent(PROPERTY_GROUPS_PAGE_SIZE);
-      console.log('[PG] property_groups action failed; using passthrough fallback: ' + (actionErr.message || actionErr));
-      data = await apiFetch(pgPath);
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var localUrl = localBase + '/api/local/property_groups?limit=1000';
+    var localRes = await fetchWithTimeout(localUrl, { headers: { 'Accept': 'application/json' } }, 45000);
+    var data = {};
+    try { data = await localRes.json(); } catch (e) { data = {}; }
+    if (!localRes.ok || data.ok === false) {
+      throw new Error(String((data && (data.error || data.message)) || ('Local property groups failed: HTTP ' + localRes.status)));
     }
+
     console.log('[PG] property_groups response keys: ' + Object.keys(data).join(', '));
 
     var results = data.results || data.data || [];
@@ -6519,50 +6561,11 @@ async function fetchPropertyGroups() {
     console.log('[PG] Parsed groups: ' + PROPERTY_GROUPS.length + ', with PropertyIds: ' +
       PROPERTY_GROUPS.filter(function(g) { return g.properties.length > 0; }).length);
 
-    // Fetch UUID→Name map — await so resolution completes before filters are used
-    await resolvePropertyGroupNames();
+    // Local property groups already carry names and property ids; skip slow remote resolution.
 
     return true;
   } catch (err) {
     console.log('[PG] fetchPropertyGroups FATAL error: ' + (err.message || err));
-    // Keep last-known-good groups on transient failures.
-    if (previousGroups.length > 0) {
-      PROPERTY_GROUPS = previousGroups;
-      console.log('[PG] preserving previous property groups: ' + previousGroups.length);
-      return true;
-    }
-
-    // Final fallback: synthesize group names from loaded property metadata.
-    var synthetic = {};
-    (PROPERTIES || []).forEach(function(p) {
-      var candidates = [
-        p.portfolio,
-        p.portfolioName,
-        p.propertyGroup,
-        p.group,
-        p.groupName,
-      ];
-      candidates.forEach(function(raw) {
-        var name = String(raw || '').trim();
-        if (name) synthetic[name] = true;
-      });
-    });
-
-    var names = Object.keys(synthetic).sort();
-    if (names.length > 0) {
-      PROPERTY_GROUPS = names.map(function(name, idx) {
-        return {
-          id: 'synthetic-' + idx,
-          name: name,
-          properties: [],
-          propertyNames: [],
-          resolvedNames: [],
-        };
-      });
-      console.log('[PG] synthesized property groups from properties: ' + PROPERTY_GROUPS.length);
-      return true;
-    }
-
     PROPERTY_GROUPS = [];
     return false;
   }
@@ -12396,6 +12399,7 @@ var currentWOAgeFilter = '';
 var currentWOSort = 'oldest';
 var currentWOView = 'board'; // 'board' | 'list'
 var currentWOSubtab = 'active'; // active | completed | closure | followup
+var currentWOTab = 'active'; // 'active' | 'inactive' - for active vs inactive work orders
 var currentBillingSubtab = 'main'; // main | payables | charge-detail | bill-detail
 var _billingKpisLoading = false;
 var _billingKpisLoadedGroup = null; // group key for which KPIs were last loaded
@@ -15054,7 +15058,8 @@ var KANBAN_STATUSES = [
 
 function getFilteredWOs() {
   var search = $('#woSearch') ? $('#woSearch').value : '';
-  return WORK_ORDERS.filter(function(wo) {
+  var sourceArray = (currentWOTab === 'inactive') ? WORK_ORDERS_INACTIVE : WORK_ORDERS_ACTIVE;
+  return sourceArray.filter(function(wo) {
     // Status filter (from filter buttons or kanban column click)
     if (currentWOFilter && currentWOFilter !== 'all' && wo.status !== currentWOFilter) return false;
     // Priority dropdown
@@ -15247,6 +15252,13 @@ function renderWorkOrders() {
   rebuildWOScopedFilters();
   var filtered = sortWorkOrders(getFilteredWOs());
 
+  // ── Active/Inactive Tabs ───────────────────────────────────────────────────
+  var tabsHtml = 
+    '<div class="wo-tabs" style="display:flex;gap:8px;margin-bottom:16px;border-bottom:1px solid var(--border-color);padding-bottom:8px;">' +
+    '  <button id="woTabActive" class="wo-tab ' + (currentWOTab === 'active' ? 'active' : '') + '" style="padding:8px 16px;border:none;background:transparent;cursor:pointer;font-weight:500;color:' + (currentWOTab === 'active' ? 'var(--text-primary)' : 'var(--text-muted)') + ';border-bottom:2px solid ' + (currentWOTab === 'active' ? 'var(--primary-color)' : 'transparent') + '">Active (' + WORK_ORDERS_ACTIVE.length + ')</button>' +
+    '  <button id="woTabInactive" class="wo-tab ' + (currentWOTab === 'inactive' ? 'active' : '') + '" style="padding:8px 16px;border:none;background:transparent;cursor:pointer;font-weight:500;color:' + (currentWOTab === 'inactive' ? 'var(--text-primary)' : 'var(--text-muted)') + ';border-bottom:2px solid ' + (currentWOTab === 'inactive' ? 'var(--primary-color)' : 'transparent') + '">Inactive (' + WORK_ORDERS_INACTIVE.length + ')</button>' +
+    '</div>';
+
   // ── List view ──────────────────────────────────────────────────────────────
   if (currentWOView === 'list') {
     if (!window._woListPageState) window._woListPageState = { page: 1, pageSize: 50 };
@@ -15266,7 +15278,7 @@ function renderWorkOrders() {
     });
     var thHtml = ['WO #', 'Property', 'Unit', 'Description', 'Status', 'Priority', 'Vendor', 'Age']
       .map(function(h) { return '<th>' + h + '</th>'; }).join('');
-    board.innerHTML = '<div class="table-wrapper">' +
+    board.innerHTML = tabsHtml + '<div class="table-wrapper">' +
       '<table class="data-table"><thead><tr>' + thHtml + '</tr></thead>' +
       '<tbody>' + woListResult.html + '</tbody></table>' +
       '<div class="u-table-footer-split" id="woListFooter"></div>' +
@@ -15288,6 +15300,12 @@ function renderWorkOrders() {
         if (woListNext) woListNext.onclick = function() { if (window._woListPageState.page < woListResult.totalPages) { window._woListPageState.page += 1; renderWorkOrders(); } };
       }
     }
+    // Attach tab click handlers
+    var woTabActive = document.getElementById('woTabActive');
+    var woTabInactive = document.getElementById('woTabInactive');
+    if (woTabActive) woTabActive.onclick = function() { currentWOTab = 'active'; window._woListPageState.page = 1; renderWorkOrders(); };
+    if (woTabInactive) woTabInactive.onclick = function() { currentWOTab = 'inactive'; window._woListPageState.page = 1; renderWorkOrders(); };
+    
     $('#woBadge').textContent = filtered.length || '0';
     renderWOCloseAssist();
     renderWOFollowupQueue();
@@ -15304,8 +15322,14 @@ function renderWorkOrders() {
   // Vendor compliance map for cross-tab warnings
   var vendorCompliance = buildVendorComplianceMap();
 
-  if (WORK_ORDERS.length === 0) {
-    board.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-inbox" style="font-size:36px;display:block;margin-bottom:12px;color:var(--border)"></i>No work orders loaded. Connect to API or import a cache file.</div>';
+  var tabsHtml = 
+    '<div class="wo-tabs-kanban" style="display:flex;gap:8px;margin-bottom:16px;border-bottom:1px solid var(--border-color);padding:0 0 8px 0;">' +
+    '  <button id="woKanbanTabActive" class="wo-tab ' + (currentWOTab === 'active' ? 'active' : '') + '" style="padding:8px 16px;border:none;background:transparent;cursor:pointer;font-weight:500;color:' + (currentWOTab === 'active' ? 'var(--text-primary)' : 'var(--text-muted)') + ';border-bottom:2px solid ' + (currentWOTab === 'active' ? 'var(--primary-color)' : 'transparent') + '">Active (' + WORK_ORDERS_ACTIVE.length + ')</button>' +
+    '  <button id="woKanbanTabInactive" class="wo-tab ' + (currentWOTab === 'inactive' ? 'active' : '') + '" style="padding:8px 16px;border:none;background:transparent;cursor:pointer;font-weight:500;color:' + (currentWOTab === 'inactive' ? 'var(--text-primary)' : 'var(--text-muted)') + ';border-bottom:2px solid ' + (currentWOTab === 'inactive' ? 'var(--primary-color)' : 'transparent') + '">Inactive (' + WORK_ORDERS_INACTIVE.length + ')</button>' +
+    '</div>';
+
+  if ((WORK_ORDERS_ACTIVE.length + WORK_ORDERS_INACTIVE.length) === 0) {
+    board.innerHTML = tabsHtml + '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-inbox" style="font-size:36px;display:block;margin-bottom:12px;color:var(--border)"></i>No work orders loaded. Connect to API or import a cache file.</div>';
     renderCompletedWOHistorySection();
     return;
   }
@@ -15377,6 +15401,13 @@ function renderWorkOrders() {
   }
 
   board.innerHTML = html;
+  
+    // Attach kanban tab click handlers
+    var woKanbanTabActive = document.getElementById('woKanbanTabActive');
+    var woKanbanTabInactive = document.getElementById('woKanbanTabInactive');
+    if (woKanbanTabActive) woKanbanTabActive.onclick = function() { currentWOTab = 'active'; expandedWOColumn = null; renderWorkOrders(); };
+    if (woKanbanTabInactive) woKanbanTabInactive.onclick = function() { currentWOTab = 'inactive'; expandedWOColumn = null; renderWorkOrders(); };
+  
   board.classList.toggle('has-expanded-column', !!expandedWOColumn);
   if (expandedWOColumn) {
     var expandedCol = board.querySelector('.kanban-col.column--expanded .kanban-col-body');
@@ -16947,9 +16978,19 @@ async function fetchPropertyStats() {
 // Fetch all units from the proxy cache and build the _unitsByPropertyId lookup.
 async function fetchUnits() {
   try {
-    var data = await proxyAction('units');
-    if (data && data.ok && Array.isArray(data.results)) {
-      UNITS = data.results;
+    setApiStatus('loading', 'Loading units (local Postgres)…');
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var url = localBase + '/api/local/units?limit=5000';
+    var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
+    var data = {};
+    try { data = await res.json(); } catch (e) { data = {}; }
+    if (!res.ok || data.ok === false) {
+      throw new Error(String((data && (data.error || data.message)) || ('Local units failed: HTTP ' + res.status)));
+    }
+
+    if (Array.isArray(data.results || data.data)) {
+      var unitRows = data.results || data.data || [];
+      UNITS = unitRows;
       _unitsByPropertyId = {};
       UNITS.forEach(function(u) {
         var pid = String(u.property_id || '').trim();
@@ -16957,6 +16998,8 @@ async function fetchUnits() {
         if (!_unitsByPropertyId[pid]) _unitsByPropertyId[pid] = [];
         _unitsByPropertyId[pid].push(u);
       });
+      setApiStatus('loading', 'Units: ' + UNITS.length + ' loaded');
+      setDataSourceState('units', 'ok', { count: UNITS.length, error: '' });
       return true;
     }
   } catch (e) {
@@ -16964,6 +17007,7 @@ async function fetchUnits() {
   }
   UNITS = [];
   _unitsByPropertyId = {};
+  setDataSourceState('units', 'no_response', { count: null, error: 'Failed to load units' });
   return false;
 }
 
@@ -24283,7 +24327,7 @@ var DispatchConfig = {
 
       var branchByTechId = {};
       try {
-        var woForBranch = await proxyAction('work_orders', { days: '90' });
+        var woForBranch = await fetchLocalWorkOrders('90');
         var branchCandidates = extractAssigneeCandidatesFromWorkOrders((woForBranch && woForBranch.results) || []);
         branchCandidates.forEach(function(c) {
           if (c && c.tech_id && !branchByTechId[c.tech_id]) branchByTechId[c.tech_id] = c.branch || 'phoenix';
@@ -24350,7 +24394,7 @@ var DispatchConfig = {
       if (!PROPERTY_GROUPS || PROPERTY_GROUPS.length === 0) {
         try { await fetchPropertyGroups(); } catch (_) {}
       }
-      var wo = await proxyAction('work_orders', { days: '90' });
+      var wo = await fetchLocalWorkOrders('90');
       var candidates = extractAssigneeCandidatesFromWorkOrders((wo && wo.results) || []);
       if (candidates.length) {
         var selected = candidates.filter(function(c) {

@@ -1,3 +1,4 @@
+// @ts-nocheck - Deno code, type checking disabled
 const RC_SERVER_URL = String(Deno.env.get("RC_SERVER_URL") || "").trim();
 const RC_TOKEN = String(Deno.env.get("RC_ACCESS_TOKEN") || "").trim();
 const RC_FROM = String(Deno.env.get("RC_FROM_NUMBER") || "").trim();

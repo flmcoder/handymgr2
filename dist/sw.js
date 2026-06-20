@@ -1,10 +1,12 @@
-const HM_CACHE_VERSION = "hm-static-v7";
+const HM_CACHE_VERSION = "hm-static-v8";
+const HM_BASE_PATH = new URL(self.registration.scope).pathname;
+const HM_SHELL_URL = HM_BASE_PATH + "index.html";
 const HM_STATIC_ASSETS = [
-  "/handymgr2/",
-  "/handymgr2/index.html",
-  "/handymgr2/assets/logo.png",
-  "/handymgr2/assets/favicon.svg",
-  "/handymgr2/manifest.webmanifest",
+  HM_BASE_PATH,
+  HM_SHELL_URL,
+  HM_BASE_PATH + "assets/logo.png",
+  HM_BASE_PATH + "assets/favicon.svg",
+  HM_BASE_PATH + "manifest.webmanifest",
 ];
 
 const HM_QUEUE_DB = "hm-offline-queue";
@@ -260,10 +262,10 @@ self.addEventListener("fetch", (event) => {
         try {
           const network = await fetch(req);
           const cache = await caches.open(HM_CACHE_VERSION);
-          cache.put("/index.html", network.clone());
+          cache.put(HM_SHELL_URL, network.clone());
           return network;
         } catch (_) {
-          return (await caches.match("/index.html")) || (await caches.match("/")) || Response.error();
+          return (await caches.match(HM_SHELL_URL)) || (await caches.match(HM_BASE_PATH)) || Response.error();
         }
       })());
       return;

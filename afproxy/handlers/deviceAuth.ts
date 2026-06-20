@@ -1,5 +1,6 @@
 // ============================================================================
 // handlers/deviceAuth.ts — PM OTP Login + Trusted Device Session Management
+// @ts-nocheck - Deno code, type checking disabled
 //
 // Handles:
 //   device_otp_request  — look up PM user by email OR phone → send OTP via SMS

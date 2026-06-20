@@ -1,5 +1,6 @@
 // ============================================================================
 // handlers/units.ts — AppFolio /api/v0/units cache handler.
+// @ts-nocheck - Deno code, type checking disabled
 //
 // Fetches all units via the Database API v0 with full pagination.
 // Uses LastUpdatedAtFrom = 5 years ago for the required filter.

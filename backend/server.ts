@@ -30,11 +30,17 @@ function ensureDenoCompat(): void {
 
 ensureDenoCompat();
 
+// @ts-ignore - afproxy uses Deno globals; will be replaced with Postgres reads
 const [unitsHandlers, turnsHandlers, estimatesHandlers, queueHandlers, deviceAuthHandlers] = await Promise.all([
+  // @ts-ignore
   import('../afproxy/handlers/units.ts'),
+  // @ts-ignore
   import('../afproxy/handlers/turns.ts'),
+  // @ts-ignore
   import('../afproxy/handlers/estimates.ts'),
+  // @ts-ignore
   import('../afproxy/handlers/queue.ts'),
+  // @ts-ignore
   import('../afproxy/handlers/deviceAuth.ts'),
 ]);
 
@@ -137,6 +143,23 @@ function parseLimit(value: unknown, fallback: number, max = 5000): number {
   return Math.max(1, Math.min(max, parsed));
 }
 
+function parsePropertyGroupId(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  // Accept single values or comma-delimited lists; local endpoints currently scope to one group.
+  const first = raw.split(',').map((v) => v.trim()).find(Boolean);
+  return String(first || '');
+}
+
+function getPropertyGroupFilter(req: Request): string {
+  return parsePropertyGroupId(
+    req.query.property_group_id
+      ?? req.query.property_group_uuid
+      ?? req.query.group_id
+      ?? req.query.propertyGroupId,
+  );
+}
+
 function asIso(value: unknown): string {
   if (!value) return '';
   const d = value instanceof Date ? value : new Date(String(value));
@@ -151,6 +174,70 @@ function pickRaw(obj: any, keys: string[]): any {
     }
   }
   return '';
+}
+
+function extractSiteManager(raw: any): string {
+  const siteManager = pickRaw(raw, ['site_manager', 'siteManager', 'SiteManager']);
+  if (typeof siteManager === 'object' && siteManager !== null) {
+    const firstName = String(siteManager?.FirstName || siteManager?.first_name || '').trim();
+    const lastName = String(siteManager?.LastName || siteManager?.last_name || '').trim();
+    return [firstName, lastName].filter(Boolean).join(' ');
+  }
+  return String(siteManager || '');
+}
+
+function normalizePropertyRow(row: any): Record<string, any> {
+  const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
+  const siteManager = extractSiteManager(raw);
+  const visibility = String(pickRaw(raw, ['visibility', 'Visibility']) || '');
+  const managementEndDate = String(pickRaw(raw, ['management_end_date', 'managementEndDate', 'ManagementEndDate']) || '');
+  const managementEndReason = String(pickRaw(raw, ['management_end_reason', 'managementEndReason', 'ManagementEndReason']) || '');
+  
+  const normalized: Record<string, any> = {
+    ...raw,
+    id: String(row?.id || pickRaw(raw, ['property_id', 'id', 'Id']) || ''),
+    name: String(row?.name || pickRaw(raw, ['property_name', 'name', 'Name']) || ''),
+    address: String(row?.street || pickRaw(raw, ['property_street', 'street', 'Street']) || ''),
+    city: String(row?.city || pickRaw(raw, ['property_city', 'city', 'City']) || ''),
+    state: String(row?.state || pickRaw(raw, ['property_state', 'state', 'State']) || ''),
+    zip: String(row?.zip || pickRaw(raw, ['property_zip', 'zip', 'Zip']) || ''),
+    property_type: String(pickRaw(raw, ['property_type', 'type', 'Type']) || ''),
+    portfolio_id: String(pickRaw(raw, ['portfolio_id', 'portfolioId', 'PortfolioId']) || ''),
+    portfolio: String(pickRaw(raw, ['portfolio', 'portfolio_name', 'portfolioName', 'PortfolioName', 'group_name', 'property_group']) || ''),
+    portfolio_name: String(pickRaw(raw, ['portfolio_name', 'portfolioName', 'PortfolioName']) || ''),
+    property_group: String(pickRaw(raw, ['property_group', 'group_name', 'group', 'Group']) || ''),
+    property_group_id: String(row?.property_group_id || pickRaw(raw, ['property_group_id', 'PropertyGroupId', 'property_group_uuid', 'PropertyGroupUuid']) || ''),
+    group: String(pickRaw(raw, ['group', 'Group']) || ''),
+    group_name: String(pickRaw(raw, ['group_name', 'groupName', 'GroupName']) || ''),
+    maintenance_limit: String(pickRaw(raw, ['maintenance_limit', 'maintenanceLimit', 'MaintenanceLimit']) || ''),
+    maintenance_notes: String(pickRaw(raw, ['maintenance_notes', 'maintenanceNotes', 'MaintenanceNotes']) || ''),
+    site_manager: siteManager,
+    visibility,
+    management_end_date: managementEndDate,
+    management_end_reason: managementEndReason,
+    units: pickRaw(raw, ['units', 'Units']),
+    sqft: pickRaw(raw, ['sqft', 'Sqft', 'SquareFeet']),
+    market_rent: pickRaw(raw, ['market_rent', 'marketRent', 'MarketRent']),
+    owners: pickRaw(raw, ['owners', 'Owners']),
+    link: '',
+    _source: 'postgres_local',
+  };
+  return normalized;
+}
+
+function isManagedPropertyState(prop: Record<string, any>): boolean {
+  const visibility = String(prop.visibility || '').trim().toLowerCase();
+  if (visibility && visibility !== 'active') return false;
+
+  const endDate = prop.management_end_date ? new Date(prop.management_end_date) : null;
+  if (endDate && !Number.isNaN(endDate.getTime())) {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    endDate.setHours(0, 0, 0, 0);
+    if (endDate <= now) return false;
+  }
+
+  return true;
 }
 
 function normalizeWorkOrderRow(row: any): Record<string, any> {
@@ -182,6 +269,28 @@ function normalizeWorkOrderRow(row: any): Record<string, any> {
   return normalized;
 }
 
+function normalizeUnitRow(row: any): Record<string, any> {
+  const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
+  const normalized: Record<string, any> = {
+    ...raw,
+    unit_id: String(row?.unit_id || pickRaw(raw, ['unit_id', 'UnitId', 'Id']) || ''),
+    property_id: String(row?.property_id || pickRaw(raw, ['property_id', 'PropertyId']) || ''),
+    name: String(row?.name || pickRaw(raw, ['name', 'Name', 'unit_name', 'UnitName']) || ''),
+    unit_number: String(row?.unit_number || pickRaw(raw, ['unit_number', 'UnitNumber', 'Number']) || ''),
+    status: String(row?.status || pickRaw(raw, ['status', 'Status']) || 'Active'),
+    bedrooms: row?.bedrooms || pickRaw(raw, ['bedrooms', 'Bedrooms']) || 0,
+    bathrooms: row?.bathrooms || pickRaw(raw, ['bathrooms', 'Bathrooms']) || 0,
+    square_feet: row?.square_feet || pickRaw(raw, ['square_feet', 'squareFeet', 'SquareFeet']) || 0,
+    market_rent: row?.market_rent || pickRaw(raw, ['market_rent', 'marketRent', 'MarketRent']) || 0,
+    type: String(pickRaw(raw, ['type', 'Type', 'unit_type', 'UnitType']) || ''),
+    lease_status: String(pickRaw(raw, ['lease_status', 'leaseStatus', 'LeaseStatus']) || ''),
+    tenant_name: String(pickRaw(raw, ['tenant_name', 'tenantName', 'TenantName', 'tenant', 'Tenant']) || ''),
+    lease_start: String(pickRaw(raw, ['lease_start', 'leaseStart', 'LeaseStart']) || ''),
+    lease_end: String(pickRaw(raw, ['lease_end', 'leaseEnd', 'LeaseEnd']) || ''),
+    _source: 'postgres_local',
+  };
+  return normalized;
+}
 const app = express();
 const DIST_DIR = path.resolve(process.cwd(), 'dist');
 
@@ -224,21 +333,39 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 180);
     const limit = parseLimit(req.query.limit, 2500);
-    const rows = await queryClient`
-      select id, wo_number, property_id, unit_id, property_group_id, description,
-             category, priority, status, assigned_user_id, assigned_user_name,
-             vendor_id, vendor_name, estimated_amount, total_cost,
-             created_at, updated_at, raw_json
-      from appfolio_work_orders
-      where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
-        and (
-          coalesce(lower(status), '') not like '%completed%'
-          and coalesce(lower(status), '') not like '%cancel%'
-          and coalesce(lower(status), '') not like '%no need to bill%'
-        )
-      order by coalesce(updated_at, created_at) desc
-      limit ${limit}
-    `;
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select id, wo_number, property_id, unit_id, property_group_id, description,
+               category, priority, status, assigned_user_id, assigned_user_name,
+               vendor_id, vendor_name, estimated_amount, total_cost,
+               created_at, updated_at, raw_json
+        from appfolio_work_orders
+        where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+          and property_group_id = ${propertyGroupId}
+          and (
+            coalesce(lower(status), '') not like '%completed%'
+            and coalesce(lower(status), '') not like '%cancel%'
+            and coalesce(lower(status), '') not like '%no need to bill%'
+          )
+        order by coalesce(updated_at, created_at) desc
+        limit ${limit}
+      `
+      : await queryClient`
+        select id, wo_number, property_id, unit_id, property_group_id, description,
+               category, priority, status, assigned_user_id, assigned_user_name,
+               vendor_id, vendor_name, estimated_amount, total_cost,
+               created_at, updated_at, raw_json
+        from appfolio_work_orders
+        where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+          and (
+            coalesce(lower(status), '') not like '%completed%'
+            and coalesce(lower(status), '') not like '%cancel%'
+            and coalesce(lower(status), '') not like '%no need to bill%'
+          )
+        order by coalesce(updated_at, created_at) desc
+        limit ${limit}
+      `;
 
     const results = (rows as any[]).map(normalizeWorkOrderRow);
     res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
@@ -248,33 +375,208 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/local/work_orders_completed_history', async (req: Request, res: Response) => {
+app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) => {
   try {
-    const days = parseDays(req.query.days, 180, 3650);
-    const limit = parseLimit(req.query.limit, 3000);
-    const rows = await queryClient`
-      select id, wo_number, property_id, unit_id, property_group_id, description,
-             category, priority, status, assigned_user_id, assigned_user_name,
-             vendor_id, vendor_name, estimated_amount, total_cost,
-             created_at, updated_at, raw_json
-      from appfolio_work_orders
-      where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
-        and (
-          coalesce(lower(status), '') like '%completed%'
-          or coalesce(lower(status), '') like '%no need to bill%'
-        )
-      order by coalesce(updated_at, created_at) desc
-      limit ${limit}
-    `;
+    const days = parseDays(req.query.days, 3650, 3650);
+    const limit = parseLimit(req.query.limit, 5000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select id, wo_number, property_id, unit_id, property_group_id, description,
+               category, priority, status, assigned_user_id, assigned_user_name,
+               vendor_id, vendor_name, estimated_amount, total_cost,
+               created_at, updated_at, raw_json
+        from appfolio_work_orders
+        where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+          and property_group_id = ${propertyGroupId}
+          and (
+            coalesce(lower(status), '') like '%completed%'
+            or coalesce(lower(status), '') like '%cancel%'
+            or coalesce(lower(status), '') like '%no need to bill%'
+          )
+        order by coalesce(updated_at, created_at) desc
+        limit ${limit}
+      `
+      : await queryClient`
+        select id, wo_number, property_id, unit_id, property_group_id, description,
+               category, priority, status, assigned_user_id, assigned_user_name,
+               vendor_id, vendor_name, estimated_amount, total_cost,
+               created_at, updated_at, raw_json
+        from appfolio_work_orders
+        where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+          and (
+            coalesce(lower(status), '') like '%completed%'
+            or coalesce(lower(status), '') like '%cancel%'
+            or coalesce(lower(status), '') like '%no need to bill%'
+          )
+        order by coalesce(updated_at, created_at) desc
+        limit ${limit}
+      `;
 
     const results = (rows as any[]).map(normalizeWorkOrderRow);
-    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local', status: 'inactive' });
   } catch (error) {
-    logTunnelError(error, '/api/local/work_orders_completed_history');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local work order history query failed') });
+    logTunnelError(error, '/api/local/work_orders/inactive');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local inactive work orders query failed') });
   }
 });
 
+app.get('/api/local/properties', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 5000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select id, name, property_group_id, street, city, state, zip, raw_json
+        from appfolio_properties
+        where property_group_id = ${propertyGroupId}
+        order by name asc
+        limit ${limit}
+      `
+      : await queryClient`
+        select id, name, property_group_id, street, city, state, zip, raw_json
+        from appfolio_properties
+        order by name asc
+        limit ${limit}
+      `;
+
+    const results = (rows as any[])
+      .map(normalizePropertyRow)
+      .filter(isManagedPropertyState);
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/properties');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local properties query failed') });
+  }
+});
+
+app.get('/api/local/property_groups', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 1000);
+    const includeInactive = String(req.query.include_inactive || '').toLowerCase() === 'true';
+    const propertyGroupId = getPropertyGroupFilter(req);
+
+    const rows = propertyGroupId
+      ? await queryClient`
+        select id, name, property_group_id, street, city, state, zip, raw_json
+        from appfolio_properties
+        where property_group_id = ${propertyGroupId}
+      `
+      : await queryClient`
+        select id, name, property_group_id, street, city, state, zip, raw_json
+        from appfolio_properties
+      `;
+
+    let properties = (rows as any[]).map(normalizePropertyRow);
+    if (!includeInactive) {
+      properties = properties.filter(isManagedPropertyState);
+    }
+
+    const groupsById = new Map<string, { id: string; name: string; propertyIds: string[] }>();
+
+    for (const prop of properties) {
+      const groupId = String(prop.property_group_id || '').trim();
+      if (!groupId) continue;
+
+      const existing = groupsById.get(groupId);
+      const groupName = String(
+        prop.property_group || prop.group_name || prop.portfolio || prop.portfolio_name || groupId,
+      ).trim() || groupId;
+      const propertyId = String(prop.id || '').trim();
+
+      if (!existing) {
+        groupsById.set(groupId, {
+          id: groupId,
+          name: groupName,
+          propertyIds: propertyId ? [propertyId] : [],
+        });
+      } else if (propertyId && !existing.propertyIds.includes(propertyId)) {
+        existing.propertyIds.push(propertyId);
+      }
+    }
+
+    const results = Array.from(groupsById.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, limit)
+      .map((group) => ({
+        id: group.id,
+        Id: group.id,
+        name: group.name,
+        Name: group.name,
+        type: 'property_group',
+        Type: 'property_group',
+        property_ids: group.propertyIds,
+        PropertyIds: group.propertyIds,
+        property_count: group.propertyIds.length,
+        _source: 'postgres_local',
+      }));
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/property_groups');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local property groups query failed') });
+  }
+});
+
+app.get('/api/local/units', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 5000);
+    const propertyId = req.query.property_id ? String(req.query.property_id) : undefined;
+    const propertyGroupId = getPropertyGroupFilter(req);
+
+    if (propertyId && propertyGroupId) {
+      const rows = await queryClient`
+        select u.unit_id, u.property_id, u.name, u.unit_number, u.status, u.bedrooms, u.bathrooms,
+               u.square_feet, u.market_rent, u.raw_json
+        from appfolio_units u
+        inner join appfolio_properties p on p.id = u.property_id
+        where u.property_id = ${propertyId}
+          and p.property_group_id = ${propertyGroupId}
+        order by u.unit_number asc
+        limit ${limit}
+      `;
+      const results = (rows as any[]).map(normalizeUnitRow);
+      res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+    } else if (propertyId) {
+      const rows = await queryClient`
+        select unit_id, property_id, name, unit_number, status, bedrooms, bathrooms,
+               square_feet, market_rent, raw_json
+        from appfolio_units
+        where property_id = ${propertyId}
+        order by unit_number asc
+        limit ${limit}
+      `;
+      const results = (rows as any[]).map(normalizeUnitRow);
+      res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+    } else if (propertyGroupId) {
+      const rows = await queryClient`
+        select u.unit_id, u.property_id, u.name, u.unit_number, u.status, u.bedrooms, u.bathrooms,
+               u.square_feet, u.market_rent, u.raw_json
+        from appfolio_units u
+        inner join appfolio_properties p on p.id = u.property_id
+        where p.property_group_id = ${propertyGroupId}
+        order by u.unit_number asc
+        limit ${limit}
+      `;
+      const results = (rows as any[]).map(normalizeUnitRow);
+      res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+    } else {
+      const rows = await queryClient`
+        select unit_id, property_id, name, unit_number, status, bedrooms, bathrooms,
+               square_feet, market_rent, raw_json
+        from appfolio_units
+        order by unit_number asc
+        limit ${limit}
+      `;
+      const results = (rows as any[]).map(normalizeUnitRow);
+      res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+    }
+  } catch (error) {
+    logTunnelError(error, '/api/local/units');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local units query failed') });
+  }
+});
 app.get('/api/local/turns', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 90);

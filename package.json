@@ -1,6 +1,6 @@
 {
   "name": "handymgr2",
-  "version": "9.7.8",
+  "version": "9.7.9",
   "description": "HandyManager Dashboard",
   "main": "index.js",
   "type": "module",
@@ -17,7 +17,7 @@
     "preview": "vite preview",
     "preview:4173": "vite preview --host 0.0.0.0 --port 4173 --strictPort",
     "live": "npm run build && npm run prepare:preview-subdir && npm run preview:4173",
-    "typecheck": "tsx --noSwc npx tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",

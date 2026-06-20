@@ -5,17 +5,54 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#3578e5">
 <title>HandyManager - An AppFolio Utility</title>
-<link rel="icon" href="assets/favicon.svg" />
-<link rel="manifest" href="manifest.webmanifest" />
-
-
+<link rel="manifest" href="manifest.webmanifest">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=Karla:wght@400;500;600;700&family=Inconsolata:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <script type="module" crossorigin src="./assets/index.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index.css">
+<link rel="stylesheet" href="css/app.css?v=20260503a">
+  <script type="module" crossorigin src="/assets/index.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index.css">
 </head>
 <body class="theme-neo dashboard-skin-neo-on">
-<div id="topLoadBar" aria-hidden="true"></div>
+
+<!-- ==================== MAINTENANCE BANNER ==================== -->
+<div id="maintenanceBanner" class="maint-banner">
+  <div class="maint-banner-track">
+    <span class="maint-banner-item">🚧&nbsp;&nbsp;BACK ONLINE — UNDER CONSTRUCTION&nbsp;&nbsp;🚧</span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">Now available at&nbsp;<strong>handymgr.app</strong></span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">⚠️&nbsp;App works but is undergoing maintenance — some features may not work as intended</span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">🔄&nbsp;Migration 80% complete — performance will improve once finished</span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">🚧&nbsp;&nbsp;BACK ONLINE — UNDER CONSTRUCTION&nbsp;&nbsp;🚧</span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">Now available at&nbsp;<strong>handymgr.app</strong></span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">⚠️&nbsp;App works but is undergoing maintenance — some features may not work as intended</span>
+    <span class="maint-banner-sep">|</span>
+    <span class="maint-banner-item">🔄&nbsp;Migration 80% complete — performance will improve once finished</span>
+    <span class="maint-banner-sep">|</span>
+  </div>
+</div>
+
+<!-- ==================== POST-LOGIN MAINTENANCE DIALOG ==================== -->
+<div id="maintDialog" class="maint-dialog-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="maintDialogTitle">
+  <div class="maint-dialog-box">
+    <div class="maint-dialog-cones">🚧</div>
+    <h2 class="maint-dialog-title" id="maintDialogTitle">Under Construction</h2>
+    <p class="maint-dialog-body">
+      Welcome back! <strong>HandyManager is online</strong> but currently undergoing a data migration.<br><br>
+      <span class="maint-dialog-status">
+        <span class="maint-progress-bar"><span class="maint-progress-fill" style="width:80%"></span></span>
+        <span class="maint-progress-label">Migration 80% complete</span>
+      </span><br>
+      Some features may behave unexpectedly until the migration is finished.<br>
+      Thank you for your patience — performance will improve soon! 🙏
+    </p>
+    <button class="maint-dialog-btn" id="maintDialogClose">Got it, continue&nbsp;→</button>
+  </div>
+</div>
 
 <!-- ==================== VAULT UNLOCK SCREEN ==================== -->
 <div id="vaultScreen">
@@ -24,11 +61,11 @@
     <button class="vault-config-btn" id="advancedToggle" type="button" title="Proxy settings" aria-label="Proxy settings"><i class="fas fa-cog"></i></button>
     <div class="vault-panel" id="vaultMainPanel">
       <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
-      <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Secure Sign-In</div>
+      <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Sign in to continue.</div>
       <div class="vault-user-hint" id="vaultUserHint" style="display:none"></div>
       <div style="display:flex;justify-content:center;margin:-10px 0 14px">
         <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
-          <span class="login-info-tip">Manager and vendor passwords go in the main field. PMs must use the PM Login via OTP button.</span>
+          <span class="login-info-tip">Manager passwords go in the password field. PMs must use PM Login via OTP button below.</span>
         </span>
       </div>
       <div class="vault-input-wrap">
@@ -40,7 +77,7 @@
       </div>
       <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
       <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
-      <button class="vault-advanced-toggle vault-resume-toggle" id="vaultResumeBtn" type="button" style="display:none"><i class="fas fa-history"></i> Resume Previous Session</button>
+      <button class="vault-advanced-toggle" id="vaultResumeBtn" type="button" style="display:none"><i class="fas fa-history"></i> Resume Session</button>
       <button class="vault-advanced-toggle vault-pm-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
     </div>
 
@@ -55,7 +92,7 @@
           <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="text">
         </div>
         <div class="vault-inline-actions vault-otp-request-row" id="vaultOtpRequestActions">
-          <button type="button" class="vault-cta-btn" id="btnSendOtp">Send OTP</button>
+          <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
         </div>
         <div class="vault-otp-summary hidden" id="vaultOtpSentSummary">
           <div class="vault-otp-summary-label">OTP sent to</div>
@@ -69,12 +106,8 @@
           <input type="text" class="vault-input" id="vaultOtpCode" placeholder="Enter 6-digit OTP" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
         </div>
         <div class="vault-inline-actions">
-          <button type="button" class="vault-cta-btn" id="btnVerifyOtp">Verify OTP</button>
+          <button type="button" class="vault-proxy-preset" id="btnVerifyOtp">Verify OTP</button>
         </div>
-        </div>
-        <div class="vault-otp-countdown" id="vaultOtpCountdown" style="display:none">
-          <span class="vault-otp-countdown-icon"><i class="fas fa-clock"></i></span>
-          <span class="vault-otp-countdown-text">Code expires in <strong id="vaultOtpCountdownTime">10:00</strong></span>
         </div>
         <div class="vault-proxy-hint">We send your one-time code to your RingCentral phone number on file.</div>
       </div>
@@ -82,12 +115,12 @@
     <div class="vault-advanced-panel vault-shared-settings" id="advancedPanel">
       <label class="vault-proxy-label">Proxy Relay URL</label>
       <div class="vault-input-wrap">
-    <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
+        <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-proxy.val.run" autocomplete="off" value="https://flr-appfolio.val.run">
       </div>
       <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.7.8</span></div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.7.4</span></div>
   </div>
 </div>
 
@@ -99,7 +132,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.7.8</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.7.9:R1</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -127,7 +160,7 @@
     <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
     <div>
       <div class="sidebar-brand-text">HandyMgr</div>
-      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.7.8</div>
+      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.7.9:R1</div>
     </div>
   </div>
 
@@ -142,9 +175,8 @@
     <div class="nav-section" id="navGroupOperations">
       <div class="nav-section-label">Operations</div>
       <button class="nav-tab" data-tab="workorders"><i class="fas fa-wrench"></i> Work Orders <span class="badge" id="woBadge">—</span></button>
-      <button class="nav-tab" data-tab="estimates"><i class="fas fa-file-signature"></i> Estimates <span class="badge" id="estBadge">—</span></button>
-      <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
       <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
+      <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
       <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Billing <span class="badge" id="billingBadge" style="display:none">0</span></button>
       <button class="nav-tab nav-role-gm" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
     </div>
@@ -200,105 +232,76 @@
 
 <section class="section active hm-neo-dashboard" id="sec-dashboard">
   <div id="filterIndicator" class="u-hidden"></div>
-  <!-- ── Dashboard Hero Section ─────────────────────────────────────────── -->
-  <div class="dashboard-hero">
-    <!-- KPI Metrics Bar -->
-    <div class="metrics-bar">
-      <div class="metric-card" data-kpi="open">
-        <div class="metric-value" id="kpiOpen">—</div>
-        <div class="metric-label">Open Work Orders</div>
-        <div class="metric-delta" id="kpiOpenSub">Loading…</div>
+  <div class="kpi-grid kpi-grid--neo stagger dashboard-kpi-rail">
+    <div class="kpi-card kpi-card--neo kpi-card--warning amber kpi-clickable" data-kpi="open"><div class="kpi-label">Open Work Orders</div><div class="kpi-value" id="kpiOpen">—</div><div class="kpi-sub" id="kpiOpenSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--critical red kpi-clickable" data-kpi="urgent"><div class="kpi-label">Urgent / Critical</div><div class="kpi-value" id="kpiUrgent">—</div><div class="kpi-sub" id="kpiUrgentSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--info blue kpi-clickable" data-kpi="turns"><div class="kpi-label">Active Turns</div><div class="kpi-value" id="kpiTurns">—</div><div class="kpi-sub" id="kpiTurnsSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--healthy green kpi-clickable" data-kpi="moveouts"><div class="kpi-label">Upcoming Move-Outs</div><div class="kpi-value" id="kpiMoveOuts">—</div><div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--info purple kpi-clickable" data-kpi="flagged"><div class="kpi-label">Flagged for Follow-Up</div><div class="kpi-value" id="kpiFlagged">—</div><div class="kpi-sub" id="kpiFlaggedSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--warning amber"><div class="kpi-label">Pending Bill Approvals</div><div class="kpi-value" id="kpiPendingBills">—</div><div class="kpi-sub" id="kpiPendingBillsSub">Loading…</div></div>
+  </div>
+
+  <div class="table-wrapper neo-surface-raised dashboard-overview-shell" style="margin-bottom:20px" id="managerOverviewSection">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-chart-line" style="color:var(--info)"></i> Handy Manager - Fort Lowell Realty & Property Management</div>
+    </div>
+    <div class="kpi-grid kpi-grid--neo kpi-grid--secondary" style="padding:12px 12px 16px">
+      <div class="kpi-card kpi-card--neo kpi-card--critical red"><div class="kpi-label">Avg Turnover Completion</div><div class="kpi-value" id="kpiMgrAvgTurnCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgTurnCompletionSub">Loading…</div></div>
+      <div class="kpi-card kpi-card--neo kpi-card--warning amber"><div class="kpi-label">Avg Days Since Inspection</div><div class="kpi-value" id="kpiMgrAvgInspectionAge">—</div><div class="kpi-sub" id="kpiMgrAvgInspectionAgeSub">Loading…</div></div>
+      <div class="kpi-card kpi-card--neo kpi-card--info blue"><div class="kpi-label">Avg WO Open Days</div><div class="kpi-value" id="kpiMgrAvgWOCompletion">—</div><div class="kpi-sub" id="kpiMgrAvgWOCompletionSub">Loading…</div></div>
+      <div class="kpi-card kpi-card--neo kpi-card--healthy green"><div class="kpi-label">Recent Completed Turns</div><div class="kpi-value" id="kpiMgrCompletedTurns">—</div><div class="kpi-sub" id="kpiMgrCompletedTurnsSub">Loading…</div></div>
+      <div class="kpi-card kpi-card--neo kpi-card--info purple" id="kpiVacancyCard"><div class="kpi-label">Vacancies by Group</div><div class="kpi-value" id="kpiVacancyGroups">—</div><div class="kpi-sub" id="kpiVacancyGroupsSub">Loading…</div></div>
+    </div>
+  </div>
+
+  <div class="dashboard-visual-lane">
+    <div class="table-wrapper visual-panel visual-panel--signal neo-surface-raised" id="dashboardSignalPanel">
+      <div class="table-header visual-panel__header">
+        <div>
+          <div class="table-title"><i class="fas fa-wave-square" style="color:var(--accent)"></i> Operations Pulse</div>
+          <div class="section-subtitle">A quick mission-control read on what needs attention now.</div>
+        </div>
       </div>
-      <div class="metric-card urgent" data-kpi="urgent">
-        <div class="metric-value" id="kpiUrgent">—</div>
-        <div class="metric-label">Urgent / Critical</div>
-        <div class="metric-delta" id="kpiUrgentSub">Loading…</div>
-      </div>
-      <div class="metric-card" data-kpi="turns">
-        <div class="metric-value" id="kpiTurns">—</div>
-        <div class="metric-label">Active Turns</div>
-        <div class="metric-delta" id="kpiTurnsSub">Loading…</div>
-      </div>
-      <div class="metric-card" data-kpi="moveouts">
-        <div class="metric-value" id="kpiMoveOuts">—</div>
-        <div class="metric-label">Move-Outs (60d)</div>
-        <div class="metric-delta" id="kpiMoveOutsSub">Loading…</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-value" id="kpiVacancyGroups">—</div>
-        <div class="metric-label">Vacancies</div>
-        <div class="metric-delta">By group</div>
+      <div class="visual-panel__body">
+        <div class="signal-headline" id="dashSignalHeadline">Loading operational signal…</div>
+        <div class="signal-meta" id="dashSignalMeta">Checking work orders, inspections, turns, bills, and alerts…</div>
+        <div class="signal-chip-grid" id="dashSignalChips"></div>
       </div>
     </div>
 
-    <!-- Main Chart Area -->
-    <div class="chart-row">
-      <div class="chart-panel main">
-        <div class="chart-header">
-          <h3><i class="fas fa-chart-bar"></i> Work Order Analytics</h3>
-          <div class="chart-legend" id="dashMainLegend"></div>
+    <div class="table-wrapper visual-panel visual-panel--followup neo-surface-raised" id="staleDataPanel">
+      <div class="table-header visual-panel__header">
+        <div>
+          <div class="table-title"><i class="fas fa-hourglass-half" style="color:var(--warning)"></i> Follow-Up Queue</div>
+          <div class="section-subtitle">Old data, missing actions, and compliance drift worth chasing down.</div>
         </div>
-        <div class="chart-body" id="dashMainChart"></div>
       </div>
-
-      <div class="chart-panel side">
-        <div class="chart-header">
-          <h3><i class="fas fa-hourglass-half"></i> Aging Distribution</h3>
+      <div class="visual-panel__body">
+        <div class="stale-data-list" id="staleDataList">
+          <div class="u-empty-state">Loading follow-up items…</div>
         </div>
-        <div class="chart-body" id="dashAgingChart"></div>
       </div>
     </div>
 
-    <!-- Portfolio Charts Row -->
-    <div class="chart-row">
-      <div class="chart-panel">
-        <div class="chart-header">
-          <h3><i class="fas fa-building"></i> Occupancy</h3>
-          <div class="chart-legend" id="dashOccupancyMeta">Loading…</div>
+    <div class="table-wrapper visual-panel visual-panel--pager neo-surface-raised" id="pagerPreviewPanel">
+      <div class="table-header visual-panel__header">
+        <div>
+          <div class="table-title"><i class="fas fa-tower-broadcast" style="color:var(--info)"></i> Pager Center</div>
+          <div class="section-subtitle">Operational comms, acknowledgements, and PM follow-up in one place.</div>
         </div>
-        <div class="chart-body" id="dashOccupancyDonut"></div>
       </div>
-
-      <div class="chart-panel">
-        <div class="chart-header">
-          <h3><i class="fas fa-door-open"></i> Move-Outs</h3>
-          <div class="chart-legend" id="dashMoveOutsMeta">Loading…</div>
+      <div class="visual-panel__body">
+        <div class="pager-preview" id="pagerPreviewList">
+          <div class="u-empty-state">Pager center warming up…</div>
         </div>
-        <div class="chart-body" id="dashMoveOutsBar"></div>
-      </div>
-
-      <div class="chart-panel">
-        <div class="chart-header">
-          <h3><i class="fas fa-chart-pie"></i> Portfolio</h3>
-          <div class="chart-legend" id="dashPortfolioTreeMeta">Loading…</div>
+        <div class="pager-preview__actions">
+          <button class="action-btn primary pager-open-btn" id="dashOpenPager" type="button"><i class="fas fa-bell"></i> Open Pager Center</button>
         </div>
-        <div class="chart-body" id="dashPortfolioTreemap"></div>
-      </div>
-
-      <div class="chart-panel">
-        <div class="chart-header">
-          <h3><i class="fas fa-tachometer-alt"></i> Leasing Velocity</h3>
-          <div class="chart-legend" id="dashVelocityMeta">Loading…</div>
-        </div>
-        <div class="chart-body" id="dashLeasingVelocity"></div>
       </div>
     </div>
   </div>
-  <!-- ── /Dashboard Hero ────────────────────────────────────────────── -->
 
-  <!-- ═══════════════════════════════════════════════════════
-     Sector: Turn Progress (Collapsed by default)
-     ═══════════════════════════════════════════════════════ -->
-  <div class="sector-panel sector-panel--collapsed" id="sector-turns" data-sector="turns">
-    <div class="sector-header">
-      <div class="sector-header__title">
-        <i class="fas fa-film" style="color:var(--accent)"></i>
-        <span>Turn Progress Dashboard</span>
-      </div>
-      <button class="sector-pin-btn" title="Pin section open"><i class="fas fa-thumbtack"></i></button>
-      <i class="fas fa-chevron-down sector-indicator"></i>
-    </div>
-    <div class="sector-body"><div class="table-wrapper neo-surface-raised" style="margin-bottom:20px" id="turnDashboardSection">
+  <div class="table-wrapper neo-surface-raised" style="margin-bottom:20px" id="turnDashboardSection">
     <div class="table-header">
       <div>
         <div class="table-title"><i class="fas fa-film" style="color:var(--accent)"></i> Turn Progress Dashboard</div>
@@ -329,27 +332,44 @@
     </div>
   </div>
 
-    </div>
-  </div> <!-- /sector-turns -->
-
-  <!-- ═════════════════════════════════════════════════════
-     Sector: Attention Required (Expanded by default)
-     ═════════════════════════════════════════════════════ -->
-  <div class="sector-panel sector-panel--expanded" id="sector-attention" data-sector="attention">
-    <div class="sector-header">
-      <div class="sector-header__title">
-        <i class="fas fa-exclamation-circle" style="color:var(--danger)"></i>
-        <span>Attention Required</span>
+  <div class="table-wrapper neo-surface-raised" style="margin-bottom:20px" id="dashboardInsightsSection">
+    <div class="table-header">
+      <div>
+        <div class="table-title"><i class="fas fa-chart-pie" style="color:var(--info)"></i> Portfolio Insights</div>
+        <div class="section-subtitle" id="dashInsightsSubtitle">Comparative snapshots from indexed work order and turn data.</div>
       </div>
-      <button class="sector-pin-btn" title="Pin section open"><i class="fas fa-thumbtack"></i></button>
-      <i class="fas fa-chevron-down sector-indicator"></i>
     </div>
-    <div class="sector-body">
-      <div class="table-wrapper neo-surface-raised action-board-shell">
-        <div class="table-header">
-          <div class="table-title"><i class="fas fa-exclamation-circle" style="color:var(--danger)"></i> Attention Required</div>
-        </div>
-        <div id="attentionGrid" class="action-board">
+    <div class="dashboard-insight-grid">
+      <article class="dashboard-insight-card" id="dashInsightPmLoadCard">
+        <header class="dashboard-insight-card__header">
+          <h4>PM Workload Comparison</h4>
+          <span class="dashboard-insight-card__meta" id="dashPmLoadMeta">Loading…</span>
+        </header>
+        <div class="billing-mini-chart" id="dashPmLoadChart"></div>
+      </article>
+      <article class="dashboard-insight-card" id="dashInsightWoTypeCard">
+        <header class="dashboard-insight-card__header">
+          <h4>Open WO Type Mix</h4>
+          <span class="dashboard-insight-card__meta" id="dashWoTypeMeta">Loading…</span>
+        </header>
+        <div class="billing-mini-chart" id="dashWoTypeChart"></div>
+      </article>
+      <article class="dashboard-insight-card" id="dashInsightUrgencyCard">
+        <header class="dashboard-insight-card__header">
+          <h4>Urgent Pressure by PM</h4>
+          <span class="dashboard-insight-card__meta" id="dashUrgencyMeta">Loading…</span>
+        </header>
+        <div class="billing-mini-chart" id="dashUrgencyChart"></div>
+      </article>
+    </div>
+  </div>
+
+  <!-- Attention Required — Stalled Turns + Overdue Inspections + Vendor Alerts -->
+  <div class="table-wrapper neo-surface-raised action-board-shell" style="margin-bottom:20px" id="attentionSection">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-exclamation-circle" style="color:var(--danger)"></i> Attention Required</div>
+    </div>
+    <div id="attentionGrid" class="action-board">
       <div id="attentionStalled" class="attention-card attention-card--danger">
         <div class="attention-card-title"><i class="fas fa-hourglass-half" style="color:var(--warning)"></i> Stalled Turns</div>
         <div id="attentionStalledBody" class="attention-card__body">Loading…</div>
@@ -371,94 +391,11 @@
         <div id="attentionBillsBody" class="attention-card__body">Loading…</div>
       </div>
     </div>
-      </div>
-    </div>
-  </div> <!-- /sector-attention -->
-
-  <!-- ═══════════════════════════════════════════════════════
-     Sector: Portfolio Insights (Collapsed by default)
-     ═══════════════════════════════════════════════════════ -->
-  <div class="sector-panel sector-panel--collapsed" id="sector-insights" data-sector="insights">
-    <div class="sector-header">
-      <div class="sector-header__title">
-        <i class="fas fa-chart-pie" style="color:var(--info)"></i>
-        <span>Portfolio Insights</span>
-      </div>
-      <button class="sector-pin-btn" title="Pin section open"><i class="fas fa-thumbtack"></i></button>
-      <i class="fas fa-chevron-down sector-indicator"></i>
-    </div>
-    <div class="sector-body">
-    <div class="table-header">
-      <div>
-        <div class="table-title"><i class="fas fa-chart-pie" style="color:var(--info)"></i> Portfolio Insights</div>
-        <div class="section-subtitle" id="dashInsightsSubtitle">Comparative snapshots from indexed work order and turn data.</div>
-      </div>
-      <i class="fas fa-chevron-down collapse-indicator"></i>
-    </div>
-    <div class="panel-body">
-      <div class="bento-insights-grid">
-        <article class="bento-insight-card bento-insight-card--wide" id="dashInsightPmLoadCard">
-          <header class="bento-insight-card__header">
-            <h4>PM Workload Comparison</h4>
-            <span class="bento-insight-card__meta" id="dashPmLoadMeta">Loading…</span>
-          </header>
-          <div class="bento-insight-chart-host" id="dashPmLoadChart"></div>
-        </article>
-        <article class="bento-insight-card" id="dashInsightWoTypeCard">
-          <header class="bento-insight-card__header">
-            <h4>Open WO Type Mix</h4>
-            <span class="bento-insight-card__meta" id="dashWoTypeMeta">Loading…</span>
-          </header>
-          <div class="bento-insight-chart-host" id="dashWoTypeChart"></div>
-        </article>
-         <article class="bento-insight-card" id="dashInsightUrgencyCard">
-           <header class="bento-insight-card__header">
-             <h4>Urgent Pressure by PM</h4>
-             <span class="bento-insight-card__meta" id="dashUrgencyMeta">Loading…</span>
-           </header>
-           <div class="bento-insight-chart-host" id="dashUrgencyChart"></div>
-         </article>
-         <article class="bento-insight-card" id="dashInsightInspMapCard">
-           <header class="bento-insight-card__header">
-             <h4>Property Inspection Map</h4>
-             <span class="bento-insight-card__meta" id="dashInspectionMapMeta">Loading…</span>
-           </header>
-           <div class="bento-insight-chart-host" id="dashInspectionMap"></div>
-         </article>
-          <article class="bento-insight-card" id="dashInsightTurnFunnelCard">
-            <header class="bento-insight-card__header">
-              <h4>Turnover Pipeline</h4>
-              <span class="bento-insight-card__meta" id="dashTurnoverFunnelMeta">Loading…</span>
-            </header>
-            <div class="bento-insight-chart-host" id="dashTurnoverFunnel"></div>
-          </article>
-
-         <article class="bento-insight-card bento-insight-card--wide" id="dashInsightSankeyCard">
-           <header class="bento-insight-card__header">
-             <h4>WO Flow</h4>
-             <span class="bento-insight-card__meta" id="dashSankeyMeta">Loading…</span>
-           </header>
-           <div class="bento-insight-chart-host" id="dashSankeyChart" style="min-height:320px"></div>
-         </article>
-       </div>
-    </div>
   </div>
-  </div> <!-- /sector-insights -->
 
-  <!-- ═══════════════════════════════════════════════════════
-     Sector: Move-Outs & Activity (Collapsed by default)
-     ═══════════════════════════════════════════════════════ -->
-  <div class="sector-panel sector-panel--collapsed" id="sector-moveouts" data-sector="moveouts">
-    <div class="sector-header">
-      <div class="sector-header__title">
-        <i class="fas fa-door-open" style="color:var(--warning)"></i>
-        <span>Move-Outs & Activity</span>
-      </div>
-      <button class="sector-pin-btn" title="Pin section open"><i class="fas fa-thumbtack"></i></button>
-      <i class="fas fa-chevron-down sector-indicator"></i>
-    </div>
-    <div class="sector-body">
-      <div class="table-wrapper neo-surface-raised" id="moveOutSection">
+  <!-- Two-Column: Move-Outs + Activity Feed -->
+  <div class="dash-columns dashboard-support-grid">
+    <div class="table-wrapper neo-surface-raised" id="moveOutSection">
       <div class="table-header">
         <div class="table-title"><i class="fas fa-door-open" style="color:var(--warning)"></i> Upcoming Move-Outs (60 days)</div>
       </div>
@@ -485,9 +422,7 @@
       </div>
       <div class="table-scroll"><table class="data-table" id="activityTable"><thead><tr><th>Time</th><th>Event</th><th>Entity</th><th>Details</th></tr></thead><tbody id="activityBody"></tbody></table></div>
     </div>
-    </div>
-  </div> <!-- /sector-moveouts -->
-
+  </div>
 </section>
 
 <section class="section" id="sec-workorders">
@@ -616,33 +551,6 @@
         </table>
       </div>
     </div>
-  </div>
-</section>
-
-<section class="section" id="sec-estimates">
-  <div class="section-header">
-    <div>
-      <div class="section-title"><i class="fas fa-file-signature" style="color:var(--accent)"></i> Estimates</div>
-      <div class="section-subtitle">Flattened estimate records from cached Work Orders (v0 Estimates + v2 current approval status)</div>
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search estimate rows…" id="estSearch"></div>
-      <button class="sec-refresh" id="btnRefreshEst"><i class="fas fa-sync-alt"></i> Refresh</button>
-    </div>
-  </div>
-  <div class="table-wrap">
-    <table class="wo-table">
-      <thead>
-        <tr>
-          <th>Work Order #</th>
-          <th>Property / Unit Address</th>
-          <th>Vendor Name</th>
-          <th>Estimate Amount</th>
-          <th>Approval Status</th>
-        </tr>
-      </thead>
-      <tbody id="estBody"></tbody>
-    </table>
   </div>
 </section>
 
@@ -811,14 +719,15 @@
     </div>
     <div class="u-toolbar-row">
       <button class="action-btn" id="btnRefreshBilling"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <div class="billing-more-wrap" style="position:relative">
+        <button class="action-btn" id="btnMoreBillReports"><i class="fas fa-ellipsis-h"></i> ...More bill reports</button>
+        <div class="billing-more-dropdown" id="billingMoreDropdown" style="display:none">
+          <button class="billing-more-item" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
+          <button class="billing-more-item" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
+          <button class="billing-more-item" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
+        </div>
+      </div>
     </div>
-  </div>
-  <!-- Billing subtab navigation -->
-  <div class="billing-subtabs" id="billingSubtabNav">
-    <button class="billing-subtab active" data-billing-subtab="main"><i class="fas fa-home"></i> Bills Home</button>
-    <button class="billing-subtab" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
-    <button class="billing-subtab" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
-    <button class="billing-subtab" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
   </div>
   <div class="kpi-grid stagger billing-kpi-grid" id="billingKpiGrid">
     <div class="kpi-card amber"><div class="kpi-label">Pending Approval</div><div class="kpi-value" id="billKpiPending">—</div><div class="kpi-sub" id="billKpiPendingSub">invoices awaiting approval</div></div>
@@ -862,13 +771,16 @@
         <div class="billing-search-shell">
           <i class="fas fa-search" aria-hidden="true"></i>
           <input type="text" id="billingMainSearch" class="billing-main-search-input" placeholder="Search WO, property, vendor, billing ID, address…">
+          <div class="billing-search-marquee" aria-hidden="true">
+            <span>Try: property name, vendor, amount</span>
+          </div>
         </div>
           <!-- Deep Search Warning Modal -->
           <div class="modal-overlay" id="billingDeepSearchModal" style="display:none">
             <div class="modal" style="max-width:420px">
               <div class="modal-head"><h3><i class="fas fa-search-plus" style="color:var(--info);margin-right:8px"></i> Deep Search Warning</h3><button class="modal-close" id="billingDeepSearchModalClose">&times;</button></div>
               <div class="modal-body">
-                <p>You are searching within a <strong>company-scoped view</strong>. Running a deep search (>120 days) may take <strong>several seconds</strong> to populate results.</p>
+                <p>You are searching within a <strong>company-scoped view</strong>. Running a deep search (>90 days) may take <strong>several seconds</strong> to populate results.</p>
                 <p>Are you sure you want to continue?</p>
               </div>
               <div class="modal-footer"><button class="action-btn" id="billingDeepSearchCancel">Cancel</button><button class="action-btn primary" id="billingDeepSearchContinue"><i class="fas fa-search-plus"></i> Continue Deep Search</button></div>
@@ -880,7 +792,7 @@
         <input type="date" id="billingMainTo" class="u-input-compact">
         <label class="u-toolbar-label" for="billingMainIncludeOlder" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
           <input type="checkbox" id="billingMainIncludeOlder">
-          Include older than 120d
+          Include older than 90d
         </label>
         <select id="billingMainStatus" class="filter-select u-toolbar-select-sm">
           <option value="">All WO Statuses</option>
@@ -1115,30 +1027,11 @@
       </div>
     </div>
     <div class="section-subtabs" id="propertiesSubtabs">
-      <button class="section-subtab" data-properties-subtab="reports"><i class="fas fa-file-invoice-dollar"></i> Owner Reports</button>
       <button class="section-subtab active" data-properties-subtab="directory"><i class="fas fa-table"></i> Directory</button>
       <button class="section-subtab" data-properties-subtab="performance"><i class="fas fa-chart-line"></i> Performance</button>
       <button class="section-subtab" data-properties-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
       <button class="section-subtab" data-properties-subtab="renewals"><i class="fas fa-file-signature"></i> Renewals</button>
       <button class="section-subtab" data-properties-subtab="bulk"><i class="fas fa-pen-to-square"></i> Bulk Notes</button>
-    </div>
-    <div class="section-subpanel" id="properties-subpanel-reports" style="display:none">
-      <div class="table-wrapper">
-        <div class="table-header">
-          <div class="table-title"><i class="fas fa-file-invoice-dollar" style="color:var(--accent)"></i> Owner Reports</div>
-          <div class="u-toolbar-row">
-            <button class="action-btn" id="btnRefreshOwnerReports"><i class="fas fa-sync-alt"></i> Refresh</button>
-          </div>
-        </div>
-        <div class="table-scroll">
-          <table class="data-table" id="ownerReportsTable">
-            <thead><tr>
-              <th>Report Type</th><th>Description</th><th>Property Group</th><th>Actions</th>
-            </tr></thead>
-            <tbody id="ownerReportsBody"><tr><td colspan="4" class="u-table-empty-cell">Click Refresh to load available reports</td></tr></tbody>
-          </table>
-        </div>
-      </div>
     </div>
     <div class="section-subpanel active" id="properties-subpanel-directory">
     <div class="table-scroll">
@@ -1198,20 +1091,6 @@
     </div>
     <!-- Vacancies subpanel -->
     <div class="section-subpanel" id="properties-subpanel-vacancies" style="display:none">
-
-      <!-- KPI chart strip -->
-      <div class="vac-chart-strip">
-        <div class="vac-chart-header">
-          <span class="vac-chart-title"><i class="fas fa-chart-scatter" style="color:var(--accent)"></i> Vacancy Exposure by Property</span>
-          <span class="vac-chart-legend">
-            <span class="vac-legend-dot" style="background:#22c55e"></span><span>&lt;30 d</span>
-            <span class="vac-legend-dot" style="background:#f59e0b"></span><span>30–59 d</span>
-            <span class="vac-legend-dot" style="background:#ef4444"></span><span>60+ d</span>
-          </span>
-        </div>
-        <div id="vacancyKpiChart" class="vac-chart-host"></div>
-      </div>
-
       <div class="table-wrapper">
         <div class="table-header">
           <div class="table-title"><i class="fas fa-door-open" style="color:var(--accent)"></i> Unit Vacancies</div>
@@ -1344,10 +1223,6 @@
       </select>
       <select class="form-select" id="turnPipeGroup" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
         <option value="">All Properties</option>
-      </select>
-      <select class="form-select" id="turnPipeSort" style="font-size:12px;padding:5px 10px;min-width:180px;font-family:var(--font-mono)">
-        <option value="oldest_risk">Oldest + Red First (Default)</option>
-        <option value="property_group">Group by Property</option>
       </select>
       <div class="search-box" style="width:180px"><i class="fas fa-search"></i><input type="text" placeholder="Search turns…" id="turnPipeSearch"></div>
       <div class="pipe-view-toggle" title="Switch between list and kanban view">
@@ -2175,10 +2050,10 @@
       <div class="form-group">
         <label class="form-label">Polling Interval</label>
         <select class="form-select" id="webhookPollInterval">
-          <option value="0" selected>Disabled (recommended)</option>
-          <option value="120">Every 2 minutes</option>
+          <option value="0" selected>Disabled</option>
+          <option value="30">Every 30 seconds</option>
+          <option value="60">Every 60 seconds</option>
           <option value="300">Every 5 minutes</option>
-          <option value="600">Every 10 minutes</option>
         </select>
       </div>
       <div style="font-size:11px;color:var(--text-muted);line-height:1.6;margin-top:8px">
@@ -2418,7 +2293,6 @@
   <span id="toastIcon" style="margin-right:8px;opacity:0.9"></span>
   <span id="toastMsg"></span>
 </div>
-
 
 </body>
 </html>

@@ -1,3 +1,4 @@
+// @ts-nocheck - Deno code, type checking disabled
 import {
   upsertUnitsToDb,
 } from "./dbUpserts.ts";
