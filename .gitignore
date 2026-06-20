@@ -1,6 +1,7 @@
 node_modules/git
 .env
 .env.*
+.ssh/
 # db/ — intentionally tracked for migrations
 agewf.jsx
 .DS_Store
