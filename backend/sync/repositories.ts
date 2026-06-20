@@ -25,31 +25,31 @@ import {
   unitTurnWorkOrders,
 } from '../schema.ts';
 
-type GroupCatalogEntry = { id: string; uuid: string };
+type GroupCatalogEntry = { id: string; uuid: string; name: string };
 
 const GROUP_CATALOG_BY_NAME: Record<string, GroupCatalogEntry> = {
-  'ana consuelo properties': { id: '1', uuid: 'c8f40f01-9e94-11ee-8b51-02167481f3bc' },
-  'andrea robidoux properties': { id: '59', uuid: '9985f145-3cb0-11f0-bfba-069ca18f5865' },
-  'chris meehan properties': { id: '3', uuid: '06fdebec-9e9b-11ee-8b51-02167481f3bc' },
-  'jessmar romea properties': { id: '6', uuid: '3405e65e-9e9c-11ee-8b51-02167481f3bc' },
-  'jennifer hazlett properties': { id: '16', uuid: 'b368729d-9eca-11ee-8b51-02167481f3bc' },
-  'mary rees properties': { id: '7', uuid: '44b79f5e-9e9c-11ee-8b51-02167481f3bc' },
-  'veronica garcia properties': { id: '10', uuid: '121e7ca4-9eca-11ee-8b51-02167481f3bc' },
-  'nita lauer properties': { id: '5', uuid: '1036e611-9e9c-11ee-8b51-02167481f3bc' },
-  'jacquelina brantley properties': { id: '23', uuid: '9a434f3b-a04d-11ee-8b51-02167481f3bc' },
-  'angela hogan properties': { id: '13', uuid: '66a16517-9eca-11ee-8b51-02167481f3bc' },
-  'michelle kovach properties': { id: '61', uuid: '930c330b-60ce-11f0-bfba-069ca18f5865' },
-  'deborah lago properties': { id: '14', uuid: '7d4a69d6-9eca-11ee-8b51-02167481f3bc' },
-  'jordan hammerschmidt properties': { id: '17', uuid: 'bee73529-9eca-11ee-8b51-02167481f3bc' },
-  'michelle cunningham properties': { id: '25', uuid: 'a5774de7-a04d-11ee-8b51-02167481f3bc' },
-  'jamie monty properties': { id: '73', uuid: 'f922348b-ea67-11f0-bfba-069ca18f5865' },
-  'cari rascon properties': { id: '56', uuid: '61a5b6d1-251b-11f0-bfba-069ca18f5865' },
-  'sara anglin': { id: '66', uuid: '7f65b11f-7c52-11f0-bfba-069ca18f5865' },
-  missionsprings: { id: '72', uuid: 'bb129607-e81e-11f0-bfba-069ca18f5865' },
-  'el diablo': { id: '71', uuid: '114bcb4d-e81e-11f0-bfba-069ca18f5865' },
-  'maggie properties': { id: '68', uuid: '0041c7dd-add1-11f0-bfba-069ca18f5865' },
-  'phoenix properties': { id: '40', uuid: '' },
-  'tucson properties': { id: '41', uuid: '' },
+  'ana consuelo properties': { id: '1', uuid: 'c8f40f01-9e94-11ee-8b51-02167481f3bc', name: 'Ana Consuelo Properties' },
+  'andrea robidoux properties': { id: '59', uuid: '9985f145-3cb0-11f0-bfba-069ca18f5865', name: 'Andrea Robidoux Properties' },
+  'chris meehan properties': { id: '3', uuid: '06fdebec-9e9b-11ee-8b51-02167481f3bc', name: 'Chris Meehan Properties' },
+  'jessmar romea properties': { id: '6', uuid: '3405e65e-9e9c-11ee-8b51-02167481f3bc', name: 'Jessmar Romea Properties' },
+  'jennifer hazlett properties': { id: '16', uuid: 'b368729d-9eca-11ee-8b51-02167481f3bc', name: 'Jennifer Hazlett Properties' },
+  'mary rees properties': { id: '7', uuid: '44b79f5e-9e9c-11ee-8b51-02167481f3bc', name: 'Mary Rees Properties' },
+  'veronica garcia properties': { id: '10', uuid: '121e7ca4-9eca-11ee-8b51-02167481f3bc', name: 'Veronica Garcia Properties' },
+  'nita lauer properties': { id: '5', uuid: '1036e611-9e9c-11ee-8b51-02167481f3bc', name: 'Nita Lauer Properties' },
+  'jacquelina brantley properties': { id: '23', uuid: '9a434f3b-a04d-11ee-8b51-02167481f3bc', name: 'Jacquelina Brantley Properties' },
+  'angela hogan properties': { id: '13', uuid: '66a16517-9eca-11ee-8b51-02167481f3bc', name: 'Angela Hogan Properties' },
+  'michelle kovach properties': { id: '61', uuid: '930c330b-60ce-11f0-bfba-069ca18f5865', name: 'Michelle Kovach Properties' },
+  'deborah lago properties': { id: '14', uuid: '7d4a69d6-9eca-11ee-8b51-02167481f3bc', name: 'Deborah Lago Properties' },
+  'jordan hammerschmidt properties': { id: '17', uuid: 'bee73529-9eca-11ee-8b51-02167481f3bc', name: 'Jordan Hammerschmidt Properties' },
+  'michelle cunningham properties': { id: '25', uuid: 'a5774de7-a04d-11ee-8b51-02167481f3bc', name: 'Michelle Cunningham Properties' },
+  'jamie monty properties': { id: '73', uuid: 'f922348b-ea67-11f0-bfba-069ca18f5865', name: 'Jamie Monty Properties' },
+  'cari rascon properties': { id: '56', uuid: '61a5b6d1-251b-11f0-bfba-069ca18f5865', name: 'Cari Rascon Properties' },
+  'sara anglin': { id: '66', uuid: '7f65b11f-7c52-11f0-bfba-069ca18f5865', name: 'Sara Anglin' },
+  missionsprings: { id: '72', uuid: 'bb129607-e81e-11f0-bfba-069ca18f5865', name: 'MissionSprings' },
+  'el diablo': { id: '71', uuid: '114bcb4d-e81e-11f0-bfba-069ca18f5865', name: 'El Diablo' },
+  'maggie properties': { id: '68', uuid: '0041c7dd-add1-11f0-bfba-069ca18f5865', name: 'Maggie Properties' },
+  'phoenix properties': { id: '40', uuid: '', name: 'Phoenix Properties' },
+  'tucson properties': { id: '41', uuid: '', name: 'Tucson Properties' },
 };
 
 const GROUP_CATALOG_BY_UUID = new Map<string, GroupCatalogEntry>();
@@ -92,6 +92,13 @@ function normalizeGroupName(v: unknown): string {
 function resolvePropertyGroupInfo(row: any): { groupId: string | null; groupUuid: string | null; groupName: string | null; canonicalGroupKey: string | null } {
   let groupId = asStr(row.PropertyGroupId || row.property_group_id || row.property_group_numeric_id || row.group_id);
   let groupUuid = asStr(row.PropertyGroupUuid || row.property_group_uuid || row.property_group_guid || row.group_uuid);
+  const groupIds = Array.isArray(row.PropertyGroupIds)
+    ? row.PropertyGroupIds.map((v: unknown) => asStr(v)).filter((v): v is string => !!v)
+    : [];
+  if (!groupUuid && groupIds.length) {
+    const knownUuid = groupIds.find((candidate) => GROUP_CATALOG_BY_UUID.has(candidate));
+    groupUuid = knownUuid || groupIds[0] || null;
+  }
   const groupName = asStr(
     row.NameOfPropertyGroup || row.name_of_property_group || row.property_group_name || row.PropertyGroupName ||
     row.property_group || row.group_name || row.GroupName || row.portfolio || row.portfolio_name,
@@ -115,8 +122,18 @@ function resolvePropertyGroupInfo(row: any): { groupId: string | null; groupUuid
     if (fromId?.uuid) groupUuid = fromId.uuid;
   }
 
+  let resolvedGroupName = groupName;
+  if (!resolvedGroupName && groupUuid) {
+    const fromUuid = GROUP_CATALOG_BY_UUID.get(groupUuid);
+    if (fromUuid?.name) resolvedGroupName = fromUuid.name;
+  }
+  if (!resolvedGroupName && groupId) {
+    const fromId = GROUP_CATALOG_BY_ID.get(groupId);
+    if (fromId?.name) resolvedGroupName = fromId.name;
+  }
+
   const canonicalGroupKey = groupUuid || groupId || null;
-  return { groupId, groupUuid, groupName, canonicalGroupKey };
+  return { groupId, groupUuid, groupName: resolvedGroupName, canonicalGroupKey };
 }
 
 // ── Properties ───────────────────────────────────────────────────────────────
