@@ -86,6 +86,7 @@ function $$(sel) { return document.querySelectorAll(sel); }
 var MAINTENANCE_CONFIG = Object.assign({
   enabled: true,
   showDialogOnLogin: true,
+  bannerCollapsible: true,
   brandHost: 'handymgr.app',
   progressPercent: 80,
   bannerHeadline: 'BACK ONLINE - UNDER CONSTRUCTION',
@@ -108,6 +109,7 @@ function hideMaintenanceUi() {
       el.parentNode.removeChild(el);
     }
   });
+  document.body.classList.remove('maint-banner-collapsed');
 }
 
 function getMaintenanceBannerHtml() {
@@ -136,11 +138,19 @@ function ensureMaintenanceStyles() {
   var style = document.createElement('style');
   style.id = 'maintInlineStyles';
   style.textContent = [
-    '.maint-banner{position:fixed;top:0;left:0;width:100%;z-index:9999;background:linear-gradient(90deg,#f97316,#fb923c,#f97316);color:#fff;font-size:13px;font-weight:700;font-family:Karla,sans-serif;letter-spacing:.03em;overflow:hidden;white-space:nowrap;height:32px;display:flex;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.25)}',
+    '.maint-banner{position:fixed;top:0;left:0;width:100%;z-index:9999;background:linear-gradient(90deg,#f97316,#fb923c,#f97316);color:#fff;font-size:13px;font-weight:700;font-family:Karla,sans-serif;letter-spacing:.03em;overflow:hidden;white-space:nowrap;height:32px;display:flex;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.25);transition:transform .22s ease,box-shadow .2s ease}',
+    '.maint-banner-inner{display:flex;align-items:center;width:100%;min-width:0}',
     '.maint-banner-track{display:inline-flex;align-items:center;gap:14px;animation:maint-scroll 35s linear infinite;will-change:transform;padding-left:100%}',
+    '.maint-banner-toggle{margin-left:auto;flex:0 0 auto;height:100%;width:44px;border:none;background:rgba(0,0,0,.2);color:#fff;cursor:pointer;font-size:12px}',
+    '.maint-banner-toggle:hover{background:rgba(0,0,0,.28)}',
     '.maint-banner-sep{opacity:.5;font-weight:400}.maint-banner-item{white-space:nowrap}',
     '@keyframes maint-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}',
-    'body.theme-neo #vaultScreen{padding-top:32px}#mainTopbar,.dash-topbar{top:32px!important}',
+    'body.theme-neo #vaultScreen{padding-top:32px}#mainTopbar,.dash-topbar{top:32px!important}.global-filter-bar{top:calc(var(--header-height) + 32px)!important}',
+    'body.maint-banner-collapsed .maint-banner{transform:translateY(calc(-100% + 18px));box-shadow:0 1px 3px rgba(0,0,0,.15)}',
+    'body.maint-banner-collapsed .maint-banner-track{animation-play-state:paused;opacity:0}',
+    'body.maint-banner-collapsed #mainTopbar,body.maint-banner-collapsed .dash-topbar{top:0!important}',
+    'body.maint-banner-collapsed #vaultScreen{padding-top:0}',
+    'body.maint-banner-collapsed .global-filter-bar{top:var(--header-height)!important}',
     '.maint-dialog-overlay{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}',
     '.maint-dialog-box{background:#1e293b;color:#f1f5f9;border:2px solid #f97316;border-radius:16px;padding:36px 40px 32px;max-width:480px;width:90%;text-align:center;box-shadow:0 24px 64px rgba(0,0,0,.5)}',
     '.maint-dialog-title{font-family:"Bricolage Grotesque",sans-serif;font-size:22px;font-weight:800;color:#f97316;margin:0 0 14px}',
@@ -150,6 +160,38 @@ function ensureMaintenanceStyles() {
     '.maint-dialog-btn{background:linear-gradient(135deg,#f97316,#fb923c);color:#fff;border:none;border-radius:8px;padding:11px 28px;font-size:15px;font-weight:700;font-family:Karla,sans-serif;cursor:pointer}'
   ].join('');
   document.head.appendChild(style);
+}
+
+function isMaintenanceBannerCollapsed() {
+  try {
+    return localStorage.getItem('hm_maint_banner_collapsed') === '1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function setMaintenanceBannerCollapsed(collapsed) {
+  var isCollapsed = !!collapsed;
+  document.body.classList.toggle('maint-banner-collapsed', isCollapsed);
+  var toggle = document.getElementById('maintenanceBannerToggle');
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+    toggle.innerHTML = isCollapsed ? '<i class="fas fa-chevron-down"></i>' : '<i class="fas fa-chevron-up"></i>';
+    toggle.title = isCollapsed ? 'Expand maintenance banner' : 'Collapse maintenance banner';
+  }
+  try {
+    localStorage.setItem('hm_maint_banner_collapsed', isCollapsed ? '1' : '0');
+  } catch (_) {}
+}
+
+function bindMaintenanceBannerToggle() {
+  var toggle = document.getElementById('maintenanceBannerToggle');
+  if (!toggle || toggle.dataset.bound === '1') return;
+  toggle.dataset.bound = '1';
+  toggle.addEventListener('click', function() {
+    var next = !document.body.classList.contains('maint-banner-collapsed');
+    setMaintenanceBannerCollapsed(next);
+  });
 }
 
 function ensureMaintenanceUi() {
@@ -164,11 +206,24 @@ function ensureMaintenanceUi() {
     var banner = document.createElement('div');
     banner.id = 'maintenanceBanner';
     banner.className = 'maint-banner';
-    banner.innerHTML = getMaintenanceBannerHtml();
+    banner.innerHTML = '<div class="maint-banner-inner">'
+      + getMaintenanceBannerHtml()
+      + (MAINTENANCE_CONFIG.bannerCollapsible
+        ? '<button id="maintenanceBannerToggle" class="maint-banner-toggle" type="button" aria-label="Toggle maintenance banner" aria-expanded="true"><i class="fas fa-chevron-up"></i></button>'
+        : '')
+      + '</div>';
     document.body.insertBefore(banner, document.body.firstChild);
   } else {
-    document.getElementById('maintenanceBanner').innerHTML = getMaintenanceBannerHtml();
+    document.getElementById('maintenanceBanner').innerHTML = '<div class="maint-banner-inner">'
+      + getMaintenanceBannerHtml()
+      + (MAINTENANCE_CONFIG.bannerCollapsible
+        ? '<button id="maintenanceBannerToggle" class="maint-banner-toggle" type="button" aria-label="Toggle maintenance banner" aria-expanded="true"><i class="fas fa-chevron-up"></i></button>'
+        : '')
+      + '</div>';
   }
+
+  bindMaintenanceBannerToggle();
+  setMaintenanceBannerCollapsed(isMaintenanceBannerCollapsed());
 
   if (!document.getElementById('maintDialog')) {
     var dialog = document.createElement('div');
@@ -5497,9 +5552,11 @@ async function fetchWorkOrders() {
   try {
     setApiStatus('loading', 'Loading work orders (active & inactive)…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var scopedGroupUuid = getEffectiveGroupUuid();
+    var scopeQuery = scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '';
     
     // Fetch active work orders
-    var urlActive = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(DATA_WINDOW_DAYS)) + '&limit=2500';
+    var urlActive = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(DATA_WINDOW_DAYS)) + '&limit=2500' + scopeQuery;
     var resActive = await fetchWithTimeout(urlActive, { headers: { 'Accept': 'application/json' } }, 45000);
     var dataActive = {};
     try { dataActive = await resActive.json(); } catch (e) { dataActive = {}; }
@@ -5509,7 +5566,7 @@ async function fetchWorkOrders() {
     var activeResults = (dataActive.results || dataActive.data || []);
     
     // Fetch inactive work orders
-    var urlInactive = localBase + '/api/local/work_orders/inactive?days=3650&limit=5000';
+    var urlInactive = localBase + '/api/local/work_orders/inactive?days=3650&limit=5000' + scopeQuery;
     var resInactive = await fetchWithTimeout(urlInactive, { headers: { 'Accept': 'application/json' } }, 45000);
     var dataInactive = {};
     try { dataInactive = await resInactive.json(); } catch (e) { dataInactive = {}; }
@@ -5528,6 +5585,7 @@ async function fetchWorkOrders() {
         dbApiId: dbApiId,
         _dataSource: r._source || (isUuidString(rawUuid) ? 'v0' : 'v2'),
         propertyId: r.property_id || r.PropertyId || '',
+        propertyGroupId: String(r.property_group_id || r.property_group_uuid || r.PropertyGroupId || r.PropertyGroupUuid || '').trim(),
         propertyName: r.property_name || r.property || r.PropertyName || '',
         propertyAddress: ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
         unitId: r.unit_id || r.UnitId || '',
@@ -6236,7 +6294,9 @@ async function fetchProperties() {
   try {
     setApiStatus('loading', 'Loading properties (local)…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
-    var url = localBase + '/api/local/properties?limit=5000';
+    var scopedGroupUuid = getEffectiveGroupUuid();
+    var url = localBase + '/api/local/properties?limit=5000'
+      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
     var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
     var data = {};
     try { data = await res.json(); } catch (e) { data = {}; }
@@ -6523,7 +6583,9 @@ async function fetchPropertyGroups() {
   try {
     setApiStatus('loading', 'Loading property groups\u2026');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
-    var localUrl = localBase + '/api/local/property_groups?limit=1000';
+    var scopedGroupUuid = getEffectiveGroupUuid();
+    var localUrl = localBase + '/api/local/property_groups?limit=1000'
+      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
     var localRes = await fetchWithTimeout(localUrl, { headers: { 'Accept': 'application/json' } }, 45000);
     var data = {};
     try { data = await localRes.json(); } catch (e) { data = {}; }
@@ -6556,6 +6618,28 @@ async function fetchPropertyGroups() {
         propertyNames: [],
         resolvedNames: []
       };
+    });
+
+    _nameToGroups = {};
+    _idToGroups = {};
+    _uuidToGroups = {};
+
+    var propertyNameById = {};
+    (PROPERTIES || []).forEach(function(p) {
+      var pid = String(p.id || '').trim();
+      if (!pid) return;
+      propertyNameById[pid] = String(p.name || '').trim();
+    });
+
+    PROPERTY_GROUPS.forEach(function(g) {
+      if (!g || !g.name) return;
+      (g.properties || []).forEach(function(pid) {
+        var id = String(pid || '').trim();
+        if (!id) return;
+        _addToGroupMap(_idToGroups, id, g.name);
+        _addToGroupMap(_uuidToGroups, id, g.name);
+        if (propertyNameById[id]) _addNameToGroupMap(propertyNameById[id], g.name);
+      });
     });
 
     console.log('[PG] Parsed groups: ' + PROPERTY_GROUPS.length + ', with PropertyIds: ' +
@@ -16980,7 +17064,9 @@ async function fetchUnits() {
   try {
     setApiStatus('loading', 'Loading units (local Postgres)…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
-    var url = localBase + '/api/local/units?limit=5000';
+    var scopedGroupUuid = getEffectiveGroupUuid();
+    var url = localBase + '/api/local/units?limit=5000'
+      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
     var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
     var data = {};
     try { data = await res.json(); } catch (e) { data = {}; }
@@ -24450,7 +24536,6 @@ var DispatchConfig = {
       try{
         var resp=await dispatchPost(actions[i],payload);
         if(resp&&resp.ok){
-          v9Toast('Test queue populated',String(resp.inserted||resp.seeded||resp.count||0)+' WOs added for reassignment testing','success');
           DispatchControl.refresh();
           return;
         }

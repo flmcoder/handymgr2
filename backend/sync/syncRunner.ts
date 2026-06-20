@@ -64,6 +64,19 @@ const ENDPOINTS: Record<string, EndpointDef> = {
     upsert: upsertProperties,
   },
 
+  'v0:property_groups': {
+    apiVersion: 'v0',
+    buildFirstUrl: ({ baseUrl, incrementalFrom }) => {
+      const from = incrementalFrom
+        ? new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z'
+        : new Date(Date.now() - 5 * 365 * 86400_000).toISOString().slice(0, 19) + 'Z';
+      return `${baseUrl}/api/v0/property_groups?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
+    },
+    extractRows: (data) => data?.data ?? data?.results ?? [],
+    // Raw pages are archived and cursor-tracked; normalization currently happens via property rows.
+    upsert: async (rows) => ({ upserted: Array.isArray(rows) ? rows.length : 0, skipped: 0 }),
+  },
+
   'v0:work_orders': {
     apiVersion: 'v0',
     buildFirstUrl: ({ baseUrl, incrementalFrom }) => {
