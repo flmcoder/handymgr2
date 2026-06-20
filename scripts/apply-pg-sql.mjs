@@ -206,7 +206,7 @@ if (SQL_SE && /^postgres(ql)?:\/\//i.test(SQL_SE)) {
   if (!DB_NAME) {
     console.error('DB_NAME is required.');
     console.error(
-      'Tip: Render environment variables are only available inside Render runtime/shell. '\
+      'Tip: Render environment variables are only available inside Render runtime/shell. '
       + 'If running locally, export DB_NAME (or SQL_SE) first, or run this command in Render Shell.',
     );
     process.exit(1);
