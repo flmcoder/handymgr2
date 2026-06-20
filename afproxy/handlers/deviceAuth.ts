@@ -437,7 +437,8 @@ async function getOtpPolicy(): Promise<{
     return {
       enabled: (map["otp_enabled"] ?? "1") !== "0",
       allowedDomain: rawDomain || OTP_ALLOWED_DOMAIN_ENV,
-      requireMembership: (map["otp_require_pm_membership"] ?? "1") !== "0",
+      // Default to permissive bootstrap mode unless explicitly enabled.
+      requireMembership: (map["otp_require_pm_membership"] ?? "0") !== "0",
       ttlMinutes: Math.max(3, Number(map["otp_ttl_minutes"]) || OTP_TTL_MINUTES_ENV),
     };
   } catch (_) {
