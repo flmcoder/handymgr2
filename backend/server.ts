@@ -294,6 +294,31 @@ function normalizeUnitRow(row: any): Record<string, any> {
 const app = express();
 const DIST_DIR = path.resolve(process.cwd(), 'dist');
 
+function getLegacyAction(req: Request): string {
+  const fromQuery = String(req.query?.action ?? '').trim();
+  if (fromQuery) return fromQuery;
+  const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : null;
+  const fromBody = String(body?.action ?? '').trim();
+  return fromBody;
+}
+
+async function respondSessionInfo(req: Request, res: Response): Promise<void> {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  if (!token) {
+    res.status(401).json({ ok: false, authenticated: false, error: 'Missing bearer token' });
+    return;
+  }
+
+  const session = await deviceAuthHandlers.getTrustedDeviceSession(token);
+  if (!session) {
+    res.status(401).json({ ok: false, authenticated: false, error: 'Invalid session' });
+    return;
+  }
+
+  res.json({ ok: true, authenticated: true, session });
+}
+
 app.use(express.json({ limit: '10mb' }));
 
 const allowedOrigins = new Set([
@@ -323,6 +348,48 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
 }));
+
+const legacyActionRoutes = {
+  units: wrapDenoHandler(unitsHandlers.handleUnits, 'params'),
+  unit_lookup: wrapDenoHandler(unitsHandlers.handleUnitLookup, 'params'),
+  turns: wrapDenoHandler(turnsHandlers.handleTurns, 'params'),
+  unit_turns: wrapDenoHandler(turnsHandlers.handleUnitTurns, 'params'),
+  turns_incremental: wrapDenoHandler(turnsHandlers.handleTurnsIncremental, 'params'),
+  unit_turns_history: wrapDenoHandler(turnsHandlers.handleUnitTurnsHistory, 'params'),
+  estimates: wrapDenoHandler(estimatesHandlers.handleEstimates, 'params'),
+  queue: wrapDenoHandler(queueHandlers.handleReassignmentQueue, 'params'),
+  reassignment_queue: wrapDenoHandler(queueHandlers.handleReassignmentQueue, 'params'),
+  device_setup: wrapDenoHandler(deviceAuthHandlers.handleDeviceSetup, 'request'),
+  device_otp_request: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpRequest, 'request'),
+  device_otp_verify: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpVerify, 'request'),
+  verify_role: wrapDenoHandler(deviceAuthHandlers.handleVerifyRole, 'request'),
+} as const;
+
+app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFunction) => {
+  const action = getLegacyAction(req);
+  if (!action) {
+    next();
+    return;
+  }
+
+  if (action === 'session_info') {
+    try {
+      await respondSessionInfo(req, res);
+    } catch (error) {
+      logTunnelError(error, '/api?action=session_info');
+      res.status(500).json({ ok: false, error: 'Session validation failed' });
+    }
+    return;
+  }
+
+  const routeHandler = (legacyActionRoutes as Record<string, any>)[action];
+  if (!routeHandler) {
+    next();
+    return;
+  }
+
+  return routeHandler(req, res);
+});
 
 app.get('/health', async (_req: Request, res: Response) => {
   const dbOk = await pingDatabase();
@@ -801,20 +868,7 @@ app.post('/api/admin/sync', async (req: Request, res: Response) => {
 
 app.get('/api/session_info', async (req: Request, res: Response) => {
   try {
-    const auth = req.headers.authorization || '';
-    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-    if (!token) {
-      res.status(401).json({ ok: false, authenticated: false, error: 'Missing bearer token' });
-      return;
-    }
-
-    const session = await deviceAuthHandlers.getTrustedDeviceSession(token);
-    if (!session) {
-      res.status(401).json({ ok: false, authenticated: false, error: 'Invalid session' });
-      return;
-    }
-
-    res.json({ ok: true, authenticated: true, session });
+    await respondSessionInfo(req, res);
   } catch (error) {
     logTunnelError(error, '/api/session_info');
     res.status(500).json({ ok: false, error: 'Session validation failed' });
