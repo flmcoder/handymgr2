@@ -176,6 +176,72 @@ function pickRaw(obj: any, keys: string[]): any {
   return '';
 }
 
+const GROUP_NAME_BY_UUID: Record<string, string> = {
+  'c8f40f01-9e94-11ee-8b51-02167481f3bc': 'Ana Consuelo Properties',
+  '9985f145-3cb0-11f0-bfba-069ca18f5865': 'Andrea Robidoux Properties',
+  '06fdebec-9e9b-11ee-8b51-02167481f3bc': 'Chris Meehan Properties',
+  '3405e65e-9e9c-11ee-8b51-02167481f3bc': 'Jessmar Romea Properties',
+  'b368729d-9eca-11ee-8b51-02167481f3bc': 'Jennifer Hazlett Properties',
+  '44b79f5e-9e9c-11ee-8b51-02167481f3bc': 'Mary Rees Properties',
+  '121e7ca4-9eca-11ee-8b51-02167481f3bc': 'Veronica Garcia Properties',
+  '1036e611-9e9c-11ee-8b51-02167481f3bc': 'Nita Lauer Properties',
+  '9a434f3b-a04d-11ee-8b51-02167481f3bc': 'Jacquelina Brantley Properties',
+  '66a16517-9eca-11ee-8b51-02167481f3bc': 'Angela Hogan Properties',
+  '930c330b-60ce-11f0-bfba-069ca18f5865': 'Michelle Kovach Properties',
+  '7d4a69d6-9eca-11ee-8b51-02167481f3bc': 'Deborah Lago Properties',
+  'bee73529-9eca-11ee-8b51-02167481f3bc': 'Jordan Hammerschmidt Properties',
+  'a5774de7-a04d-11ee-8b51-02167481f3bc': 'Michelle Cunningham Properties',
+  'f922348b-ea67-11f0-bfba-069ca18f5865': 'Jamie Monty Properties',
+  '61a5b6d1-251b-11f0-bfba-069ca18f5865': 'Cari Rascon Properties',
+  '7f65b11f-7c52-11f0-bfba-069ca18f5865': 'Sara Anglin',
+  'bb129607-e81e-11f0-bfba-069ca18f5865': 'MissionSprings',
+  '114bcb4d-e81e-11f0-bfba-069ca18f5865': 'El Diablo',
+  '0041c7dd-add1-11f0-bfba-069ca18f5865': 'Maggie Properties',
+};
+
+const GROUP_UUID_BY_MANAGER: Record<string, string> = {
+  'ana consuelo': 'c8f40f01-9e94-11ee-8b51-02167481f3bc',
+  'andrea robidoux': '9985f145-3cb0-11f0-bfba-069ca18f5865',
+  'chris meehan': '06fdebec-9e9b-11ee-8b51-02167481f3bc',
+  'jessmar romea': '3405e65e-9e9c-11ee-8b51-02167481f3bc',
+  'jennifer hazlett': 'b368729d-9eca-11ee-8b51-02167481f3bc',
+  'mary rees': '44b79f5e-9e9c-11ee-8b51-02167481f3bc',
+  'veronica garcia': '121e7ca4-9eca-11ee-8b51-02167481f3bc',
+  'nita lauer': '1036e611-9e9c-11ee-8b51-02167481f3bc',
+  'jacquelina brantley': '9a434f3b-a04d-11ee-8b51-02167481f3bc',
+  'angela hogan': '66a16517-9eca-11ee-8b51-02167481f3bc',
+  'michelle kovach': '930c330b-60ce-11f0-bfba-069ca18f5865',
+  'deborah lago': '7d4a69d6-9eca-11ee-8b51-02167481f3bc',
+  'jordan hammerschmidt': 'bee73529-9eca-11ee-8b51-02167481f3bc',
+  'michelle cunningham': 'a5774de7-a04d-11ee-8b51-02167481f3bc',
+  'jamie monty': 'f922348b-ea67-11f0-bfba-069ca18f5865',
+  'cari rascon': '61a5b6d1-251b-11f0-bfba-069ca18f5865',
+  'sara anglin': '7f65b11f-7c52-11f0-bfba-069ca18f5865',
+};
+
+function resolveGroupFromRaw(raw: any, siteManager: string): { id: string; name: string } {
+  const direct = String(pickRaw(raw, ['property_group_id', 'PropertyGroupId', 'property_group_uuid', 'PropertyGroupUuid']) || '').trim();
+  if (direct) {
+    const nm = GROUP_NAME_BY_UUID[direct] || String(pickRaw(raw, ['name_of_property_group', 'NameOfPropertyGroup', 'property_group_name', 'PropertyGroupName']) || direct);
+    return { id: direct, name: nm };
+  }
+
+  const arr = Array.isArray(raw?.PropertyGroupIds) ? raw.PropertyGroupIds : [];
+  for (const candidate of arr) {
+    const id = String(candidate || '').trim();
+    if (!id) continue;
+    if (GROUP_NAME_BY_UUID[id]) return { id, name: GROUP_NAME_BY_UUID[id] };
+  }
+
+  const mgr = String(siteManager || '').trim().toLowerCase();
+  if (mgr && GROUP_UUID_BY_MANAGER[mgr]) {
+    const id = GROUP_UUID_BY_MANAGER[mgr];
+    return { id, name: GROUP_NAME_BY_UUID[id] || id };
+  }
+
+  return { id: '', name: '' };
+}
+
 function extractSiteManager(raw: any): string {
   const siteManager = pickRaw(raw, ['site_manager', 'siteManager', 'SiteManager']);
   if (typeof siteManager === 'object' && siteManager !== null) {
@@ -189,6 +255,7 @@ function extractSiteManager(raw: any): string {
 function normalizePropertyRow(row: any): Record<string, any> {
   const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
   const siteManager = extractSiteManager(raw);
+  const resolvedGroup = resolveGroupFromRaw(raw, siteManager);
   const visibility = String(pickRaw(raw, ['visibility', 'Visibility']) || '');
   const managementEndDate = String(pickRaw(raw, ['management_end_date', 'managementEndDate', 'ManagementEndDate']) || '');
   const managementEndReason = String(pickRaw(raw, ['management_end_reason', 'managementEndReason', 'ManagementEndReason']) || '');
@@ -205,8 +272,8 @@ function normalizePropertyRow(row: any): Record<string, any> {
     portfolio_id: String(pickRaw(raw, ['portfolio_id', 'portfolioId', 'PortfolioId']) || ''),
     portfolio: String(pickRaw(raw, ['portfolio', 'portfolio_name', 'portfolioName', 'PortfolioName', 'group_name', 'property_group']) || ''),
     portfolio_name: String(pickRaw(raw, ['portfolio_name', 'portfolioName', 'PortfolioName']) || ''),
-    property_group: String(pickRaw(raw, ['property_group', 'group_name', 'group', 'Group']) || ''),
-    property_group_id: String(row?.property_group_id || pickRaw(raw, ['property_group_id', 'PropertyGroupId', 'property_group_uuid', 'PropertyGroupUuid']) || ''),
+    property_group: String(pickRaw(raw, ['property_group', 'group_name', 'group', 'Group']) || resolvedGroup.name || ''),
+    property_group_id: String(row?.property_group_id || resolvedGroup.id || pickRaw(raw, ['property_group_id', 'PropertyGroupId', 'property_group_uuid', 'PropertyGroupUuid']) || ''),
     group: String(pickRaw(raw, ['group', 'Group']) || ''),
     group_name: String(pickRaw(raw, ['group_name', 'groupName', 'GroupName']) || ''),
     maintenance_limit: String(pickRaw(raw, ['maintenance_limit', 'maintenanceLimit', 'MaintenanceLimit']) || ''),
