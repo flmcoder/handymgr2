@@ -483,6 +483,25 @@ async function getOtpPolicy(): Promise<{
   }
 }
 
+async function getOtpPolicySafe(): Promise<{
+  enabled: boolean;
+  allowedDomain: string;
+  requireMembership: boolean;
+  ttlMinutes: number;
+}> {
+  try {
+    return await getOtpPolicy();
+  } catch (err) {
+    console.warn("[otp_policy] falling back to defaults:", String((err as any)?.message || err || "unknown"));
+    return {
+      enabled: true,
+      allowedDomain: OTP_ALLOWED_DOMAIN_ENV,
+      requireMembership: false,
+      ttlMinutes: OTP_TTL_MINUTES_ENV,
+    };
+  }
+}
+
 async function sendOtpSms(toPhone: string, code: string, ttlMinutes: number): Promise<void> {
   const message = `HandyManager verification code: ${code}. Expires in ${ttlMinutes} minutes. If you did not request this code, ignore this message.`;
   const sms = await sendSMS(toPhone, message);
@@ -934,7 +953,7 @@ export async function handleDeviceOtpRequest(req: Request): Promise<any> {
       persistenceAvailable = false;
       console.warn("[device_otp_request] sqlite unavailable, using in-memory OTP fallback:", String((persistErr as any)?.message || persistErr || 'unknown'));
     }
-    const policy = await getOtpPolicy();
+    const policy = await getOtpPolicySafe();
     if (!policy.enabled) {
       return { ok: false, status: 403, error: "OTP login is currently disabled by administrator." };
     }
@@ -1028,7 +1047,7 @@ export async function handleDeviceOtpVerify(req: Request): Promise<any> {
     persistenceAvailable = false;
     console.warn("[device_otp_verify] sqlite unavailable, using stateless fallback:", String((persistErr as any)?.message || persistErr || 'unknown'));
   }
-  const policy = await getOtpPolicy();
+  const policy = await getOtpPolicySafe();
   if (!policy.enabled) {
     return { ok: false, status: 403, error: "OTP login is currently disabled by administrator." };
   }
