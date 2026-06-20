@@ -22,6 +22,15 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import postgres from 'postgres';
+import { config as loadDotenv } from 'dotenv';
+import { fileURLToPath } from 'node:url';
+
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(scriptDir, '..');
+
+// Load env from repo root so running from ./scripts still picks up DB vars.
+loadDotenv({ path: path.join(repoRoot, '.env') });
+loadDotenv({ path: path.join(repoRoot, '.env.local'), override: true });
 
 const sqlFile = process.argv[2];
 if (!sqlFile) {
@@ -196,6 +205,10 @@ if (SQL_SE && /^postgres(ql)?:\/\//i.test(SQL_SE)) {
 } else {
   if (!DB_NAME) {
     console.error('DB_NAME is required.');
+    console.error(
+      'Tip: Render environment variables are only available inside Render runtime/shell. '\
+      + 'If running locally, export DB_NAME (or SQL_SE) first, or run this command in Render Shell.',
+    );
     process.exit(1);
   }
   config = applyTunnelTarget({
