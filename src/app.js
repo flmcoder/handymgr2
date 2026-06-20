@@ -2322,7 +2322,7 @@ async function requestDeviceOtp(identifier, userName) {
   var data = {};
   try { data = await res.json(); } catch (e) { /* */ }
   if (!res.ok || !data.ok) {
-    throw new Error(data.error || ('OTP request failed (HTTP ' + res.status + ')'));
+    throw new Error(data.error || data.message || ('OTP request failed (HTTP ' + res.status + ')'));
   }
   return data;
 }
@@ -2348,7 +2348,7 @@ async function verifyDeviceOtp(identifier, code, userName) {
   var data = {};
   try { data = await res.json(); } catch (e) { /* */ }
   if (!res.ok || !data.ok || !data.token) {
-    throw new Error(data.error || ('OTP verify failed (HTTP ' + res.status + ')'));
+    throw new Error(data.error || data.message || ('OTP verify failed (HTTP ' + res.status + ')'));
   }
   return data;
 }

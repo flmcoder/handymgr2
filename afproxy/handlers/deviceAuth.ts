@@ -110,6 +110,37 @@ let _pmProxyLoginAuditTableReady = false;
 let _trustedDevicesDbFallbackWarned = false;
 const RECENT_TRUSTED_SESSION_TTL_MS = 10 * 60 * 1000;
 const _recentTrustedSessions = new Map<string, any>();
+const _memoryOtpStore = new Map<string, {
+  code: string;
+  used: boolean;
+  expiresAtMs: number;
+  userName: string;
+  scopeUuid: string;
+}>();
+
+function rememberMemoryOtp(email: string, code: string, ttlMinutes: number, userName: string, scopeUuid: string): void {
+  const key = normalizeEmail(email);
+  if (!key) return;
+  _memoryOtpStore.set(key, {
+    code: String(code || '').trim(),
+    used: false,
+    expiresAtMs: Date.now() + Math.max(1, Number(ttlMinutes || 1)) * 60_000,
+    userName: String(userName || '').trim(),
+    scopeUuid: String(scopeUuid || '').trim(),
+  });
+}
+
+function readMemoryOtp(email: string): { code: string; used: boolean; expiresAtMs: number; userName: string; scopeUuid: string } | null {
+  const key = normalizeEmail(email);
+  if (!key) return null;
+  const entry = _memoryOtpStore.get(key);
+  if (!entry) return null;
+  if (entry.expiresAtMs < Date.now()) {
+    _memoryOtpStore.delete(key);
+    return null;
+  }
+  return entry;
+}
 
 function rememberRecentTrustedSession(session: {
   device_token: string;
@@ -894,9 +925,15 @@ export async function handleDeviceSetup(req: Request): Promise<any> {
 
 export async function handleDeviceOtpRequest(req: Request): Promise<any> {
   try {
-    await ensurePmProxyUsersTable();
-    await ensureDeviceOtpsTable();
-    await ensureProxyConfigTable();
+    let persistenceAvailable = true;
+    try {
+      await ensurePmProxyUsersTable();
+      await ensureDeviceOtpsTable();
+      await ensureProxyConfigTable();
+    } catch (persistErr) {
+      persistenceAvailable = false;
+      console.warn("[device_otp_request] sqlite unavailable, using in-memory OTP fallback:", String((persistErr as any)?.message || persistErr || 'unknown'));
+    }
     const policy = await getOtpPolicy();
     if (!policy.enabled) {
       return { ok: false, status: 403, error: "OTP login is currently disabled by administrator." };
@@ -947,7 +984,11 @@ export async function handleDeviceOtpRequest(req: Request): Promise<any> {
     const userName = getBodyField(body, "user_name", "userName", "user") || "trusted-device";
     const code = generateOtpCode();
 
-    await insertDeviceOtp(email, code, policy.ttlMinutes, userName, String(pmUser?.property_group_uuid || ""));
+    if (persistenceAvailable) {
+      await insertDeviceOtp(email, code, policy.ttlMinutes, userName, String(pmUser?.property_group_uuid || ""));
+    } else {
+      rememberMemoryOtp(email, code, policy.ttlMinutes, userName, String(pmUser?.property_group_uuid || ""));
+    }
 
     try {
       await sendOtpSms(smsPhone, code, policy.ttlMinutes);
@@ -976,11 +1017,17 @@ export async function handleDeviceOtpRequest(req: Request): Promise<any> {
 }
 
 export async function handleDeviceOtpVerify(req: Request): Promise<any> {
-  await ensureTrustedDevicesTable();
-  await ensurePmProxyUsersTable();
-  await ensureDeviceOtpsTable();
-  await ensureProxyConfigTable();
-  await ensurePmProxyLoginAuditTable();
+  let persistenceAvailable = true;
+  try {
+    await ensureTrustedDevicesTable();
+    await ensurePmProxyUsersTable();
+    await ensureDeviceOtpsTable();
+    await ensureProxyConfigTable();
+    await ensurePmProxyLoginAuditTable();
+  } catch (persistErr) {
+    persistenceAvailable = false;
+    console.warn("[device_otp_verify] sqlite unavailable, using stateless fallback:", String((persistErr as any)?.message || persistErr || 'unknown'));
+  }
   const policy = await getOtpPolicy();
   if (!policy.enabled) {
     return { ok: false, status: 403, error: "OTP login is currently disabled by administrator." };
@@ -1003,39 +1050,69 @@ export async function handleDeviceOtpVerify(req: Request): Promise<any> {
     return { ok: false, status: 403, error: otpAccessErr };
   }
 
-  const result = await sqlite.execute({
-    sql: `SELECT id, code, expires_at, used FROM device_otps WHERE email = ? ORDER BY id DESC LIMIT 1`,
-    args: [email],
-  });
+  if (persistenceAvailable) {
+    const result = await sqlite.execute({
+      sql: `SELECT id, code, expires_at, used FROM device_otps WHERE email = ? ORDER BY id DESC LIMIT 1`,
+      args: [email],
+    });
 
-  const rows = rowsAsObjects(result);
-  if (!rows.length) return { ok: false, status: 401, error: "No OTP request found for this email" };
+    const rows = rowsAsObjects(result);
+    if (!rows.length) return { ok: false, status: 401, error: "No OTP request found for this email" };
 
-  const row = rows[0] as any;
-  if (Number(row.used || 0) === 1) return { ok: false, status: 401, error: "OTP code already used" };
-  if (new Date(String(row.expires_at || "")).getTime() < Date.now()) return { ok: false, status: 401, error: "OTP code expired" };
-  if (String(row.code || "") !== String(code).trim()) return { ok: false, status: 401, error: "Invalid OTP code" };
+    const row = rows[0] as any;
+    if (Number(row.used || 0) === 1) return { ok: false, status: 401, error: "OTP code already used" };
+    if (new Date(String(row.expires_at || "")).getTime() < Date.now()) return { ok: false, status: 401, error: "OTP code expired" };
+    if (String(row.code || "") !== String(code).trim()) return { ok: false, status: 401, error: "Invalid OTP code" };
 
-  await sqlite.execute({
-    sql: `UPDATE device_otps SET used = 1, used_at = datetime('now') WHERE id = ?`,
-    args: [row.id],
-  });
+    await sqlite.execute({
+      sql: `UPDATE device_otps SET used = 1, used_at = datetime('now') WHERE id = ?`,
+      args: [row.id],
+    });
+  } else {
+    const row = readMemoryOtp(email);
+    if (!row) return { ok: false, status: 401, error: "No OTP request found for this email" };
+    if (row.used) return { ok: false, status: 401, error: "OTP code already used" };
+    if (row.expiresAtMs < Date.now()) return { ok: false, status: 401, error: "OTP code expired" };
+    if (String(row.code || "") !== String(code).trim()) return { ok: false, status: 401, error: "Invalid OTP code" };
+    row.used = true;
+    _memoryOtpStore.set(normalizeEmail(email), row);
+  }
 
   const pmUser = pmUserCheck || await resolvePmProxyUser(requestedIdentifier);
   const userName = getBodyField(body, "user_name", "userName", "user") || (pmUser?.full_name || email);
-  const token = generateUuid();
   const role = "pm_readonly";
   const scopeUuid = String(pmUser?.property_group_uuid || "");
   const phone = String(pmUser?.phone || "");
 
-  await insertTrustedDeviceSession({ token, userName, role, loginEmail: email, propertyGroupUuid: scopeUuid, phone });
+  let token = "";
+  if (persistenceAvailable) {
+    token = generateUuid();
+    try {
+      await insertTrustedDeviceSession({ token, userName, role, loginEmail: email, propertyGroupUuid: scopeUuid, phone });
+    } catch (persistSessionErr) {
+      console.warn("[device_otp_verify] trusted device insert failed, falling back to signed token:", String((persistSessionErr as any)?.message || persistSessionErr || 'unknown'));
+      const signedFallback = await mintSignedToken(role, userName);
+      if (!signedFallback) {
+        return { ok: false, status: 503, error: "OTP verified but session token could not be created. Configure FRONTEND_PROXY_SECRET or restore sqlite access." };
+      }
+      token = signedFallback;
+    }
 
-  try {
-    await sqlite.execute({
-      sql: `INSERT INTO pm_proxy_login_audit (user_uuid, email, role, property_group_uuid, device_token, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-      args: [pmUser?.user_uuid || "", email, role, scopeUuid, token],
-    });
-  } catch (_) {}
+    if (!token.startsWith("v1.")) {
+      try {
+        await sqlite.execute({
+          sql: `INSERT INTO pm_proxy_login_audit (user_uuid, email, role, property_group_uuid, device_token, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+          args: [pmUser?.user_uuid || "", email, role, scopeUuid, token],
+        });
+      } catch (_) {}
+    }
+  } else {
+    const signed = await mintSignedToken(role, userName);
+    if (!signed) {
+      return { ok: false, status: 503, error: "OTP verified but proxy storage is unavailable and FRONTEND_PROXY_SECRET is not configured." };
+    }
+    token = signed;
+  }
 
   return { ok: true, token, user_name: userName, email, role, property_group_uuid: scopeUuid, phone, created_at: new Date().toISOString() };
 }
@@ -1063,7 +1140,12 @@ export async function getTrustedDeviceSession(token: string): Promise<any | null
 
   const recent = readRecentTrustedSession(token);
   if (recent) return recent;
-  await ensureTrustedDevicesTable();
+  try {
+    await ensureTrustedDevicesTable();
+  } catch (err) {
+    console.warn("[getTrustedDeviceSession] sqlite unavailable:", String((err as any)?.message || err || 'unknown'));
+    return null;
+  }
 
   async function selectSessionModern(exec: (q: string, a?: any[]) => Promise<any>) {
     const result = await exec(
