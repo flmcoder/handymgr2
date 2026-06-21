@@ -166,6 +166,22 @@ function asIso(value: unknown): string {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
+function mapTurnStagesFromMilestones(milestones: any): Record<string, any> {
+  const out: Record<string, any> = {};
+  const keys = ['moveout', 'inspection', 'wo_created', 'est_requested', 'est_received', 'movein'];
+  for (const key of keys) {
+    const node = milestones?.[key];
+    const date = asIso(node?.date);
+    if (!date) continue;
+    out[key] = {
+      done: true,
+      date,
+      notes: String(node?.notes || ''),
+    };
+  }
+  return out;
+}
+
 function pickRaw(obj: any, keys: string[]): any {
   for (const key of keys) {
     const val = obj?.[key];
@@ -868,6 +884,697 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
   } catch (error) {
     logTunnelError(error, '/api/local/turn_work_orders');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local turn work orders query failed') });
+  }
+});
+
+app.get('/api/local/turn_records', async (req: Request, res: Response) => {
+  try {
+    const days = parseDays(req.query.days, 540, 3650);
+    const limit = parseLimit(req.query.limit, 500, 5000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+
+    const rows = propertyGroupId
+      ? await queryClient`
+        select
+          t.turn_key,
+          t.unit_turn_id,
+          t.tracking_uuid,
+          t.updated_at,
+          coalesce((
+            select jsonb_object_agg(m.milestone_key, jsonb_build_object(
+              'date', m.milestone_date,
+              'source', m.source,
+              'notes', m.notes
+            ))
+            from unit_turn_milestones m
+            where m.tracking_uuid = t.tracking_uuid
+          ), '{}'::jsonb) as milestones
+        from unit_turn_tracker t
+        inner join appfolio_properties p on p.id = t.property_id
+        where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
+          and p.property_group_id = ${propertyGroupId}
+        order by coalesce(t.updated_at, t.created_at) desc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          t.turn_key,
+          t.unit_turn_id,
+          t.tracking_uuid,
+          t.updated_at,
+          coalesce((
+            select jsonb_object_agg(m.milestone_key, jsonb_build_object(
+              'date', m.milestone_date,
+              'source', m.source,
+              'notes', m.notes
+            ))
+            from unit_turn_milestones m
+            where m.tracking_uuid = t.tracking_uuid
+          ), '{}'::jsonb) as milestones
+        from unit_turn_tracker t
+        where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
+        order by coalesce(t.updated_at, t.created_at) desc
+        limit ${limit}
+      `;
+
+    const records = (rows as any[]).map((row) => ({
+      id: String(row.turn_key || row.unit_turn_id || row.tracking_uuid || '').trim(),
+      stages: mapTurnStagesFromMilestones(row.milestones || {}),
+      updated_at: asIso(row.updated_at),
+      _source: 'postgres_local',
+    })).filter((r) => r.id);
+
+    res.json({ ok: true, records, count: records.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/turn_records');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local turn records query failed') });
+  }
+});
+
+app.get('/api/local/closed_turns', async (req: Request, res: Response) => {
+  try {
+    const days = parseDays(req.query.days, 540, 3650);
+    const limit = parseLimit(req.query.limit, 500, 5000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+
+    const rows = propertyGroupId
+      ? await queryClient`
+        select
+          t.tracking_uuid,
+          t.tracking_code,
+          t.turn_key,
+          t.unit_turn_id,
+          t.unit_id,
+          t.property_id,
+          t.unit_name,
+          t.property_name,
+          t.status,
+          t.closed_at,
+          t.metadata,
+          t.updated_at,
+          (select m.milestone_date from unit_turn_milestones m
+            where m.tracking_uuid = t.tracking_uuid and m.milestone_key = 'moveout'
+            order by coalesce(m.milestone_date, m.created_at) desc nulls last
+            limit 1) as move_out_date,
+          (select m.milestone_date from unit_turn_milestones m
+            where m.tracking_uuid = t.tracking_uuid and m.milestone_key = 'movein'
+            order by coalesce(m.milestone_date, m.created_at) desc nulls last
+            limit 1) as move_in_date
+        from unit_turn_tracker t
+        inner join appfolio_properties p on p.id = t.property_id
+        where p.property_group_id = ${propertyGroupId}
+          and (t.closed_at is not null or lower(coalesce(t.status, '')) in ('closed', 'completed'))
+          and coalesce(t.closed_at, t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
+        order by coalesce(t.closed_at, t.updated_at, t.created_at) desc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          t.tracking_uuid,
+          t.tracking_code,
+          t.turn_key,
+          t.unit_turn_id,
+          t.unit_id,
+          t.property_id,
+          t.unit_name,
+          t.property_name,
+          t.status,
+          t.closed_at,
+          t.metadata,
+          t.updated_at,
+          (select m.milestone_date from unit_turn_milestones m
+            where m.tracking_uuid = t.tracking_uuid and m.milestone_key = 'moveout'
+            order by coalesce(m.milestone_date, m.created_at) desc nulls last
+            limit 1) as move_out_date,
+          (select m.milestone_date from unit_turn_milestones m
+            where m.tracking_uuid = t.tracking_uuid and m.milestone_key = 'movein'
+            order by coalesce(m.milestone_date, m.created_at) desc nulls last
+            limit 1) as move_in_date
+        from unit_turn_tracker t
+        where (t.closed_at is not null or lower(coalesce(t.status, '')) in ('closed', 'completed'))
+          and coalesce(t.closed_at, t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
+        order by coalesce(t.closed_at, t.updated_at, t.created_at) desc
+        limit ${limit}
+      `;
+
+    const results = (rows as any[]).map((row) => {
+      const meta = (row?.metadata && typeof row.metadata === 'object') ? row.metadata : {};
+      const turnId = String(row.turn_key || row.unit_turn_id || row.tracking_uuid || '').trim();
+      return {
+        turn_id: turnId,
+        turn_key: String(row.turn_key || '').trim(),
+        tracking_uuid: String(row.tracking_uuid || '').trim(),
+        unit_turn_id: String(row.unit_turn_id || '').trim(),
+        tracking_code: String(row.tracking_code || '').trim(),
+        property_id: String(row.property_id || '').trim(),
+        property_name: String(row.property_name || '').trim(),
+        unit_id: String(row.unit_id || '').trim(),
+        unit_name: String(row.unit_name || '').trim(),
+        move_out_date: asIso(row.move_out_date),
+        move_in_date: asIso(row.move_in_date),
+        site_manager: String(meta.site_manager || ''),
+        close_source: String(meta.close_source || ''),
+        close_reason: String(meta.close_reason || ''),
+        status: String(row.status || ''),
+        closed_at: asIso(row.closed_at) || asIso(row.updated_at),
+        _source: 'postgres_local',
+      };
+    }).filter((r) => r.turn_id);
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/closed_turns');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local closed turns query failed') });
+  }
+});
+
+app.get('/api/local/turns_history', async (req: Request, res: Response) => {
+  try {
+    const days = parseDays(req.query.days, 540, 3650);
+    const limit = parseLimit(req.query.limit, 300, 5000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+
+    const rows = propertyGroupId
+      ? await queryClient`
+        select
+          t.tracking_uuid,
+          t.tracking_code,
+          t.turn_key,
+          t.unit_turn_id,
+          t.unit_id,
+          t.property_id,
+          t.unit_name,
+          t.property_name,
+          t.status,
+          t.closed_at,
+          t.metadata,
+          t.updated_at,
+          (select m.milestone_date from unit_turn_milestones m
+            where m.tracking_uuid = t.tracking_uuid and m.milestone_key = 'moveout'
+            order by coalesce(m.milestone_date, m.created_at) desc nulls last
+            limit 1) as move_out_date,
+          (select m.milestone_date from unit_turn_milestones m
+            where m.tracking_uuid = t.tracking_uuid and m.milestone_key = 'movein'
+            order by coalesce(m.milestone_date, m.created_at) desc nulls last
+            limit 1) as move_in_date
+        from unit_turn_tracker t
+        inner join appfolio_properties p on p.id = t.property_id
+        where p.property_group_id = ${propertyGroupId}
+          and (t.closed_at is not null or lower(coalesce(t.status, '')) in ('closed', 'completed'))
+          and coalesce(t.closed_at, t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
+        order by coalesce(t.closed_at, t.updated_at, t.created_at) desc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          t.tracking_uuid,
+          t.tracking_code,
+          t.turn_key,
+          t.unit_turn_id,
+          t.unit_id,
+          t.property_id,
+          t.unit_name,
+          t.property_name,
+          t.status,
+          t.closed_at,
+          t.metadata,
+          t.updated_at,
+          (select m.milestone_date from unit_turn_milestones m
+            where m.tracking_uuid = t.tracking_uuid and m.milestone_key = 'moveout'
+            order by coalesce(m.milestone_date, m.created_at) desc nulls last
+            limit 1) as move_out_date,
+          (select m.milestone_date from unit_turn_milestones m
+            where m.tracking_uuid = t.tracking_uuid and m.milestone_key = 'movein'
+            order by coalesce(m.milestone_date, m.created_at) desc nulls last
+            limit 1) as move_in_date
+        from unit_turn_tracker t
+        where (t.closed_at is not null or lower(coalesce(t.status, '')) in ('closed', 'completed'))
+          and coalesce(t.closed_at, t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
+        order by coalesce(t.closed_at, t.updated_at, t.created_at) desc
+        limit ${limit}
+      `;
+
+    const results = (rows as any[]).map((row) => {
+      const meta = (row?.metadata && typeof row.metadata === 'object') ? row.metadata : {};
+      return {
+        closed_at: asIso(row.closed_at) || asIso(row.updated_at),
+        close_source: String(meta.close_source || ''),
+        close_reason: String(meta.close_reason || ''),
+        property_name: String(row.property_name || ''),
+        unit_name: String(row.unit_name || ''),
+        move_out_date: asIso(row.move_out_date),
+        move_in_date: asIso(row.move_in_date),
+        site_manager: String(meta.site_manager || ''),
+        tracking_code: String(row.tracking_code || ''),
+        turn_key: String(row.turn_key || ''),
+        tracking_uuid: String(row.tracking_uuid || ''),
+        unit_turn_id: String(row.unit_turn_id || ''),
+        _source: 'postgres_local',
+      };
+    });
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/turns_history');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local turns history query failed') });
+  }
+});
+
+app.get('/api/local/estimates', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 2500, 10000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select
+          e.estimate_id,
+          e.work_order_id,
+          e.work_order_number,
+          e.current_status,
+          e.property_group_id,
+          e.raw_data,
+          wo.vendor_name,
+          p.name as property_name,
+          u.name as unit_name,
+          e.updated_at
+        from appfolio_estimates e
+        left join appfolio_work_orders wo on wo.id = e.work_order_id
+        left join appfolio_properties p on p.id = wo.property_id
+        left join appfolio_units u on u.unit_id = wo.unit_id
+        where coalesce(e.property_group_id, wo.property_group_id) = ${propertyGroupId}
+        order by coalesce(e.updated_at, now()) desc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          e.estimate_id,
+          e.work_order_id,
+          e.work_order_number,
+          e.current_status,
+          e.property_group_id,
+          e.raw_data,
+          wo.vendor_name,
+          p.name as property_name,
+          u.name as unit_name,
+          e.updated_at
+        from appfolio_estimates e
+        left join appfolio_work_orders wo on wo.id = e.work_order_id
+        left join appfolio_properties p on p.id = wo.property_id
+        left join appfolio_units u on u.unit_id = wo.unit_id
+        order by coalesce(e.updated_at, now()) desc
+        limit ${limit}
+      `;
+
+    const results = (rows as any[]).map((row) => {
+      const raw = (row?.raw_data && typeof row.raw_data === 'object') ? row.raw_data : {};
+      const propertyName = String(row?.property_name || pickRaw(raw, ['property_name', 'PropertyName']) || '').trim();
+      const unitName = String(row?.unit_name || pickRaw(raw, ['unit_name', 'UnitName']) || '').trim();
+      return {
+        estimate_id: String(row.estimate_id || ''),
+        work_order_id: String(row.work_order_id || ''),
+        work_order_number: String(row.work_order_number || pickRaw(raw, ['work_order_number', 'WorkOrderNumber']) || ''),
+        property_unit_address: [propertyName, unitName].filter(Boolean).join(' · '),
+        vendor_name: String(row.vendor_name || pickRaw(raw, ['vendor_name', 'VendorName']) || ''),
+        estimate_amount: pickRaw(raw, ['estimate_amount', 'EstimateAmount', 'amount', 'Amount']),
+        approval_status: String(row.current_status || pickRaw(raw, ['approval_status', 'ApprovalStatus', 'current_status']) || 'Pending'),
+        property_group_id: String(row.property_group_id || pickRaw(raw, ['property_group_id', 'property_group_uuid', 'PropertyGroupId']) || ''),
+        updated_at: asIso(row.updated_at),
+        _source: 'postgres_local',
+      };
+    });
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/estimates');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local estimates query failed') });
+  }
+});
+
+app.get('/api/local/work_orders_completed_history', async (req: Request, res: Response) => {
+  try {
+    const days = parseDays(req.query.days, 365, 3650);
+    const limit = parseLimit(req.query.limit, 5000, 15000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select id, wo_number, property_id, unit_id, property_group_id, description,
+               category, priority, status, assigned_user_id, assigned_user_name,
+               vendor_id, vendor_name, estimated_amount, total_cost,
+               created_at, updated_at, raw_json
+        from appfolio_work_orders
+        where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
+          and property_group_id = ${propertyGroupId}
+          and (
+            coalesce(lower(status), '') like '%completed%'
+            or coalesce(lower(status), '') like '%no need to bill%'
+            or coalesce(lower(status), '') like '%cancel%'
+          )
+        order by coalesce(updated_at, created_at) desc
+        limit ${limit}
+      `
+      : await queryClient`
+        select id, wo_number, property_id, unit_id, property_group_id, description,
+               category, priority, status, assigned_user_id, assigned_user_name,
+               vendor_id, vendor_name, estimated_amount, total_cost,
+               created_at, updated_at, raw_json
+        from appfolio_work_orders
+        where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
+          and (
+            coalesce(lower(status), '') like '%completed%'
+            or coalesce(lower(status), '') like '%no need to bill%'
+            or coalesce(lower(status), '') like '%cancel%'
+          )
+        order by coalesce(updated_at, created_at) desc
+        limit ${limit}
+      `;
+
+    const results = (rows as any[]).map(normalizeWorkOrderRow);
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/work_orders_completed_history');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local completed work orders query failed') });
+  }
+});
+
+app.get('/api/local/inspections', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 6000, 15000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select
+          u.unit_id,
+          u.property_id,
+          p.name as property_name,
+          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+          coalesce(nullif(u.raw_json->>'last_inspection_date',''), nullif(u.raw_json->>'LastInspectionDate','')) as last_inspection_date,
+          coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
+          coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as tenant_primary_phone_number,
+          coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
+          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
+          coalesce(nullif(u.raw_json->>'rentable',''), nullif(u.raw_json->>'Rentable','')) as rentable,
+          coalesce(u.raw_json->>'unit_tags', u.raw_json->>'UnitTags', '') as unit_tags
+        from appfolio_units u
+        inner join appfolio_properties p on p.id = u.property_id
+        where p.property_group_id = ${propertyGroupId}
+        order by p.name asc, u.name asc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          u.unit_id,
+          u.property_id,
+          p.name as property_name,
+          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+          coalesce(nullif(u.raw_json->>'last_inspection_date',''), nullif(u.raw_json->>'LastInspectionDate','')) as last_inspection_date,
+          coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
+          coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as tenant_primary_phone_number,
+          coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
+          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
+          coalesce(nullif(u.raw_json->>'rentable',''), nullif(u.raw_json->>'Rentable','')) as rentable,
+          coalesce(u.raw_json->>'unit_tags', u.raw_json->>'UnitTags', '') as unit_tags
+        from appfolio_units u
+        inner join appfolio_properties p on p.id = u.property_id
+        order by p.name asc, u.name asc
+        limit ${limit}
+      `;
+
+    const results = (rows as any[]).map((row) => ({
+      property_name: String(row.property_name || ''),
+      property_id: String(row.property_id || ''),
+      unit_name: String(row.unit_name || ''),
+      unit_id: String(row.unit_id || ''),
+      last_inspection_date: String(row.last_inspection_date || ''),
+      tenant_name: String(row.tenant_name || ''),
+      tenant_primary_phone_number: String(row.tenant_primary_phone_number || ''),
+      move_in_date: String(row.move_in_date || ''),
+      move_out_date: String(row.move_out_date || ''),
+      rentable: String(row.rentable || ''),
+      unit_tags: row.unit_tags || '',
+      _source: 'postgres_local',
+    }));
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/inspections');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local inspections query failed') });
+  }
+});
+
+app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
+  try {
+    const days = parseDays(req.query.days, 60, 3650);
+    const limit = parseLimit(req.query.limit, 2500, 10000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select
+          u.unit_id,
+          u.property_id,
+          p.name as property_name,
+          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+          coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
+          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
+          coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
+          coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as phone_numbers,
+          coalesce(nullif(u.raw_json->>'tenant_email',''), nullif(u.raw_json->>'TenantEmail','')) as emails,
+          coalesce(nullif(u.raw_json->>'rent',''), nullif(u.raw_json->>'Rent',''), nullif(u.raw_json->>'market_rent','')) as rent,
+          coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id
+        from appfolio_units u
+        inner join appfolio_properties p on p.id = u.property_id
+        where p.property_group_id = ${propertyGroupId}
+        order by p.name asc, u.name asc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          u.unit_id,
+          u.property_id,
+          p.name as property_name,
+          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+          coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
+          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
+          coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
+          coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as phone_numbers,
+          coalesce(nullif(u.raw_json->>'tenant_email',''), nullif(u.raw_json->>'TenantEmail','')) as emails,
+          coalesce(nullif(u.raw_json->>'rent',''), nullif(u.raw_json->>'Rent',''), nullif(u.raw_json->>'market_rent','')) as rent,
+          coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id
+        from appfolio_units u
+        inner join appfolio_properties p on p.id = u.property_id
+        order by p.name asc, u.name asc
+        limit ${limit}
+      `;
+
+    const now = Date.now();
+    const maxMs = now + (days * 86400000);
+    const results = (rows as any[]).map((row) => ({
+      property_name: String(row.property_name || ''),
+      property_id: String(row.property_id || ''),
+      unit_name: String(row.unit_name || ''),
+      unit_id: String(row.unit_id || ''),
+      occupancy_name: String(row.tenant_name || ''),
+      move_out_date: String(row.move_out_date || ''),
+      move_in_date: String(row.move_in_date || ''),
+      phone_numbers: String(row.phone_numbers || ''),
+      emails: String(row.emails || ''),
+      rent: String(row.rent || ''),
+      occupancy_id: String(row.occupancy_id || ''),
+      _source: 'postgres_local',
+    })).filter((row) => {
+      if (!row.move_out_date) return false;
+      const d = new Date(row.move_out_date);
+      if (Number.isNaN(d.getTime())) return true;
+      const ms = d.getTime();
+      return ms >= now && ms <= maxMs;
+    });
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/upcoming_moveouts');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local upcoming move-outs query failed') });
+  }
+});
+
+app.get('/api/local/vacancies', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 5000, 15000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select
+          u.unit_id,
+          u.property_id,
+          p.name as property_name,
+          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as vacant_from,
+          coalesce(nullif(u.raw_json->>'market_rent',''), nullif(u.raw_json->>'MarketRent',''), nullif(u.raw_json->>'rent','')) as market_rent,
+          coalesce(nullif(u.raw_json->>'bedrooms',''), nullif(u.raw_json->>'Bedrooms','')) as bedrooms,
+          p.property_group_id,
+          p.raw_json
+        from appfolio_units u
+        inner join appfolio_properties p on p.id = u.property_id
+        where p.property_group_id = ${propertyGroupId}
+          and lower(coalesce(u.status, '')) like '%vacant%'
+        order by p.name asc, u.name asc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          u.unit_id,
+          u.property_id,
+          p.name as property_name,
+          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as vacant_from,
+          coalesce(nullif(u.raw_json->>'market_rent',''), nullif(u.raw_json->>'MarketRent',''), nullif(u.raw_json->>'rent','')) as market_rent,
+          coalesce(nullif(u.raw_json->>'bedrooms',''), nullif(u.raw_json->>'Bedrooms','')) as bedrooms,
+          p.property_group_id,
+          p.raw_json
+        from appfolio_units u
+        inner join appfolio_properties p on p.id = u.property_id
+        where lower(coalesce(u.status, '')) like '%vacant%'
+        order by p.name asc, u.name asc
+        limit ${limit}
+      `;
+
+    const results = (rows as any[]).map((row) => {
+      const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
+      const groupName = String(pickRaw(raw, ['property_group', 'group_name', 'property_group_name', 'NameOfPropertyGroup']) || '');
+      const vacantFrom = String(row.vacant_from || '');
+      let daysVacant: number | null = null;
+      if (vacantFrom) {
+        const d = new Date(vacantFrom);
+        if (!Number.isNaN(d.getTime())) {
+          daysVacant = Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+        }
+      }
+      return {
+        property_id: String(row.property_id || ''),
+        property_name: String(row.property_name || ''),
+        unit: String(row.unit_name || ''),
+        vacant_from: vacantFrom,
+        days_vacant: daysVacant,
+        market_rent: row.market_rent,
+        bedrooms: row.bedrooms,
+        property_group: groupName,
+        _source: 'postgres_local',
+      };
+    });
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/vacancies');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local vacancies query failed') });
+  }
+});
+
+app.get('/api/local/property_map', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 7000, 20000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select id, name, property_group_id, raw_json
+        from appfolio_properties
+        where property_group_id = ${propertyGroupId}
+        order by name asc
+        limit ${limit}
+      `
+      : await queryClient`
+        select id, name, property_group_id, raw_json
+        from appfolio_properties
+        order by name asc
+        limit ${limit}
+      `;
+
+    const property_uuid_map: Record<string, any> = {};
+    for (const row of rows as any[]) {
+      const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
+      const siteManager = extractSiteManager(raw);
+      const groupId = String(row?.property_group_id || pickRaw(raw, ['property_group_id', 'PropertyGroupId', 'property_group_uuid', 'PropertyGroupUuid']) || '').trim();
+      property_uuid_map[String(row.id || '')] = {
+        name: String(row.name || ''),
+        site_manager_name: String(siteManager || ''),
+        group_ids: groupId ? [groupId] : [],
+        maintenance_notes: String(pickRaw(raw, ['maintenance_notes', 'maintenanceNotes', 'MaintenanceNotes']) || ''),
+      };
+    }
+
+    res.json({ ok: true, property_uuid_map, count: Object.keys(property_uuid_map).length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/property_map');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local property map query failed') });
+  }
+});
+
+app.get('/api/local/property_stats', async (req: Request, res: Response) => {
+  try {
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select p.id,
+          (
+            select count(*)::int
+            from appfolio_work_orders w
+            where w.property_id = p.id
+              and (
+                coalesce(lower(w.status), '') not like '%completed%'
+                and coalesce(lower(w.status), '') not like '%cancel%'
+                and coalesce(lower(w.status), '') not like '%no need to bill%'
+              )
+          ) as open_work_orders,
+          (
+            select count(*)::int
+            from appfolio_units u
+            where u.property_id = p.id and lower(coalesce(u.status, '')) like '%vacant%'
+          ) as vacancies,
+          (
+            select count(*)::int
+            from appfolio_estimates e
+            where e.property_group_id = p.property_group_id
+          ) as estimates
+        from appfolio_properties p
+        where p.property_group_id = ${propertyGroupId}
+      `
+      : await queryClient`
+        select p.id,
+          (
+            select count(*)::int
+            from appfolio_work_orders w
+            where w.property_id = p.id
+              and (
+                coalesce(lower(w.status), '') not like '%completed%'
+                and coalesce(lower(w.status), '') not like '%cancel%'
+                and coalesce(lower(w.status), '') not like '%no need to bill%'
+              )
+          ) as open_work_orders,
+          (
+            select count(*)::int
+            from appfolio_units u
+            where u.property_id = p.id and lower(coalesce(u.status, '')) like '%vacant%'
+          ) as vacancies,
+          (
+            select count(*)::int
+            from appfolio_estimates e
+            where e.property_group_id = p.property_group_id
+          ) as estimates
+        from appfolio_properties p
+      `;
+
+    const by_property: Record<string, any> = {};
+    for (const row of rows as any[]) {
+      const id = String(row.id || '').trim();
+      if (!id) continue;
+      by_property[id] = {
+        bills: Number(row.open_work_orders || 0),
+        notes: Number(row.estimates || 0),
+        listings: Number(row.vacancies || 0),
+      };
+    }
+
+    res.json({ ok: true, by_property, count: Object.keys(by_property).length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/property_stats');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local property stats query failed') });
   }
 });
 

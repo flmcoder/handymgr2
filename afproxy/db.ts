@@ -42,7 +42,14 @@ function getEmbeddedSqliteClient(): SqlLikeClient {
 }
 
 async function getRemoteSqlClient(): Promise<SqlLikeClient> {
-  const mod = await import("npm:@libsql/client");
+  let mod: any;
+  try {
+    // Node/tsx runtime
+    mod = await import("@libsql/client");
+  } catch (_nodeErr) {
+    // Deno runtime compatibility
+    mod = await import("npm:@libsql/client");
+  }
   const createClient = (mod as any).createClient;
   if (typeof createClient !== "function") {
     throw new Error("Failed to load @libsql/client createClient");

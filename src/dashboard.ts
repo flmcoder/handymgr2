@@ -371,12 +371,17 @@ function resolveProxyUrl(): string {
 }
 
 function buildWorkOrdersUrl(): string {
-  const proxy = resolveProxyUrl();
-  if (proxy) {
-    const sep = proxy.includes('?') ? '&' : '?';
-    return `${proxy}${sep}action=work_orders&days=180`;
-  }
-  return 'https://afproxy.val.run/?action=work_orders&days=180';
+  const base = String(window.location.origin || '').replace(/\/+$/, '');
+  const scopeUuid = (() => {
+    try {
+      return (localStorage.getItem('hm_scope_group_uuid') || '').trim();
+    } catch {
+      return '';
+    }
+  })();
+  let url = `${base}/api/local/work_orders?days=180&limit=5000`;
+  if (scopeUuid) url += `&property_group_id=${encodeURIComponent(scopeUuid)}`;
+  return url;
 }
 
 // =============================================================================
@@ -1516,103 +1521,165 @@ async function fetchAndRenderDashboardData(): Promise<void> {
 
   const baseUrl = resolveProxyUrl();
   const headers = { Accept: 'application/json', ...proxyAuthHeaders() };
+  const scopedGroupUuid = (() => {
+    try {
+      return (localStorage.getItem('hm_scope_group_uuid') || '').trim();
+    } catch {
+      return '';
+    }
+  })();
+
+  function buildV2ReportUrl(report: string, extraParams: Record<string, string> = {}): string {
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    const params = new URLSearchParams({ action: 'v2_report', report, ...extraParams });
+    if (scopedGroupUuid) {
+      params.set('group_uuid', scopedGroupUuid);
+      params.set('property_group_uuid', scopedGroupUuid);
+      params.set('property_groups_ids', scopedGroupUuid);
+    }
+    return `${baseUrl}${sep}${params.toString()}`;
+  }
 
   // ── 1. Occupancy Doughnut ─────────────────────────────────────────
-  try {
-    const resp = await fetch(`${baseUrl}?action=chart_occupancy`, { headers });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (chartOccupancy && Array.isArray(data) && data.length > 0) {
+  if (chartOccupancy) {
+    try {
+      const base = String(window.location.origin || '').replace(/\/+$/, '');
+      let unitsUrl = `${base}/api/local/units?limit=8000`;
+      if (scopedGroupUuid) unitsUrl += `&property_group_id=${encodeURIComponent(scopedGroupUuid)}`;
+      const resp = await fetch(unitsUrl, { headers });
+      if (resp.ok) {
+        const payload = await resp.json();
+        const rows = Array.isArray(payload?.results) ? payload.results : [];
+        const counts: Record<string, number> = { Occupied: 0, Notice: 0, 'Vacant Rented': 0, 'Vacant Unrented': 0 };
+        for (const row of rows) {
+          const status = String(row?.status || '').toLowerCase();
+          const rentable = String(row?.rentable || '').toLowerCase();
+          if (status.includes('notice')) counts['Notice']++;
+          else if (status.includes('occupied')) counts['Occupied']++;
+          else if (status.includes('vacant') && (status.includes('rented') || rentable === 'false')) counts['Vacant Rented']++;
+          else if (status.includes('vacant')) counts['Vacant Unrented']++;
+        }
+        const data = Object.entries(counts).map(([name, value]) => ({ name, value })).filter((d) => d.value > 0);
         chartOccupancy.setOption((window as any).buildOccupancyDonutOption(data));
-        chartOccupancy.hideLoading();
         const meta = document.getElementById('dashOccupancyMeta');
-        if (meta) meta.textContent = `Total: ${data.reduce((s: number, d: any) => s + (d.value || 0), 0)} units`;
-      } else if (chartOccupancy) {
-        chartOccupancy.hideLoading();
-        chartOccupancy.setOption((window as any).buildOccupancyDonutOption([]));
-        const meta = document.getElementById('dashOccupancyMeta');
-        if (meta) meta.textContent = 'No data';
+        if (meta) meta.textContent = `Total: ${rows.length} units`;
       }
-    } else if (chartOccupancy) {
+      chartOccupancy.hideLoading();
+    } catch (e) {
+      console.error('[dashboard] Occupancy fetch failed:', e);
       chartOccupancy.hideLoading();
     }
-  } catch (e) {
-    console.error('[dashboard] Occupancy fetch failed:', e);
-    if (chartOccupancy) chartOccupancy.hideLoading();
   }
 
   // ── 2. Move-Outs Bar ──────────────────────────────────────────────
-  try {
-    const resp = await fetch(`${baseUrl}?action=chart_moveouts`, { headers });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (chartMoveOuts && data && Array.isArray(data.labels)) {
-        chartMoveOuts.setOption((window as any).buildMoveOutsBarOption(data.labels, data.values || []));
-        chartMoveOuts.hideLoading();
+  if (chartMoveOuts) {
+    try {
+      const resp = await fetch(buildV2ReportUrl('tenant_directory', {
+        tenant_statuses: '4',
+        columns: 'move_out_date,property_id,unit_id',
+      }), { headers });
+      if (resp.ok) {
+        const payload = await resp.json();
+        const rows = Array.isArray(payload?.results) ? payload.results : [];
+        const monthMap: Record<string, number> = {};
+        const now = Date.now();
+        const horizon = now + (90 * 86400000);
+        for (const r of rows) {
+          const v = String(r?.move_out_date || r?.MoveOutDate || '').trim();
+          if (!v) continue;
+          const d = new Date(v);
+          if (Number.isNaN(d.getTime())) continue;
+          const t = d.getTime();
+          if (t < now || t > horizon) continue;
+          const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+          monthMap[key] = (monthMap[key] || 0) + 1;
+        }
+        const labels = Object.keys(monthMap).sort();
+        const values = labels.map((k) => monthMap[k]);
+        chartMoveOuts.setOption((window as any).buildMoveOutsBarOption(labels, values));
         const meta = document.getElementById('dashMoveOutsMeta');
-        const vals = data.values || [];
-        if (meta) meta.textContent = `Next 90 days: ${vals.reduce((a: number, b: number) => a + b, 0)} move-outs`;
-      } else if (chartMoveOuts) {
-        chartMoveOuts.hideLoading();
-        const meta = document.getElementById('dashMoveOutsMeta');
-        if (meta) meta.textContent = 'No data';
+        if (meta) meta.textContent = `Next 90 days: ${values.reduce((a, b) => a + b, 0)} move-outs`;
       }
-    } else if (chartMoveOuts) {
+      chartMoveOuts.hideLoading();
+    } catch (e) {
+      console.error('[dashboard] Move-Outs fetch failed:', e);
       chartMoveOuts.hideLoading();
     }
-  } catch (e) {
-    console.error('[dashboard] Move-Outs fetch failed:', e);
-    if (chartMoveOuts) chartMoveOuts.hideLoading();
   }
 
   // ── 3. Portfolio Treemap ─────────────────────────────────────────
-  try {
-    const resp = await fetch(`${baseUrl}?action=chart_portfolio_owner`, { headers });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (chartPortfolio && Array.isArray(data) && data.length > 0) {
+  if (chartPortfolio) {
+    try {
+      const base = String(window.location.origin || '').replace(/\/+$/, '');
+      let propertiesUrl = `${base}/api/local/properties?limit=8000`;
+      if (scopedGroupUuid) propertiesUrl += `&property_group_id=${encodeURIComponent(scopedGroupUuid)}`;
+      const resp = await fetch(propertiesUrl, { headers });
+      if (resp.ok) {
+        const payload = await resp.json();
+        const rows = Array.isArray(payload?.results) ? payload.results : [];
+        const groupMap: Record<string, { name: string; value: number }> = {};
+        for (const p of rows) {
+          const g = String(p?.property_group || p?.portfolio || p?.group_name || 'Unassigned').trim() || 'Unassigned';
+          groupMap[g] = groupMap[g] || { name: g, value: 0 };
+          groupMap[g].value += 1;
+        }
+        const data = Object.values(groupMap).sort((a, b) => b.value - a.value);
         chartPortfolio.setOption((window as any).buildPortfolioTreemapOption(data));
-        chartPortfolio.hideLoading();
         const meta = document.getElementById('dashPortfolioTreeMeta');
-        if (meta) meta.textContent = `${data.length} owners/groups`;
-      } else if (chartPortfolio) {
-        chartPortfolio.hideLoading();
-        const meta = document.getElementById('dashPortfolioTreeMeta');
-        if (meta) meta.textContent = 'No data';
+        if (meta) meta.textContent = `${data.length} groups`;
       }
-    } else if (chartPortfolio) {
+      chartPortfolio.hideLoading();
+    } catch (e) {
+      console.error('[dashboard] Portfolio fetch failed:', e);
       chartPortfolio.hideLoading();
     }
-  } catch (e) {
-    console.error('[dashboard] Portfolio fetch failed:', e);
-    if (chartPortfolio) chartPortfolio.hideLoading();
   }
 
   // ── 4. Leasing Velocity Area Chart ───────────────────────────────
-  try {
-    const resp = await fetch(`${baseUrl}?action=chart_leasing_velocity`, { headers });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (chartVelocity && data && Array.isArray(data.dates)) {
-        chartVelocity.setOption((window as any).buildLeasingVelocityOption(data.dates, data.moveIns || [], data.moveOuts || []));
-        chartVelocity.hideLoading();
+  if (chartVelocity) {
+    try {
+      const resp = await fetch(buildV2ReportUrl('tenant_directory', {
+        columns: 'move_in_date,move_out_date,property_id,unit_id',
+      }), { headers });
+      if (resp.ok) {
+        const payload = await resp.json();
+        const rows = Array.isArray(payload?.results) ? payload.results : [];
+        const inByMonth: Record<string, number> = {};
+        const outByMonth: Record<string, number> = {};
+        const now = new Date();
+        const oldest = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1)).getTime();
+        for (const r of rows) {
+          const moveIn = String(r?.move_in_date || '').trim();
+          const moveOut = String(r?.move_out_date || '').trim();
+          if (moveIn) {
+            const d = new Date(moveIn);
+            if (!Number.isNaN(d.getTime()) && d.getTime() >= oldest) {
+              const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+              inByMonth[key] = (inByMonth[key] || 0) + 1;
+            }
+          }
+          if (moveOut) {
+            const d = new Date(moveOut);
+            if (!Number.isNaN(d.getTime()) && d.getTime() >= oldest) {
+              const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+              outByMonth[key] = (outByMonth[key] || 0) + 1;
+            }
+          }
+        }
+        const labels = Array.from(new Set([...Object.keys(inByMonth), ...Object.keys(outByMonth)])).sort();
+        const moveIns = labels.map((k) => inByMonth[k] || 0);
+        const moveOuts = labels.map((k) => outByMonth[k] || 0);
+        chartVelocity.setOption((window as any).buildLeasingVelocityOption(labels, moveIns, moveOuts));
         const meta = document.getElementById('dashVelocityMeta');
         if (meta) {
-          const totalIn = (data.moveIns || []).reduce((a: number, b: number) => a + b, 0);
-          const totalOut = (data.moveOuts || []).reduce((a: number, b: number) => a + b, 0);
-          meta.textContent = `In: ${totalIn} · Out: ${totalOut}`;
+          meta.textContent = `In: ${moveIns.reduce((a, b) => a + b, 0)} · Out: ${moveOuts.reduce((a, b) => a + b, 0)}`;
         }
-      } else if (chartVelocity) {
-        chartVelocity.hideLoading();
-        const meta = document.getElementById('dashVelocityMeta');
-        if (meta) meta.textContent = 'No data';
       }
-    } else if (chartVelocity) {
+      chartVelocity.hideLoading();
+    } catch (e) {
+      console.error('[dashboard] Velocity fetch failed:', e);
       chartVelocity.hideLoading();
     }
-  } catch (e) {
-    console.error('[dashboard] Velocity fetch failed:', e);
-    if (chartVelocity) chartVelocity.hideLoading();
   }
 
   // ===========================================================================
@@ -1682,6 +1749,18 @@ async function fetchAndRenderDashboardData(): Promise<void> {
       const { names, counts } = groupCount(openRows, pmField, 15);
       // @ts-ignore
       chartPmLoad.setOption(buildPmLoadBarOption(names, counts));
+      chartPmLoad.off('click');
+      chartPmLoad.on('click', (params: any) => {
+        const q = String(params?.name || '').trim();
+        if (!q) return;
+        const workordersTab = document.querySelector('.nav-tab[data-tab="workorders"]') as HTMLElement | null;
+        if (workordersTab) workordersTab.click();
+        const woSearch = document.getElementById('woSearch') as HTMLInputElement | null;
+        if (woSearch) {
+          woSearch.value = q;
+          woSearch.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      });
       chartPmLoad.hideLoading();
     }
 
@@ -1689,6 +1768,18 @@ async function fetchAndRenderDashboardData(): Promise<void> {
     if (chartWoType) {
       // @ts-ignore
       chartWoType.setOption(buildWoTypeTreemapOption(results));
+      chartWoType.off('click');
+      chartWoType.on('click', (params: any) => {
+        const q = String(params?.name || '').trim();
+        if (!q) return;
+        const workordersTab = document.querySelector('.nav-tab[data-tab="workorders"]') as HTMLElement | null;
+        if (workordersTab) workordersTab.click();
+        const woSearch = document.getElementById('woSearch') as HTMLInputElement | null;
+        if (woSearch) {
+          woSearch.value = q;
+          woSearch.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      });
       chartWoType.hideLoading();
     }
 
@@ -1698,6 +1789,18 @@ async function fetchAndRenderDashboardData(): Promise<void> {
       const { names, counts } = groupCount(results, priorityField, 8);
       // @ts-ignore
       chartUrgency.setOption(buildUrgencyBarOption(names, counts));
+      chartUrgency.off('click');
+      chartUrgency.on('click', (params: any) => {
+        const q = String(params?.name || '').trim();
+        if (!q) return;
+        const workordersTab = document.querySelector('.nav-tab[data-tab="workorders"]') as HTMLElement | null;
+        if (workordersTab) workordersTab.click();
+        const woSearch = document.getElementById('woSearch') as HTMLInputElement | null;
+        if (woSearch) {
+          woSearch.value = q;
+          woSearch.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      });
       chartUrgency.hideLoading();
     }
   }

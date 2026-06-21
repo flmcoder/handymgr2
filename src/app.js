@@ -2449,8 +2449,18 @@ async function proxyAction(action, params, options) {
   // Local-only read path for captured Postgres datasets.
   var LOCAL_READ_ACTIONS = {
     work_orders: '/api/local/work_orders',
+    work_orders_completed_history: '/api/local/work_orders_completed_history',
     turns: '/api/local/turns',
-    turn_work_orders: '/api/local/turn_work_orders'
+    turn_work_orders: '/api/local/turn_work_orders',
+    unit_turns: '/api/local/turns',
+    turns_incremental: '/api/local/turns',
+    unit_turns_history: '/api/local/turns_history',
+    turn_records: '/api/local/turn_records',
+    closed_turns: '/api/local/closed_turns',
+    estimates: '/api/local/estimates',
+    inspections: '/api/local/inspections',
+    property_map: '/api/local/property_map',
+    property_stats: '/api/local/property_stats'
   };
 
   if (LOCAL_READ_ACTIONS[action] && !opts.skipLocalRead) {
@@ -5659,27 +5669,7 @@ function estimateAmountText(value) {
 async function fetchEstimates(forceRefresh) {
   try {
     setApiStatus('loading', 'Loading estimates…');
-    var token = getProxyAccessToken();
-    var reqHeaders = { 'Accept': 'application/json' };
-    if (token) reqHeaders['Authorization'] = 'Bearer ' + token;
-
-    // Prefer clean REST endpoint; fallback to action endpoint for legacy deployments.
-    var base = String(API_PROXY || '').replace(/\/+$/, '');
-    var directUrl = base + '/api/estimates';
-    var res = await rateLimiter.enqueue(function() {
-      return fetchWithTimeout(directUrl, { headers: reqHeaders }, 60000);
-    });
-
-    var data = null;
-    if (res.ok) {
-      data = await res.json();
-    } else if (res.status === 404 || res.status === 400) {
-      data = await proxyAction('estimates', {});
-    } else {
-      var errText = '';
-      try { errText = await res.text(); } catch (e) { /* noop */ }
-      throw new Error('Estimates endpoint failed: HTTP ' + res.status + (errText ? (' — ' + errText.substring(0, 200)) : ''));
-    }
+    var data = await proxyAction('estimates', {});
 
     if (!data || data.ok === false) {
       throw new Error(String((data && data.error) || 'Estimates unavailable'));
@@ -6965,7 +6955,14 @@ async function fetchRecentTasks() {
 // Vacancies (v2): Proxy ?action=v2_report&report=unit_vacancy — same source as Occupancy > Vacancies tab
 async function fetchVacancyV2() {
   try {
-    var data = await proxyAction('v2_report', { report: 'unit_vacancy' });
+    var vacancyParams = { report: 'unit_vacancy' };
+    var vacancyScope = getEffectiveGroupUuid();
+    if (vacancyScope) {
+      vacancyParams.group_uuid = vacancyScope;
+      vacancyParams.property_group_uuid = vacancyScope;
+      vacancyParams.property_groups_ids = vacancyScope;
+    }
+    var data = await proxyAction('v2_report', vacancyParams);
     var rows = getReportRows(data, 'results');
     VACANCY_V2_UNITS = rows.map(function(r) {
       return {
@@ -7001,19 +6998,21 @@ async function fetchUpcomingMoveouts() {
   setDataSourceState('upcoming_moveouts', 'loading', { error: '' });
   try {
     setApiStatus('loading', 'Loading upcoming move-outs…');
-
-    // Primary: v2 Reports API — tenant_directory filtered to Notice tenants (status 4).
-    // This is the same report used by Occupancy > Tenant Directory and is the most
-    // reliable source for move_out_date on tenants who have given notice.
-    var data = await proxyAction('v2_report', {
+    var moveoutParams = {
       report: 'tenant_directory',
-      tenant_statuses: '4',   // "4" = Notice in AppFolio
+      tenant_statuses: '4',
       columns: 'tenant_name,property_name,unit_name,move_out_date,move_in_date,phone_numbers,emails,rent,property_id,unit_id,occupancy_id'
-    });
-
+    };
+    var moveoutScope = getEffectiveGroupUuid();
+    if (moveoutScope) {
+      moveoutParams.group_uuid = moveoutScope;
+      moveoutParams.property_group_uuid = moveoutScope;
+      moveoutParams.property_groups_ids = moveoutScope;
+    }
+    var data = await proxyAction('v2_report', moveoutParams);
     var results = getReportRows(data, 'results');
 
-    // If the v2 path returns nothing, fall back to the legacy proxy action
+    // Keep compatibility fallback for non-v2 environments while still using live API.
     if (!results.length) {
       var legacyData = await proxyAction('upcoming_moveouts', { days: 60 });
       results = legacyData.results || legacyData.data || [];

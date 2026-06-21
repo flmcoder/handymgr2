@@ -292,10 +292,12 @@ self.addEventListener("fetch", (event) => {
 
   if (isQueueableMutation(req)) {
     event.respondWith((async () => {
+      const reqForNetwork = req.clone();
+      const reqForQueue = req.clone();
       try {
-        return await fetch(req);
+        return await fetch(reqForNetwork);
       } catch (_) {
-        await queueRequest(req);
+        await queueRequest(reqForQueue);
         const remaining = (await readQueuedRequests()).length;
         await notifyClients({
           type: "HM_REQUEST_QUEUED",
