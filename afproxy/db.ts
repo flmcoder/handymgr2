@@ -20,36 +20,41 @@ type SqlLikeClient = {
   execute: (stmt: ExecuteStatement) => Promise<SqlResult | unknown>;
 };
 
-const DB_URL =
+function normalizeLibsqlUrl(raw: string): string {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  // In Render/Node we set DATABASE_URL to PostgreSQL. Do not treat it as libsql.
+  if (/^postgres(ql)?:\/\//i.test(value)) return "";
+  return value;
+}
+
+const DB_URL = normalizeLibsqlUrl(
   Deno.env.get("SQLITE_URL") ||
-  Deno.env.get("DATABASE_URL") ||
   Deno.env.get("TURSO_DATABASE_URL") ||
-  "";
+  Deno.env.get("DATABASE_URL") ||
+  "",
+);
 const DB_TOKEN =
   Deno.env.get("SQLITE_AUTH_TOKEN") ||
-  Deno.env.get("DATABASE_AUTH_TOKEN") ||
   Deno.env.get("TURSO_AUTH_TOKEN") ||
+  Deno.env.get("DATABASE_AUTH_TOKEN") ||
   "";
 
 function getEmbeddedSqliteClient(): SqlLikeClient {
   const candidate = (globalThis as any).sqlite;
   if (!candidate || typeof candidate.execute !== "function") {
     throw new Error(
-      "SQLite client unavailable. Set DATABASE_URL/DATABASE_AUTH_TOKEN or provide global sqlite client.",
+      "SQLite client unavailable. Set SQLITE_URL/TURSO_DATABASE_URL (+ auth token) or provide global sqlite client.",
     );
   }
   return candidate as SqlLikeClient;
 }
 
 async function getRemoteSqlClient(): Promise<SqlLikeClient> {
-  let mod: any;
-  try {
-    // Node/tsx runtime
-    mod = await import("@libsql/client");
-  } catch (_nodeErr) {
-    // Deno runtime compatibility
-    mod = await import("npm:@libsql/client");
-  }
+  const isNodeRuntime = typeof process !== "undefined" && !!(process as any)?.versions?.node;
+  const mod: any = isNodeRuntime
+    ? await import("@libsql/client")
+    : await import("npm:@libsql/client");
   const createClient = (mod as any).createClient;
   if (typeof createClient !== "function") {
     throw new Error("Failed to load @libsql/client createClient");
