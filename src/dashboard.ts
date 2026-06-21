@@ -370,6 +370,18 @@ function resolveProxyUrl(): string {
   }
 }
 
+function resolveV2ProxyUrl(): string {
+  const fallback = 'https://flr-appfolio.val.run';
+  try {
+    const pinned = String(localStorage.getItem('hm_v2_proxy_url') || '').trim();
+    if (pinned) return pinned.replace(/\/+$/, '');
+  } catch { /* */ }
+  const proxy = resolveProxyUrl().replace(/\/+$/, '');
+  const origin = String(window.location.origin || '').replace(/\/+$/, '');
+  if (!proxy || proxy === origin || proxy.includes('handymgr.app')) return fallback;
+  return proxy;
+}
+
 function buildWorkOrdersUrl(): string {
   const base = String(window.location.origin || '').replace(/\/+$/, '');
   const scopeUuid = (() => {
@@ -1520,6 +1532,7 @@ async function fetchAndRenderDashboardData(): Promise<void> {
   );
 
   const baseUrl = resolveProxyUrl();
+  const v2BaseUrl = resolveV2ProxyUrl();
   const headers = { Accept: 'application/json', ...proxyAuthHeaders() };
   const scopedGroupUuid = (() => {
     try {
@@ -1530,14 +1543,14 @@ async function fetchAndRenderDashboardData(): Promise<void> {
   })();
 
   function buildV2ReportUrl(report: string, extraParams: Record<string, string> = {}): string {
-    const sep = baseUrl.includes('?') ? '&' : '?';
+    const sep = v2BaseUrl.includes('?') ? '&' : '?';
     const params = new URLSearchParams({ action: 'v2_report', report, ...extraParams });
     if (scopedGroupUuid) {
       params.set('group_uuid', scopedGroupUuid);
       params.set('property_group_uuid', scopedGroupUuid);
       params.set('property_groups_ids', scopedGroupUuid);
     }
-    return `${baseUrl}${sep}${params.toString()}`;
+    return `${v2BaseUrl}${sep}${params.toString()}`;
   }
 
   // ── 1. Occupancy Doughnut ─────────────────────────────────────────

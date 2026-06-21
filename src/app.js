@@ -2516,6 +2516,20 @@ async function proxyAction(action, params, options) {
   return _proxyActionDirect(action, params, opts);
 }
 
+function getActionProxyBase(action) {
+  var base = String(API_PROXY || '').trim().replace(/\/+$/, '');
+  if (action !== 'v2_report') return base;
+
+  var origin = String(window.location.origin || '').trim().replace(/\/+$/, '');
+  var looksLikeAppHost = !base || base === origin || base.indexOf('handymgr.app') !== -1;
+  if (!looksLikeAppHost) return base;
+
+  var upstream = '';
+  try { upstream = String(localStorage.getItem('hm_v2_proxy_url') || '').trim(); } catch (e) { /* */ }
+  if (!upstream) upstream = 'https://flr-appfolio.val.run';
+  return upstream.replace(/\/+$/, '');
+}
+
 // Internal direct proxy call (no SQL fallback logic)
 async function _proxyActionDirect(action, params, options) {
   var opts = options || {};
@@ -2526,8 +2540,9 @@ async function _proxyActionDirect(action, params, options) {
     sql_work_orders: 1, sql_turns: 1, sql_turn_work_orders: 1, sql_work_orders_completed_history: 1 };
   var isHeavy = !!HEAVY_ACTIONS[action];
   if (isHeavy) topBarStart();
-  var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
-  var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
+  var actionBase = getActionProxyBase(action);
+  var sep = actionBase.indexOf('?') !== -1 ? '&' : '?';
+  var url = actionBase + sep + 'action=' + encodeURIComponent(action);
   if (params) {
     Object.keys(params).forEach(function(k) {
       url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
@@ -2661,8 +2676,9 @@ async function _proxyActionDirect(action, params, options) {
 
 function buildProxyActionUrl(action, params) {
   if (!API_PROXY) throw new Error('No proxy configured');
-  var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
-  var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
+  var actionBase = getActionProxyBase(action);
+  var sep = actionBase.indexOf('?') !== -1 ? '&' : '?';
+  var url = actionBase + sep + 'action=' + encodeURIComponent(action);
   if (params) {
     Object.keys(params).forEach(function(k) {
       if (params[k] === undefined || params[k] === null) return;
