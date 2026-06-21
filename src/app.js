@@ -2442,11 +2442,7 @@ async function fetchWithTimeout(url, opts, timeoutMsOrRetries, baseBackoffMs) {
 // LOCAL-FIRST STRICT MODE (high-volume tables):
 // - work_orders, turns, turn_work_orders must resolve from /api/local/*
 // - no SQL/proxy fallback for these actions; fail fast if local read is unavailable
-async function proxyAction(action, params, options) {
-  var opts = options || {};
-  if (!API_PROXY) throw new Error('No proxy configured');
-
-  // Local-only read path for captured Postgres datasets.
+function getLocalReadActionPath(action) {
   var LOCAL_READ_ACTIONS = {
     work_orders: '/api/local/work_orders',
     work_orders_completed_history: '/api/local/work_orders_completed_history',
@@ -2462,9 +2458,14 @@ async function proxyAction(action, params, options) {
     property_map: '/api/local/property_map',
     property_stats: '/api/local/property_stats'
   };
+  return LOCAL_READ_ACTIONS[action] || '';
+}
 
-  if (LOCAL_READ_ACTIONS[action] && !opts.skipLocalRead) {
-    var localPath = LOCAL_READ_ACTIONS[action];
+async function proxyAction(action, params, options) {
+  var opts = options || {};
+  var localPath = getLocalReadActionPath(action);
+
+  if (localPath && !opts.skipLocalRead) {
     var localUrl = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '') + localPath;
     var localParams = params || {};
     var localQuery = Object.keys(localParams).map(function(k) {
@@ -2486,6 +2487,8 @@ async function proxyAction(action, params, options) {
 
     return Object.assign({}, localData, { _source: 'postgres_local' });
   }
+
+  if (!API_PROXY) throw new Error('No proxy configured');
 
   // Actions that should use SQL/Turso backend when available (avoids AppFolio 429s)
   var SQL_FALLBACK_ACTIONS = {
@@ -8873,7 +8876,6 @@ function renderTurnDashboardTicker(entries) {
 }
 
 async function syncTurnDashboardIncremental(showMsg) {
-  if (!API_PROXY) return false;
   var btn = $('#dashTurnSync');
   if (btn) { btn.disabled = true; btn.classList.add('spinning'); }
   try {
@@ -16251,7 +16253,6 @@ async function fetchTurnRecords() {
 
 // Fetch closed turns from proxy and populate CLOSED_TURNS set
 async function loadClosedTurns() {
-  if (!API_PROXY) return;
   try {
     var data = await proxyAction('closed_turns');
     if (data && data.ok && Array.isArray(data.results)) {
@@ -16263,7 +16264,6 @@ async function loadClosedTurns() {
 }
 
 async function fetchUnitTurnHistory() {
-  if (!API_PROXY) return;
   try {
     var data = await proxyAction('unit_turns_history', { days: '540', limit: '300' });
     if (data && data.ok && Array.isArray(data.results)) {

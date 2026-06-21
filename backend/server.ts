@@ -3,6 +3,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import path from 'node:path';
 import { pingDatabase, queryClient } from './db';
+import * as deviceAuthHandlers from './deviceAuth';
 
 function ensureDenoCompat(): void {
   const globalAny = globalThis as any;
@@ -31,7 +32,7 @@ function ensureDenoCompat(): void {
 ensureDenoCompat();
 
 // @ts-ignore - afproxy uses Deno globals; will be replaced with Postgres reads
-const [unitsHandlers, turnsHandlers, estimatesHandlers, queueHandlers, deviceAuthHandlers] = await Promise.all([
+const [unitsHandlers, turnsHandlers, estimatesHandlers, queueHandlers] = await Promise.all([
   // @ts-ignore
   import('../afproxy/handlers/units.ts'),
   // @ts-ignore
@@ -40,8 +41,6 @@ const [unitsHandlers, turnsHandlers, estimatesHandlers, queueHandlers, deviceAut
   import('../afproxy/handlers/estimates.ts'),
   // @ts-ignore
   import('../afproxy/handlers/queue.ts'),
-  // @ts-ignore
-  import('../afproxy/handlers/deviceAuth.ts'),
 ]);
 
 type Params = Record<string, string>;
@@ -1674,10 +1673,55 @@ app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ ok: false, error: error.message || 'Unhandled server error' });
 });
 
+function startRecurringSyncScheduler(): void {
+  const enabled = /^(1|true|yes|on)$/i.test(String(process.env.SYNC_SCHEDULER_ENABLED || '').trim());
+  if (!enabled) return;
+
+  const intervalMinutes = Math.max(5, Number(process.env.SYNC_SCHEDULER_INTERVAL_MINUTES || '30') || 30);
+  const endpoints = String(process.env.SYNC_SCHEDULER_ENDPOINTS || 'v0:properties,v0:property_groups,v0:units,v0:work_orders')
+    .split(',')
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  const maxPages = Math.max(0, Number(process.env.SYNC_SCHEDULER_MAX_PAGES || '0') || 0);
+  const runOnBoot = !/^(0|false|no|off)$/i.test(String(process.env.SYNC_SCHEDULER_RUN_ON_BOOT || 'true').trim());
+  const inFlight = new Set<string>();
+
+  async function runEndpoint(endpointKey: string, triggerType: string): Promise<void> {
+    if (!endpointKey || inFlight.has(endpointKey)) return;
+    inFlight.add(endpointKey);
+    try {
+      const { runSync } = await import('./sync/syncRunner.ts');
+      const summary = await runSync({ endpointKey, triggerType, maxPages });
+      console.log('[server:sync-scheduler] completed', summary);
+    } catch (error) {
+      console.error('[server:sync-scheduler] failed', endpointKey, String((error as any)?.message || error));
+    } finally {
+      inFlight.delete(endpointKey);
+    }
+  }
+
+  async function tick(triggerType: string): Promise<void> {
+    for (const endpointKey of endpoints) {
+      await runEndpoint(endpointKey, triggerType);
+    }
+  }
+
+  if (runOnBoot) {
+    void tick('startup');
+  }
+
+  setInterval(() => {
+    void tick('scheduled');
+  }, intervalMinutes * 60 * 1000);
+
+  console.log('[server:sync-scheduler] enabled', { endpoints, intervalMinutes, maxPages, runOnBoot });
+}
+
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
 
 app.listen(PORT, HOST, () => {
   console.log(`[server] Express backend listening on ${HOST}:${PORT}`);
   console.log('[server] Runtime command: npx tsx backend/server.ts');
+  startRecurringSyncScheduler();
 });
