@@ -202,6 +202,11 @@ function logTrustedDevicesDbFallback(err: unknown): void {
   );
 }
 
+function isBenignTrustedDevicesSchemaError(err: unknown): boolean {
+  const msg = String((err as any)?.message || err || '').toLowerCase();
+  return msg.includes('duplicate column name') || msg.includes('already exists');
+}
+
 async function executeTrustedDevicesSql(
   sql: string,
   args: any[] = [],
@@ -209,7 +214,9 @@ async function executeTrustedDevicesSql(
   try {
     return await sqliteAuth.execute({ sql, args });
   } catch (err) {
-    logTrustedDevicesDbFallback(err);
+    if (!isBenignTrustedDevicesSchemaError(err)) {
+      logTrustedDevicesDbFallback(err);
+    }
     return await sqlite.execute({ sql, args });
   }
 }
@@ -221,7 +228,9 @@ async function executeTrustedDevicesSqlOnBoth(
   try {
     await sqliteAuth.execute({ sql, args });
   } catch (err) {
-    logTrustedDevicesDbFallback(err);
+    if (!isBenignTrustedDevicesSchemaError(err)) {
+      logTrustedDevicesDbFallback(err);
+    }
     try {
       await sqlite.execute({ sql, args });
     } catch (_) {}

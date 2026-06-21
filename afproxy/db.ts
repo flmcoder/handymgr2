@@ -51,10 +51,7 @@ function getEmbeddedSqliteClient(): SqlLikeClient {
 }
 
 async function getRemoteSqlClient(): Promise<SqlLikeClient> {
-  const isNodeRuntime = typeof process !== "undefined" && !!(process as any)?.versions?.node;
-  const mod: any = isNodeRuntime
-    ? await import("@libsql/client")
-    : await import("npm:@libsql/client");
+  const mod: any = await import("@libsql/client");
   const createClient = (mod as any).createClient;
   if (typeof createClient !== "function") {
     throw new Error("Failed to load @libsql/client createClient");
