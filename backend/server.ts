@@ -931,27 +931,7 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
             t.metadata,
             t.closed_at,
             t.created_at,
-            t.updated_at,
-            coalesce((
-              select jsonb_object_agg(m.milestone_key, jsonb_build_object(
-                'date', m.milestone_date,
-                'source', m.source,
-                'notes', m.notes
-              ))
-              from unit_turn_milestones m
-              where m.tracking_uuid = t.tracking_uuid
-            ), '{}'::jsonb) as milestones,
-            coalesce((
-              select jsonb_agg(jsonb_build_object(
-                'wo_id', w.wo_id,
-                'wo_db_uuid', w.wo_db_uuid,
-                'source', w.source,
-                'status', w.status,
-                'created_at', w.created_at
-              ) order by w.created_at asc)
-              from unit_turn_work_orders w
-              where w.tracking_uuid = t.tracking_uuid and coalesce(w.removed, false) = false
-            ), '[]'::jsonb) as linked_work_orders
+            t.updated_at
           from unit_turn_tracker t
           where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
           order by coalesce(t.updated_at, t.created_at) desc
@@ -995,8 +975,8 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
           total_billed: '',
           unit_turn_status: String(row.status || ''),
           reference_user: String(row.metadata?.reference_user || ''),
-          milestones: row.milestones || {},
-          linked_work_orders: Array.isArray(row.linked_work_orders) ? row.linked_work_orders : [],
+          milestones: {},
+          linked_work_orders: [],
           _source: 'postgres_local_fallback',
         }));
 
