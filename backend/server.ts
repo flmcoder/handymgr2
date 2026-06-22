@@ -732,11 +732,11 @@ app.get('/api/local/units', async (req: Request, res: Response) => {
   }
 });
 app.get('/api/local/turns', async (req: Request, res: Response) => {
-  try {
-    const days = parseDays(req.query.days, 90);
-    const limit = parseLimit(req.query.limit, 3000);
-    const statusFilter = String(req.query.status || '').trim().toLowerCase();
+  const days = parseDays(req.query.days, 90);
+  const limit = parseLimit(req.query.limit, 3000);
+  const statusFilter = String(req.query.status || '').trim().toLowerCase();
 
+  try {
     const rows = await queryClient`
       select
         t.tracking_uuid,
@@ -909,8 +909,106 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
 
     res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
   } catch (error) {
+    const message = String((error as any)?.message || error || 'Local turns query failed');
+    const code = String((error as any)?.code || '');
+
+    if (code === '42P01' && /appfolio_unit_turn_details/i.test(message)) {
+      try {
+        const fallbackRows = await queryClient`
+          select
+            t.tracking_uuid,
+            t.tracking_code,
+            t.turn_key,
+            t.unit_turn_id,
+            t.unit_id,
+            t.property_id,
+            t.unit_name,
+            t.property_name,
+            t.status,
+            t.confidence_score,
+            t.confidence_label,
+            t.source_flags,
+            t.metadata,
+            t.closed_at,
+            t.created_at,
+            t.updated_at,
+            coalesce((
+              select jsonb_object_agg(m.milestone_key, jsonb_build_object(
+                'date', m.milestone_date,
+                'source', m.source,
+                'notes', m.notes
+              ))
+              from unit_turn_milestones m
+              where m.tracking_uuid = t.tracking_uuid
+            ), '{}'::jsonb) as milestones,
+            coalesce((
+              select jsonb_agg(jsonb_build_object(
+                'wo_id', w.wo_id,
+                'wo_db_uuid', w.wo_db_uuid,
+                'source', w.source,
+                'status', w.status,
+                'created_at', w.created_at
+              ) order by w.created_at asc)
+              from unit_turn_work_orders w
+              where w.tracking_uuid = t.tracking_uuid and coalesce(w.removed, false) = false
+            ), '[]'::jsonb) as linked_work_orders
+          from unit_turn_tracker t
+          where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
+          order by coalesce(t.updated_at, t.created_at) desc
+          limit ${limit}
+        `;
+
+        const filtered = (fallbackRows as any[]).filter((row) => {
+          if (!statusFilter) return true;
+          const status = String(row?.status || '').toLowerCase();
+          return status.includes(statusFilter);
+        });
+
+        const results = filtered.map((row) => ({
+          tracking_uuid: row.tracking_uuid,
+          tracking_code: row.tracking_code,
+          turn_key: row.turn_key,
+          unit_turn_id: row.unit_turn_id,
+          unit_id: row.unit_id,
+          property_id: row.property_id,
+          unit_name: row.unit_name,
+          property_name: row.property_name,
+          status: row.status,
+          confidence_score: row.confidence_score,
+          confidence_label: row.confidence_label,
+          source_flags: row.source_flags || {},
+          metadata: row.metadata || {},
+          closed_at: asIso(row.closed_at),
+          created_at: asIso(row.created_at),
+          updated_at: asIso(row.updated_at),
+          move_out_date: asIso(row.metadata?.move_out_date),
+          move_in_date: asIso(row.metadata?.move_in_date),
+          inspection_date: asIso(row.metadata?.inspection_date),
+          expected_move_in_date: asIso(row.metadata?.move_in_date),
+          turn_end_date: asIso(row.closed_at),
+          target_days_to_complete: 0,
+          total_days_to_complete: 0,
+          labor_from_work_orders: '',
+          purchase_orders_from_work_orders: '',
+          billables_from_work_orders: '',
+          inventory_from_work_orders: '',
+          total_billed: '',
+          unit_turn_status: String(row.status || ''),
+          reference_user: String(row.metadata?.reference_user || ''),
+          milestones: row.milestones || {},
+          linked_work_orders: Array.isArray(row.linked_work_orders) ? row.linked_work_orders : [],
+          _source: 'postgres_local_fallback',
+        }));
+
+        res.json({ ok: true, results, count: results.length, source: 'postgres_local_fallback' });
+        return;
+      } catch (fallbackError) {
+        logTunnelError(fallbackError, '/api/local/turns:fallback');
+      }
+    }
+
     logTunnelError(error, '/api/local/turns');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local turns query failed') });
+    res.status(500).json({ ok: false, error: message });
   }
 });
 
