@@ -327,10 +327,15 @@ function normalizeWorkOrderRow(row: any): Record<string, any> {
   const createdAt = asIso(row?.created_at) || String(pickRaw(raw, ['CreatedAt', 'created_at', 'created_date']) || '');
   const updatedAt = asIso(row?.updated_at) || String(pickRaw(raw, ['LastUpdatedAt', 'last_updated_at', 'updated_at']) || '');
   const status = String(row?.status || pickRaw(raw, ['Status', 'status']) || '');
+  const workOrderUuid = String(
+    row?.work_order_uuid || pickRaw(raw, ['work_order_uuid', 'v0_uuid', 'UUID', 'uuid']) || '',
+  );
   const normalized: Record<string, any> = {
     ...raw,
     db_api_id: String(row?.id || pickRaw(raw, ['db_api_id', 'dbApiId', 'UUID', 'Id']) || ''),
-    work_order_id: String(row?.id || pickRaw(raw, ['work_order_id', 'WorkOrderId', 'Id']) || ''),
+    work_order_id: workOrderUuid || String(row?.id || pickRaw(raw, ['work_order_id', 'WorkOrderId', 'Id']) || ''),
+    work_order_uuid: workOrderUuid,
+    uuid: workOrderUuid,
     work_order_number: String(row?.wo_number || pickRaw(raw, ['work_order_number', 'WorkOrderNumber', 'Number']) || ''),
     property_id: String(row?.property_id || pickRaw(raw, ['property_id', 'PropertyId']) || ''),
     unit_id: String(row?.unit_id || pickRaw(raw, ['unit_id', 'UnitId']) || ''),
@@ -480,12 +485,12 @@ app.get('/health', async (_req: Request, res: Response) => {
 
 app.get('/api/local/work_orders', async (req: Request, res: Response) => {
   try {
-    const days = parseDays(req.query.days, 180);
-    const limit = parseLimit(req.query.limit, 2500);
+    const days = parseDays(req.query.days, 3650, 3650);
+    const limit = parseLimit(req.query.limit, 10000, 20000);
     const propertyGroupId = getPropertyGroupFilter(req);
     const rows = propertyGroupId
       ? await queryClient`
-        select id, wo_number, property_id, unit_id, property_group_id, description,
+        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                category, priority, status, assigned_user_id, assigned_user_name,
                vendor_id, vendor_name, estimated_amount, total_cost,
                created_at, updated_at, raw_json
@@ -501,7 +506,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
         limit ${limit}
       `
       : await queryClient`
-        select id, wo_number, property_id, unit_id, property_group_id, description,
+        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                category, priority, status, assigned_user_id, assigned_user_name,
                vendor_id, vendor_name, estimated_amount, total_cost,
                created_at, updated_at, raw_json
@@ -527,11 +532,11 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
 app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 3650, 3650);
-    const limit = parseLimit(req.query.limit, 5000);
+    const limit = parseLimit(req.query.limit, 10000, 25000);
     const propertyGroupId = getPropertyGroupFilter(req);
     const rows = propertyGroupId
       ? await queryClient`
-        select id, wo_number, property_id, unit_id, property_group_id, description,
+        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                category, priority, status, assigned_user_id, assigned_user_name,
                vendor_id, vendor_name, estimated_amount, total_cost,
                created_at, updated_at, raw_json
@@ -547,7 +552,7 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
         limit ${limit}
       `
       : await queryClient`
-        select id, wo_number, property_id, unit_id, property_group_id, description,
+        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                category, priority, status, assigned_user_id, assigned_user_name,
                vendor_id, vendor_name, estimated_amount, total_cost,
                created_at, updated_at, raw_json
@@ -1310,11 +1315,11 @@ app.get('/api/local/estimates', async (req: Request, res: Response) => {
 app.get('/api/local/work_orders_completed_history', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 365, 3650);
-    const limit = parseLimit(req.query.limit, 5000, 15000);
+    const limit = parseLimit(req.query.limit, 10000, 25000);
     const propertyGroupId = getPropertyGroupFilter(req);
     const rows = propertyGroupId
       ? await queryClient`
-        select id, wo_number, property_id, unit_id, property_group_id, description,
+        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                category, priority, status, assigned_user_id, assigned_user_name,
                vendor_id, vendor_name, estimated_amount, total_cost,
                created_at, updated_at, raw_json
@@ -1330,7 +1335,7 @@ app.get('/api/local/work_orders_completed_history', async (req: Request, res: Re
         limit ${limit}
       `
       : await queryClient`
-        select id, wo_number, property_id, unit_id, property_group_id, description,
+        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                category, priority, status, assigned_user_id, assigned_user_name,
                vendor_id, vendor_name, estimated_amount, total_cost,
                created_at, updated_at, raw_json

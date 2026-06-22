@@ -59,6 +59,7 @@ export const appfolioWorkOrders = pgTable(
   'appfolio_work_orders',
   {
     id: text('id').primaryKey(),
+    workOrderUuid: text('work_order_uuid'),
     woNumber: text('wo_number'),
     propertyId: text('property_id'),
     unitId: text('unit_id'),
@@ -78,6 +79,7 @@ export const appfolioWorkOrders = pgTable(
     rawJson: jsonb('raw_json').notNull().default({}),
   },
   (table) => ({
+    uuidIdx: index('appfolio_work_orders_uuid_idx').on(table.workOrderUuid),
     woNumberIdx: index('appfolio_work_orders_number_idx').on(table.woNumber),
     statusIdx: index('appfolio_work_orders_status_idx').on(table.status),
     propertyIdx: index('appfolio_work_orders_property_idx').on(table.propertyId),

@@ -89,6 +89,12 @@ function asDate(v: unknown): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
+function isUuidLike(value: unknown): boolean {
+  const s = String(value || '').trim();
+  if (!s) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
 function reportRowKey(row: any, keys: string[], fallbackParts: Array<unknown>): string {
   for (const key of keys) {
     const candidate = asStr(row?.[key]);
@@ -309,6 +315,8 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
       ? (row.assigned_users ?? row.AssignedUsers)
       : [];
     const firstUser = assignedUsers[0] ?? {};
+    const workOrderUuid = asStr(row.v0_uuid || row.UUID || row.uuid || row.work_order_uuid)
+      || (isUuidLike(id) ? id : null);
     const propertyId = asStr(row.property_id || row.PropertyId);
     const groupInfo = resolvePropertyGroupInfo(row);
     const resolvedGroup = groupInfo.canonicalGroupKey || (propertyId ? (propertyGroupByPropertyId.get(propertyId) || null) : null);
@@ -317,6 +325,7 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
       .insert(appfolioWorkOrders)
       .values({
         id,
+        workOrderUuid,
         woNumber,
         propertyId,
         unitId: asStr(row.unit_id || row.UnitId),
@@ -338,6 +347,7 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
       .onConflictDoUpdate({
         target: appfolioWorkOrders.id,
         set: {
+          workOrderUuid: sql`EXCLUDED.work_order_uuid`,
           woNumber: sql`EXCLUDED.wo_number`,
           propertyId: sql`EXCLUDED.property_id`,
           unitId: sql`EXCLUDED.unit_id`,
