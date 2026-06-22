@@ -488,38 +488,80 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
     const days = parseDays(req.query.days, 3650, 3650);
     const limit = parseLimit(req.query.limit, 10000, 20000);
     const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
-      ? await queryClient`
-        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-               category, priority, status, assigned_user_id, assigned_user_name,
-               vendor_id, vendor_name, estimated_amount, total_cost,
-               created_at, updated_at, raw_json
-        from appfolio_work_orders
-        where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-          and property_group_id = ${propertyGroupId}
-          and (
-            coalesce(lower(status), '') not like '%completed%'
-            and coalesce(lower(status), '') not like '%cancel%'
-            and coalesce(lower(status), '') not like '%no need to bill%'
-          )
-        order by coalesce(updated_at, created_at) desc
-        limit ${limit}
-      `
-      : await queryClient`
-        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-               category, priority, status, assigned_user_id, assigned_user_name,
-               vendor_id, vendor_name, estimated_amount, total_cost,
-               created_at, updated_at, raw_json
-        from appfolio_work_orders
-        where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-          and (
-            coalesce(lower(status), '') not like '%completed%'
-            and coalesce(lower(status), '') not like '%cancel%'
-            and coalesce(lower(status), '') not like '%no need to bill%'
-          )
-        order by coalesce(updated_at, created_at) desc
-        limit ${limit}
-      `;
+    let rows: any[] = [];
+    try {
+      rows = propertyGroupId
+        ? await queryClient`
+          select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+            and property_group_id = ${propertyGroupId}
+            and (
+              coalesce(lower(status), '') not like '%completed%'
+              and coalesce(lower(status), '') not like '%cancel%'
+              and coalesce(lower(status), '') not like '%no need to bill%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `
+        : await queryClient`
+          select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+            and (
+              coalesce(lower(status), '') not like '%completed%'
+              and coalesce(lower(status), '') not like '%cancel%'
+              and coalesce(lower(status), '') not like '%no need to bill%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `;
+    } catch (error) {
+      const message = String((error as any)?.message || error || '');
+      const code = String((error as any)?.code || '');
+      if (!(code === '42703' && /work_order_uuid/i.test(message))) {
+        throw error;
+      }
+
+      rows = propertyGroupId
+        ? await queryClient`
+          select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+            and property_group_id = ${propertyGroupId}
+            and (
+              coalesce(lower(status), '') not like '%completed%'
+              and coalesce(lower(status), '') not like '%cancel%'
+              and coalesce(lower(status), '') not like '%no need to bill%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `
+        : await queryClient`
+          select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+            and (
+              coalesce(lower(status), '') not like '%completed%'
+              and coalesce(lower(status), '') not like '%cancel%'
+              and coalesce(lower(status), '') not like '%no need to bill%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `;
+    }
 
     const results = (rows as any[]).map(normalizeWorkOrderRow);
     res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
@@ -534,38 +576,80 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
     const days = parseDays(req.query.days, 3650, 3650);
     const limit = parseLimit(req.query.limit, 10000, 25000);
     const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
-      ? await queryClient`
-        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-               category, priority, status, assigned_user_id, assigned_user_name,
-               vendor_id, vendor_name, estimated_amount, total_cost,
-               created_at, updated_at, raw_json
-        from appfolio_work_orders
-        where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-          and property_group_id = ${propertyGroupId}
-          and (
-            coalesce(lower(status), '') like '%completed%'
-            or coalesce(lower(status), '') like '%cancel%'
-            or coalesce(lower(status), '') like '%no need to bill%'
-          )
-        order by coalesce(updated_at, created_at) desc
-        limit ${limit}
-      `
-      : await queryClient`
-        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-               category, priority, status, assigned_user_id, assigned_user_name,
-               vendor_id, vendor_name, estimated_amount, total_cost,
-               created_at, updated_at, raw_json
-        from appfolio_work_orders
-        where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-          and (
-            coalesce(lower(status), '') like '%completed%'
-            or coalesce(lower(status), '') like '%cancel%'
-            or coalesce(lower(status), '') like '%no need to bill%'
-          )
-        order by coalesce(updated_at, created_at) desc
-        limit ${limit}
-      `;
+    let rows: any[] = [];
+    try {
+      rows = propertyGroupId
+        ? await queryClient`
+          select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+            and property_group_id = ${propertyGroupId}
+            and (
+              coalesce(lower(status), '') like '%completed%'
+              or coalesce(lower(status), '') like '%cancel%'
+              or coalesce(lower(status), '') like '%no need to bill%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `
+        : await queryClient`
+          select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+            and (
+              coalesce(lower(status), '') like '%completed%'
+              or coalesce(lower(status), '') like '%cancel%'
+              or coalesce(lower(status), '') like '%no need to bill%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `;
+    } catch (error) {
+      const message = String((error as any)?.message || error || '');
+      const code = String((error as any)?.code || '');
+      if (!(code === '42703' && /work_order_uuid/i.test(message))) {
+        throw error;
+      }
+
+      rows = propertyGroupId
+        ? await queryClient`
+          select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+            and property_group_id = ${propertyGroupId}
+            and (
+              coalesce(lower(status), '') like '%completed%'
+              or coalesce(lower(status), '') like '%cancel%'
+              or coalesce(lower(status), '') like '%no need to bill%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `
+        : await queryClient`
+          select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
+            and (
+              coalesce(lower(status), '') like '%completed%'
+              or coalesce(lower(status), '') like '%cancel%'
+              or coalesce(lower(status), '') like '%no need to bill%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `;
+    }
 
     const results = (rows as any[]).map(normalizeWorkOrderRow);
     res.json({ ok: true, results, count: results.length, source: 'postgres_local', status: 'inactive' });
@@ -1395,38 +1479,80 @@ app.get('/api/local/work_orders_completed_history', async (req: Request, res: Re
     const days = parseDays(req.query.days, 365, 3650);
     const limit = parseLimit(req.query.limit, 10000, 25000);
     const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
-      ? await queryClient`
-        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-               category, priority, status, assigned_user_id, assigned_user_name,
-               vendor_id, vendor_name, estimated_amount, total_cost,
-               created_at, updated_at, raw_json
-        from appfolio_work_orders
-        where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
-          and property_group_id = ${propertyGroupId}
-          and (
-            coalesce(lower(status), '') like '%completed%'
-            or coalesce(lower(status), '') like '%no need to bill%'
-            or coalesce(lower(status), '') like '%cancel%'
-          )
-        order by coalesce(updated_at, created_at) desc
-        limit ${limit}
-      `
-      : await queryClient`
-        select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-               category, priority, status, assigned_user_id, assigned_user_name,
-               vendor_id, vendor_name, estimated_amount, total_cost,
-               created_at, updated_at, raw_json
-        from appfolio_work_orders
-        where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
-          and (
-            coalesce(lower(status), '') like '%completed%'
-            or coalesce(lower(status), '') like '%no need to bill%'
-            or coalesce(lower(status), '') like '%cancel%'
-          )
-        order by coalesce(updated_at, created_at) desc
-        limit ${limit}
-      `;
+    let rows: any[] = [];
+    try {
+      rows = propertyGroupId
+        ? await queryClient`
+          select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
+            and property_group_id = ${propertyGroupId}
+            and (
+              coalesce(lower(status), '') like '%completed%'
+              or coalesce(lower(status), '') like '%no need to bill%'
+              or coalesce(lower(status), '') like '%cancel%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `
+        : await queryClient`
+          select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
+            and (
+              coalesce(lower(status), '') like '%completed%'
+              or coalesce(lower(status), '') like '%no need to bill%'
+              or coalesce(lower(status), '') like '%cancel%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `;
+    } catch (error) {
+      const message = String((error as any)?.message || error || '');
+      const code = String((error as any)?.code || '');
+      if (!(code === '42703' && /work_order_uuid/i.test(message))) {
+        throw error;
+      }
+
+      rows = propertyGroupId
+        ? await queryClient`
+          select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
+            and property_group_id = ${propertyGroupId}
+            and (
+              coalesce(lower(status), '') like '%completed%'
+              or coalesce(lower(status), '') like '%no need to bill%'
+              or coalesce(lower(status), '') like '%cancel%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `
+        : await queryClient`
+          select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+          from appfolio_work_orders
+          where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
+            and (
+              coalesce(lower(status), '') like '%completed%'
+              or coalesce(lower(status), '') like '%no need to bill%'
+              or coalesce(lower(status), '') like '%cancel%'
+            )
+          order by coalesce(updated_at, created_at) desc
+          limit ${limit}
+        `;
+    }
 
     const results = (rows as any[]).map(normalizeWorkOrderRow);
     res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
@@ -1440,48 +1566,58 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 6000, 15000);
     const propertyGroupId = getPropertyGroupFilter(req);
-    let rows = propertyGroupId
-      ? await queryClient`
-        select
-          i.inspection_id,
-          i.property_id,
-          coalesce(i.property_name, p.name) as property_name,
-          i.unit_id,
-          coalesce(i.unit_name, u.name, '') as unit_name,
-          i.last_inspection_date,
-          i.tenant_name,
-          i.tenant_primary_phone_number,
-          i.move_in_date,
-          i.move_out_date,
-          i.rentable,
-          i.unit_tags
-        from appfolio_unit_inspections i
-        left join appfolio_properties p on p.id = i.property_id
-        left join appfolio_units u on u.unit_id = i.unit_id
-        where p.property_group_id = ${propertyGroupId}
-        order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
-        limit ${limit}
-      `
-      : await queryClient`
-        select
-          i.inspection_id,
-          i.property_id,
-          coalesce(i.property_name, p.name) as property_name,
-          i.unit_id,
-          coalesce(i.unit_name, u.name, '') as unit_name,
-          i.last_inspection_date,
-          i.tenant_name,
-          i.tenant_primary_phone_number,
-          i.move_in_date,
-          i.move_out_date,
-          i.rentable,
-          i.unit_tags
-        from appfolio_unit_inspections i
-        left join appfolio_properties p on p.id = i.property_id
-        left join appfolio_units u on u.unit_id = i.unit_id
-        order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
-        limit ${limit}
-      `;
+    let rows: any[] = [];
+    try {
+      rows = propertyGroupId
+        ? await queryClient`
+          select
+            i.inspection_id,
+            i.property_id,
+            coalesce(i.property_name, p.name) as property_name,
+            i.unit_id,
+            coalesce(i.unit_name, u.name, '') as unit_name,
+            i.last_inspection_date,
+            i.tenant_name,
+            i.tenant_primary_phone_number,
+            i.move_in_date,
+            i.move_out_date,
+            i.rentable,
+            i.unit_tags
+          from appfolio_unit_inspections i
+          left join appfolio_properties p on p.id = i.property_id
+          left join appfolio_units u on u.unit_id = i.unit_id
+          where p.property_group_id = ${propertyGroupId}
+          order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
+          limit ${limit}
+        `
+        : await queryClient`
+          select
+            i.inspection_id,
+            i.property_id,
+            coalesce(i.property_name, p.name) as property_name,
+            i.unit_id,
+            coalesce(i.unit_name, u.name, '') as unit_name,
+            i.last_inspection_date,
+            i.tenant_name,
+            i.tenant_primary_phone_number,
+            i.move_in_date,
+            i.move_out_date,
+            i.rentable,
+            i.unit_tags
+          from appfolio_unit_inspections i
+          left join appfolio_properties p on p.id = i.property_id
+          left join appfolio_units u on u.unit_id = i.unit_id
+          order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
+          limit ${limit}
+        `;
+    } catch (error) {
+      const message = String((error as any)?.message || error || '');
+      const code = String((error as any)?.code || '');
+      if (!(code === '42P01' && /appfolio_unit_inspections/i.test(message))) {
+        throw error;
+      }
+      rows = [];
+    }
 
     if ((rows as any[]).length === 0) {
       rows = propertyGroupId
