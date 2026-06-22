@@ -317,6 +317,11 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
     const firstUser = assignedUsers[0] ?? {};
     const workOrderUuid = asStr(row.v0_uuid || row.UUID || row.uuid || row.work_order_uuid)
       || (isUuidLike(id) ? id : null);
+    const rawWithUuid = {
+      ...row,
+      work_order_uuid: workOrderUuid || row.work_order_uuid || row.v0_uuid || row.UUID || row.uuid || '',
+      v0_uuid: workOrderUuid || row.v0_uuid || row.UUID || row.uuid || '',
+    };
     const propertyId = asStr(row.property_id || row.PropertyId);
     const groupInfo = resolvePropertyGroupInfo(row);
     const resolvedGroup = groupInfo.canonicalGroupKey || (propertyId ? (propertyGroupByPropertyId.get(propertyId) || null) : null);
@@ -342,7 +347,7 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
         totalCost: asNum(row.total_cost || row.TotalCost),
         createdAt: asDate(row.created_date || row.CreatedDate || row.created_at),
         updatedAt: asDate(row.last_updated_at || row.LastUpdatedAt || row.updated_at),
-        rawJson: row,
+        rawJson: rawWithUuid,
       })
       .onConflictDoUpdate({
         target: appfolioWorkOrders.id,

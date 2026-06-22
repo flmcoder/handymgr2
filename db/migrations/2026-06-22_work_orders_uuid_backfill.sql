@@ -21,3 +21,14 @@ SET work_order_uuid = COALESCE(
   END
 )
 WHERE COALESCE(work_order_uuid, '') = '';
+
+-- Ensure UUID appears in raw_json for all rows so downstream payload consumers
+-- always receive a stable v0 identifier.
+UPDATE appfolio_work_orders
+SET raw_json = jsonb_set(
+  jsonb_set(coalesce(raw_json, '{}'::jsonb), '{work_order_uuid}', to_jsonb(coalesce(work_order_uuid, '')::text), true),
+  '{v0_uuid}',
+  to_jsonb(coalesce(work_order_uuid, '')::text),
+  true
+)
+WHERE coalesce(raw_json->>'work_order_uuid', '') = '' OR coalesce(raw_json->>'v0_uuid', '') = '';
