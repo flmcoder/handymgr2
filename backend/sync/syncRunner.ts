@@ -25,6 +25,7 @@ import {
   getLastSuccessfulCursor,
 } from './runStore.ts';
 import {
+  upsertPropertyGroups,
   upsertProperties, upsertUnits, upsertWorkOrders,
   upsertEstimates, upsertTurnTracker,
   upsertUnitInspections, upsertTenantDirectory, upsertUnitTurnDetails, upsertUnitVacancies,
@@ -90,8 +91,7 @@ const ENDPOINTS: Record<string, EndpointDef> = {
       return `${baseUrl}/api/v0/property_groups?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
     },
     extractRows: (data) => data?.data ?? data?.results ?? [],
-    // Raw pages are archived and cursor-tracked; normalization currently happens via property rows.
-    upsert: async (rows) => ({ upserted: Array.isArray(rows) ? rows.length : 0, skipped: 0 }),
+    upsert: upsertPropertyGroups,
   },
 
   'v0:work_orders': {

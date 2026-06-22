@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { inArray, sql } from 'drizzle-orm';
 import { db } from '../db.ts';
 import {
+  appfolioPropertyGroups,
   appfolioProperties,
   appfolioUnits,
   appfolioWorkOrders,
@@ -159,6 +160,74 @@ function resolvePropertyGroupInfo(row: any): { groupId: string | null; groupUuid
 export interface UpsertResult {
   upserted: number;
   skipped: number;
+}
+
+export async function upsertPropertyGroups(rows: any[]): Promise<UpsertResult> {
+  let upserted = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const id = asStr(row.Id || row.id || row.PropertyGroupId || row.property_group_id || row.PropertyGroupUuid || row.property_group_uuid);
+    if (!id) {
+      skipped++;
+      continue;
+    }
+
+    const rawPropertyIds = Array.isArray(row.PropertyIds)
+      ? row.PropertyIds
+      : Array.isArray(row.property_ids)
+        ? row.property_ids
+        : [];
+    const propertyIds = rawPropertyIds
+      .map((value: any) => {
+        if (typeof value === 'string') return value.trim();
+        if (value && typeof value === 'object') {
+          return String(value.Id || value.id || value.PropertyId || value.property_id || '').trim();
+        }
+        return String(value || '').trim();
+      })
+      .filter((value: string) => !!value);
+
+    const uuid = asStr(row.PropertyGroupUuid || row.property_group_uuid || row.UUID || row.uuid)
+      || (isUuidLike(id) ? id : null);
+    const normalized = {
+      id,
+      uuid,
+      name: asStr(row.Name || row.name || row.NameOfPropertyGroup || row.name_of_property_group) || id,
+      type: asStr(row.Type || row.type),
+      propertyIds,
+      lastUpdatedAt: asDate(row.LastUpdatedAt || row.last_updated_at || row.updated_at),
+    };
+
+    const hash = stableHash(normalized);
+
+    await db
+      .insert(appfolioPropertyGroups)
+      .values({
+        ...normalized,
+        rawJson: {
+          ...row,
+          _hash: hash,
+        },
+        cachedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: appfolioPropertyGroups.id,
+        set: {
+          uuid: sql`EXCLUDED.uuid`,
+          name: sql`EXCLUDED.name`,
+          type: sql`EXCLUDED.type`,
+          propertyIds: sql`EXCLUDED.property_ids`,
+          lastUpdatedAt: sql`EXCLUDED.last_updated_at`,
+          rawJson: sql`EXCLUDED.raw_json`,
+          cachedAt: sql`EXCLUDED.cached_at`,
+        },
+      });
+
+    upserted++;
+  }
+
+  return { upserted, skipped };
 }
 
 export async function upsertProperties(rows: any[]): Promise<UpsertResult> {

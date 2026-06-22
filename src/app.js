@@ -6605,10 +6605,14 @@ async function fetchPropertyGroups() {
   try {
     setApiStatus('loading', 'Loading property groups\u2026');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
-    var scopedGroupUuid = getEffectiveGroupUuid();
+    var scopedGroupUuid = String(forcedPropertyGroupUuid || '').trim();
+    var localToken = getProxyAccessToken();
+    var localHeaders = { 'Accept': 'application/json' };
+    if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
     var localUrl = localBase + '/api/local/property_groups?limit=1000'
+      + '&include_inactive=true'
       + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
-    var localRes = await fetchWithTimeout(localUrl, { headers: { 'Accept': 'application/json' } }, 45000);
+    var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 45000);
     var data = {};
     try { data = await localRes.json(); } catch (e) { data = {}; }
     if (!localRes.ok || data.ok === false) {
@@ -6675,6 +6679,52 @@ async function fetchPropertyGroups() {
     PROPERTY_GROUPS = [];
     return false;
   }
+}
+
+async function syncPropertyGroupsToLocalDb() {
+  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  var token = getProxyAccessToken();
+  if (!token) throw new Error('Missing session token for property-group sync');
+
+  var res = await fetchWithTimeout(localBase + '/api/local/property_groups/sync', {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify({ maxPages: 0 })
+  }, 120000);
+
+  var data = {};
+  try { data = await res.json(); } catch (e) { data = {}; }
+  if (!res.ok || data.ok === false) {
+    throw new Error(String((data && (data.error || data.message)) || ('Property-group sync failed: HTTP ' + res.status)));
+  }
+  return data;
+}
+
+async function syncCoreDatasetsToLocalDb() {
+  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  var token = getProxyAccessToken();
+  if (!token) throw new Error('Missing session token for bootstrap sync');
+
+  var res = await fetchWithTimeout(localBase + '/api/local/bootstrap_sync', {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify({ maxPages: 0 })
+  }, 180000);
+
+  var data = {};
+  try { data = await res.json(); } catch (e) { data = {}; }
+  if (!res.ok || data.ok === false) {
+    throw new Error(String((data && (data.error || data.message)) || ('Bootstrap sync failed: HTTP ' + res.status)));
+  }
+  return data;
 }
 
 // Resolve UUID→Name mapping for property groups (called after groups load)
@@ -21654,16 +21704,17 @@ function wireUpUI() {
     });
   }
 
-  // Wire up the "Reload Groups" button in the global filter bar
-  // Shift+Click shows detailed diagnostics toast for debugging
+  // Wire up the "Sync Groups" button in the global filter bar.
+  // Shift+Click still shows diagnostics after sync.
   var btnGlobalLoadGroups = $('#btnGlobalLoadGroups');
   if (btnGlobalLoadGroups) {
     btnGlobalLoadGroups.addEventListener('click', async function(evt) {
       var wantDiag = evt && evt.shiftKey;
       var wantCopyCommand = evt && (evt.altKey || evt.ctrlKey || evt.metaKey);
       btnGlobalLoadGroups.disabled = true;
-      btnGlobalLoadGroups.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading\u2026';
+      btnGlobalLoadGroups.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing\u2026';
       try {
+        await syncPropertyGroupsToLocalDb();
         var ok = await fetchPropertyGroups();
         if (ok) {
           populateGroupFilters();
@@ -21690,18 +21741,18 @@ function wireUpUI() {
             if (d.errors.length > 0) lines.push('ERRORS: ' + d.errors.join('; '));
             showToast(lines.join(' | '), 12000);
           } else {
-            showToast('Property groups refreshed \u2014 ' + PROPERTY_GROUPS.length + ' groups, ' +
+            showToast('Property groups synced \u2014 ' + PROPERTY_GROUPS.length + ' groups, ' +
               Object.keys(_nameToGroups).length + ' name mappings, ' +
               Object.keys(_idToGroups).length + ' ID mappings');
           }
         } else {
-          showToast('Failed to load property groups \u2014 check console for [PG] logs');
+          showToast('Sync completed, but failed to load property groups \u2014 check console for [PG] logs');
         }
       } catch (e) {
         showToast('Error: ' + (e.message || e));
       } finally {
         btnGlobalLoadGroups.disabled = false;
-        btnGlobalLoadGroups.innerHTML = '<i class="fas fa-sync-alt"></i> Reload Groups';
+        btnGlobalLoadGroups.innerHTML = '<i class="fas fa-sync-alt"></i> Sync Groups';
       }
     });
   }
@@ -22186,6 +22237,17 @@ function withStepTimeout(fn, timeoutMs) {
 async function fetchAllLive() {
   var anySuccess = false;
   updateCacheBadge('loading');
+  var needsBootstrap = (!WORK_ORDERS || WORK_ORDERS.length === 0)
+    && (!TURNS || TURNS.length === 0)
+    && (!INSPECTIONS || INSPECTIONS.length === 0);
+  if (needsBootstrap) {
+    try {
+      setApiStatus('loading', 'Bootstrapping local tables from AppFolio…');
+      await syncCoreDatasetsToLocalDb();
+    } catch (bootstrapErr) {
+      console.warn('fetchAllLive bootstrap sync failed:', bootstrapErr && (bootstrapErr.message || bootstrapErr));
+    }
+  }
   // Vendors & Inspections lazy-loaded on tab click — removed from initial sync
   var steps = ['Properties', 'Groups', 'Work Orders', 'Turns', 'Move-Outs', 'Turn WOs', 'Tasks', 'Turn Tracker'];
   showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
@@ -22352,6 +22414,9 @@ async function refreshData() {
   btn.innerHTML = '<i class="fas fa-sync-alt"></i> Syncing…';
 
   try {
+    showToast('Syncing AppFolio to local database…');
+    await syncCoreDatasetsToLocalDb();
+
     // v8+: invalidate all server-side caches before re-fetching
     if (supportsServerCacheOps()) {
       try {

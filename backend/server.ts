@@ -695,6 +695,83 @@ app.get('/api/local/property_groups', async (req: Request, res: Response) => {
     const includeInactive = String(req.query.include_inactive || '').toLowerCase() === 'true';
     const propertyGroupId = getPropertyGroupFilter(req);
 
+    let groupsRows: any[] = [];
+    try {
+      groupsRows = propertyGroupId
+        ? await queryClient`
+          select id, uuid, name, type, property_ids, raw_json, last_updated_at, cached_at
+          from appfolio_property_groups
+          where coalesce(uuid, id) = ${propertyGroupId}
+             or id = ${propertyGroupId}
+          order by name asc
+          limit ${limit}
+        `
+        : await queryClient`
+          select id, uuid, name, type, property_ids, raw_json, last_updated_at, cached_at
+          from appfolio_property_groups
+          order by name asc
+          limit ${limit}
+        `;
+    } catch (error) {
+      const message = String((error as any)?.message || error || '');
+      const code = String((error as any)?.code || '');
+      if (!(code === '42P01' && /appfolio_property_groups/i.test(message))) {
+        throw error;
+      }
+      groupsRows = [];
+    }
+
+    if (groupsRows.length > 0) {
+      const groupIdToPropertyIds = new Map<string, string[]>();
+      const allProperties = await queryClient`
+        select id, property_group_id
+        from appfolio_properties
+      `;
+      for (const row of allProperties as any[]) {
+        const gid = String(row?.property_group_id || '').trim();
+        const pid = String(row?.id || '').trim();
+        if (!gid || !pid) continue;
+        const arr = groupIdToPropertyIds.get(gid) || [];
+        if (!arr.includes(pid)) arr.push(pid);
+        groupIdToPropertyIds.set(gid, arr);
+      }
+
+      const results = (groupsRows as any[])
+        .map((group) => {
+          const rawIds = Array.isArray(group?.property_ids) ? group.property_ids : [];
+          const explicitIds = rawIds.map((value: any) => {
+            if (typeof value === 'string') return value.trim();
+            if (value && typeof value === 'object') return String(value.Id || value.id || value.PropertyId || value.property_id || '').trim();
+            return String(value || '').trim();
+          }).filter(Boolean);
+
+          const keyCandidates = [String(group?.uuid || '').trim(), String(group?.id || '').trim()].filter(Boolean);
+          const inferredIds = keyCandidates.flatMap((key) => groupIdToPropertyIds.get(key) || []);
+          const mergedPropertyIds = Array.from(new Set([...explicitIds, ...inferredIds]));
+          const name = String(group?.name || '').trim() || String(group?.id || '').trim();
+          return {
+            id: String(group?.uuid || group?.id || ''),
+            Id: String(group?.uuid || group?.id || ''),
+            group_id: String(group?.id || ''),
+            group_uuid: String(group?.uuid || ''),
+            name,
+            Name: name,
+            type: String(group?.type || 'property_group'),
+            Type: String(group?.type || 'property_group'),
+            property_ids: mergedPropertyIds,
+            PropertyIds: mergedPropertyIds,
+            property_count: mergedPropertyIds.length,
+            last_updated_at: asIso(group?.last_updated_at) || asIso(group?.cached_at),
+            _source: 'postgres_local_groups_table',
+          };
+        })
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+        .slice(0, limit);
+
+      res.json({ ok: true, results, count: results.length, source: 'postgres_local_groups_table' });
+      return;
+    }
+
     const rows = propertyGroupId
       ? await queryClient`
         select id, name, property_group_id, street, city, state, zip, raw_json
@@ -740,6 +817,8 @@ app.get('/api/local/property_groups', async (req: Request, res: Response) => {
       .map((group) => ({
         id: group.id,
         Id: group.id,
+        group_id: group.id,
+        group_uuid: group.id,
         name: group.name,
         Name: group.name,
         type: 'property_group',
@@ -754,6 +833,96 @@ app.get('/api/local/property_groups', async (req: Request, res: Response) => {
   } catch (error) {
     logTunnelError(error, '/api/local/property_groups');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local property groups query failed') });
+  }
+});
+
+app.post('/api/local/property_groups/sync', async (req: Request, res: Response) => {
+  try {
+    const auth = String(req.headers.authorization || '');
+    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+    if (!token) {
+      res.status(401).json({ ok: false, error: 'Missing bearer token' });
+      return;
+    }
+
+    const session = await deviceAuthHandlers.getTrustedDeviceSession(token);
+    if (!session) {
+      res.status(401).json({ ok: false, error: 'Invalid session' });
+      return;
+    }
+
+    const maxPages = Math.max(0, Number(req.body?.maxPages ?? 0) || 0);
+    const triggerType = 'manual_ui';
+    const { runSync } = await import('./sync/syncRunner.ts');
+
+    const groupsSummary = await runSync({ endpointKey: 'v0:property_groups', triggerType, maxPages });
+    const propertiesSummary = await runSync({ endpointKey: 'v0:properties', triggerType, maxPages });
+
+    res.json({
+      ok: true,
+      synced: true,
+      endpointKeys: ['v0:property_groups', 'v0:properties'],
+      summaries: {
+        property_groups: groupsSummary,
+        properties: propertiesSummary,
+      },
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/property_groups/sync');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Property group sync failed') });
+  }
+});
+
+app.post('/api/local/bootstrap_sync', async (req: Request, res: Response) => {
+  try {
+    const auth = String(req.headers.authorization || '');
+    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+    if (!token) {
+      res.status(401).json({ ok: false, error: 'Missing bearer token' });
+      return;
+    }
+
+    const session = await deviceAuthHandlers.getTrustedDeviceSession(token);
+    if (!session) {
+      res.status(401).json({ ok: false, error: 'Invalid session' });
+      return;
+    }
+
+    const maxPages = Math.max(0, Number(req.body?.maxPages ?? 0) || 0);
+    const triggerType = 'manual_ui';
+    const defaultEndpoints = [
+      'v0:properties',
+      'v0:property_groups',
+      'v0:units',
+      'v0:work_orders',
+      'v2:tenant_directory',
+      'v2:unit_inspection',
+      'v2:unit_turn_detail',
+      'v2:unit_vacancy',
+    ];
+
+    const requestedEndpoints = Array.isArray(req.body?.endpoints)
+      ? req.body.endpoints.map((value: unknown) => String(value || '').trim()).filter(Boolean)
+      : defaultEndpoints;
+    const endpointSet = new Set(defaultEndpoints);
+    const endpoints = requestedEndpoints.filter((endpoint) => endpointSet.has(endpoint));
+    const finalEndpoints = endpoints.length > 0 ? endpoints : defaultEndpoints;
+
+    const { runSync } = await import('./sync/syncRunner.ts');
+    const summaries: Record<string, unknown> = {};
+    for (const endpointKey of finalEndpoints) {
+      summaries[endpointKey] = await runSync({ endpointKey, triggerType, maxPages });
+    }
+
+    res.json({
+      ok: true,
+      synced: true,
+      endpointKeys: finalEndpoints,
+      summaries,
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/bootstrap_sync');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Bootstrap sync failed') });
   }
 });
 

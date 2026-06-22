@@ -12,28 +12,6 @@
 </head>
 <body class="theme-neo dashboard-skin-neo-on">
 
-<!-- ==================== MAINTENANCE BANNER ==================== -->
-<div id="maintenanceBanner" class="maint-banner">
-  <div class="maint-banner-track">
-    <span class="maint-banner-item">🚧&nbsp;&nbsp;BACK ONLINE — UNDER CONSTRUCTION&nbsp;&nbsp;🚧</span>
-    <span class="maint-banner-sep">|</span>
-    <span class="maint-banner-item">Now available at&nbsp;<strong>handymgr.app</strong></span>
-    <span class="maint-banner-sep">|</span>
-    <span class="maint-banner-item">⚠️&nbsp;App works but is undergoing maintenance — some features may not work as intended</span>
-    <span class="maint-banner-sep">|</span>
-    <span class="maint-banner-item">🔄&nbsp;Migration 80% complete — performance will improve once finished</span>
-    <span class="maint-banner-sep">|</span>
-    <span class="maint-banner-item">🚧&nbsp;&nbsp;BACK ONLINE — UNDER CONSTRUCTION&nbsp;&nbsp;🚧</span>
-    <span class="maint-banner-sep">|</span>
-    <span class="maint-banner-item">Now available at&nbsp;<strong>handymgr.app</strong></span>
-    <span class="maint-banner-sep">|</span>
-    <span class="maint-banner-item">⚠️&nbsp;App works but is undergoing maintenance — some features may not work as intended</span>
-    <span class="maint-banner-sep">|</span>
-    <span class="maint-banner-item">🔄&nbsp;Migration 80% complete — performance will improve once finished</span>
-    <span class="maint-banner-sep">|</span>
-  </div>
-</div>
-
 <!-- ==================== POST-LOGIN MAINTENANCE DIALOG ==================== -->
 <div id="maintDialog" class="maint-dialog-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="maintDialogTitle">
   <div class="maint-dialog-box">
@@ -208,25 +186,11 @@
     <span id="globalGroupName"></span>
     <button class="gf-clear" id="globalGroupClear" title="Clear filter">&times;</button>
   </span>
-  <button class="gf-load-btn" id="btnGlobalLoadGroups" title="Refresh property groups from API"><i class="fas fa-sync-alt"></i> Reload Groups</button>
+  <button class="gf-load-btn" id="btnGlobalLoadGroups" title="Sync latest property groups from AppFolio"><i class="fas fa-sync-alt"></i> Sync Groups</button>
 </div>
 
 <!-- Main Content -->
 <div class="main-content">
-
-<!-- CORS Banner — collapsible -->
-<div class="cors-banner" id="corsBanner">
-  <div class="cors-banner-header" id="corsBannerToggle" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
-    <span><strong><i class="fas fa-exclamation-triangle"></i> Connection Error</strong> — <span id="corsMsg" style="font-weight:normal;font-size:12px">The request was blocked.</span></span>
-    <i class="fas fa-chevron-down cors-toggle-icon" style="font-size:10px;transition:transform 0.2s"></i>
-  </div>
-  <div class="cors-banner-body" id="corsBannerBody" style="display:none;margin-top:10px;font-size:12px;">
-    <strong>How to fix:</strong><br>
-    <strong style="color:var(--accent)">A) CSP Blocked?</strong> Click <strong>"Allow additional resources"</strong> popup at top of page.<br>
-    <strong style="color:var(--accent)">B) 401/404?</strong> Redeploy proxy with correct credentials.<br>
-    <span id="corsDetail" style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);display:block;margin-top:6px"></span>
-  </div>
-</div>
 
 <section class="section active hm-neo-dashboard" id="sec-dashboard">
   <div id="filterIndicator" class="u-hidden"></div>

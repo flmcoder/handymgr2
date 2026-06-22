@@ -31,6 +31,26 @@ export const appfolioProperties = pgTable(
   }),
 );
 
+// AppFolio v0: Property Groups
+export const appfolioPropertyGroups = pgTable(
+  'appfolio_property_groups',
+  {
+    id: text('id').primaryKey(),
+    uuid: text('uuid'),
+    name: text('name').notNull(),
+    type: text('type'),
+    propertyIds: jsonb('property_ids').notNull().default([]),
+    rawJson: jsonb('raw_json').notNull().default({}),
+    lastUpdatedAt: timestamp('last_updated_at', { withTimezone: true }),
+    cachedAt: timestamp('cached_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    uuidIdx: index('appfolio_property_groups_uuid_idx').on(table.uuid),
+    nameIdx: index('appfolio_property_groups_name_idx').on(table.name),
+    updatedIdx: index('appfolio_property_groups_updated_idx').on(table.lastUpdatedAt),
+  }),
+);
+
 // AppFolio v0: Units (includes unit status tracking)
 export const appfolioUnits = pgTable(
   'appfolio_units',
