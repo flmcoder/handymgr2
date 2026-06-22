@@ -27,16 +27,33 @@ import {
 import {
   upsertProperties, upsertUnits, upsertWorkOrders,
   upsertEstimates, upsertTurnTracker,
+  upsertUnitInspections, upsertTenantDirectory, upsertUnitTurnDetails, upsertUnitVacancies,
 } from './repositories.ts';
 
 // ── Endpoint Definitions ─────────────────────────────────────────────────────
 
 interface EndpointDef {
   apiVersion: 'v0' | 'v2';
-  buildFirstUrl: (opts: { baseUrl: string; incrementalFrom: string | null }) => string;
+  buildFirstRequest?: (opts: { baseUrl: string; incrementalFrom: string | null }) => { url: string; method?: 'GET' | 'POST'; body?: any };
+  buildFirstUrl?: (opts: { baseUrl: string; incrementalFrom: string | null }) => string;
   /** Extract the rows array from the response payload. */
   extractRows: (data: any) => any[];
   upsert: (rows: any[]) => Promise<{ upserted: number; skipped: number }>;
+}
+
+function toIsoDate(value: Date | string | null | undefined): string {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+}
+
+function buildV2ReportRequest(report: string, body: Record<string, any>): { url: string; method: 'POST'; body: any } {
+  return {
+    url: `${afBaseUrl('v2')}/api/v2/reports/${report}.json`,
+    method: 'POST',
+    body,
+  };
 }
 
 const ENDPOINTS: Record<string, EndpointDef> = {
@@ -88,6 +105,73 @@ const ENDPOINTS: Record<string, EndpointDef> = {
     extractRows: (data) => data?.data ?? data?.results ?? [],
     upsert: upsertWorkOrders,
   },
+
+  'v2:unit_inspection': {
+    apiVersion: 'v2',
+    buildFirstRequest: ({ incrementalFrom }) => buildV2ReportRequest('unit_inspection', {
+      unit_visibility: 'active',
+      last_inspection_on_from: toIsoDate(incrementalFrom || new Date()),
+      include_blank_inspection_date: '1',
+      columns: [
+        'property', 'property_name', 'property_id', 'property_address', 'property_street', 'property_street2',
+        'property_city', 'property_state', 'property_zip', 'unit_name', 'last_inspection_date', 'tenant_name',
+        'tenant_primary_phone_number', 'move_in_date', 'move_out_date', 'unit_id', 'occupancy_id', 'rentable', 'unit_tags',
+      ],
+    }),
+    extractRows: (data) => data?.results ?? data?.data ?? [],
+    upsert: upsertUnitInspections,
+  },
+
+  'v2:tenant_directory': {
+    apiVersion: 'v2',
+    buildFirstRequest: ({ incrementalFrom }) => buildV2ReportRequest('tenant_directory', {
+      tenant_visibility: 'active',
+      tenant_statuses: ['0', '4'],
+      tenant_types: 'all',
+      property_visibility: 'active',
+      last_updated_at_from: toIsoDate(incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
+      columns: [
+        'property', 'property_name', 'property_id', 'property_address', 'unit', 'tenant', 'status', 'tenant_type',
+        'phone_numbers', 'emails', 'move_in', 'lease_to', 'rent', 'tenant_tags', 'tenant_agent', 'tenant_visibility',
+        'move_out', 'unit_tags', 'occupancy_id',
+      ],
+    }),
+    extractRows: (data) => data?.results ?? data?.data ?? [],
+    upsert: upsertTenantDirectory,
+  },
+
+  'v2:unit_turn_detail': {
+    apiVersion: 'v2',
+    buildFirstRequest: ({ incrementalFrom }) => buildV2ReportRequest('unit_turn_detail', {
+      property_visibility: 'active',
+      move_out_date_from: toIsoDate(incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
+      move_out_date_to: toIsoDate(new Date(Date.now() + 365 * 86400_000)),
+      unit_turn_status: 'All',
+      columns: [
+        'property', 'unit', 'unit_turn_id', 'notes', 'reference_user', 'move_out_date', 'turn_end_date',
+        'expected_move_in_date', 'target_days_to_complete', 'total_days_to_complete', 'labor_from_work_orders',
+        'purchase_orders_from_work_orders', 'billables_from_work_orders', 'inventory_from_work_orders', 'total_billed',
+        'property_id', 'unit_id',
+      ],
+    }),
+    extractRows: (data) => data?.results ?? data?.data ?? [],
+    upsert: upsertUnitTurnDetails,
+  },
+
+  'v2:unit_vacancy': {
+    apiVersion: 'v2',
+    buildFirstRequest: ({ incrementalFrom }) => buildV2ReportRequest('unit_vacancy', {
+      property_visibility: 'active',
+      vacant_from_from: toIsoDate(incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
+      vacant_from_to: toIsoDate(new Date()),
+      columns: [
+        'property', 'property_name', 'property_id', 'unit', 'unit_name', 'unit_id',
+        'vacant_from', 'available_on', 'market_rent', 'bedrooms', 'bathrooms', 'days_vacant', 'status',
+      ],
+    }),
+    extractRows: (data) => data?.results ?? data?.data ?? [],
+    upsert: upsertUnitVacancies,
+  },
 };
 
 // ── Sync Runner ───────────────────────────────────────────────────────────────
@@ -124,7 +208,12 @@ export async function runSync(opts: {
     filtersFingerprint,
   });
 
-  let url: string | null = def.buildFirstUrl({ baseUrl, incrementalFrom });
+  const firstRequest = def.buildFirstRequest
+    ? def.buildFirstRequest({ baseUrl, incrementalFrom })
+    : { url: def.buildFirstUrl?.({ baseUrl, incrementalFrom }) || '' };
+  let url: string | null = firstRequest.url || null;
+  let method: 'GET' | 'POST' = firstRequest.method || 'GET';
+  let body: any = firstRequest.body;
   let pageIndex = 0;
   let totalUpserted = 0;
   let totalSkipped = 0;
@@ -148,6 +237,8 @@ export async function runSync(opts: {
         apiVersion: def.apiVersion,
         runId: ctx.runId,
         attempt: pageIndex + 1,
+        method,
+        body: body ? JSON.stringify(body) : undefined,
       });
 
       // Archive raw response BEFORE any mapping.
@@ -197,6 +288,8 @@ export async function runSync(opts: {
           return { runId: ctx.runId, endpointKey, status: 'cursor_expired', pagesCompleted: pageIndex, rowsUpserted: totalUpserted, rowsSkipped: totalSkipped, error: 'v2_cursor_expired' };
         }
         url = def.apiVersion === 'v2' ? result.cursorOut : `${baseUrl}${result.cursorOut}`;
+        method = def.apiVersion === 'v2' ? 'POST' : 'GET';
+        body = undefined;
       } else {
         url = null; // Terminal — no more pages.
       }

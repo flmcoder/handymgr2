@@ -48,7 +48,17 @@ function stopOtpCountdown() {
 
 // ---- Dark/Light Mode ----
 var _manualTheme = null; // null = follow system, 'dark' or 'light' = manual override
-// Light theme by default — manual toggle only (no system detection)
+function applyInitialTheme() {
+  var savedTheme = '';
+  try {
+    savedTheme = String(localStorage.getItem('hm_theme') || '').toLowerCase();
+  } catch (e) { /* */ }
+
+  var isDark = savedTheme ? savedTheme === 'dark' : true;
+  _manualTheme = isDark ? 'dark' : 'light';
+  document.documentElement.classList.toggle('dark', isDark);
+}
+
 function toggleTheme() {
   var isDark = document.documentElement.classList.contains('dark');
   if (isDark) {
@@ -58,6 +68,7 @@ function toggleTheme() {
     document.documentElement.classList.add('dark');
     _manualTheme = 'dark';
   }
+  try { localStorage.setItem('hm_theme', _manualTheme); } catch (e) { /* */ }
   updateThemeIcon();
 }
 function updateThemeIcon() {
@@ -75,6 +86,7 @@ function updateThemeIcon() {
     vaultBtn.title = title;
   }
 }
+applyInitialTheme();
 
 // ---- Helpers ----
 function $(sel) { return document.querySelector(sel); }
@@ -597,7 +609,6 @@ function setResumeSessionState(sessionPayload) {
   hint.textContent = 'Authenticated ' + roleLabel + ' session available. Use Resume Previous Session to continue.';
   hint.style.display = '';
   resumeBtn.style.display = '';
-  resumeBtn.classList.remove('vault-advanced-toggle');
 }
 
 async function resumeFromPendingSession() {
@@ -2455,6 +2466,8 @@ function getLocalReadActionPath(action) {
     closed_turns: '/api/local/closed_turns',
     estimates: '/api/local/estimates',
     inspections: '/api/local/inspections',
+    upcoming_moveouts: '/api/local/upcoming_moveouts',
+    vacancies: '/api/local/vacancies',
     property_map: '/api/local/property_map',
     property_stats: '/api/local/property_stats'
   };
@@ -5288,7 +5301,7 @@ setVaultPanel('main');
       property_group_uuid: _siData.session.property_group_uuid,
       login_email: _siData.session.login_email,
     });
-    setVaultFeedback('Session verified. Click Resume Session.', 'info');
+    setVaultFeedback('Session verified. Click Resume Previous Session.', 'info');
   } catch (err) {
     // Token expired or invalid — clean up and show vault
     API_CREDS = null;
@@ -6971,18 +6984,11 @@ async function fetchRecentTasks() {
   }
 }
 
-// Vacancies (v2): Proxy ?action=v2_report&report=unit_vacancy — same source as Occupancy > Vacancies tab
+// Vacancies: local Postgres read (v2 unit_vacancy normalized table)
 async function fetchVacancyV2() {
   try {
-    var vacancyParams = { report: 'unit_vacancy' };
-    var vacancyScope = getEffectiveGroupUuid();
-    if (vacancyScope) {
-      vacancyParams.group_uuid = vacancyScope;
-      vacancyParams.property_group_uuid = vacancyScope;
-      vacancyParams.property_groups_ids = vacancyScope;
-    }
-    var data = await proxyAction('v2_report', vacancyParams);
-    var rows = getReportRows(data, 'results');
+    var data = await proxyAction('vacancies', {});
+    var rows = data.results || data.data || [];
     VACANCY_V2_UNITS = rows.map(function(r) {
       return {
         propertyId: r.property_id || r.propertyId || r.property_uuid || '',
@@ -7012,30 +7018,13 @@ function getVacancyV2InScope() {
   });
 }
 
-// Upcoming Move-Outs — primary: v2 tenant_directory (status "4" = Notice), fallback: legacy proxy action
+// Upcoming Move-Outs — local Postgres read (v2 tenant_directory normalized table)
 async function fetchUpcomingMoveouts() {
   setDataSourceState('upcoming_moveouts', 'loading', { error: '' });
   try {
     setApiStatus('loading', 'Loading upcoming move-outs…');
-    var moveoutParams = {
-      report: 'tenant_directory',
-      tenant_statuses: '4',
-      columns: 'tenant_name,property_name,unit_name,move_out_date,move_in_date,phone_numbers,emails,rent,property_id,unit_id,occupancy_id'
-    };
-    var moveoutScope = getEffectiveGroupUuid();
-    if (moveoutScope) {
-      moveoutParams.group_uuid = moveoutScope;
-      moveoutParams.property_group_uuid = moveoutScope;
-      moveoutParams.property_groups_ids = moveoutScope;
-    }
-    var data = await proxyAction('v2_report', moveoutParams);
-    var results = getReportRows(data, 'results');
-
-    // Keep compatibility fallback for non-v2 environments while still using live API.
-    if (!results.length) {
-      var legacyData = await proxyAction('upcoming_moveouts', { days: 60 });
-      results = legacyData.results || legacyData.data || [];
-    }
+    var data = await proxyAction('upcoming_moveouts', { days: 60 });
+    var results = data.results || data.data || [];
 
     UPCOMING_MOVEOUTS = results.map(function(t) {
       // Normalize both v2 (snake_case) and legacy field names

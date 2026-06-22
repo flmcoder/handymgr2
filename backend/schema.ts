@@ -107,6 +107,126 @@ export const appfolioEstimates = pgTable(
   }),
 );
 
+export const appfolioUnitInspections = pgTable(
+  'appfolio_unit_inspections',
+  {
+    inspectionId: text('inspection_id').primaryKey(),
+    propertyId: text('property_id'),
+    propertyName: text('property_name'),
+    unitId: text('unit_id'),
+    unitName: text('unit_name'),
+    lastInspectionDate: timestamp('last_inspection_date', { withTimezone: true }),
+    tenantName: text('tenant_name'),
+    tenantPrimaryPhoneNumber: text('tenant_primary_phone_number'),
+    moveInDate: timestamp('move_in_date', { withTimezone: true }),
+    moveOutDate: timestamp('move_out_date', { withTimezone: true }),
+    rentable: text('rentable'),
+    occupancyId: text('occupancy_id'),
+    unitTags: text('unit_tags'),
+    rawJson: jsonb('raw_json').notNull().default({}),
+    lastUpdatedAt: timestamp('last_updated_at', { withTimezone: true }),
+    cachedAt: timestamp('cached_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    propertyIdx: index('appfolio_unit_inspections_property_idx').on(table.propertyId),
+    unitIdx: index('appfolio_unit_inspections_unit_idx').on(table.unitId),
+    inspectionIdx: index('appfolio_unit_inspections_inspection_idx').on(table.lastInspectionDate),
+  }),
+);
+
+export const appfolioTenantDirectory = pgTable(
+  'appfolio_tenant_directory',
+  {
+    recordId: text('record_id').primaryKey(),
+    propertyId: text('property_id'),
+    propertyName: text('property_name'),
+    unitId: text('unit_id'),
+    unitName: text('unit_name'),
+    tenantName: text('tenant_name'),
+    status: text('status'),
+    tenantType: text('tenant_type'),
+    phoneNumbers: text('phone_numbers'),
+    emails: text('emails'),
+    moveInDate: timestamp('move_in_date', { withTimezone: true }),
+    leaseTo: timestamp('lease_to', { withTimezone: true }),
+    moveOutDate: timestamp('move_out_date', { withTimezone: true }),
+    rent: text('rent'),
+    tenantTags: text('tenant_tags'),
+    tenantAgent: text('tenant_agent'),
+    tenantVisibility: text('tenant_visibility'),
+    occupancyId: text('occupancy_id'),
+    unitTags: text('unit_tags'),
+    rawJson: jsonb('raw_json').notNull().default({}),
+    lastUpdatedAt: timestamp('last_updated_at', { withTimezone: true }),
+    cachedAt: timestamp('cached_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    propertyIdx: index('appfolio_tenant_directory_property_idx').on(table.propertyId),
+    unitIdx: index('appfolio_tenant_directory_unit_idx').on(table.unitId),
+    moveOutIdx: index('appfolio_tenant_directory_move_out_idx').on(table.moveOutDate),
+  }),
+);
+
+export const appfolioUnitTurnDetails = pgTable(
+  'appfolio_unit_turn_details',
+  {
+    turnId: text('turn_id').primaryKey(),
+    propertyId: text('property_id'),
+    propertyName: text('property_name'),
+    unitId: text('unit_id'),
+    unitName: text('unit_name'),
+    notes: text('notes'),
+    referenceUser: text('reference_user'),
+    moveOutDate: timestamp('move_out_date', { withTimezone: true }),
+    turnEndDate: timestamp('turn_end_date', { withTimezone: true }),
+    expectedMoveInDate: timestamp('expected_move_in_date', { withTimezone: true }),
+    targetDaysToComplete: integer('target_days_to_complete'),
+    totalDaysToComplete: integer('total_days_to_complete'),
+    laborFromWorkOrders: text('labor_from_work_orders'),
+    purchaseOrdersFromWorkOrders: text('purchase_orders_from_work_orders'),
+    billablesFromWorkOrders: text('billables_from_work_orders'),
+    inventoryFromWorkOrders: text('inventory_from_work_orders'),
+    totalBilled: text('total_billed'),
+    unitTurnStatus: text('unit_turn_status'),
+    propertyVisibility: text('property_visibility'),
+    rawJson: jsonb('raw_json').notNull().default({}),
+    lastUpdatedAt: timestamp('last_updated_at', { withTimezone: true }),
+    cachedAt: timestamp('cached_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    propertyIdx: index('appfolio_unit_turn_details_property_idx').on(table.propertyId),
+    unitIdx: index('appfolio_unit_turn_details_unit_idx').on(table.unitId),
+    moveOutIdx: index('appfolio_unit_turn_details_move_out_idx').on(table.moveOutDate),
+  }),
+);
+
+export const appfolioUnitVacancies = pgTable(
+  'appfolio_unit_vacancies',
+  {
+    recordId: text('record_id').primaryKey(),
+    propertyId: text('property_id'),
+    propertyName: text('property_name'),
+    unitId: text('unit_id'),
+    unitName: text('unit_name'),
+    vacantFrom: timestamp('vacant_from', { withTimezone: true }),
+    availableOn: timestamp('available_on', { withTimezone: true }),
+    marketRent: text('market_rent'),
+    bedrooms: text('bedrooms'),
+    bathrooms: text('bathrooms'),
+    daysVacant: integer('days_vacant'),
+    status: text('status'),
+    propertyVisibility: text('property_visibility'),
+    rawJson: jsonb('raw_json').notNull().default({}),
+    lastUpdatedAt: timestamp('last_updated_at', { withTimezone: true }),
+    cachedAt: timestamp('cached_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    propertyIdx: index('appfolio_unit_vacancies_property_idx').on(table.propertyId),
+    unitIdx: index('appfolio_unit_vacancies_unit_idx').on(table.unitId),
+    vacantFromIdx: index('appfolio_unit_vacancies_vacant_from_idx').on(table.vacantFrom),
+  }),
+);
+
 // UUID-based unit turn tracking
 export const unitTurnTracker = pgTable(
   'unit_turn_tracker',

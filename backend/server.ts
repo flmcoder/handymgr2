@@ -750,6 +750,20 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
         t.closed_at,
         t.created_at,
         t.updated_at,
+        d.notes as turn_notes,
+        d.reference_user as reference_user,
+        d.move_out_date as detail_move_out_date,
+        d.turn_end_date as turn_end_date,
+        d.expected_move_in_date as expected_move_in_date,
+        d.target_days_to_complete as target_days_to_complete,
+        d.total_days_to_complete as total_days_to_complete,
+        d.labor_from_work_orders as labor_from_work_orders,
+        d.purchase_orders_from_work_orders as purchase_orders_from_work_orders,
+        d.billables_from_work_orders as billables_from_work_orders,
+        d.inventory_from_work_orders as inventory_from_work_orders,
+        d.total_billed as total_billed,
+        d.unit_turn_status as unit_turn_status,
+        ui.last_inspection_date as inspection_date,
         coalesce((
           select jsonb_object_agg(m.milestone_key, jsonb_build_object(
             'date', m.milestone_date,
@@ -771,16 +785,86 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
           where w.tracking_uuid = t.tracking_uuid and coalesce(w.removed, false) = false
         ), '[]'::jsonb) as linked_work_orders
       from unit_turn_tracker t
+      left join appfolio_unit_turn_details d
+        on d.turn_id = coalesce(t.unit_turn_id, t.turn_key)
+      left join appfolio_unit_inspections ui
+        on ui.unit_id = t.unit_id and ui.property_id = t.property_id
       where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
       order by coalesce(t.updated_at, t.created_at) desc
       limit ${limit}
     `;
 
-    const filtered = (rows as any[]).filter((row) => {
+    let filtered = (rows as any[]).filter((row) => {
       if (!statusFilter) return true;
       const status = String(row?.status || '').toLowerCase();
       return status.includes(statusFilter);
     });
+
+    if (filtered.length === 0) {
+      const detailRows = await queryClient`
+        select
+          d.turn_id,
+          d.property_id,
+          d.property_name,
+          d.unit_id,
+          d.unit_name,
+          d.notes,
+          d.reference_user,
+          d.move_out_date,
+          d.turn_end_date,
+          d.expected_move_in_date,
+          d.target_days_to_complete,
+          d.total_days_to_complete,
+          d.labor_from_work_orders,
+          d.purchase_orders_from_work_orders,
+          d.billables_from_work_orders,
+          d.inventory_from_work_orders,
+          d.total_billed,
+          d.unit_turn_status,
+          d.cached_at,
+          d.last_updated_at
+        from appfolio_unit_turn_details d
+        where coalesce(d.last_updated_at, d.cached_at, now()) >= now() - (${days}::int * interval '1 day')
+        order by coalesce(d.move_out_date, d.cached_at, d.last_updated_at) desc
+        limit ${limit}
+      `;
+
+      filtered = (detailRows as any[]).map((row) => ({
+        tracking_uuid: String(row.turn_id || ''),
+        tracking_code: null,
+        turn_key: String(row.turn_id || ''),
+        unit_turn_id: String(row.turn_id || ''),
+        unit_id: String(row.unit_id || ''),
+        property_id: String(row.property_id || ''),
+        unit_name: String(row.unit_name || ''),
+        property_name: String(row.property_name || ''),
+        status: String(row.unit_turn_status || 'In Progress'),
+        confidence_score: null,
+        confidence_label: null,
+        source_flags: {},
+        metadata: { source: 'unit_turn_detail' },
+        closed_at: row.turn_end_date,
+        created_at: row.cached_at,
+        updated_at: row.last_updated_at || row.cached_at,
+        detail_move_out_date: row.move_out_date,
+        expected_move_in_date: row.expected_move_in_date,
+        turn_end_date: row.turn_end_date,
+        target_days_to_complete: row.target_days_to_complete,
+        total_days_to_complete: row.total_days_to_complete,
+        labor_from_work_orders: row.labor_from_work_orders,
+        purchase_orders_from_work_orders: row.purchase_orders_from_work_orders,
+        billables_from_work_orders: row.billables_from_work_orders,
+        inventory_from_work_orders: row.inventory_from_work_orders,
+        total_billed: row.total_billed,
+        unit_turn_status: row.unit_turn_status,
+        reference_user: row.reference_user,
+        milestones: {},
+        linked_work_orders: [],
+      })).filter((row) => {
+        if (!statusFilter) return true;
+        return String(row.status || '').toLowerCase().includes(statusFilter);
+      });
+    }
 
     const results = filtered.map((row) => ({
       tracking_uuid: row.tracking_uuid,
@@ -799,6 +883,20 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
       closed_at: asIso(row.closed_at),
       created_at: asIso(row.created_at),
       updated_at: asIso(row.updated_at),
+      move_out_date: asIso(row.detail_move_out_date) || asIso(row.metadata?.move_out_date),
+      move_in_date: asIso(row.expected_move_in_date) || asIso(row.metadata?.move_in_date),
+      inspection_date: asIso(row.inspection_date) || asIso(row.metadata?.inspection_date),
+      expected_move_in_date: asIso(row.expected_move_in_date),
+      turn_end_date: asIso(row.turn_end_date),
+      target_days_to_complete: Number(row.target_days_to_complete || 0) || 0,
+      total_days_to_complete: Number(row.total_days_to_complete || 0) || 0,
+      labor_from_work_orders: String(row.labor_from_work_orders || ''),
+      purchase_orders_from_work_orders: String(row.purchase_orders_from_work_orders || ''),
+      billables_from_work_orders: String(row.billables_from_work_orders || ''),
+      inventory_from_work_orders: String(row.inventory_from_work_orders || ''),
+      total_billed: String(row.total_billed || ''),
+      unit_turn_status: String(row.unit_turn_status || ''),
+      reference_user: String(row.reference_user || ''),
       milestones: row.milestones || {},
       linked_work_orders: Array.isArray(row.linked_work_orders) ? row.linked_work_orders : [],
       _source: 'postgres_local',
@@ -1259,44 +1357,90 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 6000, 15000);
     const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
+    let rows = propertyGroupId
       ? await queryClient`
         select
-          u.unit_id,
-          u.property_id,
-          p.name as property_name,
-          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
-          coalesce(nullif(u.raw_json->>'last_inspection_date',''), nullif(u.raw_json->>'LastInspectionDate','')) as last_inspection_date,
-          coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
-          coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as tenant_primary_phone_number,
-          coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
-          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
-          coalesce(nullif(u.raw_json->>'rentable',''), nullif(u.raw_json->>'Rentable','')) as rentable,
-          coalesce(u.raw_json->>'unit_tags', u.raw_json->>'UnitTags', '') as unit_tags
-        from appfolio_units u
-        inner join appfolio_properties p on p.id = u.property_id
+          i.inspection_id,
+          i.property_id,
+          coalesce(i.property_name, p.name) as property_name,
+          i.unit_id,
+          coalesce(i.unit_name, u.name, '') as unit_name,
+          i.last_inspection_date,
+          i.tenant_name,
+          i.tenant_primary_phone_number,
+          i.move_in_date,
+          i.move_out_date,
+          i.rentable,
+          i.unit_tags
+        from appfolio_unit_inspections i
+        left join appfolio_properties p on p.id = i.property_id
+        left join appfolio_units u on u.unit_id = i.unit_id
         where p.property_group_id = ${propertyGroupId}
-        order by p.name asc, u.name asc
+        order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
         limit ${limit}
       `
       : await queryClient`
         select
-          u.unit_id,
-          u.property_id,
-          p.name as property_name,
-          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
-          coalesce(nullif(u.raw_json->>'last_inspection_date',''), nullif(u.raw_json->>'LastInspectionDate','')) as last_inspection_date,
-          coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
-          coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as tenant_primary_phone_number,
-          coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
-          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
-          coalesce(nullif(u.raw_json->>'rentable',''), nullif(u.raw_json->>'Rentable','')) as rentable,
-          coalesce(u.raw_json->>'unit_tags', u.raw_json->>'UnitTags', '') as unit_tags
-        from appfolio_units u
-        inner join appfolio_properties p on p.id = u.property_id
-        order by p.name asc, u.name asc
+          i.inspection_id,
+          i.property_id,
+          coalesce(i.property_name, p.name) as property_name,
+          i.unit_id,
+          coalesce(i.unit_name, u.name, '') as unit_name,
+          i.last_inspection_date,
+          i.tenant_name,
+          i.tenant_primary_phone_number,
+          i.move_in_date,
+          i.move_out_date,
+          i.rentable,
+          i.unit_tags
+        from appfolio_unit_inspections i
+        left join appfolio_properties p on p.id = i.property_id
+        left join appfolio_units u on u.unit_id = i.unit_id
+        order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
         limit ${limit}
       `;
+
+    if ((rows as any[]).length === 0) {
+      rows = propertyGroupId
+        ? await queryClient`
+          select
+            u.unit_id,
+            u.property_id,
+            p.name as property_name,
+            coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+            coalesce(nullif(u.raw_json->>'last_inspection_date',''), nullif(u.raw_json->>'LastInspectionDate','')) as last_inspection_date,
+            coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
+            coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as tenant_primary_phone_number,
+            coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
+            coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
+            coalesce(nullif(u.raw_json->>'rentable',''), nullif(u.raw_json->>'Rentable','')) as rentable,
+            coalesce(u.raw_json->>'unit_tags', u.raw_json->>'UnitTags', '') as unit_tags
+          from appfolio_units u
+          inner join appfolio_properties p on p.id = u.property_id
+          where p.property_group_id = ${propertyGroupId}
+          order by p.name asc, u.name asc
+          limit ${limit}
+        `
+        : await queryClient`
+          select
+            u.unit_id,
+            u.property_id,
+            p.name as property_name,
+            coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+            coalesce(nullif(u.raw_json->>'last_inspection_date',''), nullif(u.raw_json->>'LastInspectionDate','')) as last_inspection_date,
+            coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
+            coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as tenant_primary_phone_number,
+            coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
+            coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
+            coalesce(nullif(u.raw_json->>'rentable',''), nullif(u.raw_json->>'Rentable','')) as rentable,
+            coalesce(u.raw_json->>'unit_tags', u.raw_json->>'UnitTags', '') as unit_tags
+          from appfolio_units u
+          inner join appfolio_properties p on p.id = u.property_id
+          order by p.name asc, u.name asc
+          limit ${limit}
+        `;
+
+    }
 
     const results = (rows as any[]).map((row) => ({
       property_name: String(row.property_name || ''),
@@ -1325,44 +1469,90 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
     const days = parseDays(req.query.days, 60, 3650);
     const limit = parseLimit(req.query.limit, 2500, 10000);
     const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
+    let rows = propertyGroupId
       ? await queryClient`
         select
-          u.unit_id,
-          u.property_id,
-          p.name as property_name,
-          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
-          coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
-          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
-          coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
-          coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as phone_numbers,
-          coalesce(nullif(u.raw_json->>'tenant_email',''), nullif(u.raw_json->>'TenantEmail','')) as emails,
-          coalesce(nullif(u.raw_json->>'rent',''), nullif(u.raw_json->>'Rent',''), nullif(u.raw_json->>'market_rent','')) as rent,
-          coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id
-        from appfolio_units u
-        inner join appfolio_properties p on p.id = u.property_id
+          t.record_id,
+          t.property_id,
+          coalesce(t.property_name, p.name) as property_name,
+          t.unit_id,
+          coalesce(t.unit_name, u.name, '') as unit_name,
+          t.tenant_name,
+          t.move_out_date,
+          t.move_in_date,
+          t.phone_numbers,
+          t.emails,
+          t.rent,
+          t.occupancy_id
+        from appfolio_tenant_directory t
+        left join appfolio_properties p on p.id = t.property_id
+        left join appfolio_units u on u.unit_id = t.unit_id
         where p.property_group_id = ${propertyGroupId}
-        order by p.name asc, u.name asc
+        order by coalesce(t.move_out_date, t.cached_at) asc, coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc
         limit ${limit}
       `
       : await queryClient`
         select
-          u.unit_id,
-          u.property_id,
-          p.name as property_name,
-          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
-          coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
-          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
-          coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
-          coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as phone_numbers,
-          coalesce(nullif(u.raw_json->>'tenant_email',''), nullif(u.raw_json->>'TenantEmail','')) as emails,
-          coalesce(nullif(u.raw_json->>'rent',''), nullif(u.raw_json->>'Rent',''), nullif(u.raw_json->>'market_rent','')) as rent,
-          coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id
-        from appfolio_units u
-        inner join appfolio_properties p on p.id = u.property_id
-        order by p.name asc, u.name asc
+          t.record_id,
+          t.property_id,
+          coalesce(t.property_name, p.name) as property_name,
+          t.unit_id,
+          coalesce(t.unit_name, u.name, '') as unit_name,
+          t.tenant_name,
+          t.move_out_date,
+          t.move_in_date,
+          t.phone_numbers,
+          t.emails,
+          t.rent,
+          t.occupancy_id
+        from appfolio_tenant_directory t
+        left join appfolio_properties p on p.id = t.property_id
+        left join appfolio_units u on u.unit_id = t.unit_id
+        order by coalesce(t.move_out_date, t.cached_at) asc, coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc
         limit ${limit}
       `;
+
+    if ((rows as any[]).length === 0) {
+      rows = propertyGroupId
+        ? await queryClient`
+          select
+            u.unit_id,
+            u.property_id,
+            p.name as property_name,
+            coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+            coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
+            coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
+            coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
+            coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as phone_numbers,
+            coalesce(nullif(u.raw_json->>'tenant_email',''), nullif(u.raw_json->>'TenantEmail','')) as emails,
+            coalesce(nullif(u.raw_json->>'rent',''), nullif(u.raw_json->>'Rent',''), nullif(u.raw_json->>'market_rent','')) as rent,
+            coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id
+          from appfolio_units u
+          inner join appfolio_properties p on p.id = u.property_id
+          where p.property_group_id = ${propertyGroupId}
+          order by p.name asc, u.name asc
+          limit ${limit}
+        `
+        : await queryClient`
+          select
+            u.unit_id,
+            u.property_id,
+            p.name as property_name,
+            coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+            coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
+            coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
+            coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
+            coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as phone_numbers,
+            coalesce(nullif(u.raw_json->>'tenant_email',''), nullif(u.raw_json->>'TenantEmail','')) as emails,
+            coalesce(nullif(u.raw_json->>'rent',''), nullif(u.raw_json->>'Rent',''), nullif(u.raw_json->>'market_rent','')) as rent,
+            coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id
+          from appfolio_units u
+          inner join appfolio_properties p on p.id = u.property_id
+          order by p.name asc, u.name asc
+          limit ${limit}
+        `;
+
+    }
 
     const now = Date.now();
     const maxMs = now + (days * 86400000);
@@ -1398,42 +1588,87 @@ app.get('/api/local/vacancies', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 5000, 15000);
     const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
+    let rows = propertyGroupId
       ? await queryClient`
         select
-          u.unit_id,
-          u.property_id,
-          p.name as property_name,
-          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
-          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as vacant_from,
-          coalesce(nullif(u.raw_json->>'market_rent',''), nullif(u.raw_json->>'MarketRent',''), nullif(u.raw_json->>'rent','')) as market_rent,
-          coalesce(nullif(u.raw_json->>'bedrooms',''), nullif(u.raw_json->>'Bedrooms','')) as bedrooms,
+          v.record_id,
+          v.property_id,
+          coalesce(v.property_name, p.name) as property_name,
+          v.unit_id,
+          coalesce(v.unit_name, u.name, '') as unit_name,
+          v.vacant_from,
+          v.market_rent,
+          v.bedrooms,
+          v.days_vacant,
+          v.status,
           p.property_group_id,
           p.raw_json
-        from appfolio_units u
-        inner join appfolio_properties p on p.id = u.property_id
+        from appfolio_unit_vacancies v
+        left join appfolio_properties p on p.id = v.property_id
+        left join appfolio_units u on u.unit_id = v.unit_id
         where p.property_group_id = ${propertyGroupId}
-          and lower(coalesce(u.status, '')) like '%vacant%'
-        order by p.name asc, u.name asc
+        order by coalesce(v.vacant_from, v.cached_at) asc, coalesce(v.property_name, p.name) asc, coalesce(v.unit_name, u.name) asc
         limit ${limit}
       `
       : await queryClient`
         select
-          u.unit_id,
-          u.property_id,
-          p.name as property_name,
-          coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
-          coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as vacant_from,
-          coalesce(nullif(u.raw_json->>'market_rent',''), nullif(u.raw_json->>'MarketRent',''), nullif(u.raw_json->>'rent','')) as market_rent,
-          coalesce(nullif(u.raw_json->>'bedrooms',''), nullif(u.raw_json->>'Bedrooms','')) as bedrooms,
+          v.record_id,
+          v.property_id,
+          coalesce(v.property_name, p.name) as property_name,
+          v.unit_id,
+          coalesce(v.unit_name, u.name, '') as unit_name,
+          v.vacant_from,
+          v.market_rent,
+          v.bedrooms,
+          v.days_vacant,
+          v.status,
           p.property_group_id,
           p.raw_json
-        from appfolio_units u
-        inner join appfolio_properties p on p.id = u.property_id
-        where lower(coalesce(u.status, '')) like '%vacant%'
-        order by p.name asc, u.name asc
+        from appfolio_unit_vacancies v
+        left join appfolio_properties p on p.id = v.property_id
+        left join appfolio_units u on u.unit_id = v.unit_id
+        order by coalesce(v.vacant_from, v.cached_at) asc, coalesce(v.property_name, p.name) asc, coalesce(v.unit_name, u.name) asc
         limit ${limit}
       `;
+
+    if ((rows as any[]).length === 0) {
+      rows = propertyGroupId
+        ? await queryClient`
+          select
+            u.unit_id,
+            u.property_id,
+            p.name as property_name,
+            coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+            coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as vacant_from,
+            coalesce(nullif(u.raw_json->>'market_rent',''), nullif(u.raw_json->>'MarketRent',''), nullif(u.raw_json->>'rent','')) as market_rent,
+            coalesce(nullif(u.raw_json->>'bedrooms',''), nullif(u.raw_json->>'Bedrooms','')) as bedrooms,
+            p.property_group_id,
+            p.raw_json
+          from appfolio_units u
+          inner join appfolio_properties p on p.id = u.property_id
+          where p.property_group_id = ${propertyGroupId}
+            and lower(coalesce(u.status, '')) like '%vacant%'
+          order by p.name asc, u.name asc
+          limit ${limit}
+        `
+        : await queryClient`
+          select
+            u.unit_id,
+            u.property_id,
+            p.name as property_name,
+            coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
+            coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as vacant_from,
+            coalesce(nullif(u.raw_json->>'market_rent',''), nullif(u.raw_json->>'MarketRent',''), nullif(u.raw_json->>'rent','')) as market_rent,
+            coalesce(nullif(u.raw_json->>'bedrooms',''), nullif(u.raw_json->>'Bedrooms','')) as bedrooms,
+            p.property_group_id,
+            p.raw_json
+          from appfolio_units u
+          inner join appfolio_properties p on p.id = u.property_id
+          where lower(coalesce(u.status, '')) like '%vacant%'
+          order by p.name asc, u.name asc
+          limit ${limit}
+        `;
+    }
 
     const results = (rows as any[]).map((row) => {
       const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
@@ -1678,7 +1913,7 @@ function startRecurringSyncScheduler(): void {
   if (!enabled) return;
 
   const intervalMinutes = Math.max(5, Number(process.env.SYNC_SCHEDULER_INTERVAL_MINUTES || '30') || 30);
-  const endpoints = String(process.env.SYNC_SCHEDULER_ENDPOINTS || 'v0:properties,v0:property_groups,v0:units,v0:work_orders')
+  const endpoints = String(process.env.SYNC_SCHEDULER_ENDPOINTS || 'v0:properties,v0:property_groups,v0:units,v0:work_orders,v2:tenant_directory,v2:unit_inspection,v2:unit_turn_detail,v2:unit_vacancy')
     .split(',')
     .map((value) => String(value || '').trim())
     .filter(Boolean);

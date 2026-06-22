@@ -107,29 +107,29 @@
   --error-bg: #ffeae0;
   --error-border: #ffb8a3;
 
-  /* Unlock screen coordinated blue palette */
-  --vault-grad-start: #0c5a7c;
-  --vault-grad-mid: #0090c0;
-  --vault-grad-end: #5ec8e8;
-  --vault-surface: rgba(15, 23, 42, 0.88);
-  --vault-surface-border: rgba(125, 211, 252, 0.38);
-  --vault-text: #eff6ff;
-  --vault-text-muted: #dbeafe;
-  --vault-input-bg: rgba(15, 23, 42, 0.62);
-  --vault-input-border: rgba(125, 211, 252, 0.34);
-  --vault-accent: #bae6fd;
-  --vault-accent-strong: #00adea;
-  --vault-accent-alt: #0097cf;
+  /* Unlock screen coordinated blue palette (light mode) */
+  --vault-grad-start: #d9f0ff;
+  --vault-grad-mid: #b8e6ff;
+  --vault-grad-end: #88d6fb;
+  --vault-surface: rgba(255, 255, 255, 0.93);
+  --vault-surface-border: rgba(58, 131, 197, 0.26);
+  --vault-text: #0f2740;
+  --vault-text-muted: #44617f;
+  --vault-input-bg: rgba(240, 248, 255, 0.95);
+  --vault-input-border: rgba(73, 139, 196, 0.36);
+  --vault-accent: #0f6fab;
+  --vault-accent-strong: #1f78d4;
+  --vault-accent-alt: #1762b0;
   --vault-accent-dim: rgba(0, 173, 234, 0.22);
   --vault-tooltip-bg: rgba(2, 6, 23, 0.95);
-  --vault-danger: #fecaca;
-  --vault-danger-bg: rgba(127, 29, 29, 0.48);
+  --vault-danger: #991b1b;
+  --vault-danger-bg: rgba(239, 68, 68, 0.16);
 
   /* Vault PM toggle */
-  --vault-pm-bg: linear-gradient(180deg, #1e6dff, #1554d1);
-  --vault-pm-border: #3f86ff;
-  --vault-pm-text: #ecf4ff;
-  --vault-pm-shadow: rgba(30, 109, 255, 0.32);
+  --vault-pm-bg: linear-gradient(180deg, #3f86ff, #2563eb);
+  --vault-pm-border: #5b9dff;
+  --vault-pm-text: #f4f9ff;
+  --vault-pm-shadow: rgba(37, 99, 235, 0.28);
   --vault-pm-hover-text: #ffffff;
   --vault-pm-hover-border: #7eaeff;
   --vault-pm-hover-shadow: rgba(30, 109, 255, 0.42);
@@ -173,10 +173,10 @@ html.dark {
   --vault-grad-start: #0a5f84;
   --vault-grad-mid: #0993bf;
   --vault-grad-end: #4ab3da;
-  --vault-surface: rgba(18, 40, 56, 0.58);
+  --vault-surface: rgba(18, 40, 56, 0.78);
   --vault-surface-border: rgba(170, 224, 246, 0.48);
   --vault-text: #eff6ff;
-  --vault-text-muted: #e1f2ff;
+  --vault-text-muted: #cbe3f9;
   --vault-input-bg: rgba(9, 30, 45, 0.5);
   --vault-input-border: rgba(170, 224, 246, 0.42);
   --vault-accent: #d8f2ff;
@@ -1231,7 +1231,7 @@ html.dark .bento-pill:hover {
   border: 1px solid var(--vault-surface-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
-  padding: clamp(18px, 3vw, 34px);
+  padding: clamp(14px, 2.4vw, 24px);
   color: var(--vault-text);
   position: relative;
   z-index: 2;
@@ -1261,10 +1261,10 @@ html.dark .bento-pill:hover {
 .vault-logo {
   display: block;
   max-width: 360px;
-  max-height: 84px;
+  max-height: 70px;
   width: 100%;
   height: auto;
-  margin: 0 auto 16px;
+  margin: 0 auto 10px;
   border-radius: var(--radius);
   object-fit: contain;
 }
@@ -1292,12 +1292,12 @@ html.dark .bento-pill:hover {
   letter-spacing: 0.12em;
   color: color-mix(in srgb, var(--vault-text) 82%, var(--vault-text-muted));
   text-align: center;
-  margin-bottom: 18px;
+  margin-bottom: 10px;
   line-height: 1.5;
 }
 .vault-user-hint {
-  margin: -4px 0 12px;
-  padding: 8px 10px;
+  margin: 0 0 10px;
+  padding: 7px 10px;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--vault-accent) 44%, transparent);
   background: color-mix(in srgb, var(--vault-accent-dim) 80%, transparent);
@@ -1308,12 +1308,12 @@ html.dark .bento-pill:hover {
 }
 .vault-input-wrap {
   position: relative;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 .vault-input {
   width: 100%;
-  min-height: 48px;
-  padding: 14px 48px 14px 16px;
+  min-height: 44px;
+  padding: 12px 44px 12px 14px;
   background: var(--vault-input-bg);
   border: 1px solid var(--vault-input-border);
   border-radius: var(--radius);
@@ -1321,16 +1321,20 @@ html.dark .bento-pill:hover {
   font-family: var(--font-mono);
   font-size: 16px;
   letter-spacing: 2px;
-  transition: var(--transition);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
-.vault-input:focus { outline: none; border-color: var(--vault-accent-strong); box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.22); }
+.vault-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--vault-accent-strong) 86%, white 14%);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vault-accent-strong) 28%, transparent), 0 6px 14px color-mix(in srgb, var(--vault-accent-strong) 24%, transparent);
+}
 .vault-input::placeholder { letter-spacing: 0; color: var(--vault-text-muted); font-size: 13px; }
 .vault-input.vhost-input { letter-spacing: 0; font-size: 16px; }
 .vault-toggle-vis {
   position: absolute;
   right: 12px; top: 50%; transform: translateY(-50%);
   background: none; border: none;
-  color: var(--vault-text-muted);
+  color: color-mix(in srgb, var(--vault-text-muted) 86%, var(--vault-text));
   cursor: pointer;
   font-size: 16px;
   width: 36px;
@@ -1338,28 +1342,35 @@ html.dark .bento-pill:hover {
   border-radius: 8px;
   padding: 0;
 }
-.vault-toggle-vis:hover { color: var(--vault-text); background: var(--vault-accent-dim); }
+.vault-toggle-vis:hover { color: var(--vault-text); background: color-mix(in srgb, var(--vault-accent-dim) 68%, transparent); }
 .vault-unlock-btn {
   width: 100%;
-  min-height: 48px;
-  padding: 14px;
+  min-height: 44px;
+  padding: 12px;
   background: linear-gradient(135deg, var(--vault-accent-strong), var(--vault-accent-alt));
   color: #eff6ff;
-  border: none;
+  border: 1px solid color-mix(in srgb, var(--vault-accent-strong) 72%, white 28%);
   border-radius: var(--radius);
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
   text-transform: uppercase;
   letter-spacing: 1px;
-  transition: var(--transition);
+  transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--vault-accent-strong) 30%, transparent);
 }
-.vault-unlock-btn:hover { filter: brightness(1.1); }
+.vault-unlock-btn:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow: 0 11px 24px color-mix(in srgb, var(--vault-accent-strong) 42%, transparent);
+}
 .vault-unlock-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   filter: none;
+  transform: none;
+  box-shadow: none;
 }
 .vault-error {
   display: none;
@@ -1384,7 +1395,7 @@ html.dark .bento-pill:hover {
   border: 1px solid rgba(96, 165, 250, 0.24);
 }
 .vault-footer {
-  margin-top: 20px;
+  margin-top: 14px;
   text-align: center;
   font-size: 10px;
   color: var(--vault-text-muted);
@@ -1396,8 +1407,8 @@ html.dark .bento-pill:hover {
   font-size: 11px;
   color: var(--vault-text-muted);
   font-family: var(--font-mono);
-  margin-top: -8px;
-  margin-bottom: 16px;
+  margin-top: -3px;
+  margin-bottom: 10px;
   text-align: center;
 }
 .vault-vhost-hint code {
@@ -1409,16 +1420,16 @@ html.dark .bento-pill:hover {
 .vault-panel.hidden { display: none; }
 .vault-config-btn {
   position: absolute;
-  top: 14px;
-  right: 14px;
-  width: 38px;
-  height: 38px;
+  top: 10px;
+  right: 10px;
+  width: 34px;
+  height: 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   border: 1px solid var(--vault-input-border);
-  background: rgba(15, 23, 42, 0.72);
+  background: color-mix(in srgb, var(--vault-input-bg) 90%, transparent);
   color: var(--vault-text-muted);
   cursor: pointer;
   transition: var(--transition);
@@ -1426,12 +1437,12 @@ html.dark .bento-pill:hover {
 }
 .vault-theme-btn {
   right: auto;
-  left: 14px;
+  left: 10px;
 }
 .vault-config-btn:hover {
   color: var(--vault-accent);
   border-color: var(--vault-accent-strong);
-  background: rgba(15, 23, 42, 0.9);
+  background: color-mix(in srgb, var(--vault-input-bg) 96%, transparent);
 }
 .vault-config-btn.open {
   color: var(--vault-accent);
@@ -1477,19 +1488,13 @@ html.dark .bento-pill:hover {
 .vault-advanced-toggle i { transition: transform 0.2s ease; font-size: 10px; }
 .vault-advanced-toggle.open i { transform: rotate(180deg); }
 .vault-resume-toggle {
-  background: linear-gradient(145deg, color-mix(in srgb, var(--vault-accent-alt) 76%, #0b1221) 0%, color-mix(in srgb, var(--vault-accent-strong) 82%, #0b1221) 100%);
-  border-color: color-mix(in srgb, var(--vault-accent-strong) 72%, white 28%);
-  color: #eff6ff;
-  margin-bottom: 14px;
-  box-shadow: 0 8px 18px rgba(2, 132, 199, 0.34);
-  order: -1;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--vault-accent-strong) 94%, #ffffff 6%), color-mix(in srgb, var(--vault-accent-alt) 96%, #ffffff 4%));
+  border-color: color-mix(in srgb, var(--vault-accent-strong) 76%, white 24%);
 }
 .vault-resume-toggle:hover {
-  background: linear-gradient(145deg, color-mix(in srgb, var(--vault-accent-alt) 62%, #0b1221) 0%, color-mix(in srgb, var(--vault-accent-strong) 74%, #0b1221) 100%);
-  border-color: color-mix(in srgb, var(--vault-accent-strong) 82%, white 18%);
-  color: #ffffff;
-  box-shadow: 0 10px 22px rgba(2, 132, 199, 0.46);
-  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--vault-accent-strong) 88%, white 12%);
 }
 .vault-resume-toggle i { color: #ffffff; }
 .vault-pm-toggle {
@@ -1532,6 +1537,12 @@ html.dark .bento-pill:hover {
   font-family: var(--font-mono);
   margin-top: 6px;
   line-height: 1.6;
+}
+
+.vault-login-help-row {
+  display: flex;
+  justify-content: center;
+  margin: -2px 0 9px;
 }
 .vault-otp-route {
   margin-top: 12px;
@@ -1688,15 +1699,15 @@ html.dark .bento-pill:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: var(--vault-accent-dim);
   border: 1px solid var(--vault-surface-border);
   color: var(--vault-text);
   cursor: help;
 }
-.login-info i { color: var(--vault-accent); font-size: 13px; }
+.login-info i { color: var(--vault-accent); font-size: 12px; }
 .login-info-tip {
   position: absolute;
   left: 50%;
@@ -1723,8 +1734,8 @@ html.dark .bento-pill:hover {
 }
 
 @media (max-width: 480px) {
-  .vault-box { padding: 14px; }
-  .vault-subtitle { font-size: 12px; margin-bottom: 16px; }
+  .vault-box { padding: 12px; }
+  .vault-subtitle { font-size: 12px; margin-bottom: 9px; }
   .vault-input-wrap { margin-bottom: 12px; }
   .vault-vhost-hint { font-size: 10px; margin-bottom: 12px; }
   .vault-unlock-btn { font-size: 13px; }

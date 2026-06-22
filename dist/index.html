@@ -61,9 +61,9 @@
     <button class="vault-config-btn" id="advancedToggle" type="button" title="Proxy settings" aria-label="Proxy settings"><i class="fas fa-cog"></i></button>
     <div class="vault-panel" id="vaultMainPanel">
       <img src="assets/logo.png" alt="HandyManager" class="vault-logo" id="vaultLogoImg">
-      <div class="vault-subtitle" style="margin-top:4px" id="vaultSubtitle">Sign in to continue.</div>
+      <div class="vault-subtitle" id="vaultSubtitle">Sign in to continue.</div>
       <div class="vault-user-hint" id="vaultUserHint" style="display:none"></div>
-      <div style="display:flex;justify-content:center;margin:-10px 0 14px">
+      <div class="vault-login-help-row">
         <span class="login-info" tabindex="0" aria-label="Login help"><i class="fas fa-info-circle"></i>
           <span class="login-info-tip">Manager passwords go in the password field. PMs must use PM Login via OTP button below.</span>
         </span>
@@ -77,14 +77,14 @@
       </div>
       <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
       <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
-      <button class="vault-advanced-toggle" id="vaultResumeBtn" type="button" style="display:none"><i class="fas fa-history"></i> Resume Session</button>
-      <button class="vault-advanced-toggle vault-pm-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
+      <button class="vault-unlock-btn vault-resume-toggle" id="vaultResumeBtn" type="button" style="display:none"><i class="fas fa-clock-rotate-left"></i> Resume Previous Session</button>
+      <button class="vault-unlock-btn vault-pm-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
     </div>
 
     <div class="vault-panel hidden" id="vaultPmPanel" aria-hidden="true">
       <button type="button" class="vault-back-btn" id="pmLoginBackBtn"><i class="fas fa-arrow-left"></i> Back to standard login</button>
       <img src="assets/logo.png" alt="HandyManager" class="vault-logo">
-      <div class="vault-subtitle" style="margin-top:4px">PM Login via OTP</div>
+      <div class="vault-subtitle">PM Login via OTP</div>
       <div class="vault-vhost-hint">URL: <code><span id="vhostPreviewPm">flraz</span>.appfolio.com</code></div>
       <div class="vault-otp-route" id="vaultOtpRoute" aria-hidden="false">
         <div class="vault-otp-title"><i class="fas fa-mobile-alt"></i> Enter PM Email or Phone</div>

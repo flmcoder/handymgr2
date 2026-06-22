@@ -20,6 +20,10 @@ import {
   appfolioUnits,
   appfolioWorkOrders,
   appfolioEstimates,
+  appfolioUnitInspections,
+  appfolioTenantDirectory,
+  appfolioUnitTurnDetails,
+  appfolioUnitVacancies,
   unitTurnTracker,
   unitTurnMilestones,
   unitTurnWorkOrders,
@@ -83,6 +87,14 @@ function asDate(v: unknown): Date | null {
   if (!v) return null;
   const d = new Date(String(v));
   return isNaN(d.getTime()) ? null : d;
+}
+
+function reportRowKey(row: any, keys: string[], fallbackParts: Array<unknown>): string {
+  for (const key of keys) {
+    const candidate = asStr(row?.[key]);
+    if (candidate && candidate !== '0') return candidate;
+  }
+  return createHash('sha256').update(JSON.stringify(fallbackParts)).digest('hex').slice(0, 36);
 }
 
 function normalizeGroupName(v: unknown): string {
@@ -343,6 +355,278 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
           createdAt: sql`EXCLUDED.created_at`,
           updatedAt: sql`EXCLUDED.updated_at`,
           rawJson: sql`EXCLUDED.raw_json`,
+        },
+      });
+
+    upserted++;
+  }
+
+  return { upserted, skipped };
+}
+
+// ── Unit Inspections ─────────────────────────────────────────────────────────
+
+export async function upsertUnitInspections(rows: any[]): Promise<UpsertResult> {
+  let upserted = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const propertyId = asStr(row.property_id || row.PropertyId);
+    const unitId = asStr(row.unit_id || row.UnitId);
+    const inspectionId = reportRowKey(
+      row,
+      ['inspection_id', 'InspectionId', 'occupancy_id', 'OccupancyId'],
+      [propertyId, unitId, row.last_inspection_date || row.LastInspectionDate, row.tenant_name || row.TenantName],
+    );
+
+    await db
+      .insert(appfolioUnitInspections)
+      .values({
+        inspectionId,
+        propertyId,
+        propertyName: asStr(row.property_name || row.PropertyName),
+        unitId,
+        unitName: asStr(row.unit_name || row.UnitName),
+        lastInspectionDate: asDate(row.last_inspection_date || row.LastInspectionDate),
+        tenantName: asStr(row.tenant_name || row.TenantName),
+        tenantPrimaryPhoneNumber: asStr(row.tenant_primary_phone_number || row.TenantPrimaryPhoneNumber),
+        moveInDate: asDate(row.move_in_date || row.MoveInDate),
+        moveOutDate: asDate(row.move_out_date || row.MoveOutDate),
+        rentable: asStr(row.rentable || row.Rentable),
+        occupancyId: asStr(row.occupancy_id || row.OccupancyId),
+        unitTags: asStr(row.unit_tags || row.UnitTags),
+        rawJson: row,
+        lastUpdatedAt: asDate(row.last_updated_at || row.LastUpdatedAt),
+        cachedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: appfolioUnitInspections.inspectionId,
+        set: {
+          propertyId: sql`EXCLUDED.property_id`,
+          propertyName: sql`EXCLUDED.property_name`,
+          unitId: sql`EXCLUDED.unit_id`,
+          unitName: sql`EXCLUDED.unit_name`,
+          lastInspectionDate: sql`EXCLUDED.last_inspection_date`,
+          tenantName: sql`EXCLUDED.tenant_name`,
+          tenantPrimaryPhoneNumber: sql`EXCLUDED.tenant_primary_phone_number`,
+          moveInDate: sql`EXCLUDED.move_in_date`,
+          moveOutDate: sql`EXCLUDED.move_out_date`,
+          rentable: sql`EXCLUDED.rentable`,
+          occupancyId: sql`EXCLUDED.occupancy_id`,
+          unitTags: sql`EXCLUDED.unit_tags`,
+          rawJson: sql`EXCLUDED.raw_json`,
+          lastUpdatedAt: sql`EXCLUDED.last_updated_at`,
+          cachedAt: sql`EXCLUDED.cached_at`,
+        },
+      });
+
+    upserted++;
+  }
+
+  return { upserted, skipped };
+}
+
+// ── Tenant Directory / Upcoming Move-Outs ───────────────────────────────────
+
+export async function upsertTenantDirectory(rows: any[]): Promise<UpsertResult> {
+  let upserted = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const propertyId = asStr(row.property_id || row.PropertyId);
+    const unitId = asStr(row.unit_id || row.UnitId);
+    const recordId = reportRowKey(
+      row,
+      ['occupancy_id', 'OccupancyId'],
+      [propertyId, unitId, row.move_out_date || row.MoveOutDate, row.tenant || row.Tenant],
+    );
+
+    await db
+      .insert(appfolioTenantDirectory)
+      .values({
+        recordId,
+        propertyId,
+        propertyName: asStr(row.property_name || row.PropertyName),
+        unitId,
+        unitName: asStr(row.unit_name || row.UnitName),
+        tenantName: asStr(row.tenant || row.Tenant || row.tenant_name || row.TenantName),
+        status: asStr(row.status || row.Status),
+        tenantType: asStr(row.tenant_type || row.TenantType),
+        phoneNumbers: asStr(row.phone_numbers || row.PhoneNumbers),
+        emails: asStr(row.emails || row.Emails),
+        moveInDate: asDate(row.move_in || row.MoveIn || row.move_in_date || row.MoveInDate),
+        leaseTo: asDate(row.lease_to || row.LeaseTo),
+        moveOutDate: asDate(row.move_out || row.MoveOut || row.move_out_date || row.MoveOutDate),
+        rent: asStr(row.rent || row.Rent),
+        tenantTags: asStr(row.tenant_tags || row.TenantTags),
+        tenantAgent: asStr(row.tenant_agent || row.TenantAgent),
+        tenantVisibility: asStr(row.tenant_visibility || row.TenantVisibility),
+        occupancyId: asStr(row.occupancy_id || row.OccupancyId),
+        unitTags: asStr(row.unit_tags || row.UnitTags),
+        rawJson: row,
+        lastUpdatedAt: asDate(row.last_updated_at || row.LastUpdatedAt),
+        cachedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: appfolioTenantDirectory.recordId,
+        set: {
+          propertyId: sql`EXCLUDED.property_id`,
+          propertyName: sql`EXCLUDED.property_name`,
+          unitId: sql`EXCLUDED.unit_id`,
+          unitName: sql`EXCLUDED.unit_name`,
+          tenantName: sql`EXCLUDED.tenant_name`,
+          status: sql`EXCLUDED.status`,
+          tenantType: sql`EXCLUDED.tenant_type`,
+          phoneNumbers: sql`EXCLUDED.phone_numbers`,
+          emails: sql`EXCLUDED.emails`,
+          moveInDate: sql`EXCLUDED.move_in_date`,
+          leaseTo: sql`EXCLUDED.lease_to`,
+          moveOutDate: sql`EXCLUDED.move_out_date`,
+          rent: sql`EXCLUDED.rent`,
+          tenantTags: sql`EXCLUDED.tenant_tags`,
+          tenantAgent: sql`EXCLUDED.tenant_agent`,
+          tenantVisibility: sql`EXCLUDED.tenant_visibility`,
+          occupancyId: sql`EXCLUDED.occupancy_id`,
+          unitTags: sql`EXCLUDED.unit_tags`,
+          rawJson: sql`EXCLUDED.raw_json`,
+          lastUpdatedAt: sql`EXCLUDED.last_updated_at`,
+          cachedAt: sql`EXCLUDED.cached_at`,
+        },
+      });
+
+    upserted++;
+  }
+
+  return { upserted, skipped };
+}
+
+// ── Unit Turn Detail ────────────────────────────────────────────────────────
+
+export async function upsertUnitTurnDetails(rows: any[]): Promise<UpsertResult> {
+  let upserted = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const propertyId = asStr(row.property_id || row.PropertyId);
+    const unitId = asStr(row.unit_id || row.UnitId);
+    const turnId = reportRowKey(
+      row,
+      ['unit_turn_id', 'UnitTurnId'],
+      [propertyId, unitId, row.move_out_date || row.MoveOutDate, row.turn_end_date || row.TurnEndDate],
+    );
+
+    await db
+      .insert(appfolioUnitTurnDetails)
+      .values({
+        turnId,
+        propertyId,
+        propertyName: asStr(row.property || row.Property || row.property_name || row.PropertyName),
+        unitId,
+        unitName: asStr(row.unit || row.Unit || row.unit_name || row.UnitName),
+        notes: asStr(row.notes || row.Notes),
+        referenceUser: asStr(row.reference_user || row.ReferenceUser),
+        moveOutDate: asDate(row.move_out_date || row.MoveOutDate),
+        turnEndDate: asDate(row.turn_end_date || row.TurnEndDate),
+        expectedMoveInDate: asDate(row.expected_move_in_date || row.ExpectedMoveInDate),
+        targetDaysToComplete: row.target_days_to_complete != null ? Math.round(Number(row.target_days_to_complete)) : asNum(row.target_days_to_complete),
+        totalDaysToComplete: row.total_days_to_complete != null ? Math.round(Number(row.total_days_to_complete)) : asNum(row.total_days_to_complete),
+        laborFromWorkOrders: asStr(row.labor_from_work_orders || row.LaborFromWorkOrders),
+        purchaseOrdersFromWorkOrders: asStr(row.purchase_orders_from_work_orders || row.PurchaseOrdersFromWorkOrders),
+        billablesFromWorkOrders: asStr(row.billables_from_work_orders || row.BillablesFromWorkOrders),
+        inventoryFromWorkOrders: asStr(row.inventory_from_work_orders || row.InventoryFromWorkOrders),
+        totalBilled: asStr(row.total_billed || row.TotalBilled),
+        unitTurnStatus: asStr(row.unit_turn_status || row.UnitTurnStatus || row.status || row.Status),
+        propertyVisibility: asStr(row.property_visibility || row.PropertyVisibility),
+        rawJson: row,
+        lastUpdatedAt: asDate(row.last_updated_at || row.LastUpdatedAt),
+        cachedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: appfolioUnitTurnDetails.turnId,
+        set: {
+          propertyId: sql`EXCLUDED.property_id`,
+          propertyName: sql`EXCLUDED.property_name`,
+          unitId: sql`EXCLUDED.unit_id`,
+          unitName: sql`EXCLUDED.unit_name`,
+          notes: sql`EXCLUDED.notes`,
+          referenceUser: sql`EXCLUDED.reference_user`,
+          moveOutDate: sql`EXCLUDED.move_out_date`,
+          turnEndDate: sql`EXCLUDED.turn_end_date`,
+          expectedMoveInDate: sql`EXCLUDED.expected_move_in_date`,
+          targetDaysToComplete: sql`EXCLUDED.target_days_to_complete`,
+          totalDaysToComplete: sql`EXCLUDED.total_days_to_complete`,
+          laborFromWorkOrders: sql`EXCLUDED.labor_from_work_orders`,
+          purchaseOrdersFromWorkOrders: sql`EXCLUDED.purchase_orders_from_work_orders`,
+          billablesFromWorkOrders: sql`EXCLUDED.billables_from_work_orders`,
+          inventoryFromWorkOrders: sql`EXCLUDED.inventory_from_work_orders`,
+          totalBilled: sql`EXCLUDED.total_billed`,
+          unitTurnStatus: sql`EXCLUDED.unit_turn_status`,
+          propertyVisibility: sql`EXCLUDED.property_visibility`,
+          rawJson: sql`EXCLUDED.raw_json`,
+          lastUpdatedAt: sql`EXCLUDED.last_updated_at`,
+          cachedAt: sql`EXCLUDED.cached_at`,
+        },
+      });
+
+    upserted++;
+  }
+
+  return { upserted, skipped };
+}
+
+// ── Unit Vacancies ───────────────────────────────────────────────────────────
+
+export async function upsertUnitVacancies(rows: any[]): Promise<UpsertResult> {
+  let upserted = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const propertyId = asStr(row.property_id || row.PropertyId);
+    const unitId = asStr(row.unit_id || row.UnitId);
+    const recordId = reportRowKey(
+      row,
+      ['unit_id', 'UnitId', 'unit', 'Unit'],
+      [propertyId, row.property_name || row.PropertyName, row.vacant_from || row.VacantFrom, row.unit_name || row.UnitName],
+    );
+
+    await db
+      .insert(appfolioUnitVacancies)
+      .values({
+        recordId,
+        propertyId,
+        propertyName: asStr(row.property_name || row.PropertyName || row.property || row.Property),
+        unitId,
+        unitName: asStr(row.unit_name || row.UnitName || row.unit || row.Unit),
+        vacantFrom: asDate(row.vacant_from || row.VacantFrom || row.vacated_on || row.VacatedOn),
+        availableOn: asDate(row.available_on || row.AvailableOn || row.market_ready_date || row.MarketReadyDate),
+        marketRent: asStr(row.market_rent || row.MarketRent || row.rent || row.Rent),
+        bedrooms: asStr(row.bedrooms || row.Bedrooms),
+        bathrooms: asStr(row.bathrooms || row.Bathrooms),
+        daysVacant: row.days_vacant != null ? Math.round(Number(row.days_vacant)) : asNum(row.vacancy_days),
+        status: asStr(row.status || row.Status),
+        propertyVisibility: asStr(row.property_visibility || row.PropertyVisibility),
+        rawJson: row,
+        lastUpdatedAt: asDate(row.last_updated_at || row.LastUpdatedAt),
+        cachedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: appfolioUnitVacancies.recordId,
+        set: {
+          propertyId: sql`EXCLUDED.property_id`,
+          propertyName: sql`EXCLUDED.property_name`,
+          unitId: sql`EXCLUDED.unit_id`,
+          unitName: sql`EXCLUDED.unit_name`,
+          vacantFrom: sql`EXCLUDED.vacant_from`,
+          availableOn: sql`EXCLUDED.available_on`,
+          marketRent: sql`EXCLUDED.market_rent`,
+          bedrooms: sql`EXCLUDED.bedrooms`,
+          bathrooms: sql`EXCLUDED.bathrooms`,
+          daysVacant: sql`EXCLUDED.days_vacant`,
+          status: sql`EXCLUDED.status`,
+          propertyVisibility: sql`EXCLUDED.property_visibility`,
+          rawJson: sql`EXCLUDED.raw_json`,
+          lastUpdatedAt: sql`EXCLUDED.last_updated_at`,
+          cachedAt: sql`EXCLUDED.cached_at`,
         },
       });
 
