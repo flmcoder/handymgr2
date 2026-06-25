@@ -23518,8 +23518,8 @@ function parseHiddenAssigneeMap(raw) {
 async function saveDispatchConfigKey(key, value) {
   var adminKey = getDispatchAdminKey();
   if (!adminKey) return false;
-  var q = "INSERT OR REPLACE INTO proxy_config (key,value,updated_at) VALUES ('" +
-    _dispatchSqlSafe(key) + "','" + _dispatchSqlSafe(value) + "',datetime('now'))";
+  var q = "INSERT OR REPLACE INTO proxy_config (key,value) VALUES ('" +
+    _dispatchSqlSafe(key) + "','" + _dispatchSqlSafe(value) + "')";
   var r = await proxyPost('sql_execute', { key: adminKey, query: q });
   return !!(r && (r.ok || r.rowsAffected >= 0));
 }
@@ -24456,7 +24456,7 @@ var DispatchConfig = {
     if(!adminKey){v9Toast('Admin key required','Set PROXY_ADMIN_KEY in Database tab first','warning');return;}
     var next = DISPATCH.paused ? '0' : '1';
     try {
-      var q="INSERT OR REPLACE INTO proxy_config (key,value,updated_at) VALUES ('dispatch_paused','"+next+"',datetime('now'))";
+      var q="INSERT OR REPLACE INTO proxy_config (key,value) VALUES ('dispatch_paused','"+next+"')";
       var r=await proxyPost('sql_execute',{key:adminKey,query:q});
       if(!(r.ok||r.rowsAffected>=0)){v9Toast('Pause toggle failed',r.error||'Unknown error','danger');return;}
       DISPATCH.paused = next==='1';
@@ -24641,7 +24641,7 @@ var DispatchConfig = {
     var inp=document.getElementById('cfg-'+key);
     var value=f.type==='toggle'?(inp.checked?'1':'0'):(inp?inp.value:'');
     try {
-      var r=await proxyPost('sql_execute',{key:adminKey,query:"INSERT OR REPLACE INTO proxy_config (key,value,updated_at) VALUES ('"+key.replace(/'/g,'')+"','"+String(value).replace(/'/g,'')+"',datetime('now'))"});
+      var r=await proxyPost('sql_execute',{key:adminKey,query:"INSERT OR REPLACE INTO proxy_config (key,value) VALUES ('"+key.replace(/'/g,'')+"','"+String(value).replace(/'/g,'')+"')"});
       if(r.ok||r.rowsAffected>=0)v9Toast(f.label+' saved',value+' '+(f.unit||''),'success');
       else v9Toast('Save failed',r.error||'Check PROXY_ADMIN_KEY','danger');
     }catch(e){v9Toast('Save failed',e.message,'danger');}

@@ -167,11 +167,18 @@ export async function upsertPropertyGroups(rows: any[]): Promise<UpsertResult> {
   let skipped = 0;
 
   for (const row of rows) {
-    const id = asStr(row.Id || row.id || row.PropertyGroupId || row.property_group_id || row.PropertyGroupUuid || row.property_group_uuid);
-    if (!id) {
+    const rawId = asStr(row.Id || row.id || row.PropertyGroupId || row.property_group_id || row.PropertyGroupUuid || row.property_group_uuid);
+    if (!rawId) {
       skipped++;
       continue;
     }
+
+    const explicitNumericId = asStr(row.PropertyGroupId || row.property_group_id || row.group_id);
+    const inferredUuid = asStr(row.PropertyGroupUuid || row.property_group_uuid || row.UUID || row.uuid)
+      || (isUuidLike(rawId) ? rawId : null);
+    const catalogEntry = inferredUuid ? GROUP_CATALOG_BY_UUID.get(inferredUuid) : undefined;
+    // Prefer stable numeric ids when available to stay compatible with older integer-based schemas.
+    const id = explicitNumericId || catalogEntry?.id || rawId;
 
     const rawPropertyIds = Array.isArray(row.PropertyIds)
       ? row.PropertyIds
@@ -188,8 +195,7 @@ export async function upsertPropertyGroups(rows: any[]): Promise<UpsertResult> {
       })
       .filter((value: string) => !!value);
 
-    const uuid = asStr(row.PropertyGroupUuid || row.property_group_uuid || row.UUID || row.uuid)
-      || (isUuidLike(id) ? id : null);
+    const uuid = inferredUuid || (isUuidLike(id) ? id : null);
     const normalized = {
       id,
       uuid,
