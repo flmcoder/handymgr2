@@ -889,6 +889,9 @@ app.post('/api/local/bootstrap_sync', async (req: Request, res: Response) => {
     }
 
     const maxPages = Math.max(0, Number(req.body?.maxPages ?? 0) || 0);
+    const lookbackDays = Math.max(1, Math.min(3650, Number(req.body?.lookback_days ?? 180) || 180));
+    const forceLookback = String(req.body?.force_lookback ?? 'false').toLowerCase() === 'true'
+      || req.body?.force_lookback === true;
     const triggerType = 'manual_ui';
     const defaultEndpoints = [
       'v0:properties',
@@ -911,7 +914,14 @@ app.post('/api/local/bootstrap_sync', async (req: Request, res: Response) => {
     const { runSync } = await import('./sync/syncRunner.ts');
     const summaries: Record<string, unknown> = {};
     for (const endpointKey of finalEndpoints) {
-      summaries[endpointKey] = await runSync({ endpointKey, triggerType, maxPages });
+      const useLookbackControls = endpointKey === 'v0:work_orders';
+      summaries[endpointKey] = await runSync({
+        endpointKey,
+        triggerType,
+        maxPages,
+        lookbackDays: useLookbackControls ? lookbackDays : 180,
+        forceLookback: useLookbackControls ? forceLookback : false,
+      });
     }
 
     res.json({

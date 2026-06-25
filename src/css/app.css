@@ -1497,6 +1497,16 @@ html.dark .bento-pill:hover {
   border-color: color-mix(in srgb, var(--vault-accent-strong) 88%, white 12%);
 }
 .vault-resume-toggle i { color: #ffffff; }
+html.dark .vault-resume-toggle {
+  background: linear-gradient(135deg, #f97316, #ea580c);
+  border-color: #fb923c;
+  color: #fff7ed;
+  box-shadow: 0 10px 22px rgba(249, 115, 22, 0.34);
+}
+html.dark .vault-resume-toggle:hover {
+  border-color: #fdba74;
+  box-shadow: 0 12px 24px rgba(249, 115, 22, 0.42);
+}
 .vault-pm-toggle {
   background: var(--vault-pm-bg);
   border-color: var(--vault-pm-border);

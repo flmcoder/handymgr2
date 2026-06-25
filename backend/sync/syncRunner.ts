@@ -35,8 +35,8 @@ import {
 
 interface EndpointDef {
   apiVersion: 'v0' | 'v2';
-  buildFirstRequest?: (opts: { baseUrl: string; incrementalFrom: string | null }) => { url: string; method?: 'GET' | 'POST'; body?: any };
-  buildFirstUrl?: (opts: { baseUrl: string; incrementalFrom: string | null }) => string;
+  buildFirstRequest?: (opts: { baseUrl: string; incrementalFrom: string | null; lookbackDays: number; forceLookback: boolean }) => { url: string; method?: 'GET' | 'POST'; body?: any };
+  buildFirstUrl?: (opts: { baseUrl: string; incrementalFrom: string | null; lookbackDays: number; forceLookback: boolean }) => string;
   /** Extract the rows array from the response payload. */
   extractRows: (data: any) => any[];
   upsert: (rows: any[]) => Promise<{ upserted: number; skipped: number }>;
@@ -96,10 +96,13 @@ const ENDPOINTS: Record<string, EndpointDef> = {
 
   'v0:work_orders': {
     apiVersion: 'v0',
-    buildFirstUrl: ({ baseUrl, incrementalFrom }) => {
+    buildFirstUrl: ({ baseUrl, incrementalFrom, lookbackDays, forceLookback }) => {
+      const clampedLookback = Math.max(1, Math.min(3650, Number(lookbackDays || 180)));
       const from = incrementalFrom
-        ? new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z'
-        : new Date(Date.now() - 180 * 86400_000).toISOString().slice(0, 19) + 'Z';
+        ? (forceLookback
+          ? new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z'
+          : new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z')
+        : new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z';
       return `${baseUrl}/api/v0/work_orders?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
     },
     extractRows: (data) => data?.data ?? data?.results ?? [],
@@ -192,8 +195,19 @@ export async function runSync(opts: {
   filtersFingerprint?: string;
   /** Hard cap on pages per run chunk (Phase 6 backfill safety). 0 = unlimited. */
   maxPages?: number;
+  /** Optional historical backfill window, in days, used by compatible endpoints. */
+  lookbackDays?: number;
+  /** Force compatible endpoints to use lookbackDays instead of incremental cursor. */
+  forceLookback?: boolean;
 }): Promise<SyncRunSummary> {
-  const { endpointKey, triggerType = 'manual', filtersFingerprint, maxPages = 0 } = opts;
+  const {
+    endpointKey,
+    triggerType = 'manual',
+    filtersFingerprint,
+    maxPages = 0,
+    lookbackDays = 180,
+    forceLookback = false,
+  } = opts;
 
   const def = ENDPOINTS[endpointKey];
   if (!def) throw new Error(`Unknown endpointKey: ${endpointKey}`);
@@ -209,8 +223,8 @@ export async function runSync(opts: {
   });
 
   const firstRequest = def.buildFirstRequest
-    ? def.buildFirstRequest({ baseUrl, incrementalFrom })
-    : { url: def.buildFirstUrl?.({ baseUrl, incrementalFrom }) || '' };
+    ? def.buildFirstRequest({ baseUrl, incrementalFrom, lookbackDays, forceLookback })
+    : { url: def.buildFirstUrl?.({ baseUrl, incrementalFrom, lookbackDays, forceLookback }) || '' };
   let url: string | null = firstRequest.url || null;
   let method: 'GET' | 'POST' = firstRequest.method || 'GET';
   let body: any = firstRequest.body;

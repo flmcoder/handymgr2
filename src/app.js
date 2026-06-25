@@ -96,7 +96,7 @@ function $$(sel) { return document.querySelectorAll(sel); }
 // Toggle/override by setting window.HM_MAINTENANCE_CONFIG before app.js loads.
 // Example disable: window.HM_MAINTENANCE_CONFIG = { enabled: false }
 var MAINTENANCE_CONFIG = Object.assign({
-  enabled: true,
+  enabled: false,
   showDialogOnLogin: true,
   bannerCollapsible: true,
   brandHost: 'handymgr.app',
@@ -297,7 +297,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.7.9:R1';
+var APP_VERSION = 'v9.7.9:R1.1';
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
   : (window.location.origin || 'https://handymgr2.onrender.com');
