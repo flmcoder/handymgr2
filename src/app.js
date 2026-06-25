@@ -22681,6 +22681,8 @@ renderDashboardKPIs = function() {
   var pmUserNameEl = document.getElementById('pmUserName');
   var pmUserPhoneEl = document.getElementById('pmUserPhone');
   var pmUserGroupUuidEl = document.getElementById('pmUserGroupUuid');
+  var pmUserScopesEl = document.getElementById('pmUserScopes');
+  var pmUserActiveEl = document.getElementById('pmUserActive');
   var pmUserSaveBtn = document.getElementById('btnPmUserSave');
   var pmUserClearBtn = document.getElementById('btnPmUserClear');
   var pmUserRefreshBtn = document.getElementById('btnRefreshPmUsers');
@@ -22918,8 +22920,33 @@ renderDashboardKPIs = function() {
     if (pmUserNameEl) pmUserNameEl.value = '';
     if (pmUserPhoneEl) pmUserPhoneEl.value = '';
     if (pmUserGroupUuidEl) pmUserGroupUuidEl.value = '';
+    if (pmUserScopesEl) pmUserScopesEl.value = '';
+    if (pmUserActiveEl) pmUserActiveEl.checked = true;
     populatePMGroupDropdown('');
     if (pmUserSaveBtn) pmUserSaveBtn.innerHTML = '<i class="fas fa-save"></i> Save';
+  }
+
+  function escapeSqlText(value) {
+    return String(value || '').replace(/'/g, "''");
+  }
+
+  function normalizeScopeUuid(value) {
+    var scope = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(scope) ? scope : '';
+  }
+
+  function parseScopeUuidList(raw, primaryScope) {
+    var seen = {};
+    var out = [];
+    (String(raw || '').split(/[\s,]+/) || []).forEach(function(token) {
+      var normalized = normalizeScopeUuid(token);
+      if (!normalized || seen[normalized]) return;
+      seen[normalized] = true;
+      out.push(normalized);
+    });
+    var normalizedPrimary = normalizeScopeUuid(primaryScope);
+    if (normalizedPrimary && !seen[normalizedPrimary]) out.unshift(normalizedPrimary);
+    return out;
   }
 
   function renderPmUsers(users) {
@@ -22934,20 +22961,22 @@ renderDashboardKPIs = function() {
       var fullName = escapeHtml(String(u.full_name || ''));
       var phone = escapeHtml(String(u.phone || ''));
       var groupUuid = escapeHtml(String(u.property_group_uuid || ''));
+      var scopeCsv = escapeHtml(String(u.scope_uuids || ''));
       var active = Number(u.active) === 1;
-      return '<tr data-uuid="' + uuid + '" data-email="' + email + '" data-full-name="' + fullName + '" data-phone="' + phone + '" data-group-uuid="' + groupUuid + '">' +
+      return '<tr data-uuid="' + uuid + '" data-email="' + email + '" data-full-name="' + fullName + '" data-phone="' + phone + '" data-group-uuid="' + groupUuid + '" data-scope-uuids="' + scopeCsv + '" data-active="' + (active ? '1' : '0') + '">' +
         '<td style="font-family:var(--font-mono)">' + email + '</td>' +
         '<td>' + fullName + '</td>' +
         '<td style="font-family:var(--font-mono)">' + phone + '</td>' +
         '<td style="font-family:var(--font-mono)">' + groupUuid + '</td>' +
+        '<td style="font-family:var(--font-mono);font-size:10px;max-width:340px;word-break:break-all">' + scopeCsv + '</td>' +
         '<td>' + (active ? '<span style="color:var(--success)">Active</span>' : '<span style="color:var(--danger)">Inactive</span>') + '</td>' +
         '<td style="text-align:right;white-space:nowrap">' +
           '<button class="dbadmin-btn pm-edit" style="padding:2px 8px;font-size:10px" data-uuid="' + uuid + '"><i class="fas fa-pen"></i> Edit</button> ' +
-          '<button class="dbadmin-btn danger pm-delete" style="padding:2px 8px;font-size:10px" data-uuid="' + uuid + '"><i class="fas fa-trash"></i> Delete</button>' +
+          '<button class="dbadmin-btn pm-toggle" style="padding:2px 8px;font-size:10px" data-uuid="' + uuid + '" data-next-active="' + (active ? '0' : '1') + '"><i class="fas ' + (active ? 'fa-user-slash' : 'fa-user-check') + '"></i> ' + (active ? 'Deactivate' : 'Activate') + '</button>' +
         '</td>' +
       '</tr>';
     }).join('');
-    pmUsersBody.innerHTML = '<table><thead><tr><th>Email</th><th>Name</th><th>Phone</th><th>Property Group UUID</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    pmUsersBody.innerHTML = '<table><thead><tr><th>Email</th><th>Name</th><th>Phone</th><th>Primary Scope</th><th>All Scopes</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
   function loadPmUsers() {
@@ -22971,8 +23000,11 @@ renderDashboardKPIs = function() {
     }
     // Store key in sessionStorage for future auto-load
     try { sessionStorage.setItem('hm_pm_admin_key', adminKey); } catch (e) { /* */ }
-    return proxyAction('pm_proxy_users', { key: adminKey }).then(function(data) {
-      renderPmUsers(data.results || []);
+    return proxyPost('sql_query', {
+      key: adminKey,
+      query: "SELECT u.user_uuid, u.email, u.full_name, u.phone, coalesce(u.property_group_uuid,'') AS property_group_uuid, coalesce(u.active,1) AS active, coalesce(string_agg(DISTINCT s.property_group_uuid, ',' ORDER BY s.property_group_uuid) FILTER (WHERE coalesce(s.active,true)=true), '') AS scope_uuids FROM pm_proxy_users u LEFT JOIN pm_proxy_user_scopes s ON s.user_uuid=u.user_uuid GROUP BY u.user_uuid, u.email, u.full_name, u.phone, u.property_group_uuid, u.active ORDER BY lower(u.email)"
+    }).then(function(data) {
+      renderPmUsers((data && data.rows) || []);
     }).catch(function(err) {
       pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--danger)"><i class="fas fa-exclamation-circle"></i> ' + escapeHtml(err.message || String(err)) + '</div>';
     });
@@ -22986,6 +23018,8 @@ renderDashboardKPIs = function() {
       || (document.getElementById('pm-user-group-select') && document.getElementById('pm-user-group-select').value || '').trim()
       || '';
     var userUuid = (pmUserUuidEl && pmUserUuidEl.value || '').trim();
+    var active = pmUserActiveEl ? !!pmUserActiveEl.checked : true;
+    var scopeList = parseScopeUuidList(pmUserScopesEl && pmUserScopesEl.value || '', groupUuid);
     if (!email) {
       showToast('PM user email is required', 'error');
       return;
@@ -23002,6 +23036,10 @@ renderDashboardKPIs = function() {
       showToast('Select a property group before saving.', 'error');
       return;
     }
+    if (!scopeList.length) {
+      showToast('Enter at least one valid scope UUID.', 'error');
+      return;
+    }
     if (pmUserSaveBtn) pmUserSaveBtn.disabled = true;
     // Restore API_PROXY from localStorage if the session was reopened without full vault login
     if (!API_PROXY) {
@@ -23012,21 +23050,32 @@ renderDashboardKPIs = function() {
       if (pmUserSaveBtn) pmUserSaveBtn.disabled = false;
       return;
     }
-    proxyPost('pm_proxy_user_upsert', {
+    var resolvedUuid = userUuid || ('pm-' + email.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48));
+    var escapedEmail = escapeSqlText(email);
+    var escapedName = escapeSqlText(fullName);
+    var escapedPhone = escapeSqlText(phone);
+    var escapedPrimary = escapeSqlText(groupUuid);
+    var escapedUuid = escapeSqlText(resolvedUuid);
+    var activeSql = active ? 'TRUE' : 'FALSE';
+    var statements = [];
+    statements.push("INSERT INTO pm_proxy_users (user_uuid, email, full_name, phone, property_group_uuid, roles, active, raw_json, updated_at) VALUES ('" + escapedUuid + "','" + escapedEmail + "','" + escapedName + "','" + escapedPhone + "','" + escapedPrimary + "','[\"pm_readonly\"]'::jsonb," + activeSql + ",'{}'::jsonb,NOW()) ON CONFLICT (user_uuid) DO UPDATE SET email=EXCLUDED.email, full_name=EXCLUDED.full_name, phone=EXCLUDED.phone, property_group_uuid=EXCLUDED.property_group_uuid, active=EXCLUDED.active, updated_at=NOW();");
+    statements.push("UPDATE pm_proxy_user_scopes SET active = FALSE, updated_at = NOW() WHERE user_uuid = '" + escapedUuid + "';");
+    for (var i = 0; i < scopeList.length; i++) {
+      var scope = escapeSqlText(scopeList[i]);
+      var isPrimary = (scopeList[i] === groupUuid) ? 'TRUE' : 'FALSE';
+      statements.push("INSERT INTO pm_proxy_user_scopes (user_uuid, property_group_uuid, is_primary, active, source, updated_at) VALUES ('" + escapedUuid + "','" + scope + "'," + isPrimary + ",TRUE,'dbadmin_ui',NOW()) ON CONFLICT (user_uuid, property_group_uuid) DO UPDATE SET is_primary = EXCLUDED.is_primary, active = TRUE, source = EXCLUDED.source, updated_at = NOW();");
+    }
+
+    proxyPost('sql_execute', {
       key: getAdminKey(),
-      user_uuid: userUuid || undefined,
-      email: email,
-      full_name: fullName,
-      phone: phone,
-      property_group_uuid: groupUuid,
-      active: 1
+      query: statements.join('\n')
     }).then(function(response) {
       if (!response || response.ok === false) {
         var errMsg = (response && (response.message || response.error)) || 'PM save failed';
         showToast(errMsg, 'error');
         return;
       }
-      var msg = (userUuid ? 'PM user updated' : 'PM user created') + ' — UUID: ' + (response.user_uuid || '?').slice(0, 8);
+      var msg = (userUuid ? 'PM account updated' : 'PM account created') + ' — UUID: ' + resolvedUuid.slice(0, 12);
       showToast(msg, { kind: 'success', duration: 5000 });
       clearPmUserForm();
       return loadPmUsers();
@@ -23037,16 +23086,22 @@ renderDashboardKPIs = function() {
     });
   }
 
-  async function deletePmUser(userUuid) {
+  async function togglePmUserActive(userUuid, nextActive) {
     if (!userUuid) return;
-    if (!await hmConfirm('Delete this PM login user?', { title: 'Delete PM User', okLabel: 'Delete', danger: true })) return;
+    var willActivate = String(nextActive) === '1';
+    if (!await hmConfirm((willActivate ? 'Activate' : 'Deactivate') + ' this PM account?', { title: (willActivate ? 'Activate' : 'Deactivate') + ' PM Account', okLabel: willActivate ? 'Activate' : 'Deactivate', danger: !willActivate })) return;
     if (!API_PROXY) {
       try { var _savedProxy2 = localStorage.getItem('hm_proxy_url'); if (_savedProxy2) API_PROXY = normalizeConfiguredProxy(_savedProxy2); } catch (e) { /* */ }
     }
     if (!API_PROXY) { showToast('Proxy not configured.', 'error'); return; }
-    proxyPost('pm_proxy_user_delete', { key: getAdminKey(), user_uuid: userUuid }).then(function() {
-      showToast('PM user deleted', 'success');
-      if (pmUserUuidEl && pmUserUuidEl.value === userUuid) clearPmUserForm();
+    var userIdEsc = escapeSqlText(userUuid);
+    var isActiveSql = willActivate ? 'TRUE' : 'FALSE';
+    var q = "UPDATE pm_proxy_users SET active = " + isActiveSql + ", updated_at = NOW() WHERE user_uuid = '" + userIdEsc + "'; UPDATE pm_proxy_user_scopes SET active = " + isActiveSql + ", updated_at = NOW() WHERE user_uuid = '" + userIdEsc + "';";
+    proxyPost('sql_execute', { key: getAdminKey(), query: q }).then(function() {
+      showToast('PM account ' + (willActivate ? 'activated' : 'deactivated'), 'success');
+      if (pmUserUuidEl && pmUserUuidEl.value === userUuid) {
+        if (pmUserActiveEl) pmUserActiveEl.checked = willActivate;
+      }
       return loadPmUsers();
     }).catch(function(err) {
       showToast(err.message || String(err), 'error');
@@ -23112,7 +23167,7 @@ renderDashboardKPIs = function() {
   if (pmUsersBody) {
     pmUsersBody.addEventListener('click', function(ev) {
       var editBtn = ev.target.closest('.pm-edit');
-      var deleteBtn = ev.target.closest('.pm-delete');
+      var toggleBtn = ev.target.closest('.pm-toggle');
       if (editBtn) {
         var tr = editBtn.closest('tr');
         if (!tr) return;
@@ -23121,13 +23176,15 @@ renderDashboardKPIs = function() {
         if (pmUserNameEl) pmUserNameEl.value = tr.getAttribute('data-full-name') || '';
         if (pmUserPhoneEl) pmUserPhoneEl.value = tr.getAttribute('data-phone') || '';
         if (pmUserGroupUuidEl) pmUserGroupUuidEl.value = tr.getAttribute('data-group-uuid') || '';
+        if (pmUserScopesEl) pmUserScopesEl.value = tr.getAttribute('data-scope-uuids') || '';
+        if (pmUserActiveEl) pmUserActiveEl.checked = (tr.getAttribute('data-active') || '1') === '1';
         populatePMGroupDropdown(tr.getAttribute('data-group-uuid') || '');
         if (pmUserSaveBtn) pmUserSaveBtn.innerHTML = '<i class="fas fa-save"></i> Update';
         if (pmUserEmailEl) pmUserEmailEl.focus();
         return;
       }
-      if (deleteBtn) {
-        deletePmUser(deleteBtn.getAttribute('data-uuid') || '');
+      if (toggleBtn) {
+        togglePmUserActive(toggleBtn.getAttribute('data-uuid') || '', toggleBtn.getAttribute('data-next-active') || '0');
       }
     });
   }
