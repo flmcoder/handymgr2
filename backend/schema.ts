@@ -383,7 +383,7 @@ export const pmProxyUsers = pgTable(
     email: text('email').notNull(),
     fullName: text('full_name'),
     phone: text('phone'),
-    propertyGroupUuid: text('property_group_uuid').notNull(),
+    propertyGroupUuid: text('property_group_uuid'),
     roles: jsonb('roles').notNull().default([]),
     active: boolean('active').default(true),
     rawJson: jsonb('raw_json').notNull().default({}),
@@ -393,6 +393,25 @@ export const pmProxyUsers = pgTable(
   (table) => ({
     emailUnique: unique('pm_proxy_users_email_unique').on(table.email),
     propertyGroupIdx: index('pm_proxy_users_group_idx').on(table.propertyGroupUuid),
+  }),
+);
+
+export const pmProxyUserScopes = pgTable(
+  'pm_proxy_user_scopes',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    userUuid: text('user_uuid').notNull(),
+    propertyGroupUuid: text('property_group_uuid').notNull(),
+    isPrimary: boolean('is_primary').default(false),
+    active: boolean('active').default(true),
+    source: text('source').default('manual'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userScopeUnique: unique('pm_proxy_user_scopes_user_scope_unique').on(table.userUuid, table.propertyGroupUuid),
+    userIdx: index('pm_proxy_user_scopes_user_idx').on(table.userUuid),
+    groupIdx: index('pm_proxy_user_scopes_group_idx').on(table.propertyGroupUuid),
   }),
 );
 

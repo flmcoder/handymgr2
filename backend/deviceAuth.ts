@@ -6,7 +6,14 @@ type PmProxyUser = {
   full_name: string;
   phone: string;
   property_group_uuid: string;
+  scopes: string[];
+  primary_scope_uuid: string;
   active: boolean;
+};
+
+type ScopeOption = {
+  property_group_uuid: string;
+  property_group_name: string;
 };
 
 const DEVICE_SETUP_PIN = String(process.env.DEVICE_SETUP_PIN || '').trim();
@@ -37,6 +44,13 @@ function getBodyField(body: any, ...keys: string[]): string {
 
 function normalizeEmail(rawEmail: string): string {
   return String(rawEmail || '').trim().toLowerCase();
+}
+
+function normalizeScopeUuid(rawScope: string): string {
+  const value = String(rawScope || '').trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : '';
 }
 
 function stripPhoneExtension(raw: string): string {
@@ -114,8 +128,12 @@ function readRecentTrustedSession(token: string): any | null {
   return entry;
 }
 
+function otpMemoryKey(email: string, scopeUuid: string): string {
+  return `${normalizeEmail(email)}::${normalizeScopeUuid(scopeUuid)}`;
+}
+
 function rememberMemoryOtp(email: string, code: string, ttlMinutes: number, userName: string, scopeUuid: string): void {
-  const key = normalizeEmail(email);
+  const key = otpMemoryKey(email, scopeUuid);
   if (!key) return;
   memoryOtpStore.set(key, {
     code,
@@ -126,8 +144,8 @@ function rememberMemoryOtp(email: string, code: string, ttlMinutes: number, user
   });
 }
 
-function readMemoryOtp(email: string) {
-  const key = normalizeEmail(email);
+function readMemoryOtp(email: string, scopeUuid: string) {
+  const key = otpMemoryKey(email, scopeUuid);
   const entry = memoryOtpStore.get(key);
   if (!entry) return null;
   if (entry.expiresAtMs < Date.now()) {
@@ -215,14 +233,35 @@ async function ensureAuthTables(): Promise<void> {
       email TEXT NOT NULL,
       full_name TEXT,
       phone TEXT,
-      property_group_uuid TEXT NOT NULL,
+      property_group_uuid TEXT,
       roles JSONB NOT NULL DEFAULT '[]'::jsonb,
       active BOOLEAN DEFAULT TRUE,
       raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS pm_proxy_users_email_unique ON pm_proxy_users(email);
+    DROP INDEX IF EXISTS pm_proxy_users_email_unique;
+    CREATE INDEX IF NOT EXISTS pm_proxy_users_email_idx ON pm_proxy_users(lower(email));
+    CREATE INDEX IF NOT EXISTS pm_proxy_users_group_idx ON pm_proxy_users(property_group_uuid);
+    CREATE TABLE IF NOT EXISTS pm_proxy_user_scopes (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_uuid TEXT NOT NULL,
+      property_group_uuid TEXT NOT NULL,
+      is_primary BOOLEAN DEFAULT FALSE,
+      active BOOLEAN DEFAULT TRUE,
+      source TEXT DEFAULT 'runtime_bootstrap',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (user_uuid, property_group_uuid)
+    );
+    CREATE INDEX IF NOT EXISTS pm_proxy_user_scopes_user_idx ON pm_proxy_user_scopes(user_uuid);
+    CREATE INDEX IF NOT EXISTS pm_proxy_user_scopes_group_idx ON pm_proxy_user_scopes(property_group_uuid);
+    INSERT INTO pm_proxy_user_scopes (user_uuid, property_group_uuid, is_primary, active, source)
+    SELECT user_uuid, property_group_uuid, TRUE, COALESCE(active, TRUE), 'legacy_backfill'
+    FROM pm_proxy_users
+    WHERE COALESCE(property_group_uuid, '') <> ''
+    ON CONFLICT (user_uuid, property_group_uuid) DO UPDATE
+    SET active = EXCLUDED.active, updated_at = NOW();
     CREATE TABLE IF NOT EXISTS proxy_config (
       key TEXT PRIMARY KEY,
       value TEXT,
@@ -244,14 +283,14 @@ async function getOtpPolicySafe(): Promise<{ enabled: boolean; allowedDomain: st
     return {
       enabled: (map.otp_enabled ?? '1') !== '0',
       allowedDomain: rawDomain || OTP_ALLOWED_DOMAIN_ENV,
-      requireMembership: (map.otp_require_pm_membership ?? '0') !== '0',
+      requireMembership: (map.otp_require_pm_membership ?? '1') !== '0',
       ttlMinutes: Math.max(3, Number(map.otp_ttl_minutes) || OTP_TTL_MINUTES_ENV),
     };
   } catch {
     return {
       enabled: true,
       allowedDomain: OTP_ALLOWED_DOMAIN_ENV,
-      requireMembership: false,
+      requireMembership: true,
       ttlMinutes: OTP_TTL_MINUTES_ENV,
     };
   }
@@ -282,21 +321,129 @@ async function sendOtpSms(toPhone: string, code: string, ttlMinutes: number): Pr
   }
 }
 
-async function resolvePmProxyUser(identifier: string): Promise<PmProxyUser | null> {
+async function buildScopeOptions(scopeUuids: string[]): Promise<ScopeOption[]> {
+  const uuids = Array.from(new Set((scopeUuids || []).map((v) => normalizeScopeUuid(v)).filter(Boolean)));
+  if (!uuids.length) return [];
+  const labelMap: Record<string, string> = {};
+  try {
+    const rows = await queryClient.unsafe(
+      `SELECT uuid, name FROM appfolio_property_groups WHERE uuid = ANY($1::text[])`,
+      [uuids],
+    );
+    for (const row of rows as any[]) {
+      const uuid = normalizeScopeUuid(String(row?.uuid || ''));
+      if (!uuid) continue;
+      labelMap[uuid] = String(row?.name || uuid);
+    }
+  } catch {
+    // Optional lookup table may not be hydrated yet.
+  }
+
+  return uuids.map((uuid) => ({
+    property_group_uuid: uuid,
+    property_group_name: labelMap[uuid] || uuid,
+  }));
+}
+
+async function resolvePmProxyUsers(identifier: string): Promise<PmProxyUser[]> {
   await ensureAuthTables();
   const email = normalizeEmail(identifier);
+  let rows: any[] = [];
+
   if (email && email.includes('@')) {
-    const rows = await queryClient.unsafe(`SELECT user_uuid, email, full_name, phone, property_group_uuid, active FROM pm_proxy_users WHERE lower(email) = lower($1) AND active = true LIMIT 1`, [email]);
-    if ((rows as any[]).length) return rows[0] as PmProxyUser;
+    rows = await queryClient.unsafe(
+      `SELECT user_uuid, email, full_name, phone, property_group_uuid, active
+       FROM pm_proxy_users
+       WHERE lower(email) = lower($1) AND active = true`,
+      [email],
+    );
+  } else {
+    rows = await queryClient.unsafe(`SELECT user_uuid, email, full_name, phone, property_group_uuid, active FROM pm_proxy_users WHERE active = true`);
+    const inputKeys = phoneMatchKeys(identifier);
+    if (!inputKeys.length) rows = [];
+    else rows = rows.filter((row) => phoneMatchKeys(String(row?.phone || '')).some((key) => inputKeys.includes(key)));
   }
-  const inputKeys = phoneMatchKeys(identifier);
-  if (!inputKeys.length) return null;
-  const rows = await queryClient.unsafe(`SELECT user_uuid, email, full_name, phone, property_group_uuid, active FROM pm_proxy_users WHERE active = true`);
-  for (const row of rows as any[]) {
-    const storedKeys = phoneMatchKeys(String(row.phone || ''));
-    if (storedKeys.some((key) => inputKeys.includes(key))) return row as PmProxyUser;
+
+  if (!rows.length) return [];
+
+  const userUuids = Array.from(new Set(rows.map((row) => String(row?.user_uuid || '').trim()).filter(Boolean)));
+  const scopesByUser = new Map<string, string[]>();
+
+  try {
+    const scopeRows = await queryClient.unsafe(
+      `SELECT user_uuid, property_group_uuid
+       FROM pm_proxy_user_scopes
+       WHERE active = true AND user_uuid = ANY($1::text[])`,
+      [userUuids],
+    );
+    for (const scopeRow of scopeRows as any[]) {
+      const userUuid = String(scopeRow?.user_uuid || '').trim();
+      const scopeUuid = normalizeScopeUuid(String(scopeRow?.property_group_uuid || ''));
+      if (!userUuid || !scopeUuid) continue;
+      if (!scopesByUser.has(userUuid)) scopesByUser.set(userUuid, []);
+      scopesByUser.get(userUuid)!.push(scopeUuid);
+    }
+  } catch {
+    // Scope table might not exist in older runtimes; fallback to legacy column only.
   }
-  return null;
+
+  return rows.map((row: any) => {
+    const userUuid = String(row?.user_uuid || '').trim();
+    const legacyScope = normalizeScopeUuid(String(row?.property_group_uuid || ''));
+    const joinedScopes = scopesByUser.get(userUuid) || [];
+    const scopes = Array.from(new Set([legacyScope, ...joinedScopes].filter(Boolean)));
+    const primaryScope = scopes.includes(legacyScope) ? legacyScope : (scopes[0] || '');
+    return {
+      user_uuid: userUuid,
+      email: String(row?.email || ''),
+      full_name: String(row?.full_name || ''),
+      phone: String(row?.phone || ''),
+      property_group_uuid: legacyScope,
+      scopes,
+      primary_scope_uuid: primaryScope,
+      active: Boolean(row?.active),
+    } as PmProxyUser;
+  });
+}
+
+async function selectPmScopedAccount(users: PmProxyUser[], requestedScopeUuidRaw: string): Promise<{ user: PmProxyUser | null; scopeUuid: string; scopeOptions?: ScopeOption[]; error?: string }> {
+  if (!users.length) return { user: null, scopeUuid: '' };
+
+  const requestedScopeUuid = normalizeScopeUuid(requestedScopeUuidRaw);
+  const allScopeUuids = users.flatMap((user) => user.scopes || []).filter(Boolean);
+
+  if (requestedScopeUuid) {
+    const scoped = users.find((user) => (user.scopes || []).includes(requestedScopeUuid));
+    if (!scoped) {
+      return {
+        user: null,
+        scopeUuid: '',
+        scopeOptions: await buildScopeOptions(allScopeUuids),
+        error: 'Requested property group scope is not assigned to this PM account.',
+      };
+    }
+    return { user: scoped, scopeUuid: requestedScopeUuid };
+  }
+
+  if (users.length === 1) {
+    const user = users[0];
+    if (user.primary_scope_uuid) return { user, scopeUuid: user.primary_scope_uuid };
+    if ((user.scopes || []).length === 1) return { user, scopeUuid: user.scopes[0] };
+  }
+
+  const distinctScopes = Array.from(new Set(allScopeUuids));
+  if (distinctScopes.length === 1) {
+    const onlyScope = distinctScopes[0];
+    const user = users.find((candidate) => (candidate.scopes || []).includes(onlyScope)) || users[0];
+    return { user, scopeUuid: onlyScope };
+  }
+
+  return {
+    user: null,
+    scopeUuid: '',
+    scopeOptions: await buildScopeOptions(distinctScopes),
+    error: 'Multiple property-group scopes are assigned to this PM account. Provide property_group_uuid to continue OTP login.',
+  };
 }
 
 async function insertTrustedDeviceSession(args: { token: string; userName: string; role?: string; loginEmail?: string; propertyGroupUuid?: string; phone?: string }): Promise<void> {
@@ -338,9 +485,21 @@ export async function handleDeviceOtpRequest(req: Request): Promise<any> {
     let body: any = {};
     try { body = await req.json(); } catch { body = {}; }
     const requestedIdentifier = getBodyField(body, 'identifier', 'email', 'phone');
-    const pmUser = await resolvePmProxyUser(requestedIdentifier);
-    if (policy.requireMembership && !pmUser) {
+    const requestedScopeUuid = getBodyField(body, 'property_group_uuid', 'scope_uuid', 'propertyGroupUuid');
+    const pmUsers = await resolvePmProxyUsers(requestedIdentifier);
+    if (policy.requireMembership && !pmUsers.length) {
       return { ok: false, status: 403, error: 'No active PM account found for that identifier. Please verify the identifier you registered with, or contact your administrator.' };
+    }
+    const selection = await selectPmScopedAccount(pmUsers, requestedScopeUuid);
+    const pmUser = selection.user;
+    const scopeUuid = selection.scopeUuid;
+    if (policy.requireMembership && !pmUser) {
+      return {
+        ok: false,
+        status: 409,
+        error: selection.error || 'No PM scope is available for this account.',
+        scope_options: selection.scopeOptions || [],
+      };
     }
     const email = deriveOtpIdentityEmail(pmUser, requestedIdentifier, policy.allowedDomain);
     const fallbackPhone = normalizePhone(requestedIdentifier);
@@ -354,16 +513,17 @@ export async function handleDeviceOtpRequest(req: Request): Promise<any> {
       await queryClient.unsafe(
         `INSERT INTO device_otps (email, code, used, expires_at, user_name, role_hint, property_group_uuid)
          VALUES ($1, $2, FALSE, NOW() + ($3 * INTERVAL '1 minute'), $4, 'pm_readonly', $5)`,
-        [email, code, policy.ttlMinutes, userName, String(pmUser?.property_group_uuid || '')],
+        [email, code, policy.ttlMinutes, userName, String(scopeUuid || pmUser?.primary_scope_uuid || '')],
       );
     } catch {
-      rememberMemoryOtp(email, code, policy.ttlMinutes, userName, String(pmUser?.property_group_uuid || ''));
+      rememberMemoryOtp(email, code, policy.ttlMinutes, userName, String(scopeUuid || pmUser?.primary_scope_uuid || ''));
     }
     await sendOtpSms(smsPhone, code, policy.ttlMinutes);
     return {
       ok: true,
       message: pmUser ? `OTP sent to phone on file for ${pmUser.full_name || 'PM User'}.` : 'OTP sent to the provided phone number.',
       phone_hint: smsPhone.length > 7 ? smsPhone.slice(0, 5) + '***' + smsPhone.slice(-2) : '***',
+      property_group_uuid: String(scopeUuid || pmUser?.primary_scope_uuid || ''),
       expires_in_minutes: policy.ttlMinutes,
     };
   } catch (err: any) {
@@ -379,8 +539,20 @@ export async function handleDeviceOtpVerify(req: Request): Promise<any> {
   let body: any = {};
   try { body = await req.json(); } catch { body = {}; }
   const requestedIdentifier = getBodyField(body, 'identifier', 'email', 'phone');
-  const pmUser = await resolvePmProxyUser(requestedIdentifier);
-  if (policy.requireMembership && !pmUser) return { ok: false, status: 403, error: 'No active PM account found for that identifier.' };
+  const requestedScopeUuid = getBodyField(body, 'property_group_uuid', 'scope_uuid', 'propertyGroupUuid');
+  const pmUsers = await resolvePmProxyUsers(requestedIdentifier);
+  const selection = await selectPmScopedAccount(pmUsers, requestedScopeUuid);
+  const pmUser = selection.user;
+  const requestedScope = selection.scopeUuid;
+  if (policy.requireMembership && !pmUsers.length) return { ok: false, status: 403, error: 'No active PM account found for that identifier.' };
+  if (policy.requireMembership && !pmUser) {
+    return {
+      ok: false,
+      status: 409,
+      error: selection.error || 'No PM scope is available for this account.',
+      scope_options: selection.scopeOptions || [],
+    };
+  }
   const email = deriveOtpIdentityEmail(pmUser, requestedIdentifier, policy.allowedDomain);
   const code = getBodyField(body, 'code', 'otp');
   if (!email || !code) return { ok: false, status: 403, error: 'No active PM account found for that identifier.' };
@@ -389,8 +561,11 @@ export async function handleDeviceOtpVerify(req: Request): Promise<any> {
   let scopeUuidFromOtp = '';
   const rows = await queryClient.unsafe(
     `SELECT id, code, expires_at, used, user_name, property_group_uuid
-     FROM device_otps WHERE email = $1 ORDER BY id DESC LIMIT 1`,
-    [email],
+     FROM device_otps
+     WHERE email = $1
+       AND ($2 = '' OR coalesce(property_group_uuid, '') = $2)
+     ORDER BY id DESC LIMIT 1`,
+    [email, requestedScope],
   ).catch(() => [] as any[]);
   if ((rows as any[]).length) {
     const row: any = rows[0];
@@ -401,7 +576,7 @@ export async function handleDeviceOtpVerify(req: Request): Promise<any> {
     scopeUuidFromOtp = String(row.property_group_uuid || '');
     await queryClient.unsafe(`UPDATE device_otps SET used = TRUE, used_at = NOW() WHERE id = $1`, [row.id]).catch(() => {});
   } else {
-    const memoryRow = readMemoryOtp(email);
+    const memoryRow = readMemoryOtp(email, requestedScope);
     if (!memoryRow) return { ok: false, status: 401, error: 'No OTP request found for this email' };
     if (memoryRow.used) return { ok: false, status: 401, error: 'OTP code already used' };
     if (memoryRow.expiresAtMs < Date.now()) return { ok: false, status: 401, error: 'OTP code expired' };
@@ -409,12 +584,12 @@ export async function handleDeviceOtpVerify(req: Request): Promise<any> {
     memoryRow.used = true;
     userNameFromOtp = memoryRow.userName;
     scopeUuidFromOtp = memoryRow.scopeUuid;
-    memoryOtpStore.set(normalizeEmail(email), memoryRow);
+    memoryOtpStore.set(otpMemoryKey(email, scopeUuidFromOtp), memoryRow);
   }
 
   const userName = getBodyField(body, 'user_name', 'userName', 'user') || pmUser?.full_name || userNameFromOtp || email;
   const role = 'pm_readonly';
-  const scopeUuid = String(pmUser?.property_group_uuid || scopeUuidFromOtp || '');
+  const scopeUuid = String(requestedScope || pmUser?.primary_scope_uuid || scopeUuidFromOtp || '');
   const phone = String(pmUser?.phone || '');
   let token = generateUuid();
   try {

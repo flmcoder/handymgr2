@@ -2226,23 +2226,27 @@ function formatOtpIdentifierSummary(identifier) {
 function setPmOtpStep(step, identifier) {
   var route = $('#vaultOtpRoute');
   var identifierWrap = $('#vaultOtpIdentifierWrap');
+  var scopeWrap = $('#vaultOtpScopeWrap');
   var requestActions = $('#vaultOtpRequestActions');
   var summary = $('#vaultOtpSentSummary');
   var summaryValue = $('#vaultOtpSentValue');
   var editRow = $('#vaultOtpEditRow');
   var verifyRow = $('#vaultOtpVerifyRow');
   var identifierInput = $('#vaultOtpEmail');
+  var scopeInput = $('#vaultOtpScope');
   var codeInput = $('#vaultOtpCode');
   var verifyBtn = $('#btnVerifyOtp');
   var sent = step === 'verify';
 
   if (route) route.classList.toggle('compact', sent);
   if (identifierWrap) identifierWrap.classList.toggle('hidden', sent);
+  if (scopeWrap) scopeWrap.classList.toggle('hidden', sent);
   if (requestActions) requestActions.classList.toggle('hidden', sent);
   if (summary) summary.classList.toggle('hidden', !sent);
   if (editRow) editRow.classList.toggle('hidden', !sent);
   if (verifyRow) verifyRow.classList.toggle('hidden', !sent);
   if (identifierInput) identifierInput.disabled = sent;
+  if (scopeInput) scopeInput.disabled = sent;
   if (summaryValue && sent) summaryValue.textContent = formatOtpIdentifierSummary(identifier || (identifierInput ? identifierInput.value : ''));
   if (verifyBtn) verifyBtn.textContent = 'Verify OTP';
 
@@ -2313,16 +2317,24 @@ function normalizeOtpIdentifier(raw) {
   return normalizeOtpEmail(raw) || normalizeOtpPhone(raw);
 }
 
-async function requestDeviceOtp(identifier, userName) {
+function normalizeOtpScopeUuid(raw) {
+  var value = String(raw || '').trim().toLowerCase();
+  if (!value) return '';
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : '';
+}
+
+async function requestDeviceOtp(identifier, userName, scopeUuid) {
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_request';
   var email = normalizeOtpEmail(identifier);
   var phone = normalizeOtpPhone(identifier);
+  var scope = normalizeOtpScopeUuid(scopeUuid);
   var payload = {
     identifier: String(identifier || '').trim(),
     email: email || undefined,
     phone: phone || undefined,
+    property_group_uuid: scope || undefined,
     user_name: userName || ('hm-' + (navigator && navigator.platform ? navigator.platform : 'device'))
   };
   var res = await fetchWithTimeout(url, {
@@ -2333,21 +2345,25 @@ async function requestDeviceOtp(identifier, userName) {
   var data = {};
   try { data = await res.json(); } catch (e) { /* */ }
   if (!res.ok || !data.ok) {
-    throw new Error(data.error || data.message || ('OTP request failed (HTTP ' + res.status + ')'));
+    var reqErr = new Error(data.error || data.message || ('OTP request failed (HTTP ' + res.status + ')'));
+    reqErr.details = data;
+    throw reqErr;
   }
   return data;
 }
 
-async function verifyDeviceOtp(identifier, code, userName) {
+async function verifyDeviceOtp(identifier, code, userName, scopeUuid) {
   if (!API_PROXY) throw new Error('No proxy configured');
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=device_otp_verify';
   var email = normalizeOtpEmail(identifier);
   var phone = normalizeOtpPhone(identifier);
+  var scope = normalizeOtpScopeUuid(scopeUuid);
   var payload = {
     identifier: String(identifier || '').trim(),
     email: email || undefined,
     phone: phone || undefined,
+    property_group_uuid: scope || undefined,
     code: code,
     user_name: userName || ('hm-' + (navigator && navigator.platform ? navigator.platform : 'device'))
   };
@@ -2359,7 +2375,9 @@ async function verifyDeviceOtp(identifier, code, userName) {
   var data = {};
   try { data = await res.json(); } catch (e) { /* */ }
   if (!res.ok || !data.ok || !data.token) {
-    throw new Error(data.error || data.message || ('OTP verify failed (HTTP ' + res.status + ')'));
+    var verifyErr = new Error(data.error || data.message || ('OTP verify failed (HTTP ' + res.status + ')'));
+    verifyErr.details = data;
+    throw verifyErr;
   }
   return data;
 }
@@ -5007,6 +5025,11 @@ if ($('#vaultOtpEmail')) {
     if (e.key === 'Enter') { $('#btnSendOtp').click(); }
   });
 }
+if ($('#vaultOtpScope')) {
+  $('#vaultOtpScope').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { $('#btnSendOtp').click(); }
+  });
+}
 if ($('#vaultOtpCode')) {
   $('#vaultOtpCode').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') { $('#btnVerifyOtp').click(); }
@@ -5078,6 +5101,12 @@ if ($('#btnSendOtp')) {
   $('#btnSendOtp').addEventListener('click', async function() {
     var identifierRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
     var identifier = normalizeOtpIdentifier(identifierRaw);
+    var scopeRaw = $('#vaultOtpScope') ? $('#vaultOtpScope').value : '';
+    var scopeUuid = normalizeOtpScopeUuid(scopeRaw);
+    if (scopeRaw && !scopeUuid) {
+      setVaultFeedback('If provided, property group scope must be a valid UUID.', '');
+      return;
+    }
     if (!identifier) {
       setVaultFeedback('Enter a valid PM email or phone number to start PM login. For phone, just type 10 digits and formatting is automatic.', '');
       return;
@@ -5095,12 +5124,16 @@ if ($('#btnSendOtp')) {
     btn.textContent = 'Sending...';
     setVaultFeedback('');
     try {
-      await requestDeviceOtp(identifier, 'dispatcher');
+      await requestDeviceOtp(identifier, 'dispatcher', scopeUuid);
       showToast('OTP sent', { kind: 'success' });
       setPmOtpStep('verify', identifier);
       setVaultFeedback('OTP code sent successfully. Enter 6-digit verification code.', 'success');
       startOtpCountdown();
     } catch (err) {
+      if (err && err.details && Array.isArray(err.details.scope_options) && err.details.scope_options.length) {
+        var firstScope = String(err.details.scope_options[0].property_group_uuid || '');
+        if ($('#vaultOtpScope') && firstScope) $('#vaultOtpScope').value = firstScope;
+      }
       var msg = (err && (err.message || String(err))) || 'OTP request failed';
       setVaultFeedback(msg, '');
       showToast(msg, { kind: 'danger' });
@@ -5115,6 +5148,7 @@ if ($('#btnSendOtp')) {
 if ($('#btnVerifyOtp')) {
   $('#btnVerifyOtp').addEventListener('click', async function() {
     var identifier = normalizeOtpIdentifier($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
+    var scopeUuid = normalizeOtpScopeUuid($('#vaultOtpScope') ? $('#vaultOtpScope').value : '');
     var code = String(($('#vaultOtpCode') && $('#vaultOtpCode').value) || '').trim();
     if (!identifier) {
       setPmOtpStep('request');
@@ -5145,7 +5179,7 @@ if ($('#btnVerifyOtp')) {
     setVaultFeedback('');
     stopOtpCountdown();
     try {
-      var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher');
+      var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher', scopeUuid);
       var token = verifyData.token;
       try { localStorage.setItem('hm_auth_token', token); } catch (eA) { /* */ }
       try { localStorage.setItem('hm_device_token', token); } catch (e) { /* */ }
