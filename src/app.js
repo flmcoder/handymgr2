@@ -301,7 +301,9 @@ var APP_VERSION = 'v9.7.9:R1.1';
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
   : (window.location.origin || 'https://handymgr2.onrender.com');
-var DEFAULT_PROXY_URL = API_BASE_URL;
+var DEFAULT_PROXY_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:3000'
+  : 'https://flr-appfolio.val.run';
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 var DASHBOARD_KPI_HISTORY = [];
@@ -2561,6 +2563,13 @@ function getActionProxyBase(action) {
   return useOverride ? upstream.replace(/\/+$/, '') : base;
 }
 
+function isLikelyAppShellProxyBase(base) {
+  var normalized = String(base || '').trim().replace(/\/+$/, '');
+  if (!normalized) return false;
+  var origin = String(window.location.origin || '').trim().replace(/\/+$/, '');
+  return normalized === origin || normalized.indexOf('handymgr.app') !== -1;
+}
+
 async function parseJsonResponseOrThrow(res, contextLabel) {
   var rawText = '';
   try { rawText = await res.text(); } catch (e) { rawText = ''; }
@@ -2584,6 +2593,9 @@ async function _proxyActionDirect(action, params, options) {
   var isHeavy = !!HEAVY_ACTIONS[action];
   if (isHeavy) topBarStart();
   var actionBase = getActionProxyBase(action);
+  if (isLikelyAppShellProxyBase(actionBase)) {
+    throw new Error('Proxy base appears to be app shell origin; configure Proxy Relay URL to backend proxy (for example https://flr-appfolio.val.run)');
+  }
   var sep = actionBase.indexOf('?') !== -1 ? '&' : '?';
   var url = actionBase + sep + 'action=' + encodeURIComponent(action);
   if (params) {
@@ -2743,6 +2755,9 @@ async function proxyPost(action, bodyObj, extraHeaders) {
     throw new Error('Read-only access mode: updates are disabled');
   }
   if (!API_PROXY) throw new Error('No proxy configured');
+  if (isLikelyAppShellProxyBase(API_PROXY)) {
+    throw new Error('Proxy base appears to be app shell origin; configure Proxy Relay URL to backend proxy (for example https://flr-appfolio.val.run)');
+  }
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
   var skipAuthActions = {
@@ -4883,9 +4898,6 @@ function sanitizeProxy(raw) {
 function normalizeConfiguredProxy(raw) {
   var proxy = sanitizeProxy(raw);
   if (!proxy) return DEFAULT_PROXY_URL;
-  if (proxy.indexOf('afproxy.val.run') !== -1 || proxy.indexOf('val.run') !== -1 || proxy.indexOf('val.town') !== -1) {
-    return DEFAULT_PROXY_URL;
-  }
   return proxy;
 }
 
