@@ -942,6 +942,12 @@ function _addNameToGroupMap(name, groupName) {
   }
 }
 
+function isLikelyGroupUuid(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return false;
+  return /^[0-9a-fA-F-]{20,}$/.test(raw);
+}
+
 // Populates the GLOBAL group filter dropdown (replaces per-tab dropdowns)
 function populateGroupFilters() {
   var el = document.getElementById('globalGroupFilter');
@@ -985,6 +991,11 @@ function populateGroupFilters() {
     ];
     candidates.forEach(function(raw) {
       var pf = String(raw || '').trim();
+      if (isLikelyGroupUuid(pf)) {
+        var resolved = resolveGroupNameFromUuid(pf);
+        if (resolved) pf = resolved;
+        else return;
+      }
       if (pf && !existingNames[pf.toLowerCase()]) grps[pf] = true;
     });
   });
@@ -4244,10 +4255,15 @@ try { _pmScopeEmail = localStorage.getItem('hm_scope_email') || ''; } catch (e) 
 function resolveGroupNameFromUuid(groupUuid) {
   var gid = String(groupUuid || '').trim();
   if (!gid) return '';
+  var gidLower = gid.toLowerCase();
   var g = (PROPERTY_GROUPS || []).find(function(x) {
-    return String((x && x.id) || '').trim() === gid;
+    if (!x) return false;
+    var candidates = [x.id, x.group_id, x.group_uuid];
+    return candidates.some(function(c) {
+      return String(c || '').trim().toLowerCase() === gidLower;
+    });
   });
-  return g && g.name ? String(g.name) : '';
+  return g && g.name ? String(g.name).trim() : '';
 }
 
 function resolveGroupUuidFromName(groupName) {
@@ -7060,6 +7076,24 @@ async function resolvePropertyGroupNames() {
       var grps = byName.length ? byName : byId;
       wo._propertyGroup = grps[0] || '';
     });
+    PROPERTIES.forEach(function(p) {
+      var byName = groupsByPropertyName(p.name || '');
+      var byId = _idToGroups[String(p.id || '')] || [];
+      var byGroupUuid = [];
+      if (p.propertyGroupId) {
+        var resolved = resolveGroupNameFromUuid(p.propertyGroupId);
+        if (resolved) byGroupUuid.push(resolved);
+      }
+      var grps = byName.length ? byName : (byId.length ? byId : byGroupUuid);
+      var resolvedName = String(grps[0] || '').trim();
+      if (!resolvedName) return;
+
+      if (!String(p.groupName || '').trim() || isLikelyGroupUuid(p.groupName)) p.groupName = resolvedName;
+      if (!String(p.propertyGroup || '').trim() || isLikelyGroupUuid(p.propertyGroup)) p.propertyGroup = resolvedName;
+      if (!String(p.group || '').trim() || isLikelyGroupUuid(p.group)) p.group = resolvedName;
+      if (!String(p.portfolio || '').trim() || isLikelyGroupUuid(p.portfolio)) p.portfolio = resolvedName;
+      if (!String(p.portfolioName || '').trim() || isLikelyGroupUuid(p.portfolioName)) p.portfolioName = resolvedName;
+    });
     TURNS.forEach(function(t) {
       var byName = groupsByPropertyName(t.property || '');
       var byId   = _idToGroups[String(t.propertyId || '')] || [];
@@ -8651,17 +8685,37 @@ async function fetchWONotes(woIdOrUuid, woContext) {
   }
   var notesCached = detailCacheGet('notes_' + woRef);
   if (typeof notesCached !== 'undefined') return notesCached;
+
+  function normalizeWONotesPayload(data) {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data.results)) return data.results;
+    if (Array.isArray(data.Results)) return data.Results;
+    if (Array.isArray(data.data)) return data.data;
+    if (Array.isArray(data.Data)) return data.Data;
+    if (Array.isArray(data.items)) return data.items;
+    return [];
+  }
+
+  var notesApiPath = '/api/v0/work_orders/' + encodeURIComponent(String(woRef)) + '/notes';
   try {
-    // Use dedicated proxy action with v0 credentials (like property_groups)
-    var data = await proxyAction('wo_notes', { wo_id: woRef });
-    var notes = (data && data.results) ? data.results :
-                (data && data.Results) ? data.Results :
-                (data && data.data) ? data.data :
-                (data && data.Data) ? data.Data :
-                (Array.isArray(data) ? data : []);
+    // Primary path: direct v0 endpoint by UUID through passthrough/apiFetch.
+    var data = await apiFetch(notesApiPath);
+    var notes = normalizeWONotesPayload(data);
     detailCacheSet('notes_' + woRef, notes);
     return notes;
-  } catch (e) { return []; }
+  } catch (apiErr) {
+    // Fallback for environments where only wo_notes action is available.
+    try {
+      var fallbackData = await proxyAction('wo_notes', { wo_id: woRef });
+      var fallbackNotes = normalizeWONotesPayload(fallbackData);
+      detailCacheSet('notes_' + woRef, fallbackNotes);
+      return fallbackNotes;
+    } catch (proxyErr) {
+      console.warn('[fetchWONotes] v0 and proxy fallback failed for WO UUID', woRef, apiErr && apiErr.message, proxyErr && proxyErr.message);
+      return [];
+    }
+  }
 }
 
 function renderWONotesList(notes) {
@@ -8736,12 +8790,22 @@ async function loadWOAttachments(woIdOrUuid, woContext) {
       renderWOAttachmentsList([], 'Unable to resolve the AppFolio work order UUID for attachments.');
       return;
     }
-    var data = await proxyAction('wo_attachments', { wo_id: String(woRef) }, { suppressSessionExpiry: true });
-    if (!data || data.ok === false) {
-      renderWOAttachmentsList([], String((data && (data.detail || data.error)) || 'No detail from proxy'));
+
+    var attachmentsApiPath = '/api/v0/work_orders/' + encodeURIComponent(String(woRef)) + '/attachments';
+
+    try {
+      var directData = await apiFetch(attachmentsApiPath);
+      renderWOAttachmentsList(normalizeWOAttachmentList(directData));
       return;
+    } catch (apiErr) {
+      // Fallback for environments where attachments action is still required.
+      var data = await proxyAction('wo_attachments', { wo_id: String(woRef) }, { suppressSessionExpiry: true });
+      if (!data || data.ok === false) {
+        renderWOAttachmentsList([], String((data && (data.detail || data.error)) || (apiErr && apiErr.message) || 'No detail from proxy'));
+        return;
+      }
+      renderWOAttachmentsList(normalizeWOAttachmentList(data));
     }
-    renderWOAttachmentsList(normalizeWOAttachmentList(data));
   } catch (e) {
     renderWOAttachmentsList([], String((e && e.message) || e || 'Request failed'));
   }
