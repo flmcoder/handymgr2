@@ -298,12 +298,13 @@ var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06e
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
 var APP_VERSION = 'v9.7.9:R1.1';
+var RENDER_API_BASE_URL = 'https://handymgr2.onrender.com';
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
-  : (window.location.origin || 'https://handymgr2.onrender.com');
-var DEFAULT_PROXY_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://localhost:3000'
-  : 'https://flr-appfolio.val.run';
+  : ((window.location.hostname || '').indexOf('.onrender.com') !== -1
+      ? (window.location.origin || RENDER_API_BASE_URL)
+      : RENDER_API_BASE_URL);
+var DEFAULT_PROXY_URL = API_BASE_URL;
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 var DASHBOARD_KPI_HISTORY = [];
@@ -2594,7 +2595,7 @@ async function _proxyActionDirect(action, params, options) {
   if (isHeavy) topBarStart();
   var actionBase = getActionProxyBase(action);
   if (isLikelyAppShellProxyBase(actionBase)) {
-    throw new Error('Proxy base appears to be app shell origin; configure Proxy Relay URL to backend proxy (for example https://flr-appfolio.val.run)');
+    throw new Error('Proxy base appears to be app shell origin; configure Proxy Relay URL to backend API (for example https://handymgr2.onrender.com)');
   }
   var sep = actionBase.indexOf('?') !== -1 ? '&' : '?';
   var url = actionBase + sep + 'action=' + encodeURIComponent(action);
@@ -2756,7 +2757,7 @@ async function proxyPost(action, bodyObj, extraHeaders) {
   }
   if (!API_PROXY) throw new Error('No proxy configured');
   if (isLikelyAppShellProxyBase(API_PROXY)) {
-    throw new Error('Proxy base appears to be app shell origin; configure Proxy Relay URL to backend proxy (for example https://flr-appfolio.val.run)');
+    throw new Error('Proxy base appears to be app shell origin; configure Proxy Relay URL to backend API (for example https://handymgr2.onrender.com)');
   }
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
