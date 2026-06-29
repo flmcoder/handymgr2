@@ -8784,6 +8784,10 @@ async function loadWOAttachments(woIdOrUuid, woContext) {
   var el = document.getElementById('detailAttachmentList');
   if (!el || !woIdOrUuid) return;
   el.innerHTML = '<div style="color:var(--text-muted);font-size:11px"><i class="fas fa-spinner fa-spin"></i> Loading attachments…</div>';
+  function _isHttp404(errLike) {
+    var msg = String((errLike && errLike.message) || errLike || '').toLowerCase();
+    return msg.indexOf('http 404') !== -1 || msg.indexOf('status 404') !== -1 || msg.indexOf('404') === 0;
+  }
   try {
     var woRef = await resolveWorkOrderApiUuid(woIdOrUuid, woContext);
     if (!woRef || !isUuidString(woRef)) {
@@ -8798,15 +8802,27 @@ async function loadWOAttachments(woIdOrUuid, woContext) {
       renderWOAttachmentsList(normalizeWOAttachmentList(directData));
       return;
     } catch (apiErr) {
+      if (_isHttp404(apiErr)) {
+        renderWOAttachmentsList([]);
+        return;
+      }
       // Fallback for environments where attachments action is still required.
       var data = await proxyAction('wo_attachments', { wo_id: String(woRef) }, { suppressSessionExpiry: true });
       if (!data || data.ok === false) {
+        if (_isHttp404(data && (data.detail || data.error || data.message || data.status))) {
+          renderWOAttachmentsList([]);
+          return;
+        }
         renderWOAttachmentsList([], String((data && (data.detail || data.error)) || (apiErr && apiErr.message) || 'No detail from proxy'));
         return;
       }
       renderWOAttachmentsList(normalizeWOAttachmentList(data));
     }
   } catch (e) {
+    if (_isHttp404(e)) {
+      renderWOAttachmentsList([]);
+      return;
+    }
     renderWOAttachmentsList([], String((e && e.message) || e || 'Request failed'));
   }
 }
