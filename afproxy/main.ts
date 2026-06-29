@@ -1111,7 +1111,7 @@ export default async function handler(req: Request): Promise<Response> {
           result = await handleAdminRateLimits(params, req);
           break;
 
-        // Proxy config settings (OTP policy etc.) — admin key required in body
+        // Proxy config settings (OTP policy etc.) — admin key OR authenticated full/manager session
         case "settings_set": {
           let sbody: any = {};
           try {
@@ -1124,7 +1124,10 @@ export default async function handler(req: Request): Promise<Response> {
           const adminKey =
             String(sbody.admin_key || sbody.key_auth || "").trim() ||
             (req.headers.get("x-admin-key") || "");
-          if (!PROXY_ADMIN_KEY || adminKey !== PROXY_ADMIN_KEY) {
+          const hasValidAdminKey = !!PROXY_ADMIN_KEY && adminKey === PROXY_ADMIN_KEY;
+          const sessionRole = String(frontendSession?.role || "").toLowerCase();
+          const hasSessionAdmin = sessionRole === "full" || sessionRole === "manager";
+          if (!hasValidAdminKey && !hasSessionAdmin) {
             result = { ok: false, error: "Unauthorized: invalid admin key" };
             break;
           }
@@ -1663,7 +1666,10 @@ export default async function handler(req: Request): Promise<Response> {
           break;
         case "settings_get": {
           const adminKey = params.key || req.headers.get("x-admin-key") || "";
-          if (!PROXY_ADMIN_KEY || adminKey !== PROXY_ADMIN_KEY) {
+          const hasValidAdminKey = !!PROXY_ADMIN_KEY && adminKey === PROXY_ADMIN_KEY;
+          const sessionRole = String(frontendSession?.role || "").toLowerCase();
+          const hasSessionAdmin = sessionRole === "full" || sessionRole === "manager";
+          if (!hasValidAdminKey && !hasSessionAdmin) {
             result = { ok: false, error: "Unauthorized: invalid admin key" };
             break;
           }

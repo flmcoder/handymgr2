@@ -2553,15 +2553,24 @@ async function proxyAction(action, params, options) {
 function getActionProxyBase(action) {
   var base = String(API_PROXY || '').trim().replace(/\/+$/, '');
   if (action !== 'v2_report') return base;
-
-  var origin = String(window.location.origin || '').trim().replace(/\/+$/, '');
-  var looksLikeAppHost = !base || base === origin || base.indexOf('handymgr.app') !== -1;
-  if (!looksLikeAppHost) return base;
-
   var upstream = '';
   try { upstream = String(localStorage.getItem('hm_v2_proxy_url') || '').trim(); } catch (e) { /* */ }
-  if (!upstream) upstream = 'https://flr-appfolio.val.run';
-  return upstream.replace(/\/+$/, '');
+  var enabled = '';
+  try { enabled = String(localStorage.getItem('hm_v2_proxy_enabled') || '').trim().toLowerCase(); } catch (e2) { /* */ }
+  var useOverride = upstream && (enabled === '1' || enabled === 'true' || enabled === 'on');
+  return useOverride ? upstream.replace(/\/+$/, '') : base;
+}
+
+async function parseJsonResponseOrThrow(res, contextLabel) {
+  var rawText = '';
+  try { rawText = await res.text(); } catch (e) { rawText = ''; }
+  if (!rawText) return {};
+  try {
+    return JSON.parse(rawText);
+  } catch (eParse) {
+    var preview = String(rawText || '').replace(/\s+/g, ' ').slice(0, 180);
+    throw new Error((contextLabel || 'Response') + ' returned non-JSON payload: ' + preview);
+  }
 }
 
 // Internal direct proxy call (no SQL fallback logic)
@@ -2666,7 +2675,7 @@ async function _proxyActionDirect(action, params, options) {
       logApiError(res.status, errMsg, 'queued');
       throw new Error(errMsg);
     }
-    var data = await res.json();
+    var data = await parseJsonResponseOrThrow(res, 'Proxy action=' + action);
     if (data && data.ok === false) {
       var dataStatus = parseInt(data.status || '0', 10) || 0;
       // For SQL fallback actions, 404 or empty results are NOT errors — just means SQL cache miss
@@ -2779,7 +2788,7 @@ async function proxyPost(action, bodyObj, extraHeaders) {
       }
       throw new Error('Proxy POST action=' + action + ' failed: HTTP ' + res.status + (errBody ? ' \u2014 ' + errBody.substring(0, 200) : ''));
     }
-    var postData = await res.json();
+    var postData = await parseJsonResponseOrThrow(res, 'Proxy POST action=' + action);
     markProxySessionHealthy();
     return postData;
   }
@@ -22994,10 +23003,6 @@ renderDashboardKPIs = function() {
       pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-plug"></i> Proxy not configured. Connect via the vault first.</div>';
       return Promise.resolve();
     }
-    if (!adminKey) {
-      pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-key"></i> Admin key required. Enter above to load PM users.</div>';
-      return Promise.resolve();
-    }
     // Store key in sessionStorage for future auto-load
     try { sessionStorage.setItem('hm_pm_admin_key', adminKey); } catch (e) { /* */ }
     return proxyPost('sql_query', {
@@ -23233,7 +23238,6 @@ renderDashboardKPIs = function() {
       if (adminKey && keyInput && !String(keyInput.value || '').trim()) {
         keyInput.value = adminKey;
       }
-      if (!adminKey) { if (saveStatus) { saveStatus.textContent = 'Enter Admin Key above to load settings'; saveStatus.style.color = 'var(--text-muted)'; } return; }
       proxyAction('settings_get', { key: adminKey }).then(function(data) {
         var settings = {};
         (data.settings || []).forEach(function(s) { settings[s.key] = s.value; });
@@ -23252,7 +23256,6 @@ renderDashboardKPIs = function() {
 
     saveBtn.addEventListener('click', function() {
       var adminKey = (document.getElementById('dbAdminKey') && document.getElementById('dbAdminKey').value || '').trim();
-      if (!adminKey) { showToast('Enter Admin Key first', 'error'); return; }
       var saves = [
         { key: 'otp_enabled', value: enabledCb.checked ? '1' : '0' },
         { key: 'otp_require_pm_membership', value: (membershipCb && membershipCb.checked) ? '1' : '0' },

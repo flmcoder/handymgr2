@@ -24,6 +24,24 @@ import { PROXY_ADMIN_KEY } from "../config.ts";
 import { checkRateLimit } from "../lib/rateLimit.ts";
 import { sendSMS } from "../lib/ringcentral.ts";
 
+function readBearerToken(req: Request): string {
+  const auth = String(req.headers.get("authorization") || "").trim();
+  if (!auth) return "";
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  return (m && m[1]) ? String(m[1]).trim() : "";
+}
+
+async function isAdminAuthorized(req: Request, providedKey?: string): Promise<boolean> {
+  const key = String(providedKey || req.headers.get("x-admin-key") || "").trim();
+  if (PROXY_ADMIN_KEY && key === PROXY_ADMIN_KEY) return true;
+
+  const token = readBearerToken(req);
+  if (!token) return false;
+  const session = await getTrustedDeviceSession(token).catch(() => null);
+  const role = String(session?.role || "").toLowerCase();
+  return role === "full" || role === "manager";
+}
+
 // ── Stateless HMAC-signed session tokens ─────────────────────────────────────
 // Used as a fallback when the DB is unavailable for writes (e.g. Val Town free
 // plan blocks SQL writes).  Format: "v1.<b64url-payload>.<b64url-sig>"
@@ -1259,9 +1277,8 @@ export async function touchDeviceSession(token: string): Promise<void> {
 export async function handlePmProxyUsersList(params: Record<string, string>, req: Request): Promise<any> {
   try {
     await ensurePmProxyUsersTable();
-    if (!PROXY_ADMIN_KEY) return { ok: false, error: "pm user admin disabled — set PROXY_ADMIN_KEY" };
     const key = params.key || req.headers.get("x-admin-key") || "";
-    if (key !== PROXY_ADMIN_KEY) return { ok: false, error: "Unauthorized: invalid admin key" };
+    if (!(await isAdminAuthorized(req, key))) return { ok: false, error: "Unauthorized: invalid admin key" };
     const limit = Math.max(1, Math.min(500, parseInt(String(params.limit || "100"), 10) || 100));
     const offset = Math.max(0, parseInt(String(params.offset || "0"), 10) || 0);
     const totalResult = await sqlite.execute({ sql: `SELECT COUNT(*) AS total FROM pm_proxy_users` });
@@ -1285,11 +1302,10 @@ export async function handlePmProxyUsersList(params: Record<string, string>, req
 export async function handlePmProxyUserUpsert(req: Request): Promise<any> {
   try {
     await ensurePmProxyUsersTable();
-    if (!PROXY_ADMIN_KEY) return { ok: false, error: "pm user admin disabled — set PROXY_ADMIN_KEY" };
     let body: any = {};
     try { body = await req.json(); } catch { body = {}; }
     const key = getBodyField(body, "key", "admin_key");
-    if (key !== PROXY_ADMIN_KEY) return { ok: false, error: "Unauthorized: invalid admin key" };
+    if (!(await isAdminAuthorized(req, key))) return { ok: false, error: "Unauthorized: invalid admin key" };
     const email = normalizeEmail(getBodyField(body, "email"));
     const propertyGroupUuid = getBodyField(body, "property_group_uuid", "scope_uuid");
     if (!email || !propertyGroupUuid) return { ok: false, status: 400, error: "Missing email or property_group_uuid" };
@@ -1319,11 +1335,10 @@ export async function handlePmProxyUserUpsert(req: Request): Promise<any> {
 export async function handlePmProxyUserDelete(req: Request): Promise<any> {
   try {
     await ensurePmProxyUsersTable();
-    if (!PROXY_ADMIN_KEY) return { ok: false, error: "pm user admin disabled — set PROXY_ADMIN_KEY" };
     let body: any = {};
     try { body = await req.json(); } catch { body = {}; }
     const key = getBodyField(body, "key", "admin_key");
-    if (key !== PROXY_ADMIN_KEY) return { ok: false, error: "Unauthorized: invalid admin key" };
+    if (!(await isAdminAuthorized(req, key))) return { ok: false, error: "Unauthorized: invalid admin key" };
     const userUuid = getBodyField(body, "user_uuid");
     const email = normalizeEmail(getBodyField(body, "email"));
     if (!userUuid && !email) return { ok: false, status: 400, error: "Missing user_uuid or email" };
@@ -1340,9 +1355,8 @@ export async function handlePmProxyUserDelete(req: Request): Promise<any> {
 
 export async function handleTrustedDeviceList(params: Record<string, string>, req: Request): Promise<any> {
   await ensureTrustedDevicesTable();
-  if (!PROXY_ADMIN_KEY) return { ok: false, error: "trusted device admin is disabled — set PROXY_ADMIN_KEY" };
   const key = params.key || req.headers.get("x-admin-key") || "";
-  if (key !== PROXY_ADMIN_KEY) return { ok: false, error: "Unauthorized: invalid admin key" };
+  if (!(await isAdminAuthorized(req, key))) return { ok: false, error: "Unauthorized: invalid admin key" };
   const limit = Math.max(1, Math.min(500, parseInt(String(params.limit || "100"), 10) || 100));
   const offset = Math.max(0, parseInt(String(params.offset || "0"), 10) || 0);
   const totalResult = await executeTrustedDevicesSql(`SELECT COUNT(*) AS total FROM trusted_devices WHERE revoked = 0`);
@@ -1354,11 +1368,10 @@ export async function handleTrustedDeviceList(params: Record<string, string>, re
 
 export async function handleTrustedDeviceRevoke(params: Record<string, string>, req: Request): Promise<any> {
   await ensureTrustedDevicesTable();
-  if (!PROXY_ADMIN_KEY) return { ok: false, error: "trusted device admin is disabled — set PROXY_ADMIN_KEY" };
   let body: any = {};
   try { body = await req.json(); } catch { body = {}; }
   const key = params.key || body.key || req.headers.get("x-admin-key") || "";
-  if (key !== PROXY_ADMIN_KEY) return { ok: false, error: "Unauthorized: invalid admin key" };
+  if (!(await isAdminAuthorized(req, key))) return { ok: false, error: "Unauthorized: invalid admin key" };
   const token = getBodyField(body, "token", "device_token", "deviceToken") || getBodyField(params, "token", "device_token", "deviceToken");
   if (!token) return { ok: false, error: "Missing token/device_token" };
   const result = await executeTrustedDevicesSql(`UPDATE trusted_devices SET revoked = 1 WHERE device_token = ?`, [token]);
