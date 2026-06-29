@@ -4895,9 +4895,17 @@ function sanitizeProxy(raw) {
   return val;
 }
 
+function isAppShellProxyValue(proxy) {
+  var normalized = String(proxy || '').trim().replace(/\/+$/, '');
+  if (!normalized) return false;
+  var origin = String(window.location.origin || '').trim().replace(/\/+$/, '');
+  return normalized === origin || normalized.indexOf('handymgr.app') !== -1;
+}
+
 function normalizeConfiguredProxy(raw) {
   var proxy = sanitizeProxy(raw);
   if (!proxy) return DEFAULT_PROXY_URL;
+  if (isAppShellProxyValue(proxy)) return DEFAULT_PROXY_URL;
   return proxy;
 }
 
@@ -4956,13 +4964,21 @@ async function initVaultConfigUI() {
 
   var cfgFromUrl = getConfigFromUrl();
   if (cfgFromUrl) {
+    cfgFromUrl.proxy = normalizeConfiguredProxy(cfgFromUrl.proxy || '');
     applyVaultConfigToInputs(cfgFromUrl);
     if (!rememberEl || rememberEl.checked) {
       await saveVaultConfig(cfgFromUrl);
     }
   } else {
     var savedCfg = await loadVaultConfig();
-    if (savedCfg) applyVaultConfigToInputs(savedCfg);
+    if (savedCfg) {
+      var normalizedSavedProxy = normalizeConfiguredProxy(savedCfg.proxy || '');
+      if (normalizedSavedProxy !== String(savedCfg.proxy || '')) {
+        savedCfg.proxy = normalizedSavedProxy;
+        await saveVaultConfig(savedCfg);
+      }
+      applyVaultConfigToInputs(savedCfg);
+    }
   }
 
   function handleConfigInput() {
@@ -5318,12 +5334,25 @@ setVaultPanel('main');
   if (!_token) return;
 
   var _proxyUrl = '';
-  try { _proxyUrl = normalizeConfiguredProxy(localStorage.getItem('hm_proxy_url') || ''); } catch (e) { /* */ }
+  try {
+    var _rawStoredProxy = localStorage.getItem('hm_proxy_url') || '';
+    _proxyUrl = normalizeConfiguredProxy(_rawStoredProxy);
+    if (_proxyUrl && _proxyUrl !== _rawStoredProxy) {
+      localStorage.setItem('hm_proxy_url', _proxyUrl);
+    }
+  } catch (e) { /* */ }
   var _vhost = '';
   try {
     var _resumeCfg = await loadVaultConfig();
     if (_resumeCfg) {
-      if (!_proxyUrl && _resumeCfg.proxy) _proxyUrl = normalizeConfiguredProxy(_resumeCfg.proxy);
+      if (_resumeCfg.proxy) {
+        var _normalizedCfgProxy = normalizeConfiguredProxy(_resumeCfg.proxy);
+        if (_normalizedCfgProxy !== String(_resumeCfg.proxy || '')) {
+          _resumeCfg.proxy = _normalizedCfgProxy;
+          await saveVaultConfig(_resumeCfg);
+        }
+        if (!_proxyUrl) _proxyUrl = _normalizedCfgProxy;
+      }
       if (_resumeCfg.vhost) _vhost = sanitizeVhost(_resumeCfg.vhost);
     }
   } catch (e) { /* */ }
