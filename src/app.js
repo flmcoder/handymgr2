@@ -60,11 +60,59 @@ function applyInitialTheme() {
 }
 
 function toggleTheme() {
-    setStatus('err', 'Disabled');
-    resultsBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-lock"></i> Raw SQL query is disabled. Use Postgres-local PM/OTP/Dispatch controls.</div>';
-    resultsMeta.textContent = '';
-    csvBtn.style.display = 'none';
-    jsonBtn.style.display = 'none';
+  var isDark = document.documentElement.classList.contains('dark');
+  if (isDark) {
+    document.documentElement.classList.remove('dark');
+    _manualTheme = 'light';
+  } else {
+    document.documentElement.classList.add('dark');
+    _manualTheme = 'dark';
+  }
+  try { localStorage.setItem('hm_theme', _manualTheme); } catch (e) { /* */ }
+  updateThemeIcon();
+}
+function updateThemeIcon() {
+  var isDark = document.documentElement.classList.contains('dark');
+  var iconHtml = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+  var title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
+  var topbarBtn = $('#themeToggle');
+  var vaultBtn = $('#vaultThemeToggle');
+  if (topbarBtn) {
+    topbarBtn.innerHTML = iconHtml;
+    topbarBtn.title = title;
+  }
+  if (vaultBtn) {
+    vaultBtn.innerHTML = iconHtml;
+    vaultBtn.title = title;
+  }
+}
+applyInitialTheme();
+
+// ---- Helpers ----
+function $(sel) { return document.querySelector(sel); }
+function $$(sel) { return document.querySelectorAll(sel); }
+
+// ---- Maintenance UI Config ----
+// Toggle/override by setting window.HM_MAINTENANCE_CONFIG before app.js loads.
+// Example disable: window.HM_MAINTENANCE_CONFIG = { enabled: false }
+var MAINTENANCE_CONFIG = Object.assign({
+  enabled: false,
+  showDialogOnLogin: true,
+  bannerCollapsible: true,
+  brandHost: 'handymgr.app',
+  progressPercent: 80,
+  bannerHeadline: 'BACK ONLINE - UNDER CONSTRUCTION',
+  bannerDetail: 'App works but is undergoing maintenance - some features may not work as intended.',
+  bannerProgressText: 'Migration 80% complete - performance will improve once finished.',
+  dialogTitle: 'Under Construction',
+  dialogBodyLead: 'Welcome back! HandyManager is online but currently undergoing a data migration.',
+  dialogBodyDetail: 'App works in hybrid mode, so some features may not work as intended.',
+  dialogCta: 'Got it, continue ->'
+}, (window && window.HM_MAINTENANCE_CONFIG) || {});
+
+function isMaintenanceEnabled() {
+  return !!(MAINTENANCE_CONFIG && MAINTENANCE_CONFIG.enabled);
+}
 
 function hideMaintenanceUi() {
   ['maintenanceBanner', 'maintDialog', 'maintenanceInlineVault', 'maintenanceInlineApp'].forEach(function(id) {
