@@ -23080,6 +23080,26 @@ renderDashboardKPIs = function() {
     return out;
   }
 
+  async function localPmAdminRequest(path, options) {
+    var token = getProxyAccessToken();
+    if (!token) throw new Error('Sign in with manager/admin access first.');
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var req = Object.assign({ method: 'GET' }, options || {});
+    req.headers = Object.assign({
+      'Accept': 'application/json',
+      'Authorization': 'Bearer ' + token,
+    }, req.headers || {});
+    if (req.body && !req.headers['Content-Type']) req.headers['Content-Type'] = 'application/json';
+
+    var res = await fetchWithTimeout(localBase + path, req, 45000);
+    var data = {};
+    try { data = await res.json(); } catch (e) { data = {}; }
+    if (!res.ok || data.ok === false) {
+      throw new Error(String((data && (data.error || data.message)) || ('Request failed: HTTP ' + res.status)));
+    }
+    return data;
+  }
+
   function renderPmUsers(users) {
     if (!pmUsersBody) return;
     if (!users || !users.length) {
@@ -23112,26 +23132,9 @@ renderDashboardKPIs = function() {
 
   function loadPmUsers() {
     if (!pmUsersBody) return Promise.resolve();
-    var adminKey = (document.getElementById('dbAdminKey') && document.getElementById('dbAdminKey').value || '').trim();
-    // Try to retrieve from sessionStorage if not entered
-    if (!adminKey) {
-      try { adminKey = (sessionStorage.getItem('hm_pm_admin_key') || '').trim(); } catch (e) { /* */ }
-    }
     pmUsersBody.innerHTML = '<div class="dbadmin-msg">Loading PM users…</div>';
-    if (!API_PROXY) {
-      try { var _sp = localStorage.getItem('hm_proxy_url'); if (_sp) API_PROXY = normalizeConfiguredProxy(_sp); } catch (e) { /* */ }
-    }
-    if (!API_PROXY) {
-      pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-plug"></i> Proxy not configured. Connect via the vault first.</div>';
-      return Promise.resolve();
-    }
-    // Store key in sessionStorage for future auto-load
-    try { sessionStorage.setItem('hm_pm_admin_key', adminKey); } catch (e) { /* */ }
-    return proxyPost('sql_query', {
-      key: adminKey,
-      query: "SELECT u.user_uuid, u.email, u.full_name, u.phone, coalesce(u.property_group_uuid,'') AS property_group_uuid, coalesce(u.active,1) AS active, coalesce(string_agg(DISTINCT s.property_group_uuid, ',' ORDER BY s.property_group_uuid) FILTER (WHERE coalesce(s.active,true)=true), '') AS scope_uuids FROM pm_proxy_users u LEFT JOIN pm_proxy_user_scopes s ON s.user_uuid=u.user_uuid GROUP BY u.user_uuid, u.email, u.full_name, u.phone, u.property_group_uuid, u.active ORDER BY lower(u.email)"
-    }).then(function(data) {
-      renderPmUsers((data && data.rows) || []);
+    return localPmAdminRequest('/api/local/pm_users').then(function(data) {
+      renderPmUsers((data && data.users) || []);
     }).catch(function(err) {
       pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--danger)"><i class="fas fa-exclamation-circle"></i> ' + escapeHtml(err.message || String(err)) + '</div>';
     });
@@ -23168,40 +23171,20 @@ renderDashboardKPIs = function() {
       return;
     }
     if (pmUserSaveBtn) pmUserSaveBtn.disabled = true;
-    // Restore API_PROXY from localStorage if the session was reopened without full vault login
-    if (!API_PROXY) {
-      try { var _savedProxy = localStorage.getItem('hm_proxy_url'); if (_savedProxy) API_PROXY = normalizeConfiguredProxy(_savedProxy); } catch (e) { /* */ }
-    }
-    if (!API_PROXY) {
-      showToast('Proxy not configured. Connect to the proxy first (enter URL in the vault).', 'error');
-      if (pmUserSaveBtn) pmUserSaveBtn.disabled = false;
-      return;
-    }
     var resolvedUuid = userUuid || ('pm-' + email.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48));
-    var escapedEmail = escapeSqlText(email);
-    var escapedName = escapeSqlText(fullName);
-    var escapedPhone = escapeSqlText(phone);
-    var escapedPrimary = escapeSqlText(groupUuid);
-    var escapedUuid = escapeSqlText(resolvedUuid);
-    var activeSql = active ? 'TRUE' : 'FALSE';
-    var statements = [];
-    statements.push("INSERT INTO pm_proxy_users (user_uuid, email, full_name, phone, property_group_uuid, roles, active, raw_json, updated_at) VALUES ('" + escapedUuid + "','" + escapedEmail + "','" + escapedName + "','" + escapedPhone + "','" + escapedPrimary + "','[\"pm_readonly\"]'::jsonb," + activeSql + ",'{}'::jsonb,NOW()) ON CONFLICT (user_uuid) DO UPDATE SET email=EXCLUDED.email, full_name=EXCLUDED.full_name, phone=EXCLUDED.phone, property_group_uuid=EXCLUDED.property_group_uuid, active=EXCLUDED.active, updated_at=NOW();");
-    statements.push("UPDATE pm_proxy_user_scopes SET active = FALSE, updated_at = NOW() WHERE user_uuid = '" + escapedUuid + "';");
-    for (var i = 0; i < scopeList.length; i++) {
-      var scope = escapeSqlText(scopeList[i]);
-      var isPrimary = (scopeList[i] === groupUuid) ? 'TRUE' : 'FALSE';
-      statements.push("INSERT INTO pm_proxy_user_scopes (user_uuid, property_group_uuid, is_primary, active, source, updated_at) VALUES ('" + escapedUuid + "','" + scope + "'," + isPrimary + ",TRUE,'dbadmin_ui',NOW()) ON CONFLICT (user_uuid, property_group_uuid) DO UPDATE SET is_primary = EXCLUDED.is_primary, active = TRUE, source = EXCLUDED.source, updated_at = NOW();");
-    }
-
-    proxyPost('sql_execute', {
-      key: getAdminKey(),
-      query: statements.join('\n')
-    }).then(function(response) {
-      if (!response || response.ok === false) {
-        var errMsg = (response && (response.message || response.error)) || 'PM save failed';
-        showToast(errMsg, 'error');
-        return;
-      }
+    localPmAdminRequest('/api/local/pm_users/upsert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_uuid: resolvedUuid,
+        email: email,
+        full_name: fullName,
+        phone: phone,
+        property_group_uuid: groupUuid,
+        scope_uuids: scopeList,
+        active: active,
+      })
+    }).then(function() {
       var msg = (userUuid ? 'PM account updated' : 'PM account created') + ' — UUID: ' + resolvedUuid.slice(0, 12);
       showToast(msg, { kind: 'success', duration: 5000 });
       clearPmUserForm();
@@ -23217,14 +23200,11 @@ renderDashboardKPIs = function() {
     if (!userUuid) return;
     var willActivate = String(nextActive) === '1';
     if (!await hmConfirm((willActivate ? 'Activate' : 'Deactivate') + ' this PM account?', { title: (willActivate ? 'Activate' : 'Deactivate') + ' PM Account', okLabel: willActivate ? 'Activate' : 'Deactivate', danger: !willActivate })) return;
-    if (!API_PROXY) {
-      try { var _savedProxy2 = localStorage.getItem('hm_proxy_url'); if (_savedProxy2) API_PROXY = normalizeConfiguredProxy(_savedProxy2); } catch (e) { /* */ }
-    }
-    if (!API_PROXY) { showToast('Proxy not configured.', 'error'); return; }
-    var userIdEsc = escapeSqlText(userUuid);
-    var isActiveSql = willActivate ? 'TRUE' : 'FALSE';
-    var q = "UPDATE pm_proxy_users SET active = " + isActiveSql + ", updated_at = NOW() WHERE user_uuid = '" + userIdEsc + "'; UPDATE pm_proxy_user_scopes SET active = " + isActiveSql + ", updated_at = NOW() WHERE user_uuid = '" + userIdEsc + "';";
-    proxyPost('sql_execute', { key: getAdminKey(), query: q }).then(function() {
+    localPmAdminRequest('/api/local/pm_users/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_uuid: userUuid, active: willActivate })
+    }).then(function() {
       showToast('PM account ' + (willActivate ? 'activated' : 'deactivated'), 'success');
       if (pmUserUuidEl && pmUserUuidEl.value === userUuid) {
         if (pmUserActiveEl) pmUserActiveEl.checked = willActivate;
@@ -23280,9 +23260,7 @@ renderDashboardKPIs = function() {
   
   // Auto-load PM users on page load if proxy is available
   function autoLoadPmUsers() {
-    if (!API_PROXY && !pmUsersBody) return;
-      try { var _sp = localStorage.getItem('hm_proxy_url'); if (_sp) API_PROXY = normalizeConfiguredProxy(_sp); } catch (e) { /* */ }
-    if (API_PROXY) {
+    if (pmUsersBody) {
       loadPmUsers().catch(function() { /* silently ignore auto-load failures */ });
     }
   }
@@ -23324,7 +23302,8 @@ renderDashboardKPIs = function() {
   var dbKeyInput = document.getElementById('dbAdminKey');
   if (dbKeyInput) {
     dbKeyInput.addEventListener('change', function() {
-      if (dbKeyInput.value.trim()) { populatePMGroupDropdown(''); loadPmUsers(); }
+      populatePMGroupDropdown('');
+      loadPmUsers();
     });
   }
   loadPmUsers();
@@ -23350,23 +23329,12 @@ renderDashboardKPIs = function() {
     if (membershipCb) membershipCb.addEventListener('change', updateCheckboxLabels);
 
     function loadOtpSettings() {
-      var keyInput = document.getElementById('dbAdminKey');
-      var adminKey = (keyInput && keyInput.value || '').trim();
-      if (!adminKey) {
-        try {
-          adminKey = String(localStorage.getItem('hm_proxy_admin_key') || '').trim() || String(sessionStorage.getItem('hm_pm_admin_key') || '').trim();
-        } catch (e) { /* */ }
-      }
-      if (adminKey && keyInput && !String(keyInput.value || '').trim()) {
-        keyInput.value = adminKey;
-      }
-      proxyAction('settings_get', { key: adminKey }).then(function(data) {
-        var settings = {};
-        (data.settings || []).forEach(function(s) { settings[s.key] = s.value; });
-        if (enabledCb) enabledCb.checked = (settings['otp_enabled'] ?? '1') !== '0';
-        if (membershipCb) membershipCb.checked = (settings['otp_require_pm_membership'] ?? '1') !== '0';
-        if (domainInput) domainInput.value = settings['otp_allowed_domain'] || '';
-        if (ttlInput) ttlInput.value = settings['otp_ttl_minutes'] || '10';
+      localPmAdminRequest('/api/local/otp_settings').then(function(data) {
+        var settings = (data && data.settings) || {};
+        if (enabledCb) enabledCb.checked = settings.otp_enabled !== false;
+        if (membershipCb) membershipCb.checked = settings.otp_require_pm_membership !== false;
+        if (domainInput) domainInput.value = settings.otp_allowed_domain || '';
+        if (ttlInput) ttlInput.value = String(settings.otp_ttl_minutes || '10');
         updateCheckboxLabels();
         if (saveStatus) { saveStatus.textContent = 'Settings loaded'; saveStatus.style.color = 'var(--success)'; setTimeout(function() { if (saveStatus) saveStatus.textContent = ''; }, 2000); }
       }).catch(function(err) {
@@ -23377,19 +23345,19 @@ renderDashboardKPIs = function() {
     if (refreshBtn) refreshBtn.addEventListener('click', loadOtpSettings);
 
     saveBtn.addEventListener('click', function() {
-      var adminKey = (document.getElementById('dbAdminKey') && document.getElementById('dbAdminKey').value || '').trim();
-      var saves = [
-        { key: 'otp_enabled', value: enabledCb.checked ? '1' : '0' },
-        { key: 'otp_require_pm_membership', value: (membershipCb && membershipCb.checked) ? '1' : '0' },
-        { key: 'otp_allowed_domain', value: (domainInput && domainInput.value.trim().replace(/^@/, '')) || '' },
-        { key: 'otp_ttl_minutes', value: String(Math.max(3, parseInt(ttlInput && ttlInput.value || '10', 10) || 10)) },
-      ];
+      var payload = {
+        otp_enabled: enabledCb.checked,
+        otp_require_pm_membership: (membershipCb && membershipCb.checked),
+        otp_allowed_domain: (domainInput && domainInput.value.trim().replace(/^@/, '')) || '',
+        otp_ttl_minutes: Math.max(3, parseInt(ttlInput && ttlInput.value || '10', 10) || 10),
+      };
       saveBtn.disabled = true;
       if (saveStatus) { saveStatus.textContent = 'Saving…'; saveStatus.style.color = 'var(--text-muted)'; }
-      var promises = saves.map(function(s) {
-        return proxyPost('settings_set', { admin_key: adminKey, key: s.key, value: s.value });
-      });
-      Promise.all(promises).then(function() {
+      localPmAdminRequest('/api/local/otp_settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then(function() {
         showToast('OTP settings saved', 'success');
         if (saveStatus) { saveStatus.textContent = 'Saved ✓'; saveStatus.style.color = 'var(--success)'; setTimeout(function() { if (saveStatus) saveStatus.textContent = ''; }, 3000); }
       }).catch(function(err) {
@@ -23398,10 +23366,9 @@ renderDashboardKPIs = function() {
       }).finally(function() { saveBtn.disabled = false; });
     });
 
-    // Auto-load when admin key is entered
     var adminKeyInput = document.getElementById('dbAdminKey');
     if (adminKeyInput) {
-      adminKeyInput.addEventListener('change', function() { if (adminKeyInput.value.trim()) loadOtpSettings(); });
+      adminKeyInput.addEventListener('change', function() { loadOtpSettings(); });
     }
 
     loadOtpSettings();

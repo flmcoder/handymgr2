@@ -2244,6 +2244,312 @@ app.post('/api/device_otp_request', wrapDenoHandler(deviceAuthHandlers.handleDev
 app.post('/api/device_otp_verify', wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpVerify, 'request'));
 app.post('/api/verify_role', wrapDenoHandler(deviceAuthHandlers.handleVerifyRole, 'request'));
 
+function normalizeScopeUuid(value: unknown): string {
+  const raw = String(value || '').trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)
+    ? raw
+    : '';
+}
+
+async function requireAdminSession(req: Request, res: Response): Promise<any | null> {
+  const auth = String(req.headers.authorization || '');
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  if (!token) {
+    res.status(401).json({ ok: false, error: 'Missing bearer token' });
+    return null;
+  }
+
+  const session = await deviceAuthHandlers.getTrustedDeviceSession(token);
+  if (!session) {
+    res.status(401).json({ ok: false, error: 'Invalid session' });
+    return null;
+  }
+
+  const role = String(session.role || '').toLowerCase();
+  if (role !== 'full' && role !== 'manager') {
+    res.status(403).json({ ok: false, error: 'Admin access required' });
+    return null;
+  }
+
+  return session;
+}
+
+async function ensurePmAccountTables(): Promise<void> {
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS pm_proxy_users (
+      user_uuid TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      full_name TEXT,
+      phone TEXT,
+      property_group_uuid TEXT,
+      roles JSONB DEFAULT '["pm_readonly"]'::jsonb,
+      active BOOLEAN DEFAULT TRUE,
+      raw_json JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS pm_proxy_user_scopes (
+      id BIGSERIAL PRIMARY KEY,
+      user_uuid TEXT NOT NULL,
+      property_group_uuid TEXT NOT NULL,
+      is_primary BOOLEAN DEFAULT FALSE,
+      active BOOLEAN DEFAULT TRUE,
+      source TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (user_uuid, property_group_uuid)
+    );
+  `);
+
+  await queryClient.unsafe(`
+    CREATE INDEX IF NOT EXISTS pm_proxy_users_email_idx ON pm_proxy_users(lower(email));
+    CREATE INDEX IF NOT EXISTS pm_proxy_users_group_idx ON pm_proxy_users(property_group_uuid);
+    CREATE INDEX IF NOT EXISTS pm_proxy_user_scopes_user_idx ON pm_proxy_user_scopes(user_uuid);
+    CREATE INDEX IF NOT EXISTS pm_proxy_user_scopes_group_idx ON pm_proxy_user_scopes(property_group_uuid);
+  `);
+}
+
+async function ensureOtpSettingsTable(): Promise<void> {
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS proxy_config (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
+app.get('/api/local/pm_users', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+    await ensurePmAccountTables();
+
+    const rows = await queryClient.unsafe(`
+      SELECT
+        u.user_uuid,
+        u.email,
+        u.full_name,
+        u.phone,
+        COALESCE(u.property_group_uuid, '') AS property_group_uuid,
+        CASE WHEN COALESCE(u.active, TRUE) THEN 1 ELSE 0 END AS active,
+        COALESCE(
+          string_agg(
+            DISTINCT s.property_group_uuid,
+            ',' ORDER BY s.property_group_uuid
+          ) FILTER (WHERE COALESCE(s.active, TRUE) = TRUE),
+          ''
+        ) AS scope_uuids
+      FROM pm_proxy_users u
+      LEFT JOIN pm_proxy_user_scopes s ON s.user_uuid = u.user_uuid
+      GROUP BY u.user_uuid, u.email, u.full_name, u.phone, u.property_group_uuid, u.active
+      ORDER BY lower(u.email)
+    `);
+
+    res.json({ ok: true, users: rows, count: (rows as any[]).length });
+  } catch (error) {
+    logTunnelError(error, '/api/local/pm_users');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to load PM users') });
+  }
+});
+
+app.post('/api/local/pm_users/upsert', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+    await ensurePmAccountTables();
+
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const fullName = String(req.body?.full_name || '').trim();
+    const phone = String(req.body?.phone || '').trim();
+    const active = req.body?.active !== false;
+    const primaryScope = normalizeScopeUuid(req.body?.property_group_uuid || '');
+    const scopeInput = Array.isArray(req.body?.scope_uuids) ? req.body.scope_uuids : [];
+    const scopeSet = new Set<string>(scopeInput.map((value: unknown) => normalizeScopeUuid(value)).filter(Boolean));
+    if (primaryScope) scopeSet.add(primaryScope);
+    const scopes = Array.from(scopeSet.values());
+
+    if (!email) {
+      res.status(400).json({ ok: false, error: 'Email is required' });
+      return;
+    }
+    if (!fullName) {
+      res.status(400).json({ ok: false, error: 'Full name is required' });
+      return;
+    }
+    if (!phone) {
+      res.status(400).json({ ok: false, error: 'Phone is required' });
+      return;
+    }
+    if (!primaryScope) {
+      res.status(400).json({ ok: false, error: 'Primary property group UUID is required' });
+      return;
+    }
+    if (!scopes.length) {
+      res.status(400).json({ ok: false, error: 'At least one valid property group scope is required' });
+      return;
+    }
+
+    const userUuidRaw = String(req.body?.user_uuid || '').trim();
+    const userUuid = userUuidRaw || (`pm-${email.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)}`);
+
+    await queryClient.unsafe(
+      `INSERT INTO pm_proxy_users (user_uuid, email, full_name, phone, property_group_uuid, roles, active, raw_json, updated_at)
+       VALUES ($1, $2, $3, $4, $5, '["pm_readonly"]'::jsonb, $6, '{}'::jsonb, NOW())
+       ON CONFLICT (user_uuid) DO UPDATE SET
+         email = EXCLUDED.email,
+         full_name = EXCLUDED.full_name,
+         phone = EXCLUDED.phone,
+         property_group_uuid = EXCLUDED.property_group_uuid,
+         active = EXCLUDED.active,
+         updated_at = NOW()`,
+      [userUuid, email, fullName, phone, primaryScope, active],
+    );
+
+    await queryClient.unsafe(
+      `UPDATE pm_proxy_user_scopes SET active = FALSE, updated_at = NOW() WHERE user_uuid = $1`,
+      [userUuid],
+    );
+
+    for (const scopeUuid of scopes) {
+      await queryClient.unsafe(
+        `INSERT INTO pm_proxy_user_scopes (user_uuid, property_group_uuid, is_primary, active, source, updated_at)
+         VALUES ($1, $2, $3, TRUE, 'local_ui', NOW())
+         ON CONFLICT (user_uuid, property_group_uuid) DO UPDATE SET
+           is_primary = EXCLUDED.is_primary,
+           active = TRUE,
+           source = EXCLUDED.source,
+           updated_at = NOW()`,
+        [userUuid, scopeUuid, scopeUuid === primaryScope],
+      );
+    }
+
+    res.json({
+      ok: true,
+      user: {
+        user_uuid: userUuid,
+        email,
+        full_name: fullName,
+        phone,
+        property_group_uuid: primaryScope,
+        scope_uuids: scopes,
+        active: active ? 1 : 0,
+      },
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/pm_users/upsert');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to save PM user') });
+  }
+});
+
+app.post('/api/local/pm_users/toggle', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+    await ensurePmAccountTables();
+
+    const userUuid = String(req.body?.user_uuid || '').trim();
+    const active = req.body?.active !== false;
+    if (!userUuid) {
+      res.status(400).json({ ok: false, error: 'user_uuid is required' });
+      return;
+    }
+
+    await queryClient.unsafe(
+      `UPDATE pm_proxy_users SET active = $2, updated_at = NOW() WHERE user_uuid = $1`,
+      [userUuid, active],
+    );
+    await queryClient.unsafe(
+      `UPDATE pm_proxy_user_scopes SET active = $2, updated_at = NOW() WHERE user_uuid = $1`,
+      [userUuid, active],
+    );
+
+    res.json({ ok: true, user_uuid: userUuid, active: active ? 1 : 0 });
+  } catch (error) {
+    logTunnelError(error, '/api/local/pm_users/toggle');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to toggle PM user') });
+  }
+});
+
+app.get('/api/local/otp_settings', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+    await ensureOtpSettingsTable();
+
+    const rows = await queryClient.unsafe(
+      `SELECT key, value FROM proxy_config WHERE key IN ('otp_enabled','otp_allowed_domain','otp_require_pm_membership','otp_ttl_minutes')`,
+    );
+    const map: Record<string, string> = {};
+    (rows as any[]).forEach((row) => {
+      map[String(row?.key || '')] = String(row?.value || '');
+    });
+
+    const defaultDomain = String(process.env.OTP_ALLOWED_DOMAIN || 'flraz.com').replace(/^@/, '').toLowerCase();
+    const defaultTtl = Math.max(3, Number(process.env.DEVICE_OTP_TTL_MINUTES || '10') || 10);
+
+    res.json({
+      ok: true,
+      settings: {
+        otp_enabled: (map.otp_enabled ?? '1') !== '0',
+        otp_require_pm_membership: (map.otp_require_pm_membership ?? '1') !== '0',
+        otp_allowed_domain: String(map.otp_allowed_domain || defaultDomain),
+        otp_ttl_minutes: Math.max(3, Number(map.otp_ttl_minutes || defaultTtl) || defaultTtl),
+      },
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/otp_settings');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to load OTP settings') });
+  }
+});
+
+app.post('/api/local/otp_settings', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+    await ensureOtpSettingsTable();
+
+    const enabled = req.body?.otp_enabled !== false;
+    const requireMembership = req.body?.otp_require_pm_membership !== false;
+    const allowedDomain = String(req.body?.otp_allowed_domain || '').trim().replace(/^@/, '').toLowerCase();
+    const ttlMinutes = Math.max(3, Number(req.body?.otp_ttl_minutes || 10) || 10);
+
+    const entries: Array<[string, string]> = [
+      ['otp_enabled', enabled ? '1' : '0'],
+      ['otp_require_pm_membership', requireMembership ? '1' : '0'],
+      ['otp_allowed_domain', allowedDomain],
+      ['otp_ttl_minutes', String(ttlMinutes)],
+    ];
+
+    for (const [key, value] of entries) {
+      await queryClient.unsafe(
+        `INSERT INTO proxy_config (key, value, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET
+           value = EXCLUDED.value,
+           updated_at = NOW()`,
+        [key, value],
+      );
+    }
+
+    res.json({
+      ok: true,
+      settings: {
+        otp_enabled: enabled,
+        otp_require_pm_membership: requireMembership,
+        otp_allowed_domain: allowedDomain,
+        otp_ttl_minutes: ttlMinutes,
+      },
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/otp_settings');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to save OTP settings') });
+  }
+});
+
 // ── Sync admin routes ────────────────────────────────────────────────────────
 // Trigger a sync run. Protected by INTERNAL_SYNC_TOKEN.
 app.post('/api/admin/sync', async (req: Request, res: Response) => {
