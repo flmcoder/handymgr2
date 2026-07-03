@@ -2,9 +2,10 @@ import 'dotenv/config';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { pingDatabase, queryClient } from './db';
 import * as deviceAuthHandlers from './deviceAuth';
-import { AF_REPORTS_BASE, afHeaders } from './sync/afCredentials';
+import { AF_DB_BASE, AF_REPORTS_BASE, afHeaders } from './sync/afCredentials';
 
 function ensureDenoCompat(): void {
   const globalAny = globalThis as any;
@@ -292,6 +293,261 @@ function asIso(value: unknown): string {
   if (!value) return '';
   const d = value instanceof Date ? value : new Date(String(value));
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+}
+
+const WORK_ORDER_DETAIL_CACHE_TTL_MS = Math.max(
+  60_000,
+  Number(process.env.WO_DETAIL_CACHE_TTL_MS || String(15 * 60 * 1000)) || (15 * 60 * 1000),
+);
+
+let workOrderDetailCacheTableEnsured = false;
+
+async function ensureWorkOrderDetailCacheTable(): Promise<void> {
+  if (workOrderDetailCacheTableEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS appfolio_work_order_detail_cache (
+      work_order_uuid TEXT NOT NULL,
+      detail_type TEXT NOT NULL,
+      payload JSONB NOT NULL DEFAULT '[]'::jsonb,
+      payload_hash TEXT NOT NULL DEFAULT '',
+      record_count INTEGER NOT NULL DEFAULT 0,
+      last_fetched_at TIMESTAMPTZ,
+      last_checked_at TIMESTAMPTZ,
+      fetch_count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (work_order_uuid, detail_type)
+    )
+  `);
+  await queryClient.unsafe(`
+    CREATE INDEX IF NOT EXISTS appfolio_work_order_detail_cache_fetched_idx
+      ON appfolio_work_order_detail_cache(last_fetched_at)
+  `);
+  workOrderDetailCacheTableEnsured = true;
+}
+
+function isUuidLike(value: unknown): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
+function normalizeDetailList(payload: any): any[] {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload.results)) return payload.results;
+  if (Array.isArray(payload.Results)) return payload.Results;
+  if (Array.isArray(payload.items)) return payload.items;
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.attachments)) return payload.attachments;
+  return [];
+}
+
+function detailPayloadHash(payload: any[]): string {
+  return createHash('sha256').update(JSON.stringify(payload || [])).digest('hex').slice(0, 16);
+}
+
+function detailItemKey(item: any): string {
+  const candidates = [
+    item?.id,
+    item?.Id,
+    item?.uuid,
+    item?.UUID,
+    item?.work_order_note_id,
+    item?.WorkOrderNoteId,
+    item?.work_order_attachment_id,
+    item?.WorkOrderAttachmentId,
+    item?.created_at,
+    item?.CreatedAt,
+    item?.updated_at,
+    item?.UpdatedAt,
+    item?.file_name,
+    item?.FileName,
+    item?.name,
+    item?.Name,
+    item?.body,
+    item?.Body,
+  ];
+  for (const value of candidates) {
+    const normalized = String(value || '').trim();
+    if (normalized) return normalized;
+  }
+  return createHash('sha256').update(JSON.stringify(item || {})).digest('hex').slice(0, 16);
+}
+
+function computeDetailDelta(previousPayload: any[], nextPayload: any[]): { changed: boolean; added: number; removed: number; previous_count: number; current_count: number } {
+  const prevKeys = new Set((previousPayload || []).map((item) => detailItemKey(item)));
+  const nextKeys = new Set((nextPayload || []).map((item) => detailItemKey(item)));
+  let added = 0;
+  let removed = 0;
+  for (const key of nextKeys.values()) {
+    if (!prevKeys.has(key)) added++;
+  }
+  for (const key of prevKeys.values()) {
+    if (!nextKeys.has(key)) removed++;
+  }
+  return {
+    changed: added > 0 || removed > 0,
+    added,
+    removed,
+    previous_count: previousPayload.length,
+    current_count: nextPayload.length,
+  };
+}
+
+async function resolveWorkOrderUuid(refRaw: string): Promise<string> {
+  const ref = String(refRaw || '').trim();
+  if (!ref) return '';
+  if (isUuidLike(ref)) return ref;
+
+  const rows = await queryClient`
+    select work_order_uuid, id, wo_number, raw_json
+    from appfolio_work_orders
+    where id = ${ref} or wo_number = ${ref}
+    order by updated_at desc nulls last
+    limit 1
+  `;
+  const row = (rows as any[])[0] || {};
+  const resolved = String(
+    row?.work_order_uuid || row?.id || row?.raw_json?.work_order_uuid || row?.raw_json?.v0_uuid || row?.raw_json?.UUID || row?.raw_json?.uuid || '',
+  ).trim();
+  return isUuidLike(resolved) ? resolved : '';
+}
+
+async function fetchWorkOrderDetailFromAppFolio(workOrderUuid: string, detailType: 'notes' | 'attachments'): Promise<any[]> {
+  const url = `${AF_DB_BASE}/api/v0/work_orders/${encodeURIComponent(workOrderUuid)}/${detailType}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: afHeaders('v0'),
+      signal: controller.signal,
+    });
+    const rawText = await response.text();
+    if (!response.ok) {
+      const preview = String(rawText || '').replace(/\s+/g, ' ').slice(0, 220);
+      throw new Error(`AppFolio ${detailType} fetch failed: HTTP ${response.status} ${preview}`);
+    }
+
+    let parsed: any = {};
+    try {
+      parsed = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      parsed = {};
+    }
+    return normalizeDetailList(parsed);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getWorkOrderDetailCached(args: { workOrderRef: string; detailType: 'notes' | 'attachments'; forceRefresh: boolean }): Promise<{ workOrderUuid: string; results: any[]; source: 'live' | 'cached' | 'stale_cache'; stale: boolean; fetched_at: string; delta: { changed: boolean; added: number; removed: number; previous_count: number; current_count: number } }> {
+  await ensureWorkOrderDetailCacheTable();
+
+  const resolvedUuid = await resolveWorkOrderUuid(args.workOrderRef);
+  if (!resolvedUuid) {
+    throw new Error('Unable to resolve AppFolio work order UUID for detail fetch');
+  }
+
+  const cachedRows = await queryClient`
+    select payload, payload_hash, record_count, last_fetched_at, last_checked_at, fetch_count
+    from appfolio_work_order_detail_cache
+    where work_order_uuid = ${resolvedUuid}
+      and detail_type = ${args.detailType}
+    limit 1
+  `;
+
+  const cached = (cachedRows as any[])[0] || null;
+  const now = Date.now();
+  const cachedPayload = normalizeDetailList(cached?.payload || []);
+  const lastFetchedAt = cached?.last_fetched_at ? new Date(String(cached.last_fetched_at)).getTime() : 0;
+  const isFresh = !!lastFetchedAt && (now - lastFetchedAt) <= WORK_ORDER_DETAIL_CACHE_TTL_MS;
+
+  if (cached && isFresh && !args.forceRefresh) {
+    return {
+      workOrderUuid: resolvedUuid,
+      results: cachedPayload,
+      source: 'cached',
+      stale: false,
+      fetched_at: asIso(cached.last_fetched_at) || new Date(lastFetchedAt).toISOString(),
+      delta: {
+        changed: false,
+        added: 0,
+        removed: 0,
+        previous_count: cachedPayload.length,
+        current_count: cachedPayload.length,
+      },
+    };
+  }
+
+  try {
+    const freshPayload = await fetchWorkOrderDetailFromAppFolio(resolvedUuid, args.detailType);
+    const freshHash = detailPayloadHash(freshPayload);
+    const previousHash = String(cached?.payload_hash || '');
+    const changed = freshHash !== previousHash;
+    const delta = computeDetailDelta(cachedPayload, freshPayload);
+
+    if (!cached) {
+      await queryClient`
+        insert into appfolio_work_order_detail_cache (
+          work_order_uuid, detail_type, payload, payload_hash, record_count,
+          last_fetched_at, last_checked_at, fetch_count
+        )
+        values (
+          ${resolvedUuid}, ${args.detailType}, ${JSON.stringify(freshPayload)}::jsonb, ${freshHash}, ${freshPayload.length},
+          now(), now(), 1
+        )
+      `;
+    } else if (changed) {
+      await queryClient`
+        update appfolio_work_order_detail_cache
+        set payload = ${JSON.stringify(freshPayload)}::jsonb,
+            payload_hash = ${freshHash},
+            record_count = ${freshPayload.length},
+            last_fetched_at = now(),
+            last_checked_at = now(),
+            fetch_count = coalesce(fetch_count, 0) + 1
+        where work_order_uuid = ${resolvedUuid}
+          and detail_type = ${args.detailType}
+      `;
+    } else {
+      await queryClient`
+        update appfolio_work_order_detail_cache
+        set last_checked_at = now(),
+            last_fetched_at = now(),
+            fetch_count = coalesce(fetch_count, 0) + 1
+        where work_order_uuid = ${resolvedUuid}
+          and detail_type = ${args.detailType}
+      `;
+    }
+
+    return {
+      workOrderUuid: resolvedUuid,
+      results: freshPayload,
+      source: 'live',
+      stale: false,
+      fetched_at: new Date().toISOString(),
+      delta: {
+        ...delta,
+        changed,
+      },
+    };
+  } catch (error) {
+    if (cached) {
+      return {
+        workOrderUuid: resolvedUuid,
+        results: cachedPayload,
+        source: 'stale_cache',
+        stale: true,
+        fetched_at: asIso(cached.last_fetched_at),
+        delta: {
+          changed: false,
+          added: 0,
+          removed: 0,
+          previous_count: cachedPayload.length,
+          current_count: cachedPayload.length,
+        },
+      };
+    }
+    throw error;
+  }
 }
 
 function mapTurnStagesFromMilestones(milestones: any): Record<string, any> {
@@ -871,6 +1127,66 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
   } catch (error) {
     logTunnelError(error, '/api/local/work_orders/inactive');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local inactive work orders query failed') });
+  }
+});
+
+app.get('/api/local/work_orders/:workOrderRef/notes', async (req: Request, res: Response) => {
+  try {
+    const workOrderRef = String(req.params.workOrderRef || '').trim();
+    const forceRefresh = /^(1|true|yes|on)$/i.test(String(req.query.force_refresh || '').trim());
+    if (!workOrderRef) {
+      res.status(400).json({ ok: false, error: 'Missing work order reference' });
+      return;
+    }
+
+    const payload = await getWorkOrderDetailCached({
+      workOrderRef,
+      detailType: 'notes',
+      forceRefresh,
+    });
+
+    res.json({
+      ok: true,
+      work_order_uuid: payload.workOrderUuid,
+      results: payload.results,
+      source: payload.source,
+      stale: payload.stale,
+      fetched_at: payload.fetched_at,
+      delta: payload.delta,
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/work_orders/:workOrderRef/notes');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local notes query failed') });
+  }
+});
+
+app.get('/api/local/work_orders/:workOrderRef/attachments', async (req: Request, res: Response) => {
+  try {
+    const workOrderRef = String(req.params.workOrderRef || '').trim();
+    const forceRefresh = /^(1|true|yes|on)$/i.test(String(req.query.force_refresh || '').trim());
+    if (!workOrderRef) {
+      res.status(400).json({ ok: false, error: 'Missing work order reference' });
+      return;
+    }
+
+    const payload = await getWorkOrderDetailCached({
+      workOrderRef,
+      detailType: 'attachments',
+      forceRefresh,
+    });
+
+    res.json({
+      ok: true,
+      work_order_uuid: payload.workOrderUuid,
+      results: payload.results,
+      source: payload.source,
+      stale: payload.stale,
+      fetched_at: payload.fetched_at,
+      delta: payload.delta,
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/work_orders/:workOrderRef/attachments');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local attachments query failed') });
   }
 });
 

@@ -8721,6 +8721,25 @@ async function fetchWONotes(woIdOrUuid, woContext) {
 
   var notesApiPath = '/api/v0/work_orders/' + encodeURIComponent(String(woRef)) + '/notes';
   try {
+    // Preferred path: local backend cache in Postgres (fast + 429-safe).
+    try {
+      var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+      var localUrl = localBase + '/api/local/work_orders/' + encodeURIComponent(String(woRef)) + '/notes';
+      var localHeaders = { 'Accept': 'application/json' };
+      var localToken = getProxyAccessToken();
+      if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
+      var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 30000);
+      var localData = {};
+      try { localData = await localRes.json(); } catch (e) { localData = {}; }
+      if (localRes.ok && localData && localData.ok !== false) {
+        var localNotes = normalizeWONotesPayload(localData);
+        detailCacheSet('notes_' + woRef, localNotes);
+        return localNotes;
+      }
+    } catch (localErr) {
+      console.warn('[fetchWONotes] local cache path failed for WO UUID', woRef, localErr && localErr.message);
+    }
+
     // Primary path: direct v0 endpoint by UUID through passthrough/apiFetch.
     var data = await apiFetch(notesApiPath);
     var notes = normalizeWONotesPayload(data);
@@ -8820,6 +8839,24 @@ async function loadWOAttachments(woIdOrUuid, woContext) {
     var attachmentsApiPath = '/api/v0/work_orders/' + encodeURIComponent(String(woRef)) + '/attachments';
 
     try {
+      // Preferred path: local backend cache in Postgres (fast + 429-safe).
+      try {
+        var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+        var localUrl = localBase + '/api/local/work_orders/' + encodeURIComponent(String(woRef)) + '/attachments';
+        var localHeaders = { 'Accept': 'application/json' };
+        var localToken = getProxyAccessToken();
+        if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
+        var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 30000);
+        var localData = {};
+        try { localData = await localRes.json(); } catch (e) { localData = {}; }
+        if (localRes.ok && localData && localData.ok !== false) {
+          renderWOAttachmentsList(normalizeWOAttachmentList(localData));
+          return;
+        }
+      } catch (localErr) {
+        console.warn('[loadWOAttachments] local cache path failed for WO UUID', woRef, localErr && localErr.message);
+      }
+
       var directData = await apiFetch(attachmentsApiPath);
       renderWOAttachmentsList(normalizeWOAttachmentList(directData));
       return;
@@ -8902,9 +8939,15 @@ function refreshCurrentWONotes(forceUuid, bypassProxyCache) {
   delete WO_DETAIL_CACHE['notes_' + targetUuid];
   var fetchPromise;
   if (bypassProxyCache && API_PROXY) {
-    // Use apiFetch which routes via ?path= compat mode, bypassing wo_notes Turso cache
-    var notesApiPath = '/api/v0/work_orders/' + encodeURIComponent(targetUuid) + '/notes';
-    fetchPromise = apiFetch(notesApiPath)
+    // Prefer local cache endpoint with force_refresh so backend updates Postgres
+    // and captures delta from AppFolio in one place.
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var notesApiPath = localBase + '/api/local/work_orders/' + encodeURIComponent(targetUuid) + '/notes?force_refresh=1';
+    var headers = { 'Accept': 'application/json' };
+    var token = getProxyAccessToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    fetchPromise = fetchWithTimeout(notesApiPath, { headers: headers }, 30000)
+      .then(function(res) { return res.json(); })
       .then(function(data) {
         var notes = (data && data.results) ? data.results
           : (data && data.Results) ? data.Results
