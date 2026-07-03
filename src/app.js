@@ -60,59 +60,11 @@ function applyInitialTheme() {
 }
 
 function toggleTheme() {
-  var isDark = document.documentElement.classList.contains('dark');
-  if (isDark) {
-    document.documentElement.classList.remove('dark');
-    _manualTheme = 'light';
-  } else {
-    document.documentElement.classList.add('dark');
-    _manualTheme = 'dark';
-  }
-  try { localStorage.setItem('hm_theme', _manualTheme); } catch (e) { /* */ }
-  updateThemeIcon();
-}
-function updateThemeIcon() {
-  var isDark = document.documentElement.classList.contains('dark');
-  var iconHtml = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-  var title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
-  var topbarBtn = $('#themeToggle');
-  var vaultBtn = $('#vaultThemeToggle');
-  if (topbarBtn) {
-    topbarBtn.innerHTML = iconHtml;
-    topbarBtn.title = title;
-  }
-  if (vaultBtn) {
-    vaultBtn.innerHTML = iconHtml;
-    vaultBtn.title = title;
-  }
-}
-applyInitialTheme();
-
-// ---- Helpers ----
-function $(sel) { return document.querySelector(sel); }
-function $$(sel) { return document.querySelectorAll(sel); }
-
-// ---- Maintenance UI Config ----
-// Toggle/override by setting window.HM_MAINTENANCE_CONFIG before app.js loads.
-// Example disable: window.HM_MAINTENANCE_CONFIG = { enabled: false }
-var MAINTENANCE_CONFIG = Object.assign({
-  enabled: false,
-  showDialogOnLogin: true,
-  bannerCollapsible: true,
-  brandHost: 'handymgr.app',
-  progressPercent: 80,
-  bannerHeadline: 'BACK ONLINE - UNDER CONSTRUCTION',
-  bannerDetail: 'App works but is undergoing maintenance - some features may not work as intended.',
-  bannerProgressText: 'Migration 80% complete - performance will improve once finished.',
-  dialogTitle: 'Under Construction',
-  dialogBodyLead: 'Welcome back! HandyManager is online but currently undergoing a data migration.',
-  dialogBodyDetail: 'App works in hybrid mode, so some features may not work as intended.',
-  dialogCta: 'Got it, continue ->'
-}, (window && window.HM_MAINTENANCE_CONFIG) || {});
-
-function isMaintenanceEnabled() {
-  return !!(MAINTENANCE_CONFIG && MAINTENANCE_CONFIG.enabled);
-}
+    setStatus('err', 'Disabled');
+    resultsBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-lock"></i> Raw SQL query is disabled. Use Postgres-local PM/OTP/Dispatch controls.</div>';
+    resultsMeta.textContent = '';
+    csvBtn.style.display = 'none';
+    jsonBtn.style.display = 'none';
 
 function hideMaintenanceUi() {
   ['maintenanceBanner', 'maintDialog', 'maintenanceInlineVault', 'maintenanceInlineApp'].forEach(function(id) {
@@ -6693,7 +6645,19 @@ async function fetchInspections() {
     var yearStart = getCurrentYearStartDate(now);
     INSPECTION_LOOKBACK_DAYS = Math.max(1, daysBetween(yearStart, now) + 1);
     setApiStatus('loading', 'Loading inspections (active properties, ' + INSPECTION_LOOKBACK_DAYS + 'd window)\u2026');
-    var data = await proxyAction('inspections', { days: String(INSPECTION_LOOKBACK_DAYS), active_only: '1' });
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var scopedGroupUuid = getEffectiveGroupUuid();
+    var localUrl = localBase + '/api/local/inspections?limit=6000&active_only=1'
+      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
+    var localHeaders = { 'Accept': 'application/json' };
+    var localToken = getProxyAccessToken();
+    if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
+    var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 45000);
+    var data = {};
+    try { data = await localRes.json(); } catch (e) { data = {}; }
+    if (!localRes.ok || data.ok === false) {
+      throw new Error(String((data && (data.error || data.message)) || ('Local inspections failed: HTTP ' + localRes.status)));
+    }
     var results = data.results || [];
     INSPECTIONS = results.map(function(r) {
       return {
@@ -22942,56 +22906,19 @@ renderDashboardKPIs = function() {
   }
 
   function runQuery() {
-    var sql = editor.value.trim();
-    if (!sql) return;
-    setStatus('ok', 'Running\u2026');
-    var t0 = Date.now();
-    var key = getAdminKey();
-    proxyPost('sql_query', { query: sql, key: key }).then(function(data) {
-      var ms = Date.now() - t0;
-      setStatus('ok', 'OK');
-      addHistory(sql);
-      if (data.rows && data.columns) {
-        _dbLastRows = data.rows;
-        _dbLastCols = data.columns;
-        renderDbTable(data.rows, data.columns);
-        resultsMeta.textContent = data.rows.length + ' row' + (data.rows.length !== 1 ? 's' : '') + ' \u00b7 ' + ms + 'ms';
-        csvBtn.style.display = data.rows.length > 0 ? '' : 'none';
-        jsonBtn.style.display = data.rows.length > 0 ? '' : 'none';
-      } else {
-        resultsBody.innerHTML = '<div class="dbadmin-msg">' + escapeHtml(JSON.stringify(data, null, 2).substring(0, 500)) + '</div>';
-        resultsMeta.textContent = ms + 'ms';
-        csvBtn.style.display = 'none';
-        jsonBtn.style.display = 'none';
-      }
-    }).catch(function(err) {
-      setStatus('err', 'Error');
-      resultsBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--danger)"><i class="fas fa-exclamation-circle"></i> ' + escapeHtml(err.message) + '</div>';
-      resultsMeta.textContent = '';
-      csvBtn.style.display = 'none';
-      jsonBtn.style.display = 'none';
-    });
+    setStatus('err', 'Disabled');
+    resultsBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-lock"></i> Raw SQL query is disabled. Use Postgres-local PM/OTP/Dispatch controls.</div>';
+    resultsMeta.textContent = '';
+    csvBtn.style.display = 'none';
+    jsonBtn.style.display = 'none';
   }
 
   function runExecute(sql) {
-    sql = sql || editor.value.trim();
-    if (!sql) return;
-    setStatus('ok', 'Executing\u2026');
-    var t0 = Date.now();
-    var key = getAdminKey();
-    proxyPost('sql_execute', { query: sql, key: key }).then(function(data) {
-      var ms = Date.now() - t0;
-      setStatus('ok', 'OK');
-      addHistory(sql);
-      var affected = data.rowsAffected != null ? data.rowsAffected : '?';
-      resultsBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--success)"><i class="fas fa-check-circle"></i> Executed successfully \u2014 ' + affected + ' row(s) affected' + (data.lastInsertRowid ? ' (last rowid: ' + data.lastInsertRowid + ')' : '') + '</div>';
-      resultsMeta.textContent = ms + 'ms';
-      csvBtn.style.display = 'none';
-      jsonBtn.style.display = 'none';
-    }).catch(function(err) {
-      setStatus('err', 'Error');
-      resultsBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--danger)"><i class="fas fa-exclamation-circle"></i> ' + escapeHtml(err.message) + '</div>';
-    });
+    setStatus('err', 'Disabled');
+    resultsBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-lock"></i> Raw SQL execute is disabled. Use dedicated Postgres-local controls.</div>';
+    resultsMeta.textContent = '';
+    csvBtn.style.display = 'none';
+    jsonBtn.style.display = 'none';
   }
 
   function renderDbTable(rows, cols) {
@@ -23757,12 +23684,21 @@ function parseHiddenAssigneeMap(raw) {
   }
 }
 async function saveDispatchConfigKey(key, value) {
-  var adminKey = getDispatchAdminKey();
-  if (!adminKey) return false;
-  var q = "INSERT OR REPLACE INTO proxy_config (key,value) VALUES ('" +
-    _dispatchSqlSafe(key) + "','" + _dispatchSqlSafe(value) + "')";
-  var r = await proxyPost('sql_execute', { key: adminKey, query: q });
-  return !!(r && (r.ok || r.rowsAffected >= 0));
+  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  var token = getProxyAccessToken();
+  if (!token) return false;
+  var res = await fetchWithTimeout(localBase + '/api/local/proxy_config/upsert', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify({ key: String(key || ''), value: String(value || '') })
+  }, 45000);
+  var data = {};
+  try { data = await res.json(); } catch (_) { data = {}; }
+  return !!(res.ok && data && data.ok !== false);
 }
 function extractAssigneeCandidatesFromWorkOrders(rows) {
   var out = {};
@@ -24325,9 +24261,23 @@ var DispatchQueue = {
   clearExempt: async function(woId) {
     if (!await hmConfirm('Clear exemption for WO '+woId+'?\n\nIt will re-enter automation on the next cron run.', { title: 'Clear Exemption', okLabel: 'Clear Exemption' })) return;
     try {
-      var key=getDispatchAdminKey();
-      if(!key){v9Toast('Admin key required','Set PROXY_ADMIN_KEY in Database tab','warning');return;}
-      await proxyPost('sql_execute',{key:key,query:"UPDATE reassignment_queue SET auto_exempt=0,auto_exempt_at=NULL,auto_exempt_by=NULL WHERE wo_id='"+woId.replace(/'/g,'')+"'"});
+      var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+      var token = getProxyAccessToken();
+      if (!token) { v9Toast('Session required','Sign in again to update local Postgres data','warning'); return; }
+      var resp = await fetchWithTimeout(localBase + '/api/local/reassignment_queue/clear_exempt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({ wo_id: woId })
+      }, 45000);
+      var payload = {};
+      try { payload = await resp.json(); } catch (_) { payload = {}; }
+      if (!resp.ok || payload.ok === false) {
+        throw new Error(String((payload && (payload.error || payload.message)) || ('HTTP ' + resp.status)));
+      }
       v9Toast('Exemption cleared','WO '+woId+' will re-enter automation','success');
       DispatchControl.refresh();
     } catch(e) { v9Toast('Clear failed',e.message,'danger'); }
@@ -24693,13 +24643,10 @@ var DispatchConfig = {
     v9Toast('Branch scope updated', val === 'all' ? 'Showing all branches' : ('Showing ' + val + ' only'), 'success');
   },
   togglePause: async function() {
-    var adminKey=getDispatchAdminKey();
-    if(!adminKey){v9Toast('Admin key required','Set PROXY_ADMIN_KEY in Database tab first','warning');return;}
     var next = DISPATCH.paused ? '0' : '1';
     try {
-      var q="INSERT OR REPLACE INTO proxy_config (key,value) VALUES ('dispatch_paused','"+next+"')";
-      var r=await proxyPost('sql_execute',{key:adminKey,query:q});
-      if(!(r.ok||r.rowsAffected>=0)){v9Toast('Pause toggle failed',r.error||'Unknown error','danger');return;}
+      var ok = await saveDispatchConfigKey('dispatch_paused', next);
+      if (!ok) { v9Toast('Pause toggle failed','Could not update local Postgres config','danger'); return; }
       DISPATCH.paused = next==='1';
       this.applyPauseUi();
       renderDispatchConfig([{key:'dispatch_paused',value:next}].concat(DISPATCH._lastConfigRows||[]));
@@ -24877,14 +24824,12 @@ var DispatchConfig = {
   saveField: async function(key) {
     var f=DISPATCH_CONFIG_FIELDS.find(function(x){return x.key===key;});
     if(!f) return;
-    var adminKey=getDispatchAdminKey();
-    if(!adminKey){v9Toast('Admin key required','Set PROXY_ADMIN_KEY in Database tab first','warning');return;}
     var inp=document.getElementById('cfg-'+key);
     var value=f.type==='toggle'?(inp.checked?'1':'0'):(inp?inp.value:'');
     try {
-      var r=await proxyPost('sql_execute',{key:adminKey,query:"INSERT OR REPLACE INTO proxy_config (key,value) VALUES ('"+key.replace(/'/g,'')+"','"+String(value).replace(/'/g,'')+"')"});
-      if(r.ok||r.rowsAffected>=0)v9Toast(f.label+' saved',value+' '+(f.unit||''),'success');
-      else v9Toast('Save failed',r.error||'Check PROXY_ADMIN_KEY','danger');
+      var ok = await saveDispatchConfigKey(key, value);
+      if (ok) v9Toast(f.label+' saved',value+' '+(f.unit||''),'success');
+      else v9Toast('Save failed','Could not update local Postgres config','danger');
     }catch(e){v9Toast('Save failed',e.message,'danger');}
   },
   runCron: async function(action,btnEl) {
@@ -24944,18 +24889,25 @@ var DispatchControl = {
         updateDispatchStats(queueData);
       }
       if(commsData.ok)DISPATCH.comms=commsData.results||[];
-      var adminKey=getDispatchAdminKey();
-      if(adminKey){
-        try{
-          var cfg=await proxyPost('sql_query',{key:adminKey,query:'SELECT key,value FROM proxy_config ORDER BY key'});
-          if(cfg.ok){
-            DISPATCH._lastConfigRows=cfg.rows||[];
-            renderDispatchConfig(cfg.rows||[]);
+      try {
+        var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+        var token = getProxyAccessToken();
+        if (token) {
+          var cfgRes = await fetchWithTimeout(localBase + '/api/local/proxy_config', {
+            headers: {
+              'Accept': 'application/json',
+              'Authorization': 'Bearer ' + token
+            }
+          }, 45000);
+          var cfg = {};
+          try { cfg = await cfgRes.json(); } catch (_) { cfg = {}; }
+          if (cfgRes.ok && cfg && cfg.ok !== false) {
+            DISPATCH._lastConfigRows = cfg.rows || [];
+            renderDispatchConfig(DISPATCH._lastConfigRows);
             DispatchConfig.applyPauseUi();
           }
         }
-        catch(e){}
-      }
+      } catch(e) {}
       var branchSel = document.getElementById('dispatchBranchSelect');
       if (branchSel) branchSel.value = DISPATCH.activeBranch || 'all';
       DispatchConfig.applyPauseUi();

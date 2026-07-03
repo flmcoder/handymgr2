@@ -295,6 +295,470 @@ function asIso(value: unknown): string {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
+const REPORT_FAST_MS = 6_000;
+const REPORT_SLOW_MS = 15_000;
+const REPORT_PREFER_LOCAL_MS = 30 * 60_000;
+const REPORT_POLICY_TTL_MS = 5 * 60_000;
+
+let reportLatencyTableEnsured = false;
+const reportMonitorInFlight = new Set<string>();
+
+async function ensureReportLatencyPolicyTable(): Promise<void> {
+  if (reportLatencyTableEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS appfolio_report_latency_policy (
+      dataset_key TEXT NOT NULL,
+      property_group_id TEXT NOT NULL DEFAULT '',
+      last_status TEXT NOT NULL DEFAULT 'unknown',
+      last_latency_ms INTEGER,
+      prefer_local_until TIMESTAMPTZ,
+      last_checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_fast_at TIMESTAMPTZ,
+      last_slow_at TIMESTAMPTZ,
+      meta_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      PRIMARY KEY (dataset_key, property_group_id)
+    )
+  `);
+  reportLatencyTableEnsured = true;
+}
+
+async function readReportPolicy(datasetKey: string, propertyGroupId: string): Promise<any | null> {
+  await ensureReportLatencyPolicyTable();
+  const rows = await queryClient`
+    select dataset_key, property_group_id, last_status, last_latency_ms,
+           prefer_local_until, last_checked_at, last_fast_at, last_slow_at, meta_json
+    from appfolio_report_latency_policy
+    where dataset_key = ${datasetKey}
+      and property_group_id = ${propertyGroupId}
+    limit 1
+  `;
+  return (rows as any[])[0] || null;
+}
+
+async function upsertReportPolicy(
+  datasetKey: string,
+  propertyGroupId: string,
+  status: 'fast' | 'warm' | 'slow' | 'error',
+  latencyMs: number,
+  meta: Record<string, unknown> = {},
+  preferLocalUntil: Date | null = null,
+): Promise<void> {
+  await ensureReportLatencyPolicyTable();
+  const nowIso = new Date().toISOString();
+  const fastAt = status === 'fast' ? nowIso : null;
+  const slowAt = status === 'slow' ? nowIso : null;
+  await queryClient.unsafe(
+    `INSERT INTO appfolio_report_latency_policy (
+       dataset_key, property_group_id, last_status, last_latency_ms,
+       prefer_local_until, last_checked_at, last_fast_at, last_slow_at, meta_json
+     ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8::jsonb)
+     ON CONFLICT (dataset_key, property_group_id) DO UPDATE SET
+       last_status = EXCLUDED.last_status,
+       last_latency_ms = EXCLUDED.last_latency_ms,
+       prefer_local_until = EXCLUDED.prefer_local_until,
+       last_checked_at = NOW(),
+       last_fast_at = COALESCE(EXCLUDED.last_fast_at, appfolio_report_latency_policy.last_fast_at),
+       last_slow_at = COALESCE(EXCLUDED.last_slow_at, appfolio_report_latency_policy.last_slow_at),
+       meta_json = EXCLUDED.meta_json`,
+    [
+      datasetKey,
+      propertyGroupId,
+      status,
+      Math.max(0, Math.round(Number(latencyMs || 0))),
+      preferLocalUntil ? preferLocalUntil.toISOString() : null,
+      fastAt,
+      slowAt,
+      JSON.stringify(meta || {}),
+    ],
+  );
+}
+
+async function fetchWithHardTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<{ response?: Response; timedOut: boolean; elapsedMs: number; error?: unknown }> {
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    return { response, timedOut: false, elapsedMs: Date.now() - started };
+  } catch (error) {
+    const err = error as any;
+    return {
+      timedOut: err?.name === 'AbortError',
+      elapsedMs: Date.now() - started,
+      error,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function mapLiveInspectionRows(rows: any[]): any[] {
+  return (rows || []).map((row) => ({
+    property_name: String(pickRaw(row, ['property_name', 'PropertyName', 'property', 'Property']) || ''),
+    property_id: String(pickRaw(row, ['property_id', 'PropertyId']) || ''),
+    unit_name: String(pickRaw(row, ['unit_name', 'UnitName', 'unit', 'Unit']) || ''),
+    unit_id: String(pickRaw(row, ['unit_id', 'UnitId']) || ''),
+    last_inspection_date: String(pickRaw(row, ['last_inspection_date', 'LastInspectionDate']) || ''),
+    tenant_name: String(pickRaw(row, ['tenant_name', 'TenantName']) || ''),
+    tenant_primary_phone_number: String(pickRaw(row, ['tenant_primary_phone_number', 'TenantPrimaryPhoneNumber']) || ''),
+    move_in_date: String(pickRaw(row, ['move_in_date', 'MoveInDate']) || ''),
+    move_out_date: String(pickRaw(row, ['move_out_date', 'MoveOutDate']) || ''),
+    rentable: String(pickRaw(row, ['rentable', 'Rentable']) || ''),
+    unit_tags: pickRaw(row, ['unit_tags', 'UnitTags']) || '',
+    _source: 'appfolio_live',
+  }));
+}
+
+async function fetchLiveInspectionRows(propertyGroupId: string, timeoutMs: number): Promise<{ ok: boolean; timedOut: boolean; latencyMs: number; status: number; rows: any[]; error: string }> {
+  const body: Record<string, unknown> = {
+    unit_visibility: 'active',
+    include_blank_inspection_date: '1',
+    columns: [
+      'property', 'property_name', 'property_id', 'unit_name', 'unit_id',
+      'last_inspection_date', 'tenant_name', 'tenant_primary_phone_number',
+      'move_in_date', 'move_out_date', 'rentable', 'unit_tags',
+    ],
+  };
+  if (propertyGroupId) body.property_groups_ids = [propertyGroupId];
+
+  const url = `${AF_REPORTS_BASE}/api/v2/reports/unit_inspection.json`;
+  const attempt = await fetchWithHardTimeout(url, {
+    method: 'POST',
+    headers: afHeaders('v2'),
+    body: JSON.stringify(body),
+  }, timeoutMs);
+
+  if (!attempt.response) {
+    return {
+      ok: false,
+      timedOut: !!attempt.timedOut,
+      latencyMs: attempt.elapsedMs,
+      status: 0,
+      rows: [],
+      error: String((attempt.error as any)?.message || attempt.error || 'live inspection fetch failed'),
+    };
+  }
+
+  const response = attempt.response;
+  const text = await response.text();
+  let parsed: any = {};
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    parsed = {};
+  }
+  const rows = Array.isArray(parsed?.results)
+    ? parsed.results
+    : (Array.isArray(parsed?.data) ? parsed.data : []);
+
+  return {
+    ok: response.ok,
+    timedOut: false,
+    latencyMs: attempt.elapsedMs,
+    status: response.status,
+    rows,
+    error: response.ok ? '' : String(parsed?.error || text || `HTTP ${response.status}`),
+  };
+}
+
+async function monitorInspectionSlowPath(propertyGroupId: string): Promise<void> {
+  const groupKey = String(propertyGroupId || '');
+  const lockKey = `v2:unit_inspection:${groupKey || '__all__'}`;
+  if (reportMonitorInFlight.has(lockKey)) return;
+  reportMonitorInFlight.add(lockKey);
+
+  try {
+    const probe = await fetchLiveInspectionRows(groupKey, REPORT_SLOW_MS);
+    if (probe.ok && probe.latencyMs <= REPORT_SLOW_MS) {
+      await upsertReportPolicy('v2:unit_inspection', groupKey, probe.latencyMs <= REPORT_FAST_MS ? 'fast' : 'warm', probe.latencyMs, {
+        mode: 'background_probe',
+        status: probe.status,
+        row_count: probe.rows.length,
+      }, null);
+      return;
+    }
+
+    const preferUntil = new Date(Date.now() + REPORT_PREFER_LOCAL_MS);
+    await upsertReportPolicy('v2:unit_inspection', groupKey, probe.timedOut ? 'slow' : 'error', probe.latencyMs, {
+      mode: 'background_probe',
+      status: probe.status,
+      timed_out: probe.timedOut,
+      error: probe.error,
+    }, preferUntil);
+
+    const { runSync } = await import('./sync/syncRunner.ts');
+    await runSync({
+      endpointKey: 'v2:unit_inspection',
+      triggerType: 'latency_slow_auto',
+      maxPages: 1,
+    });
+  } catch (error) {
+    console.error('[local:inspections] slow-path monitor failed', String((error as any)?.message || error));
+  } finally {
+    reportMonitorInFlight.delete(lockKey);
+  }
+}
+
+async function monitorVendorSlowPath(propertyGroupId: string): Promise<void> {
+  const groupKey = String(propertyGroupId || '');
+  const lockKey = `v0:work_orders:vendors:${groupKey || '__all__'}`;
+  if (reportMonitorInFlight.has(lockKey)) return;
+  reportMonitorInFlight.add(lockKey);
+
+  try {
+    let url = `${AF_DB_BASE}/api/v0/work_orders?page%5Bsize%5D=1`;
+    if (groupKey) {
+      url += `&filters%5BPropertyGroupId%5D=${encodeURIComponent(groupKey)}`;
+    }
+    const probe = await fetchWithHardTimeout(url, {
+      method: 'GET',
+      headers: afHeaders('v0'),
+    }, REPORT_SLOW_MS);
+
+    const status = probe.response ? probe.response.status : 0;
+    if (probe.response && probe.response.ok && probe.elapsedMs <= REPORT_SLOW_MS) {
+      await upsertReportPolicy('v0:work_orders:vendors', groupKey, probe.elapsedMs <= REPORT_FAST_MS ? 'fast' : 'warm', probe.elapsedMs, {
+        mode: 'background_probe',
+        status,
+      }, null);
+      return;
+    }
+
+    const preferUntil = new Date(Date.now() + REPORT_PREFER_LOCAL_MS);
+    await upsertReportPolicy('v0:work_orders:vendors', groupKey, probe.timedOut ? 'slow' : 'error', probe.elapsedMs, {
+      mode: 'background_probe',
+      status,
+      timed_out: probe.timedOut,
+      error: String((probe.error as any)?.message || probe.error || ''),
+    }, preferUntil);
+
+    const { runSync } = await import('./sync/syncRunner.ts');
+    await runSync({
+      endpointKey: 'v0:work_orders',
+      triggerType: 'latency_slow_auto',
+      maxPages: 1,
+    });
+  } catch (error) {
+    console.error('[local:vendors] slow-path monitor failed', String((error as any)?.message || error));
+  } finally {
+    reportMonitorInFlight.delete(lockKey);
+  }
+}
+
+type JwkKey = {
+  kid?: string;
+  kty?: string;
+  alg?: string;
+  n?: string;
+  e?: string;
+  use?: string;
+  key_ops?: string[];
+};
+
+let webhookTableEnsured = false;
+let webhookJwksCache: { keys: JwkKey[]; fetchedAt: number } = { keys: [], fetchedAt: 0 };
+
+const WEBHOOK_JWKS_URL = 'https://api.appfolio.com/.well-known/jwks.json';
+const WEBHOOK_JWKS_TTL_MS = Math.max(60_000, Number(process.env.WEBHOOK_JWKS_TTL_MS || String(6 * 60 * 60 * 1000)) || (6 * 60 * 60 * 1000));
+const WEBHOOK_VERIFY_SIGNATURE = !/^(0|false|no|off)$/i.test(String(process.env.WEBHOOK_VERIFY_SIGNATURE || 'true').trim());
+
+function base64UrlToUint8Array(input: string): Uint8Array {
+  const normalized = String(input || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padLen = normalized.length % 4;
+  const padded = padLen === 0 ? normalized : normalized + '='.repeat(4 - padLen);
+  return new Uint8Array(Buffer.from(padded, 'base64'));
+}
+
+function bufferToBase64Url(input: Buffer): string {
+  return input.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function singularizeTopic(topicRaw: string): string {
+  const topic = String(topicRaw || '').trim().toLowerCase();
+  if (!topic) return '';
+  if (topic.endsWith('ies')) return topic.slice(0, -3) + 'y';
+  if (topic.endsWith('s')) return topic.slice(0, -1);
+  return topic;
+}
+
+function normalizeWebhookResourceType(rawResourceType: string, topic: string): string {
+  const cleaned = String(rawResourceType || '').trim().toLowerCase().replace(/[^a-z0-9_.-]/g, '');
+  if (cleaned.includes('.')) {
+    return singularizeTopic(cleaned.split('.')[0] || '');
+  }
+  if (cleaned) return singularizeTopic(cleaned);
+  return singularizeTopic(topic);
+}
+
+function parseWebhookEventType(rawEventType: string): string {
+  const value = String(rawEventType || '').trim().toLowerCase();
+  if (!value) return '';
+  if (value.includes('.')) return String(value.split('.')[1] || '').trim();
+  return value;
+}
+
+async function ensureWebhookEventsTable(): Promise<void> {
+  if (webhookTableEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS webhook_events (
+      id BIGSERIAL PRIMARY KEY,
+      event_uuid TEXT,
+      topic TEXT NOT NULL,
+      event_type TEXT,
+      resource_type TEXT,
+      resource_id TEXT,
+      signature TEXT,
+      payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      processed_at TIMESTAMPTZ,
+      processing_status TEXT DEFAULT 'pending'
+    )
+  `);
+  await queryClient.unsafe(`
+    CREATE INDEX IF NOT EXISTS webhook_events_topic_idx
+      ON webhook_events(topic)
+  `);
+  await queryClient.unsafe(`
+    CREATE INDEX IF NOT EXISTS webhook_events_resource_idx
+      ON webhook_events(resource_type, resource_id)
+  `);
+  await queryClient.unsafe(`
+    CREATE INDEX IF NOT EXISTS webhook_events_status_idx
+      ON webhook_events(processing_status)
+  `);
+  await queryClient.unsafe(`
+    CREATE UNIQUE INDEX IF NOT EXISTS webhook_events_event_uuid_unique
+      ON webhook_events(event_uuid)
+      WHERE event_uuid IS NOT NULL AND event_uuid <> ''
+  `);
+  webhookTableEnsured = true;
+}
+
+async function fetchWebhookJwks(force = false): Promise<JwkKey[]> {
+  const now = Date.now();
+  if (!force && webhookJwksCache.keys.length > 0 && (now - webhookJwksCache.fetchedAt) < WEBHOOK_JWKS_TTL_MS) {
+    return webhookJwksCache.keys;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(WEBHOOK_JWKS_URL, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`JWKS fetch failed: HTTP ${response.status}`);
+    }
+    const payload: any = await response.json();
+    const keys = Array.isArray(payload?.keys) ? payload.keys as JwkKey[] : [];
+    if (!keys.length) throw new Error('JWKS returned no keys');
+    webhookJwksCache = { keys, fetchedAt: now };
+    return keys;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function verifyAppfolioDetachedJws(rawBody: string, detachedSignatureHeader: string): Promise<{ ok: boolean; kid: string; alg: string }> {
+  const detached = String(detachedSignatureHeader || '').trim();
+  if (!detached) return { ok: false, kid: '', alg: '' };
+
+  const parts = detached.split('..');
+  if (parts.length !== 2) return { ok: false, kid: '', alg: '' };
+  const protectedB64 = String(parts[0] || '').trim();
+  const signatureB64 = String(parts[1] || '').trim();
+  if (!protectedB64 || !signatureB64) return { ok: false, kid: '', alg: '' };
+
+  let protectedHeader: any = {};
+  try {
+    protectedHeader = JSON.parse(Buffer.from(base64UrlToUint8Array(protectedB64)).toString('utf8'));
+  } catch {
+    return { ok: false, kid: '', alg: '' };
+  }
+
+  const kid = String(protectedHeader?.kid || '').trim();
+  const alg = String(protectedHeader?.alg || '').trim();
+  if (!kid || alg !== 'PS256') {
+    return { ok: false, kid, alg };
+  }
+
+  const payloadB64 = bufferToBase64Url(Buffer.from(String(rawBody || ''), 'utf8'));
+  const signingInput = new Uint8Array(Buffer.from(`${protectedB64}.${payloadB64}`, 'utf8'));
+  const signature = base64UrlToUint8Array(signatureB64);
+
+  let keys = await fetchWebhookJwks(false);
+  let key = keys.find((entry) => String(entry?.kid || '').trim() === kid);
+  if (!key) {
+    keys = await fetchWebhookJwks(true);
+    key = keys.find((entry) => String(entry?.kid || '').trim() === kid);
+  }
+  if (!key) return { ok: false, kid, alg };
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'jwk',
+    key as any,
+    { name: 'RSA-PSS', hash: 'SHA-256' },
+    false,
+    ['verify'],
+  );
+
+  const verified = await crypto.subtle.verify(
+    { name: 'RSA-PSS', saltLength: 32 },
+    cryptoKey,
+    signature as any,
+    signingInput as any,
+  );
+
+  return { ok: !!verified, kid, alg };
+}
+
+function mapWebhookToSyncEndpoints(resourceTypeRaw: string, topicRaw: string): string[] {
+  const resourceType = normalizeWebhookResourceType(resourceTypeRaw, topicRaw);
+  switch (resourceType) {
+    case 'work_order':
+      return ['v0:work_orders'];
+    case 'property':
+      return ['v0:properties'];
+    case 'property_group':
+      return ['v0:property_groups'];
+    case 'unit':
+      return ['v0:units'];
+    case 'tenant':
+      return ['v2:tenant_directory'];
+    case 'inspection':
+    case 'unit_inspection':
+      return ['v2:unit_inspection'];
+    case 'unit_turn':
+      return ['v2:unit_turn_detail'];
+    case 'vacancy':
+    case 'unit_vacancy':
+      return ['v2:unit_vacancy'];
+    default:
+      return [];
+  }
+}
+
+async function runWebhookDeltaSync(resourceTypeRaw: string, topicRaw: string): Promise<string[]> {
+  const endpoints = mapWebhookToSyncEndpoints(resourceTypeRaw, topicRaw)
+    .filter((endpoint) => SYNC_ENDPOINT_ALLOWLIST.has(endpoint) && !SYNC_ENDPOINT_BLOCKLIST.has(endpoint));
+  if (!endpoints.length) return [];
+
+  const { runSync } = await import('./sync/syncRunner.ts');
+  for (const endpointKey of endpoints) {
+    try {
+      await runSync({ endpointKey, triggerType: 'webhook', maxPages: 1 });
+    } catch (error) {
+      console.error('[webhook:delta-sync] failed', endpointKey, String((error as any)?.message || error));
+    }
+  }
+  return endpoints;
+}
+
 const WORK_ORDER_DETAIL_CACHE_TTL_MS = Math.max(
   60_000,
   Number(process.env.WO_DETAIL_CACHE_TTL_MS || String(15 * 60 * 1000)) || (15 * 60 * 1000),
@@ -766,6 +1230,94 @@ function normalizeUnitRow(row: any): Record<string, any> {
 const app = express();
 const DIST_DIR = path.resolve(process.cwd(), 'dist');
 
+// AppFolio webhook ingress uses detached JWS verification on the exact raw payload.
+// Keep this route above express.json middleware to avoid body mutation.
+app.post('/api/webhooks/appfolio', express.text({ type: '*/*', limit: '2mb' }), async (req: Request, res: Response) => {
+  try {
+    await ensureWebhookEventsTable();
+    const rawBody = typeof req.body === 'string' ? req.body : String(req.body || '');
+    const signatureHeader = String(req.header('x-jws-signature') || req.header('X-JWS-Signature') || '').trim();
+
+    const verification = WEBHOOK_VERIFY_SIGNATURE
+      ? await verifyAppfolioDetachedJws(rawBody, signatureHeader)
+      : { ok: true, kid: '', alg: '' };
+
+    if (WEBHOOK_VERIFY_SIGNATURE && !verification.ok) {
+      await queryClient`
+        insert into webhook_events (
+          event_uuid, topic, event_type, resource_type, resource_id,
+          signature, payload_json, processed_at, processing_status
+        )
+        values (
+          null, 'unverified', '', '', '',
+          ${signatureHeader}, ${JSON.stringify({ raw: rawBody, verification })}::jsonb, now(), 'invalid_signature'
+        )
+      `;
+      res.status(401).json({ ok: false, error: 'Invalid webhook signature' });
+      return;
+    }
+
+    let payload: any = {};
+    try {
+      payload = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      res.status(400).json({ ok: false, error: 'Invalid JSON payload' });
+      return;
+    }
+
+    const topic = String(payload?.topic || '').trim().toLowerCase();
+    const eventType = parseWebhookEventType(String(payload?.event_type || payload?.type || ''));
+    const resourceType = normalizeWebhookResourceType(String(payload?.resource_type || ''), topic);
+    const resourceId = String(payload?.resource_id || '').trim();
+    const eventUuid = String(payload?.event_id || '').trim();
+
+    if (eventUuid) {
+      const existing = await queryClient`
+        select id from webhook_events where event_uuid = ${eventUuid} limit 1
+      `;
+      if ((existing as any[]).length > 0) {
+        res.status(200).json({ ok: true, duplicate: true, event_uuid: eventUuid });
+        return;
+      }
+    }
+
+    const insertRows = await queryClient`
+      insert into webhook_events (
+        event_uuid, topic, event_type, resource_type, resource_id,
+        signature, payload_json, processing_status
+      )
+      values (
+        ${eventUuid || null}, ${topic || 'unknown'}, ${eventType || ''}, ${resourceType || ''}, ${resourceId || ''},
+        ${signatureHeader}, ${JSON.stringify(payload)}::jsonb, 'received'
+      )
+      returning id
+    `;
+    const webhookRowId = Number((insertRows as any[])[0]?.id || 0) || 0;
+
+    const syncedEndpoints = await runWebhookDeltaSync(resourceType, topic);
+    await queryClient`
+      update webhook_events
+      set processed_at = now(),
+          processing_status = ${syncedEndpoints.length ? 'processed' : 'stored'}
+      where id = ${webhookRowId}
+    `;
+
+    res.status(200).json({
+      ok: true,
+      verified: verification.ok,
+      event_uuid: eventUuid || null,
+      topic,
+      event_type: eventType,
+      resource_type: resourceType,
+      resource_id: resourceId || null,
+      synced_endpoints: syncedEndpoints,
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/webhooks/appfolio');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Webhook ingest failed') });
+  }
+});
+
 function getLegacyAction(req: Request): string {
   const fromQuery = String(req.query?.action ?? '').trim();
   if (fromQuery) return fromQuery;
@@ -866,6 +1418,35 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
 app.get('/health', async (_req: Request, res: Response) => {
   const dbOk = await pingDatabase();
   res.status(dbOk ? 200 : 503).json({ ok: dbOk, service: 'handymgr-backend', database: dbOk ? 'up' : 'down' });
+});
+
+app.get('/api/local/webhook_events', async (req: Request, res: Response) => {
+  try {
+    await ensureWebhookEventsTable();
+    const limit = parseLimit(req.query.limit, 100, 1000);
+    const rows = await queryClient`
+      select id, event_uuid, topic, event_type, resource_type, resource_id,
+             received_at, processed_at, processing_status
+      from webhook_events
+      order by received_at desc
+      limit ${limit}
+    `;
+    const results = (rows as any[]).map((row) => ({
+      id: Number(row?.id || 0) || 0,
+      event_uuid: String(row?.event_uuid || ''),
+      topic: String(row?.topic || ''),
+      event_type: String(row?.event_type || ''),
+      resource_type: String(row?.resource_type || ''),
+      resource_id: String(row?.resource_id || ''),
+      received_at: asIso(row?.received_at),
+      processed_at: asIso(row?.processed_at),
+      processing_status: String(row?.processing_status || ''),
+    }));
+    res.json({ ok: true, results, count: results.length });
+  } catch (error) {
+    logTunnelError(error, '/api/local/webhook_events');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Webhook events query failed') });
+  }
 });
 
 app.get('/api/local/ping', async (_req: Request, res: Response) => {
@@ -1224,29 +1805,75 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 2500, 10000);
     const propertyGroupId = getPropertyGroupFilter(req);
+    const vendorPolicy = await readReportPolicy('v0:work_orders:vendors', String(propertyGroupId || ''));
+    const vendorPolicyCheckedAt = Date.parse(String(vendorPolicy?.last_checked_at || ''));
+    if (!vendorPolicy || !Number.isFinite(vendorPolicyCheckedAt) || (Date.now() - vendorPolicyCheckedAt) > REPORT_POLICY_TTL_MS) {
+      void monitorVendorSlowPath(String(propertyGroupId || ''));
+    }
+
     const rows = propertyGroupId
       ? await queryClient`
         select
           coalesce(nullif(vendor_id, ''), nullif(raw_json->>'vendor_id', ''), nullif(raw_json->>'VendorId', '')) as vendor_id,
-          coalesce(nullif(vendor_name, ''), nullif(raw_json->>'vendor_name', ''), nullif(raw_json->>'VendorName', '')) as vendor_name,
+          coalesce(
+            nullif(vendor_name, ''),
+            nullif(raw_json->>'vendor_name', ''),
+            nullif(raw_json->>'VendorName', ''),
+            nullif(assigned_user_name, ''),
+            nullif(raw_json->>'assigned_user_name', ''),
+            nullif(raw_json->>'AssignedUserName', ''),
+            nullif(vendor_id, ''),
+            nullif(raw_json->>'vendor_id', ''),
+            nullif(raw_json->>'VendorId', '')
+          ) as vendor_name,
           count(*)::int as open_work_order_count,
           max(coalesce(updated_at, created_at, now())) as last_seen_at
         from appfolio_work_orders
         where property_group_id = ${propertyGroupId}
         group by 1, 2
-        having coalesce(nullif(vendor_name, ''), nullif(raw_json->>'vendor_name', ''), nullif(raw_json->>'VendorName', '')) is not null
+        having coalesce(
+          nullif(vendor_name, ''),
+          nullif(raw_json->>'vendor_name', ''),
+          nullif(raw_json->>'VendorName', ''),
+          nullif(assigned_user_name, ''),
+          nullif(raw_json->>'assigned_user_name', ''),
+          nullif(raw_json->>'AssignedUserName', ''),
+          nullif(vendor_id, ''),
+          nullif(raw_json->>'vendor_id', ''),
+          nullif(raw_json->>'VendorId', '')
+        ) is not null
         order by vendor_name asc
         limit ${limit}
       `
       : await queryClient`
         select
           coalesce(nullif(vendor_id, ''), nullif(raw_json->>'vendor_id', ''), nullif(raw_json->>'VendorId', '')) as vendor_id,
-          coalesce(nullif(vendor_name, ''), nullif(raw_json->>'vendor_name', ''), nullif(raw_json->>'VendorName', '')) as vendor_name,
+          coalesce(
+            nullif(vendor_name, ''),
+            nullif(raw_json->>'vendor_name', ''),
+            nullif(raw_json->>'VendorName', ''),
+            nullif(assigned_user_name, ''),
+            nullif(raw_json->>'assigned_user_name', ''),
+            nullif(raw_json->>'AssignedUserName', ''),
+            nullif(vendor_id, ''),
+            nullif(raw_json->>'vendor_id', ''),
+            nullif(raw_json->>'VendorId', '')
+          ) as vendor_name,
           count(*)::int as open_work_order_count,
           max(coalesce(updated_at, created_at, now())) as last_seen_at
         from appfolio_work_orders
         group by 1, 2
-        having coalesce(nullif(vendor_name, ''), nullif(raw_json->>'vendor_name', ''), nullif(raw_json->>'VendorName', '')) is not null
+        having coalesce(
+          nullif(vendor_name, ''),
+          nullif(raw_json->>'vendor_name', ''),
+          nullif(raw_json->>'VendorName', ''),
+          nullif(assigned_user_name, ''),
+          nullif(raw_json->>'assigned_user_name', ''),
+          nullif(raw_json->>'AssignedUserName', ''),
+          nullif(vendor_id, ''),
+          nullif(raw_json->>'vendor_id', ''),
+          nullif(raw_json->>'VendorId', '')
+        ) is not null
         order by vendor_name asc
         limit ${limit}
       `;
@@ -1260,9 +1887,21 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
         last_seen_at: asIso(row?.last_seen_at),
         _source: 'postgres_local',
       }))
-      .filter((row) => !!row.company_name);
+      .filter((row) => !!row.company_name || !!row.vendor_id);
 
-    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+    res.json({
+      ok: true,
+      results,
+      count: results.length,
+      source: 'postgres_local',
+      latency_policy: {
+        dataset_key: 'v0:work_orders:vendors',
+        property_group_id: String(propertyGroupId || ''),
+        last_status: String(vendorPolicy?.last_status || ''),
+        last_latency_ms: Number(vendorPolicy?.last_latency_ms || 0) || 0,
+        prefer_local_until: asIso(vendorPolicy?.prefer_local_until),
+      },
+    });
   } catch (error) {
     logTunnelError(error, '/api/local/vendors');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local vendors query failed') });
@@ -2393,6 +3032,62 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
     const limit = parseLimit(req.query.limit, 6000, 15000);
     const propertyGroupId = getPropertyGroupFilter(req);
     const activeOnly = /^(1|true|yes|on)$/i.test(String(req.query.active_only || '1').trim());
+    const groupKey = String(propertyGroupId || '');
+    const inspectionPolicy = await readReportPolicy('v2:unit_inspection', groupKey);
+    const preferLocalUntilMs = Date.parse(String(inspectionPolicy?.prefer_local_until || ''));
+    const lastCheckedAtMs = Date.parse(String(inspectionPolicy?.last_checked_at || ''));
+    const preferLocal = Number.isFinite(preferLocalUntilMs) && preferLocalUntilMs > Date.now();
+
+    if (!preferLocal) {
+      const fastLive = await fetchLiveInspectionRows(groupKey, REPORT_FAST_MS);
+      if (fastLive.ok && fastLive.latencyMs <= REPORT_FAST_MS) {
+        await upsertReportPolicy('v2:unit_inspection', groupKey, 'fast', fastLive.latencyMs, {
+          mode: 'fast_live',
+          status: fastLive.status,
+          row_count: fastLive.rows.length,
+        }, null);
+
+        let liveResults = mapLiveInspectionRows(fastLive.rows);
+        if (activeOnly) {
+          const todayIso = new Date().toISOString().slice(0, 10);
+          liveResults = liveResults.filter((row) => {
+            const moveIn = String(row.move_in_date || '').slice(0, 10);
+            if (moveIn && moveIn > todayIso) return false;
+            const moveOut = String(row.move_out_date || '').slice(0, 10);
+            if (moveOut && moveOut < todayIso) return false;
+            return true;
+          });
+        }
+
+        res.json({
+          ok: true,
+          results: liveResults,
+          count: liveResults.length,
+          source: 'appfolio_live_fast',
+          latency_ms: fastLive.latencyMs,
+          property_group_id: groupKey,
+          latency_policy: {
+            dataset_key: 'v2:unit_inspection',
+            status: 'fast',
+            threshold_fast_ms: REPORT_FAST_MS,
+            threshold_slow_ms: REPORT_SLOW_MS,
+          },
+        });
+        return;
+      }
+
+      if (fastLive.ok) {
+        await upsertReportPolicy('v2:unit_inspection', groupKey, 'warm', fastLive.latencyMs, {
+          mode: 'fast_gate',
+          status: fastLive.status,
+        }, null);
+      }
+
+      void monitorInspectionSlowPath(groupKey);
+    } else if (!Number.isFinite(lastCheckedAtMs) || (Date.now() - lastCheckedAtMs) > REPORT_POLICY_TTL_MS) {
+      void monitorInspectionSlowPath(groupKey);
+    }
+
     let rows: any[] = [];
     try {
       rows = propertyGroupId
@@ -2506,9 +3201,6 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
     if (activeOnly) {
       const todayIso = new Date().toISOString().slice(0, 10);
       results = results.filter((row) => {
-        const tenantName = String(row.tenant_name || '').trim();
-        if (!tenantName) return false;
-
         const moveIn = String(row.move_in_date || '').slice(0, 10);
         if (moveIn && moveIn > todayIso) return false;
 
@@ -2519,7 +3211,22 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
       });
     }
 
-    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+    const currentPolicy = await readReportPolicy('v2:unit_inspection', groupKey);
+    res.json({
+      ok: true,
+      results,
+      count: results.length,
+      source: 'postgres_local',
+      property_group_id: groupKey,
+      latency_policy: {
+        dataset_key: 'v2:unit_inspection',
+        last_status: String(currentPolicy?.last_status || ''),
+        last_latency_ms: Number(currentPolicy?.last_latency_ms || 0) || 0,
+        prefer_local_until: asIso(currentPolicy?.prefer_local_until),
+        threshold_fast_ms: REPORT_FAST_MS,
+        threshold_slow_ms: REPORT_SLOW_MS,
+      },
+    });
   } catch (error) {
     logTunnelError(error, '/api/local/inspections');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local inspections query failed') });
@@ -3218,6 +3925,78 @@ app.post('/api/local/otp_settings', async (req: Request, res: Response) => {
   } catch (error) {
     logTunnelError(error, '/api/local/otp_settings');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to save OTP settings') });
+  }
+});
+
+app.get('/api/local/proxy_config', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+    await ensureOtpSettingsTable();
+
+    const rows = await queryClient.unsafe(
+      `SELECT key, value FROM proxy_config ORDER BY key`,
+    );
+    res.json({ ok: true, rows: rows as any[] });
+  } catch (error) {
+    logTunnelError(error, '/api/local/proxy_config');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to load proxy config') });
+  }
+});
+
+app.post('/api/local/proxy_config/upsert', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+    await ensureOtpSettingsTable();
+
+    const key = String(req.body?.key || '').trim();
+    if (!key) {
+      res.status(400).json({ ok: false, error: 'Missing config key' });
+      return;
+    }
+    const value = String(req.body?.value ?? '');
+
+    await queryClient.unsafe(
+      `INSERT INTO proxy_config (key, value, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET
+         value = EXCLUDED.value,
+         updated_at = NOW()`,
+      [key, value],
+    );
+
+    res.json({ ok: true, key, value });
+  } catch (error) {
+    logTunnelError(error, '/api/local/proxy_config/upsert');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to save proxy config') });
+  }
+});
+
+app.post('/api/local/reassignment_queue/clear_exempt', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+
+    const woId = String(req.body?.wo_id || '').trim();
+    if (!woId) {
+      res.status(400).json({ ok: false, error: 'Missing wo_id' });
+      return;
+    }
+
+    await queryClient.unsafe(
+      `UPDATE reassignment_queue
+         SET auto_exempt = 0,
+             auto_exempt_at = NULL,
+             auto_exempt_by = NULL
+       WHERE wo_id = $1`,
+      [woId],
+    );
+
+    res.json({ ok: true, wo_id: woId });
+  } catch (error) {
+    logTunnelError(error, '/api/local/reassignment_queue/clear_exempt');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to clear exemption') });
   }
 });
 
