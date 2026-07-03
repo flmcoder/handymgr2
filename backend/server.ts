@@ -612,6 +612,89 @@ app.get('/health', async (_req: Request, res: Response) => {
   res.status(dbOk ? 200 : 503).json({ ok: dbOk, service: 'handymgr-backend', database: dbOk ? 'up' : 'down' });
 });
 
+app.get('/api/local/ping', async (_req: Request, res: Response) => {
+  try {
+    const dbOk = await pingDatabase();
+    const status = dbOk ? 200 : 503;
+    res.status(status).json({
+      ok: dbOk,
+      status,
+      latency_ms: 0,
+      database: dbOk ? 'up' : 'down',
+      db_api: { ok: dbOk, status },
+      reports_api: { ok: true, status: 200 },
+      schema: { ok: true, missing_tables: [] },
+      version: String(process.env.APP_VERSION || process.env.RENDER_GIT_COMMIT || 'server-local'),
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/ping');
+    res.status(500).json({
+      ok: false,
+      status: 500,
+      error: String((error as any)?.message || error || 'Ping failed'),
+      db_api: { ok: false, status: 500 },
+      reports_api: { ok: false, status: 500 },
+      schema: { ok: false, missing_tables: [] },
+    });
+  }
+});
+
+app.get('/api/local/system_health', async (_req: Request, res: Response) => {
+  try {
+    const dbOk = await pingDatabase();
+    const checks: Array<{ key: string; label: string; status: 'green' | 'yellow' | 'red'; detail: string }> = [
+      {
+        key: 'database',
+        label: 'Postgres Connectivity',
+        status: dbOk ? 'green' : 'red',
+        detail: dbOk ? 'Postgres reachable' : 'Postgres unavailable',
+      },
+      {
+        key: 'local_api',
+        label: 'Local API Routes',
+        status: 'green',
+        detail: 'Using local /api/local routes for operational reads',
+      },
+      {
+        key: 'work_orders_uuid',
+        label: 'Work Orders UUID Path',
+        status: 'green',
+        detail: 'Work orders sourced from local v0-backed table with UUID support',
+      },
+    ];
+
+    const summary = {
+      green_count: checks.filter((c) => c.status === 'green').length,
+      yellow_count: checks.filter((c) => c.status === 'yellow').length,
+      red_count: checks.filter((c) => c.status === 'red').length,
+    };
+    const overall = summary.red_count > 0 ? 'red' : (summary.yellow_count > 0 ? 'yellow' : 'green');
+
+    res.json({
+      ok: true,
+      status: overall,
+      generated_at: new Date().toISOString(),
+      summary,
+      checks,
+      debug: {
+        debug_query: [
+          'select count(*) from appfolio_work_orders;',
+          'select count(*) from appfolio_properties;',
+          'select count(*) from appfolio_unit_inspections;',
+        ],
+        payload: {
+          db_ok: dbOk,
+          scheduler_endpoints: syncSchedulerState.endpoints,
+          scheduler_rejected_endpoints: syncSchedulerState.rejectedEndpoints,
+        },
+      },
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/system_health');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'System health failed') });
+  }
+});
+
 // Enforce PM scoped property-group filtering on all local data endpoints.
 app.use('/api/local', pmScopeMiddleware);
 
@@ -821,6 +904,79 @@ app.get('/api/local/properties', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/api/local/vendors', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 2500, 10000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select
+          coalesce(nullif(vendor_id, ''), nullif(raw_json->>'vendor_id', ''), nullif(raw_json->>'VendorId', '')) as vendor_id,
+          coalesce(nullif(vendor_name, ''), nullif(raw_json->>'vendor_name', ''), nullif(raw_json->>'VendorName', '')) as vendor_name,
+          count(*)::int as open_work_order_count,
+          max(coalesce(updated_at, created_at, now())) as last_seen_at
+        from appfolio_work_orders
+        where property_group_id = ${propertyGroupId}
+        group by 1, 2
+        having coalesce(nullif(vendor_name, ''), nullif(raw_json->>'vendor_name', ''), nullif(raw_json->>'VendorName', '')) is not null
+        order by vendor_name asc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          coalesce(nullif(vendor_id, ''), nullif(raw_json->>'vendor_id', ''), nullif(raw_json->>'VendorId', '')) as vendor_id,
+          coalesce(nullif(vendor_name, ''), nullif(raw_json->>'vendor_name', ''), nullif(raw_json->>'VendorName', '')) as vendor_name,
+          count(*)::int as open_work_order_count,
+          max(coalesce(updated_at, created_at, now())) as last_seen_at
+        from appfolio_work_orders
+        group by 1, 2
+        having coalesce(nullif(vendor_name, ''), nullif(raw_json->>'vendor_name', ''), nullif(raw_json->>'VendorName', '')) is not null
+        order by vendor_name asc
+        limit ${limit}
+      `;
+
+    const results = (rows as any[])
+      .map((row) => ({
+        vendor_id: String(row?.vendor_id || '').trim(),
+        company_name: String(row?.vendor_name || '').trim(),
+        vendor_name: String(row?.vendor_name || '').trim(),
+        open_work_order_count: Number(row?.open_work_order_count || 0),
+        last_seen_at: asIso(row?.last_seen_at),
+        _source: 'postgres_local',
+      }))
+      .filter((row) => !!row.company_name);
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/vendors');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local vendors query failed') });
+  }
+});
+
+app.get('/api/local/property_group_directory', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 1000, 5000);
+    const rows = await queryClient`
+      select coalesce(uuid, id) as group_uuid, coalesce(name, id) as group_name
+      from appfolio_property_groups
+      order by coalesce(name, id) asc
+      limit ${limit}
+    `;
+
+    const results = (rows as any[])
+      .map((row) => ({
+        property_group_uuid: String(row?.group_uuid || '').trim(),
+        property_group_name: String(row?.group_name || '').trim(),
+      }))
+      .filter((row) => !!row.property_group_uuid);
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/property_group_directory');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Property group directory failed') });
+  }
+});
+
 app.get('/api/local/property_groups', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 1000);
@@ -855,8 +1011,9 @@ app.get('/api/local/property_groups', async (req: Request, res: Response) => {
 
     if (groupsRows.length > 0) {
       const groupIdToPropertyIds = new Map<string, string[]>();
+      const groupIdToNameHints = new Map<string, string>();
       const allProperties = await queryClient`
-        select id, property_group_id
+        select id, property_group_id, raw_json
         from appfolio_properties
       `;
       for (const row of allProperties as any[]) {
@@ -866,6 +1023,14 @@ app.get('/api/local/property_groups', async (req: Request, res: Response) => {
         const arr = groupIdToPropertyIds.get(gid) || [];
         if (!arr.includes(pid)) arr.push(pid);
         groupIdToPropertyIds.set(gid, arr);
+
+        const raw = row?.raw_json || {};
+        const nameHint = String(
+          raw?.property_group || raw?.group_name || raw?.portfolio || raw?.portfolio_name || '',
+        ).trim();
+        if (nameHint && !groupIdToNameHints.get(gid)) {
+          groupIdToNameHints.set(gid, nameHint);
+        }
       }
 
       const results = (groupsRows as any[])
@@ -877,15 +1042,18 @@ app.get('/api/local/property_groups', async (req: Request, res: Response) => {
             return String(value || '').trim();
           }).filter(Boolean);
 
-          const keyCandidates = [String(group?.uuid || '').trim(), String(group?.id || '').trim()].filter(Boolean);
+          const groupId = String(group?.id || '').trim();
+          const groupUuid = String(group?.uuid || '').trim();
+          const keyCandidates = [groupUuid, groupId].filter(Boolean);
           const inferredIds = keyCandidates.flatMap((key) => groupIdToPropertyIds.get(key) || []);
           const mergedPropertyIds = Array.from(new Set([...explicitIds, ...inferredIds]));
-          const name = String(group?.name || '').trim() || String(group?.id || '').trim();
+          const inferredName = groupIdToNameHints.get(groupId) || groupIdToNameHints.get(groupUuid) || '';
+          const name = String(group?.name || inferredName || '').trim() || groupId;
           return {
-            id: String(group?.uuid || group?.id || ''),
-            Id: String(group?.uuid || group?.id || ''),
-            group_id: String(group?.id || ''),
-            group_uuid: String(group?.uuid || ''),
+            id: String(groupUuid || groupId || ''),
+            Id: String(groupUuid || groupId || ''),
+            group_id: groupId,
+            group_uuid: groupUuid,
             name,
             Name: name,
             type: String(group?.type || 'property_group'),
@@ -1877,6 +2045,7 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 6000, 15000);
     const propertyGroupId = getPropertyGroupFilter(req);
+    const activeOnly = /^(1|true|yes|on)$/i.test(String(req.query.active_only || '1').trim());
     let rows: any[] = [];
     try {
       rows = propertyGroupId
@@ -1972,7 +2141,7 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
 
     }
 
-    const results = (rows as any[]).map((row) => ({
+    let results = (rows as any[]).map((row) => ({
       property_name: String(row.property_name || ''),
       property_id: String(row.property_id || ''),
       unit_name: String(row.unit_name || ''),
@@ -1986,6 +2155,22 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
       unit_tags: row.unit_tags || '',
       _source: 'postgres_local',
     }));
+
+    if (activeOnly) {
+      const todayIso = new Date().toISOString().slice(0, 10);
+      results = results.filter((row) => {
+        const tenantName = String(row.tenant_name || '').trim();
+        if (!tenantName) return false;
+
+        const moveIn = String(row.move_in_date || '').slice(0, 10);
+        if (moveIn && moveIn > todayIso) return false;
+
+        const moveOut = String(row.move_out_date || '').slice(0, 10);
+        if (moveOut && moveOut < todayIso) return false;
+
+        return true;
+      });
+    }
 
     res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
   } catch (error) {
@@ -2398,7 +2583,7 @@ async function requireAdminSession(req: Request, res: Response): Promise<any | n
   }
 
   const role = String(session.role || '').toLowerCase();
-  if (role !== 'full' && role !== 'manager') {
+  if (role !== 'full' && role !== 'manager' && role !== 'advanced::manager' && role !== 'advanced_manager') {
     res.status(403).json({ ok: false, error: 'Admin access required' });
     return null;
   }

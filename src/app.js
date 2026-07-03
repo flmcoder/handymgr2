@@ -1760,6 +1760,7 @@ var DEFAULT_COMPLETED_WO_LOOKBACK_DAYS = 30;
 
 function normalizeAccessRole(role) {
   var value = String(role || '').trim().toLowerCase();
+  if (value === 'advanced::manager' || value === 'advanced_manager') return 'manager';
   if (value === 'vendors' || value === 'manager' || value === 'full' || value === 'pm_readonly') return value;
   return 'full';
 }
@@ -2487,8 +2488,11 @@ async function fetchWithTimeout(url, opts, timeoutMsOrRetries, baseBackoffMs) {
 // - no SQL/proxy fallback for these actions; fail fast if local read is unavailable
 function getLocalReadActionPath(action) {
   var LOCAL_READ_ACTIONS = {
+    ping: '/api/local/ping',
+    system_health: '/api/local/system_health',
     work_orders: '/api/local/work_orders',
     work_orders_completed_history: '/api/local/work_orders_completed_history',
+    vendors: '/api/local/vendors',
     turns: '/api/local/turns',
     turn_work_orders: '/api/local/turn_work_orders',
     unit_turns: '/api/local/turns',
@@ -2501,7 +2505,8 @@ function getLocalReadActionPath(action) {
     upcoming_moveouts: '/api/local/upcoming_moveouts',
     vacancies: '/api/local/vacancies',
     property_map: '/api/local/property_map',
-    property_stats: '/api/local/property_stats'
+    property_stats: '/api/local/property_stats',
+    property_group_directory: '/api/local/property_group_directory'
   };
   return LOCAL_READ_ACTIONS[action] || '';
 }
@@ -6377,9 +6382,18 @@ async function fetchBills(days, opts) {
 // Vendors: Proxy ?action=vendors — server-side pagination, one request
 async function fetchVendors() {
   try {
-    setApiStatus('loading', 'Loading vendors (server-side)\u2026');
-    var data = await proxyAction('vendors');
-    var results = data.results || [];
+    setApiStatus('loading', 'Loading vendors (local)\u2026');
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var scopedGroupUuid = getEffectiveGroupUuid();
+    var url = localBase + '/api/local/vendors?limit=2500'
+      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
+    var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
+    var data = {};
+    try { data = await res.json(); } catch (e) { data = {}; }
+    if (!res.ok || data.ok === false) {
+      throw new Error(String((data && (data.error || data.message)) || ('Local vendors failed: HTTP ' + res.status)));
+    }
+    var results = data.results || data.data || [];
     VENDORS = results.map(function(v) {
       var displayName = v.company_name || ((v.first_name || '') + ' ' + (v.last_name || '')).trim() || v.name || '';
       return {
@@ -22416,39 +22430,39 @@ async function fetchAllLive() {
     }
   }
   // Vendors & Inspections lazy-loaded on tab click — removed from initial sync
-  var steps = ['Properties', 'Groups', 'Work Orders', 'Turns', 'Move-Outs', 'Turn WOs', 'Tasks', 'Turn Tracker'];
+  var steps = ['Work Orders', 'Properties', 'Groups', 'Turns', 'Move-Outs', 'Turn WOs', 'Tasks', 'Turn Tracker'];
   showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
 
   try {
-    // Step 0: Properties (proxy action — Reports API)
-    updateProgress(0, 'active', 'Fetching properties\u2026');
-    var propOk = await withStepTimeout(fetchProperties, 60000);
-    updateProgress(0, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
-    if (propOk) {
-      anySuccess = true;
-      populateDropdowns();
-      renderWorkOrders();
-    }
-
-    // Step 1: Property Groups (proxy action — DB API v0)
-    updateProgress(1, 'active', 'Fetching property groups\u2026');
-    var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
-    var grpMsg = grpOk
-      ? PROPERTY_GROUPS.length + ' groups, ' + Object.keys(_idToGroups).length + ' ID maps'
-      : 'Groups skipped';
-    updateProgress(1, grpOk ? 'done' : 'error', grpMsg);
-    if (grpOk) { populateDropdowns(); renderWorkOrders(); }
-
-    // Step 2: Work Orders (proxy action — Reports API)
-    updateProgress(2, 'active', 'Fetching work orders\u2026');
+    // Step 0: Work Orders first for fastest post-login visibility.
+    updateProgress(0, 'active', 'Fetching work orders\u2026');
     var woOk = await withStepTimeout(fetchWorkOrders, 60000);
-    updateProgress(2, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
+    updateProgress(0, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
     if (woOk) {
       anySuccess = true;
       renderWorkOrders();
       renderDashboardKPIs();
       renderActivityFeed();
     }
+
+    // Step 1: Properties (local)
+    updateProgress(1, 'active', 'Fetching properties\u2026');
+    var propOk = await withStepTimeout(fetchProperties, 60000);
+    updateProgress(1, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
+    if (propOk) {
+      anySuccess = true;
+      populateDropdowns();
+      renderWorkOrders();
+    }
+
+    // Step 2: Property Groups (local)
+    updateProgress(2, 'active', 'Fetching property groups\u2026');
+    var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
+    var grpMsg = grpOk
+      ? PROPERTY_GROUPS.length + ' groups, ' + Object.keys(_idToGroups).length + ' ID maps'
+      : 'Groups skipped';
+    updateProgress(2, grpOk ? 'done' : 'error', grpMsg);
+    if (grpOk) { populateDropdowns(); renderWorkOrders(); }
 
     // Step 3: Turns — In Progress only, 60-day window (proxy action — Reports API)
     // Short timeout (20s) — turns are supplementary; pipeline works from WOs + move-outs too
