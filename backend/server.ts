@@ -4,6 +4,7 @@ import cors from 'cors';
 import path from 'node:path';
 import { pingDatabase, queryClient } from './db';
 import * as deviceAuthHandlers from './deviceAuth';
+import { AF_REPORTS_BASE, afHeaders } from './sync/afCredentials';
 
 function ensureDenoCompat(): void {
   const globalAny = globalThis as any;
@@ -142,6 +143,55 @@ function parseLimit(value: unknown, fallback: number, max = 5000): number {
   return Math.max(1, Math.min(max, parsed));
 }
 
+const SYNC_ENDPOINT_ALLOWLIST = new Set<string>([
+  'v0:properties',
+  'v0:property_groups',
+  'v0:units',
+  'v0:work_orders',
+  'v2:tenant_directory',
+  'v2:unit_inspection',
+  'v2:unit_turn_detail',
+  'v2:unit_vacancy',
+]);
+
+const SYNC_ENDPOINT_BLOCKLIST = new Set<string>([
+  'v2:work_orders',
+]);
+
+function sanitizeSyncEndpoints(
+  requested: string[],
+  fallback: string[],
+  source: string,
+): { accepted: string[]; rejected: string[] } {
+  const dedupedRequested = Array.from(new Set(
+    requested
+      .map((value) => String(value || '').trim())
+      .filter(Boolean),
+  ));
+
+  const rejected = dedupedRequested.filter((endpoint) => (
+    !SYNC_ENDPOINT_ALLOWLIST.has(endpoint) || SYNC_ENDPOINT_BLOCKLIST.has(endpoint)
+  ));
+
+  let accepted = dedupedRequested.filter((endpoint) => (
+    SYNC_ENDPOINT_ALLOWLIST.has(endpoint) && !SYNC_ENDPOINT_BLOCKLIST.has(endpoint)
+  ));
+
+  if (accepted.length === 0) {
+    accepted = Array.from(new Set(
+      fallback
+        .map((value) => String(value || '').trim())
+        .filter((endpoint) => SYNC_ENDPOINT_ALLOWLIST.has(endpoint) && !SYNC_ENDPOINT_BLOCKLIST.has(endpoint)),
+    ));
+  }
+
+  if (rejected.length > 0) {
+    console.warn(`[server:sync-guard] source=${source} rejected_endpoints=${rejected.join(',')}`);
+  }
+
+  return { accepted, rejected };
+}
+
 function parsePropertyGroupId(value: unknown): string {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
@@ -150,13 +200,92 @@ function parsePropertyGroupId(value: unknown): string {
   return String(first || '');
 }
 
-function getPropertyGroupFilter(req: Request): string {
+function getRequestedPropertyGroupId(req: Request): string {
   return parsePropertyGroupId(
     req.query.property_group_id
       ?? req.query.property_group_uuid
       ?? req.query.group_id
       ?? req.query.propertyGroupId,
   );
+}
+
+function getBearerToken(req: Request): string {
+  const auth = String(req.headers.authorization || '');
+  return auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+}
+
+type LocalScopeContext = {
+  role: string;
+  requestedGroupId: string;
+  sessionGroupId: string;
+  effectiveGroupId: string;
+  scopeSource: 'query' | 'session';
+  enforced: boolean;
+};
+
+async function pmScopeMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const requestedGroupId = getRequestedPropertyGroupId(req);
+    const token = getBearerToken(req);
+
+    // Backward-compatible: if no bearer token is present, keep existing query behavior.
+    if (!token) {
+      (req as any).localScope = {
+        role: 'anonymous',
+        requestedGroupId,
+        sessionGroupId: '',
+        effectiveGroupId: requestedGroupId,
+        scopeSource: 'query',
+        enforced: false,
+      } as LocalScopeContext;
+      next();
+      return;
+    }
+
+    const session = await deviceAuthHandlers.getTrustedDeviceSession(token);
+    if (!session) {
+      res.status(401).json({ ok: false, error: 'Invalid session' });
+      return;
+    }
+
+    const role = String(session.role || '').toLowerCase();
+    const sessionGroupId = normalizeScopeUuid(session.property_group_uuid || '');
+    let effectiveGroupId = requestedGroupId;
+    let scopeSource: 'query' | 'session' = 'query';
+    let enforced = false;
+
+    if (role === 'pm_readonly') {
+      if (!sessionGroupId) {
+        res.status(403).json({ ok: false, error: 'PM session missing scoped property group' });
+        return;
+      }
+      effectiveGroupId = sessionGroupId;
+      scopeSource = 'session';
+      enforced = true;
+    }
+
+    (req as any).localScope = {
+      role,
+      requestedGroupId,
+      sessionGroupId,
+      effectiveGroupId,
+      scopeSource,
+      enforced,
+    } as LocalScopeContext;
+
+    next();
+  } catch (error) {
+    logTunnelError(error, 'pm-scope-middleware');
+    res.status(500).json({ ok: false, error: 'Scope middleware failed' });
+  }
+}
+
+function getPropertyGroupFilter(req: Request): string {
+  const localScope = (req as any).localScope as LocalScopeContext | undefined;
+  if (localScope && typeof localScope.effectiveGroupId === 'string') {
+    return String(localScope.effectiveGroupId || '');
+  }
+  return getRequestedPropertyGroupId(req);
 }
 
 function asIso(value: unknown): string {
@@ -482,6 +611,9 @@ app.get('/health', async (_req: Request, res: Response) => {
   const dbOk = await pingDatabase();
   res.status(dbOk ? 200 : 503).json({ ok: dbOk, service: 'handymgr-backend', database: dbOk ? 'up' : 'down' });
 });
+
+// Enforce PM scoped property-group filtering on all local data endpoints.
+app.use('/api/local', pmScopeMiddleware);
 
 app.get('/api/local/work_orders', async (req: Request, res: Response) => {
   try {
@@ -907,9 +1039,8 @@ app.post('/api/local/bootstrap_sync', async (req: Request, res: Response) => {
     const requestedEndpoints = Array.isArray(req.body?.endpoints)
       ? req.body.endpoints.map((value: unknown) => String(value || '').trim()).filter(Boolean)
       : defaultEndpoints;
-    const endpointSet = new Set(defaultEndpoints);
-    const endpoints = requestedEndpoints.filter((endpoint) => endpointSet.has(endpoint));
-    const finalEndpoints = endpoints.length > 0 ? endpoints : defaultEndpoints;
+    const endpointSelection = sanitizeSyncEndpoints(requestedEndpoints, defaultEndpoints, 'bootstrap_sync');
+    const finalEndpoints = endpointSelection.accepted;
 
     const { runSync } = await import('./sync/syncRunner.ts');
     const summaries: Record<string, unknown> = {};
@@ -928,6 +1059,7 @@ app.post('/api/local/bootstrap_sync', async (req: Request, res: Response) => {
       ok: true,
       synced: true,
       endpointKeys: finalEndpoints,
+      rejected_endpoint_keys: endpointSelection.rejected,
       summaries,
     });
   } catch (error) {
@@ -2275,6 +2407,7 @@ async function requireAdminSession(req: Request, res: Response): Promise<any | n
 }
 
 async function ensurePmAccountTables(): Promise<void> {
+  if (pmAccountTablesEnsured) return;
   await queryClient.unsafe(`
     CREATE TABLE IF NOT EXISTS pm_proxy_users (
       user_uuid TEXT PRIMARY KEY,
@@ -2310,9 +2443,11 @@ async function ensurePmAccountTables(): Promise<void> {
     CREATE INDEX IF NOT EXISTS pm_proxy_user_scopes_user_idx ON pm_proxy_user_scopes(user_uuid);
     CREATE INDEX IF NOT EXISTS pm_proxy_user_scopes_group_idx ON pm_proxy_user_scopes(property_group_uuid);
   `);
+  pmAccountTablesEnsured = true;
 }
 
 async function ensureOtpSettingsTable(): Promise<void> {
+  if (otpSettingsTableEnsured) return;
   await queryClient.unsafe(`
     CREATE TABLE IF NOT EXISTS proxy_config (
       key TEXT PRIMARY KEY,
@@ -2320,7 +2455,11 @@ async function ensureOtpSettingsTable(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  otpSettingsTableEnsured = true;
 }
+
+let pmAccountTablesEnsured = false;
+let otpSettingsTableEnsured = false;
 
 app.get('/api/local/pm_users', async (req: Request, res: Response) => {
   try {
@@ -2561,7 +2700,20 @@ app.post('/api/admin/sync', async (req: Request, res: Response) => {
       return;
     }
 
-    const endpointKey = String(req.body?.endpoint ?? 'v0:units').trim();
+    const endpointSelection = sanitizeSyncEndpoints(
+      [String(req.body?.endpoint ?? 'v0:units').trim()],
+      ['v0:units'],
+      'admin_sync',
+    );
+    const endpointKey = endpointSelection.accepted[0] || '';
+    if (!endpointKey) {
+      res.status(400).json({
+        ok: false,
+        error: 'Requested endpoint is not allowed',
+        rejected_endpoint_keys: endpointSelection.rejected,
+      });
+      return;
+    }
     const triggerType = String(req.body?.triggerType ?? 'manual').trim();
     const maxPages    = Number(req.body?.maxPages ?? 0);
 
@@ -2591,6 +2743,7 @@ const syncSchedulerState: {
   lastError: string;
   inFlightEndpoints: string[];
   endpointSummaries: Record<string, any>;
+  rejectedEndpoints: string[];
 } = {
   enabled: false,
   intervalMinutes: 0,
@@ -2604,10 +2757,28 @@ const syncSchedulerState: {
   lastError: '',
   inFlightEndpoints: [],
   endpointSummaries: {},
+  rejectedEndpoints: [],
 };
+
+function getSchedulerEndpointGroups(endpoints: string[]): { v0: string[]; v2: string[]; other: string[]; v2Paused: boolean } {
+  const groups = {
+    v0: [] as string[],
+    v2: [] as string[],
+    other: [] as string[],
+    v2Paused: true,
+  };
+  for (const endpoint of endpoints) {
+    if (endpoint.startsWith('v0:')) groups.v0.push(endpoint);
+    else if (endpoint.startsWith('v2:')) groups.v2.push(endpoint);
+    else groups.other.push(endpoint);
+  }
+  groups.v2Paused = groups.v2.length === 0;
+  return groups;
+}
 
 app.get('/api/local/sync/status', async (_req: Request, res: Response) => {
   try {
+    const endpointGroups = getSchedulerEndpointGroups(syncSchedulerState.endpoints);
     const payload: Record<string, any> = {
       ok: true,
       scheduler: {
@@ -2623,6 +2794,13 @@ app.get('/api/local/sync/status', async (_req: Request, res: Response) => {
         in_flight_endpoints: syncSchedulerState.inFlightEndpoints,
         last_error: syncSchedulerState.lastError || null,
         endpoint_summaries: syncSchedulerState.endpointSummaries,
+        rejected_endpoints: syncSchedulerState.rejectedEndpoints,
+        endpoint_groups: {
+          v0: endpointGroups.v0,
+          v2: endpointGroups.v2,
+          other: endpointGroups.other,
+        },
+        v2_paused: endpointGroups.v2Paused,
       },
       runs: [] as any[],
       cursors: {
@@ -2673,6 +2851,102 @@ app.get('/api/local/sync/status', async (_req: Request, res: Response) => {
   }
 });
 
+app.get('/api/local/sync/v2_probe', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+
+    const timeoutMs = Math.max(5_000, Math.min(60_000, Number(req.query.timeout_ms || 20_000) || 20_000));
+    const endpointBodies: Array<{ report: string; body: Record<string, unknown> }> = [
+      {
+        report: 'tenant_directory',
+        body: {
+          tenant_visibility: 'active',
+          property_visibility: 'active',
+          tenant_statuses: ['0', '4'],
+          tenant_types: 'all',
+          columns: ['property', 'property_id', 'unit', 'tenant', 'status'],
+        },
+      },
+      {
+        report: 'unit_inspection',
+        body: {
+          unit_visibility: 'active',
+          include_blank_inspection_date: '1',
+          columns: ['property', 'property_id', 'unit_name', 'last_inspection_date', 'unit_id'],
+        },
+      },
+      {
+        report: 'unit_turn_detail',
+        body: {
+          property_visibility: 'active',
+          unit_turn_status: 'All',
+          columns: ['property', 'property_id', 'unit', 'unit_turn_id', 'move_out_date'],
+        },
+      },
+      {
+        report: 'unit_vacancy',
+        body: {
+          property_visibility: 'active',
+          columns: ['property', 'property_id', 'unit', 'unit_id', 'vacant_from', 'status'],
+        },
+      },
+    ];
+
+    const results: any[] = [];
+    for (const endpoint of endpointBodies) {
+      const startedAt = Date.now();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const url = `${AF_REPORTS_BASE}/api/v2/reports/${endpoint.report}.json`;
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: afHeaders('v2'),
+          body: JSON.stringify(endpoint.body),
+          signal: controller.signal,
+        });
+        const rawBody = await response.text();
+        const preview = String(rawBody || '').replace(/\s+/g, ' ').slice(0, 240);
+        results.push({
+          report: endpoint.report,
+          ok: response.ok,
+          status: response.status,
+          latency_ms: Date.now() - startedAt,
+          response_preview: preview,
+        });
+      } catch (error) {
+        const err = error as any;
+        const causeCode = String(err?.cause?.code || err?.code || '');
+        const reason = err?.name === 'AbortError'
+          ? `timeout after ${timeoutMs}ms`
+          : String(err?.message || err || 'fetch failed');
+        results.push({
+          report: endpoint.report,
+          ok: false,
+          status: 0,
+          latency_ms: Date.now() - startedAt,
+          error: causeCode ? `${reason} (${causeCode})` : reason,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    const failures = results.filter((row) => !row.ok);
+    res.json({
+      ok: failures.length === 0,
+      reports_base: AF_REPORTS_BASE,
+      timeout_ms: timeoutMs,
+      failures: failures.length,
+      results,
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/sync/v2_probe');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'V2 probe failed') });
+  }
+});
+
 app.get('/api/session_info', async (req: Request, res: Response) => {
   try {
     await respondSessionInfo(req, res);
@@ -2713,15 +2987,28 @@ function startRecurringSyncScheduler(): void {
   if (!enabled) return;
 
   const intervalMinutes = Math.max(5, Number(process.env.SYNC_SCHEDULER_INTERVAL_MINUTES || '30') || 30);
-  const endpoints = String(process.env.SYNC_SCHEDULER_ENDPOINTS || 'v0:properties,v0:property_groups,v0:units,v0:work_orders,v2:tenant_directory,v2:unit_inspection,v2:unit_turn_detail,v2:unit_vacancy')
+  const defaultEndpoints = [
+    'v0:properties',
+    'v0:property_groups',
+    'v0:units',
+    'v0:work_orders',
+    'v2:tenant_directory',
+    'v2:unit_inspection',
+    'v2:unit_turn_detail',
+    'v2:unit_vacancy',
+  ];
+  const configuredEndpoints = String(process.env.SYNC_SCHEDULER_ENDPOINTS || defaultEndpoints.join(','))
     .split(',')
     .map((value) => String(value || '').trim())
     .filter(Boolean);
+  const endpointSelection = sanitizeSyncEndpoints(configuredEndpoints, defaultEndpoints, 'scheduler_env');
+  const endpoints = endpointSelection.accepted;
   const maxPages = Math.max(0, Number(process.env.SYNC_SCHEDULER_MAX_PAGES || '0') || 0);
   const runOnBoot = !/^(0|false|no|off)$/i.test(String(process.env.SYNC_SCHEDULER_RUN_ON_BOOT || 'true').trim());
   const inFlight = new Set<string>();
   syncSchedulerState.intervalMinutes = intervalMinutes;
   syncSchedulerState.endpoints = endpoints.slice();
+  syncSchedulerState.rejectedEndpoints = endpointSelection.rejected.slice();
   syncSchedulerState.maxPages = maxPages;
   syncSchedulerState.runOnBoot = runOnBoot;
   syncSchedulerState.startedAt = new Date().toISOString();

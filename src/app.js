@@ -5720,13 +5720,15 @@ async function fetchWorkOrders() {
     
     // Normalize work order row
     var normalizeWo = function(r) {
-      var rawUuid = r.work_order_id || r.Id || '';
+      // Work orders are sourced from local Postgres rows hydrated from AppFolio v0.
+      // UUID is required by notes/attachments flows, so prefer explicit UUID fields.
+      var rawUuid = r.work_order_uuid || r.work_order_id || r.uuid || r.Id || '';
       var dbApiId = r.db_api_id || r.dbApiId || r.v0_uuid || r.v0_id || r.uuid || r.UUID || '';
       return {
         id: r.work_order_number || r.WorkOrderNumber || r.service_request_number || '',
         uuid: rawUuid,
         dbApiId: dbApiId,
-        _dataSource: r._source || (isUuidString(rawUuid) ? 'v0' : 'v2'),
+        _dataSource: r._source || 'v0_local',
         propertyId: r.property_id || r.PropertyId || '',
         propertyGroupId: String(r.property_group_id || r.property_group_uuid || r.PropertyGroupId || r.PropertyGroupUuid || '').trim(),
         propertyName: r.property_name || r.property || r.PropertyName || '',
@@ -16669,12 +16671,12 @@ async function linkTurnWorkOrder(turnKey, woId) {
   if (isTurnActionLocked(turnKey)) {
     throw new Error('Turn is terminal/closed; link actions are locked');
   }
-  // WORK_ORDERS (Reports v2): id = WO number, uuid = UUID (work_order_id)
+  // WORK_ORDERS (local v0-backed table): id = WO number, uuid = AppFolio UUID
   // TURN_WORK_ORDERS (DB API v0): id = UUID, woNumber = WO number
   var woStr = String(woId).replace(/^\s*#/, '').trim();
   var wo = WORK_ORDERS.find(function(w) { return String(w.id) === woStr; }) ||
     TURN_WORK_ORDERS.find(function(w) { return String(w.woNumber || '') === woStr || String(w.id) === woStr; }) || null;
-  // Prefer the Reports v2 UUID (wo.uuid); for DB API records wo.id is already the UUID
+  // Prefer explicit UUID from work-order rows; for DB API records wo.id is already the UUID
   var isDbApiMatch = !wo ? false : TURN_WORK_ORDERS.some(function(w) { return w === wo; });
   var wo_db_uuid = wo ? (isDbApiMatch ? String(wo.id || '') : String(wo.uuid || '')) : '';
   var payload = {

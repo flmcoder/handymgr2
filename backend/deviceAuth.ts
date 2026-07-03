@@ -189,7 +189,8 @@ async function verifySignedToken(token: string): Promise<{ role: string; userNam
   const key = await getSignKey();
   if (!key) return null;
   try {
-    const valid = await crypto.subtle.verify('HMAC', key, b64urlDecode(sig64).buffer, new TextEncoder().encode(payload64));
+    const sigBytes = new Uint8Array(b64urlDecode(sig64));
+    const valid = await crypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(payload64));
     if (!valid) return null;
     const decoded = JSON.parse(Buffer.from(b64urlDecode(payload64)).toString('utf8'));
     if (!decoded || typeof decoded.iat !== 'number') return null;

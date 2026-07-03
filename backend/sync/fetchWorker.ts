@@ -68,6 +68,7 @@ const DEFAULT_TIMEOUT_MS = 45_000;
 const MAX_RETRIES        = 4;
 const BACKOFF_BASE_MS    = 1_000;
 const BACKOFF_MAX_MS     = 30_000;
+const V2_PRE_FETCH_DELAY_MS = Math.max(0, Number(process.env.AF_V2_PRE_FETCH_DELAY_MS || '0') || 0);
 // v2 page URLs expire after 30 min; reject if < 90s remain to leave headroom.
 const V2_CURSOR_EXPIRY_HEADROOM_MS = 90_000;
 
@@ -103,6 +104,11 @@ export async function afFetch(
   for (let tryNum = 1; tryNum <= MAX_RETRIES; tryNum++) {
     // Acquire rate-limit token — waits if windows are full or 429 block is active.
     await acquireToken();
+
+    // Optional V2 pacing buffer to reduce Reports API burst pressure.
+    if (apiVersion === 'v2' && V2_PRE_FETCH_DELAY_MS > 0) {
+      await sleep(V2_PRE_FETCH_DELAY_MS);
+    }
 
     const started = Date.now();
     let status = 0;
@@ -201,10 +207,7 @@ export async function afFetch(
       if (err instanceof AfFetchError) throw err;
 
       // Network / timeout errors — retryable.
-      const isAbort = (err as any)?.name === 'AbortError';
-      const msg = isAbort
-        ? `Request timed out after ${timeoutMs}ms`
-        : String((err as any)?.message ?? err);
+      const msg = describeNetworkError(err, timeoutMs, endpointKey, url);
 
       lastError = new AfFetchError('retryable_network', msg);
 
@@ -225,12 +228,35 @@ export async function afFetch(
   throw lastError ?? new AfFetchError('retryable_network', 'Exhausted retries');
 }
 
+function describeNetworkError(err: unknown, timeoutMs: number, endpointKey: string, url: string): string {
+  const e = err as any;
+  const isAbort = e?.name === 'AbortError';
+  const causeCode = String(e?.cause?.code || e?.code || '').trim();
+  let host = '';
+  try {
+    host = new URL(url).host;
+  } catch {
+    host = '';
+  }
+  const base = isAbort
+    ? `Request timed out after ${timeoutMs}ms`
+    : String(e?.message ?? err ?? 'fetch failed');
+  const details: string[] = [base, `(endpoint=${endpointKey})`];
+  if (host) details.push(`(host=${host})`);
+  if (causeCode) details.push(`(code=${causeCode})`);
+  return details.join(' ');
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 async function jitterBackoff(attempt: number): Promise<void> {
   const base = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * Math.pow(2, attempt - 1));
   const jitter = Math.floor(Math.random() * 1_000);
-  await new Promise((r) => setTimeout(r, base + jitter));
+  await sleep(base + jitter);
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function logRequest(entry: {
