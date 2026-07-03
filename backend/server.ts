@@ -2272,6 +2272,101 @@ app.post('/api/admin/sync', async (req: Request, res: Response) => {
   }
 });
 
+const syncSchedulerState: {
+  enabled: boolean;
+  intervalMinutes: number;
+  endpoints: string[];
+  maxPages: number;
+  runOnBoot: boolean;
+  startedAt: string;
+  lastTickStartedAt: string;
+  lastTickFinishedAt: string;
+  lastTickTriggerType: string;
+  lastError: string;
+  inFlightEndpoints: string[];
+  endpointSummaries: Record<string, any>;
+} = {
+  enabled: false,
+  intervalMinutes: 0,
+  endpoints: [],
+  maxPages: 0,
+  runOnBoot: false,
+  startedAt: '',
+  lastTickStartedAt: '',
+  lastTickFinishedAt: '',
+  lastTickTriggerType: '',
+  lastError: '',
+  inFlightEndpoints: [],
+  endpointSummaries: {},
+};
+
+app.get('/api/local/sync/status', async (_req: Request, res: Response) => {
+  try {
+    const payload: Record<string, any> = {
+      ok: true,
+      scheduler: {
+        enabled: syncSchedulerState.enabled,
+        interval_minutes: syncSchedulerState.intervalMinutes,
+        endpoints: syncSchedulerState.endpoints,
+        max_pages: syncSchedulerState.maxPages,
+        run_on_boot: syncSchedulerState.runOnBoot,
+        started_at: syncSchedulerState.startedAt || null,
+        last_tick_started_at: syncSchedulerState.lastTickStartedAt || null,
+        last_tick_finished_at: syncSchedulerState.lastTickFinishedAt || null,
+        last_tick_trigger_type: syncSchedulerState.lastTickTriggerType || null,
+        in_flight_endpoints: syncSchedulerState.inFlightEndpoints,
+        last_error: syncSchedulerState.lastError || null,
+        endpoint_summaries: syncSchedulerState.endpointSummaries,
+      },
+      runs: [] as any[],
+      cursors: {
+        last_successful_work_orders_execution_start_cursor: null as string | null,
+      },
+    };
+
+    try {
+      const rows = await queryClient`
+        select run_id, endpoint_key, trigger_type, status, started_at, completed_at,
+               pages_completed, rows_upserted, rows_skipped, last_error, execution_start_cursor
+        from sync_job_runs
+        order by started_at desc
+        limit 25
+      `;
+
+      payload.runs = (rows as any[]).map((row) => ({
+        run_id: String(row?.run_id || ''),
+        endpoint_key: String(row?.endpoint_key || ''),
+        trigger_type: String(row?.trigger_type || ''),
+        status: String(row?.status || ''),
+        started_at: asIso(row?.started_at) || asIso(row?.created_at),
+        completed_at: asIso(row?.completed_at),
+        pages_completed: Number(row?.pages_completed || 0),
+        rows_upserted: Number(row?.rows_upserted || 0),
+        rows_skipped: Number(row?.rows_skipped || 0),
+        last_error: String(row?.last_error || ''),
+        execution_start_cursor: asIso(row?.execution_start_cursor) || String(row?.execution_start_cursor || ''),
+      }));
+
+      const lastWoRun = payload.runs.find((row: any) =>
+        row.endpoint_key === 'v0:work_orders' && row.status === 'completed' && row.execution_start_cursor,
+      );
+      payload.cursors.last_successful_work_orders_execution_start_cursor = lastWoRun
+        ? String(lastWoRun.execution_start_cursor || '')
+        : null;
+    } catch (tableErr) {
+      const msg = String((tableErr as any)?.message || tableErr || '');
+      if (!/sync_job_runs/i.test(msg)) throw tableErr;
+      payload.ok = false;
+      payload.error = 'sync_job_runs table not available yet';
+    }
+
+    res.json(payload);
+  } catch (error) {
+    logTunnelError(error, '/api/local/sync/status');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Sync status failed') });
+  }
+});
+
 app.get('/api/session_info', async (req: Request, res: Response) => {
   try {
     await respondSessionInfo(req, res);
@@ -2307,7 +2402,8 @@ app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 function startRecurringSyncScheduler(): void {
-  const enabled = /^(1|true|yes|on)$/i.test(String(process.env.SYNC_SCHEDULER_ENABLED || '').trim());
+  const enabled = !/^(0|false|no|off)$/i.test(String(process.env.SYNC_SCHEDULER_ENABLED || 'true').trim());
+  syncSchedulerState.enabled = enabled;
   if (!enabled) return;
 
   const intervalMinutes = Math.max(5, Number(process.env.SYNC_SCHEDULER_INTERVAL_MINUTES || '30') || 30);
@@ -2318,25 +2414,40 @@ function startRecurringSyncScheduler(): void {
   const maxPages = Math.max(0, Number(process.env.SYNC_SCHEDULER_MAX_PAGES || '0') || 0);
   const runOnBoot = !/^(0|false|no|off)$/i.test(String(process.env.SYNC_SCHEDULER_RUN_ON_BOOT || 'true').trim());
   const inFlight = new Set<string>();
+  syncSchedulerState.intervalMinutes = intervalMinutes;
+  syncSchedulerState.endpoints = endpoints.slice();
+  syncSchedulerState.maxPages = maxPages;
+  syncSchedulerState.runOnBoot = runOnBoot;
+  syncSchedulerState.startedAt = new Date().toISOString();
 
   async function runEndpoint(endpointKey: string, triggerType: string): Promise<void> {
     if (!endpointKey || inFlight.has(endpointKey)) return;
     inFlight.add(endpointKey);
+    syncSchedulerState.inFlightEndpoints = Array.from(inFlight.values());
     try {
       const { runSync } = await import('./sync/syncRunner.ts');
       const summary = await runSync({ endpointKey, triggerType, maxPages });
+      syncSchedulerState.endpointSummaries[endpointKey] = {
+        ...summary,
+        updated_at: new Date().toISOString(),
+      };
       console.log('[server:sync-scheduler] completed', summary);
     } catch (error) {
+      syncSchedulerState.lastError = `${endpointKey}: ${String((error as any)?.message || error)}`;
       console.error('[server:sync-scheduler] failed', endpointKey, String((error as any)?.message || error));
     } finally {
       inFlight.delete(endpointKey);
+      syncSchedulerState.inFlightEndpoints = Array.from(inFlight.values());
     }
   }
 
   async function tick(triggerType: string): Promise<void> {
+    syncSchedulerState.lastTickTriggerType = triggerType;
+    syncSchedulerState.lastTickStartedAt = new Date().toISOString();
     for (const endpointKey of endpoints) {
       await runEndpoint(endpointKey, triggerType);
     }
+    syncSchedulerState.lastTickFinishedAt = new Date().toISOString();
   }
 
   if (runOnBoot) {
