@@ -5322,6 +5322,12 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   initApp().catch(function(err) {
     console.warn('initApp background bootstrap failed:', err && (err.message || err));
   });
+  if (typeof window._loadPmUsersNow === 'function') {
+    window._loadPmUsersNow();
+  }
+  if (typeof window._loadOtpSettingsNow === 'function') {
+    window._loadOtpSettingsNow();
+  }
   maybeAutoRunSystemHealthCheck();
   if (_accessRole === 'pm_readonly') {
     try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (eScope) { /* */ }
@@ -23155,6 +23161,9 @@ renderDashboardKPIs = function() {
       pmUsersBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--danger)"><i class="fas fa-exclamation-circle"></i> ' + escapeHtml(err.message || String(err)) + '</div>';
     });
   }
+  window._loadPmUsersNow = function() {
+    return loadPmUsers();
+  };
 
   function savePmUser() {
     var email = (pmUserEmailEl && pmUserEmailEl.value || '').trim().toLowerCase();
@@ -23314,14 +23323,6 @@ renderDashboardKPIs = function() {
   populatePMGroupDropdown('');
   // Expose a re-populate hook so populateGroupFilters() can call it once groups load
   window._repopulatePMGroupDropdown = function() { populatePMGroupDropdown(''); };
-  // Also re-run when admin key is entered (groups may already be loaded by then)
-  var dbKeyInput = document.getElementById('dbAdminKey');
-  if (dbKeyInput) {
-    dbKeyInput.addEventListener('change', function() {
-      populatePMGroupDropdown('');
-      loadPmUsers();
-    });
-  }
   loadPmUsers();
 
   // ── OTP Settings Panel ──────────────────────────────────────────────────
@@ -23357,6 +23358,9 @@ renderDashboardKPIs = function() {
         if (saveStatus) { saveStatus.textContent = err.message || String(err); saveStatus.style.color = 'var(--danger)'; }
       });
     }
+    window._loadOtpSettingsNow = function() {
+      return loadOtpSettings();
+    };
 
     if (refreshBtn) refreshBtn.addEventListener('click', loadOtpSettings);
 
@@ -23381,11 +23385,6 @@ renderDashboardKPIs = function() {
         if (saveStatus) { saveStatus.textContent = err.message || 'Error'; saveStatus.style.color = 'var(--danger)'; }
       }).finally(function() { saveBtn.disabled = false; });
     });
-
-    var adminKeyInput = document.getElementById('dbAdminKey');
-    if (adminKeyInput) {
-      adminKeyInput.addEventListener('change', function() { loadOtpSettings(); });
-    }
 
     loadOtpSettings();
   })();
