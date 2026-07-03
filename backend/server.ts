@@ -1272,19 +1272,50 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
 app.get('/api/local/property_group_directory', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 1000, 5000);
-    const rows = await queryClient`
-      select coalesce(uuid, id) as group_uuid, coalesce(name, id) as group_name
-      from appfolio_property_groups
-      order by coalesce(name, id) asc
-      limit ${limit}
-    `;
+    let results: Array<{ property_group_uuid: string; property_group_name: string }> = [];
+    try {
+      const rows = await queryClient`
+        select coalesce(uuid, id) as group_uuid, coalesce(name, id) as group_name
+        from appfolio_property_groups
+        order by coalesce(name, id) asc
+        limit ${limit}
+      `;
 
-    const results = (rows as any[])
-      .map((row) => ({
-        property_group_uuid: String(row?.group_uuid || '').trim(),
-        property_group_name: String(row?.group_name || '').trim(),
-      }))
-      .filter((row) => !!row.property_group_uuid);
+      results = (rows as any[])
+        .map((row) => ({
+          property_group_uuid: String(row?.group_uuid || '').trim(),
+          property_group_name: String(row?.group_name || '').trim(),
+        }))
+        .filter((row) => !!row.property_group_uuid);
+    } catch (tableError) {
+      const message = String((tableError as any)?.message || tableError || '');
+      const code = String((tableError as any)?.code || '');
+      if (!(code === '42P01' && /appfolio_property_groups/i.test(message))) {
+        throw tableError;
+      }
+
+      const propertyRows = await queryClient`
+        select property_group_id, raw_json
+        from appfolio_properties
+        where coalesce(property_group_id, '') <> ''
+      `;
+
+      const byGroup = new Map<string, string>();
+      for (const row of propertyRows as any[]) {
+        const groupId = String(row?.property_group_id || '').trim();
+        if (!groupId || byGroup.has(groupId)) continue;
+        const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
+        const nameHint = String(
+          raw?.property_group || raw?.group_name || raw?.portfolio || raw?.portfolio_name || groupId,
+        ).trim() || groupId;
+        byGroup.set(groupId, nameHint);
+      }
+
+      results = Array.from(byGroup.entries())
+        .map(([property_group_uuid, property_group_name]) => ({ property_group_uuid, property_group_name }))
+        .sort((a, b) => a.property_group_name.localeCompare(b.property_group_name))
+        .slice(0, limit);
+    }
 
     res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
   } catch (error) {
