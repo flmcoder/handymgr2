@@ -1687,7 +1687,16 @@ async function loadVendorOverrides() {
   // 2. Layer in SQL overrides (authoritative — survives device change)
   if (API_PROXY) {
     try {
-      var sqlData = await proxyAction('vendor_override');
+      var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+      var localHeaders = { 'Accept': 'application/json' };
+      var localToken = getProxyAccessToken();
+      if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
+      var localRes = await fetchWithTimeout(localBase + '/api/local/vendor_overrides', { headers: localHeaders }, 30000);
+      var sqlData = {};
+      try { sqlData = await localRes.json(); } catch (eJson) { sqlData = {}; }
+      if (!localRes.ok || sqlData.ok === false) {
+        throw new Error(String((sqlData && (sqlData.error || sqlData.message)) || ('Local vendor overrides failed: HTTP ' + localRes.status)));
+      }
       if (sqlData && sqlData.ok && Array.isArray(sqlData.results)) {
         sqlData.results.forEach(function(row) {
           var vid = row.vendor_id;
@@ -1717,7 +1726,17 @@ async function saveVendorOverride(vendorId, overrides) {
     if (overrides.category !== undefined) payload.category = overrides.category;
     if (overrides.tradeCategory !== undefined) payload.trade_category = overrides.tradeCategory;
     if (overrides.compliant !== undefined) payload.compliant = overrides.compliant === true ? 1 : (overrides.compliant === false ? 0 : null);
-    try { await proxyPost('vendor_override', payload); } catch (e) { /* best-effort */ }
+    try {
+      var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+      var localHeaders = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+      var localToken = getProxyAccessToken();
+      if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
+      await fetchWithTimeout(localBase + '/api/local/vendor_overrides/upsert', {
+        method: 'POST',
+        headers: localHeaders,
+        body: JSON.stringify(payload)
+      }, 30000);
+    } catch (e) { /* best-effort */ }
   }
 }
 
@@ -2493,6 +2512,7 @@ function getLocalReadActionPath(action) {
     work_orders: '/api/local/work_orders',
     work_orders_completed_history: '/api/local/work_orders_completed_history',
     vendors: '/api/local/vendors',
+    recent_tasks: '/api/local/recent_tasks',
     turns: '/api/local/turns',
     turn_work_orders: '/api/local/turn_work_orders',
     unit_turns: '/api/local/turns',
@@ -2535,7 +2555,17 @@ async function proxyAction(action, params, options) {
       throw new Error(String((localData && (localData.error || localData.message)) || ('Local read failed for ' + action + ': HTTP ' + localRes.status)));
     }
 
-    return Object.assign({}, localData, { _source: 'postgres_local' });
+    var localResults = Array.isArray(localData.results) ? localData.results : (Array.isArray(localData.data) ? localData.data : []);
+    var EMPTY_LOCAL_FALLBACK_ACTIONS = {
+      turns: true,
+      unit_turns: true,
+      turns_incremental: true,
+    };
+    if (EMPTY_LOCAL_FALLBACK_ACTIONS[action] && localResults.length === 0 && API_PROXY) {
+      console.warn('[Local Read Empty] ' + action + ' returned 0 rows from /api/local; falling back to legacy proxy action');
+    } else {
+      return Object.assign({}, localData, { _source: 'postgres_local' });
+    }
   }
 
   if (!API_PROXY) throw new Error('No proxy configured');
@@ -6361,6 +6391,61 @@ async function fetchBills(days, opts) {
     return true;
   } catch (err) {
     console.log('fetchBills error: ' + (err.message || err));
+    try {
+      var compatReport = await loadBillingV2Report({ forceRefresh: !!(opts && opts.forceRefresh) });
+      if (compatReport && compatReport.ok && Array.isArray(compatReport.billing_search_results)) {
+        var compatRows = normalizeBillingReportRowsToBills(compatReport.billing_search_results);
+
+        if (routeAction === 'bills_by_vendor' && filterValue) {
+          compatRows = compatRows.filter(function(row) {
+            return String(row.vendorId || '').trim() === String(filterValue || '').trim();
+          });
+        } else if (routeAction === 'bills_by_property' && filterValue) {
+          compatRows = compatRows.filter(function(row) {
+            return String(row.propertyId || '').trim() === String(filterValue || '').trim()
+              || String(row.propertyName || '').trim().toLowerCase().indexOf(String(filterValue || '').trim().toLowerCase()) !== -1;
+          });
+        } else if ((routeAction === 'bills_by_wo' || routeAction === 'bills_by_wo_number') && filterValue) {
+          compatRows = compatRows.filter(function(row) {
+            return String(row.workOrderId || '').trim().toLowerCase().indexOf(String(filterValue || '').trim().toLowerCase()) !== -1;
+          });
+        } else if (routeAction === 'bills_by_invoice' && filterValue) {
+          compatRows = compatRows.filter(function(row) {
+            return String(row.billNumber || '').trim().toLowerCase().indexOf(String(filterValue || '').trim().toLowerCase()) !== -1;
+          });
+        } else if (routeAction === 'bills_due_range') {
+          compatRows = compatRows.filter(function(row) {
+            var due = String((row.raw && row.raw.due_date) || '').slice(0, 10);
+            if (dueFrom && due && due < dueFrom) return false;
+            if (dueTo && due && due > dueTo) return false;
+            return true;
+          });
+        }
+
+        if (assignGlobal) {
+          BILLS = compatRows;
+          _lastBillSource = 'v2_report';
+          _billsLoadedAt = Date.now();
+          setDataSourceState('bills', 'ok', { count: BILLS.length, error: '' });
+        }
+
+        if (opts && opts.returnPayload) {
+          return {
+            ok: true,
+            rows: compatRows,
+            total: compatRows.length,
+            page: 1,
+            perPage: requestedPerPage,
+            totalPages: 1,
+            fromCache: false,
+            source: 'v2_report'
+          };
+        }
+        return true;
+      }
+    } catch (compatErr) {
+      console.log('fetchBills compatibility fallback failed: ' + (compatErr.message || compatErr));
+    }
     _lastBillSource = 'legacy';
     if (assignGlobal) {
       BILLS = [];
@@ -9511,6 +9596,138 @@ function billMatchesGroupScope(b, grp, groupUuid, hasGroupMaps) {
   return false;
 }
 
+function buildBillingMainReportPayload() {
+  var fromVal = String((($('#billingMainFrom') || {}).value) || '').trim();
+  var toVal = String((($('#billingMainTo') || {}).value) || '').trim();
+  var includeOlder = !!(($('#billingMainIncludeOlder') || {}).checked);
+  var now = new Date();
+  var defaultFrom = new Date(now.getTime());
+  defaultFrom.setDate(defaultFrom.getDate() - (includeOlder ? BILLS_EXTENDED_LOOKBACK_DAYS : BILLS_DEFAULT_LOOKBACK_DAYS));
+  var effectiveFrom = fromVal || dateInputValue(defaultFrom);
+  var effectiveTo = toVal || dateInputValue(now);
+
+  return {
+    property_visibility: 'active',
+    properties: buildScopedPropertiesPayload(),
+    date_type: 'Bill Date',
+    payment_status: 'All',
+    created_by: 'All',
+    reverse_transaction: '0',
+    occurred_on_from: effectiveFrom,
+    occurred_on_to: effectiveTo,
+    columns: [
+      'reference_number', 'bill_date', 'due_date', 'account', 'account_name', 'account_number',
+      'property', 'property_name', 'property_id', 'property_address', 'unit', 'payee_name',
+      'paid', 'unpaid', 'check_number', 'payment_date', 'description', 'work_order',
+      'cash_account', 'txn_id', 'payable_invoice_detail_id', 'unit_id', 'approval_status',
+      'approved_by', 'last_approver', 'next_approvers', 'days_pending_approval', 'created_by',
+      'txn_created_at', 'txn_updated_at', 'bank_account', 'vendor_id', 'work_order_id',
+      'party_id', 'party_type'
+    ]
+  };
+}
+
+function normalizeBillingSavedReportRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map(function(row) {
+    var paid = amountToNumber(row.paid || 0);
+    var unpaid = amountToNumber(row.unpaid || 0);
+    var total = paid + unpaid;
+    var approvalStatus = String(row.approval_status || '').trim();
+    var workOrderStatus = approvalStatus;
+    if (!workOrderStatus) {
+      if (unpaid > 0 && paid > 0) workOrderStatus = 'Approved';
+      else if (unpaid > 0) workOrderStatus = 'Pending Approval';
+      else if (paid > 0) workOrderStatus = 'Paid';
+      else workOrderStatus = 'Open';
+    }
+
+    return {
+      billing_id: row.reference_number || row.txn_id || row.payable_invoice_detail_id || '',
+      invoice: row.reference_number || '',
+      property_id: row.property_id || '',
+      property_name: row.property_name || row.property || '',
+      property: row.property_name || row.property || '',
+      property_address: row.property_address || '',
+      property_context: {
+        property_id: row.property_id || '',
+        property_name: row.property_name || row.property || '',
+        address: row.property_address || '',
+        property_group_id: '',
+      },
+      vendor_id: row.vendor_id || row.party_id || '',
+      vendor: {
+        vendor_id: row.vendor_id || row.party_id || '',
+        vendor_name: row.payee_name || '',
+      },
+      work_order_number: row.work_order || row.work_order_id || '',
+      work_order: {
+        number: row.work_order || row.work_order_id || '',
+        description: row.description || '',
+        status: workOrderStatus,
+        type: row.party_type || '',
+      },
+      financials: {
+        bill_total_amount: total,
+        total_amount: total,
+        vendor_bill_amount: total,
+        vendor_charge_amount: unpaid,
+        tenant_total_charge: 0,
+      },
+      dates: {
+        created_at: row.txn_created_at || row.bill_date || '',
+        completed_on: row.payment_date || '',
+        last_billed_on: row.payment_date || row.txn_updated_at || '',
+      },
+      status: approvalStatus || workOrderStatus,
+      approval_status: approvalStatus,
+      paid: paid,
+      unpaid: unpaid,
+      raw: row,
+    };
+  });
+}
+
+function normalizeBillingReportRowsToBills(rows) {
+  return (Array.isArray(rows) ? rows : []).map(function(row) {
+    var raw = row.raw || row;
+    var propertyMeta = resolvePropertyMetaFromMaps(
+      row.property_id || raw.property_id || '',
+      row.property_name || row.property || raw.property_name || raw.property || '',
+      row.property_context && row.property_context.property_group_id ? row.property_context.property_group_id : ''
+    );
+    var paid = amountToNumber(row.paid || raw.paid || 0);
+    var unpaid = amountToNumber(row.unpaid || raw.unpaid || 0);
+    var total = paid + unpaid;
+    return {
+      id: raw.txn_id || raw.payable_invoice_detail_id || row.billing_id || '',
+      billNumber: row.invoice || row.billing_id || raw.reference_number || '',
+      vendorId: row.vendor_id || (row.vendor && row.vendor.vendor_id) || raw.vendor_id || raw.party_id || '',
+      vendorUuid: row.vendor_id || raw.vendor_id || '',
+      payeeUuid: row.vendor_id || raw.vendor_id || '',
+      vendorName: (row.vendor && row.vendor.vendor_name) || raw.payee_name || '',
+      propertyId: propertyMeta.id || row.property_id || raw.property_id || '',
+      unitId: raw.unit_id || '',
+      propertyName: propertyMeta.name || row.property_name || row.property || raw.property_name || raw.property || 'Multiple/Unknown',
+      propertyGroup: propertyMeta.groupName || '',
+      propertyGroupId: propertyMeta.groupId || '',
+      propertyManager: propertyMeta.siteManager || '',
+      workOrderId: (row.work_order && row.work_order.number) || row.work_order_number || raw.work_order || raw.work_order_id || '',
+      amount: total,
+      bill_total_amount: total,
+      bill_amount_due: unpaid,
+      bill_amount_paid: paid,
+      unpaid: unpaid,
+      paid: paid,
+      date: raw.bill_date || raw.due_date || raw.payment_date || raw.txn_created_at || '',
+      lastUpdatedAt: raw.txn_updated_at || raw.payment_date || raw.bill_date || '',
+      status: getBillStatusKey(raw),
+      statusLabel: raw.approval_status || getBillStatusKey(raw),
+      lineItems: [],
+      raw: raw,
+    };
+  });
+}
+
 function isBillingListRouteActive() {
   return String(_billingRouteAction || 'bills_list').trim() === 'bills_list' &&
     !_billingRouteFilterValue && !_billingDueFrom && !_billingDueTo;
@@ -9559,16 +9776,19 @@ async function loadBillingV2Report(opts) {
   
   _billingV2Loading = true;
   try {
-    var cacheKey = (_accessRole === 'pm_readonly' ? (window.forcedPropertyGroupUuid || '') : '__all__') + '__' + String(opts.forceRefresh || false);
+    var payload = buildBillingMainReportPayload();
+    var cacheKey = JSON.stringify({
+      group: _accessRole === 'pm_readonly' ? (window.forcedPropertyGroupUuid || '') : '__all__',
+      from: payload.occurred_on_from,
+      to: payload.occurred_on_to,
+      force: !!opts.forceRefresh,
+    });
     if (!opts.forceRefresh && _billingV2CacheKey === cacheKey && _billingV2CachedReport) {
       return _billingV2CachedReport;
     }
-    
-    var report = await proxyAction('billing_saved_report', {});
-    if (!report || !report.ok) {
-      console.warn('[V2 Billing] Report fetch failed:', report && report.error || 'unknown error');
-      return { ok: false, error: report && report.error || 'Report fetch failed', billing_search_results: [] };
-    }
+
+    var reportRows = await fetchReportRows('bill_detail', payload, 'billing_saved_report');
+    var report = { ok: true, billing_search_results: normalizeBillingSavedReportRows(reportRows) };
     
     _billingV2CachedReport = report;
     _billingV2CacheKey = cacheKey;
@@ -14407,7 +14627,7 @@ async function loadBillingMain() {
   if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading billing records…</td></tr>';
   setSectionBusy('sec-billing', true, 'Loading billing records…');
   try {
-    var data = await proxyAction('billing_saved_report');
+    var data = await loadBillingV2Report({ forceRefresh: false });
     var rows = getReportRows(data, 'billing_search_results');
     _billingMainData = rows;
     applyBillingMainFilters();

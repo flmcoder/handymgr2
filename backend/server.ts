@@ -295,6 +295,27 @@ function asIso(value: unknown): string {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
+function looksLikeUuidLabel(value: unknown): boolean {
+  const raw = String(value || '').trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw);
+}
+
+function resolvePropertyGroupDisplayName(row: any, fallback = ''): string {
+  const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
+  const direct = String(row?.name || row?.group_name || '').trim();
+  const candidates = [
+    direct,
+    pickRaw(raw, ['NameOfPropertyGroup', 'name_of_property_group', 'PropertyGroupName', 'property_group_name']),
+    pickRaw(raw, ['property_group', 'PropertyGroup', 'group_name', 'GroupName']),
+    pickRaw(raw, ['portfolio_name', 'PortfolioName', 'portfolio', 'Portfolio']),
+    fallback,
+    String(row?.uuid || row?.id || '').trim(),
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+
+  const nonUuid = candidates.find((value) => !looksLikeUuidLabel(value));
+  return nonUuid || candidates[0] || '';
+}
+
 const REPORT_FAST_MS = 6_000;
 const REPORT_SLOW_MS = 15_000;
 const REPORT_PREFER_LOCAL_MS = 30 * 60_000;
@@ -1389,6 +1410,54 @@ const legacyActionRoutes = {
   verify_role: wrapDenoHandler(deviceAuthHandlers.handleVerifyRole, 'request'),
 } as const;
 
+async function requireProxySession(req: Request, res: Response): Promise<any | null> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ ok: false, error: 'Missing bearer token' });
+    return null;
+  }
+
+  const session = await deviceAuthHandlers.getTrustedDeviceSession(token);
+  if (!session) {
+    res.status(401).json({ ok: false, error: 'Invalid session' });
+    return null;
+  }
+
+  return session;
+}
+
+async function proxyAppFolioAction(req: Request, res: Response, apiPath: string): Promise<void> {
+  const safePath = String(apiPath || '').trim();
+  if (!safePath.startsWith('/api/v0/') && !safePath.startsWith('/api/v2/')) {
+    res.status(400).json({ ok: false, error: `Unsupported passthrough path: ${safePath}` });
+    return;
+  }
+
+  const targetBase = safePath.startsWith('/api/v0/') ? AF_DB_BASE : AF_REPORTS_BASE;
+  const targetUrl = `${targetBase}${safePath}`;
+  const method = String(req.method || 'GET').toUpperCase();
+  const headers: Record<string, string> = {
+    ...afHeaders(safePath.startsWith('/api/v0/') ? 'v0' : 'v2'),
+  };
+
+  let body: string | undefined;
+  if (method !== 'GET' && method !== 'HEAD') {
+    headers['Content-Type'] = String(req.headers['content-type'] || 'application/json');
+    body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
+  }
+
+  const upstream = await fetch(targetUrl, {
+    method,
+    headers,
+    body,
+  });
+
+  const text = await upstream.text();
+  res.status(upstream.status);
+  res.setHeader('content-type', upstream.headers.get('content-type') || 'application/json; charset=utf-8');
+  res.send(text);
+}
+
 app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFunction) => {
   const action = getLegacyAction(req);
   if (!action) {
@@ -1403,6 +1472,50 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
       logTunnelError(error, '/api?action=session_info');
       res.status(500).json({ ok: false, error: 'Session validation failed' });
     }
+    return;
+  }
+
+  if (action === 'passthrough') {
+    try {
+      const session = await requireProxySession(req, res);
+      if (!session) return;
+      const path = String(req.query.path || '').trim();
+      await proxyAppFolioAction(req, res, path);
+    } catch (error) {
+      logTunnelError(error, '/api?action=passthrough');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Passthrough failed') });
+    }
+    return;
+  }
+
+  if (action === 'report') {
+    try {
+      const session = await requireProxySession(req, res);
+      if (!session) return;
+      const reportName = String(req.query.name || '').trim().replace(/[^a-z0-9_]/gi, '');
+      if (!reportName) {
+        res.status(400).json({ ok: false, error: 'Missing report name' });
+        return;
+      }
+      await proxyAppFolioAction(req, res, `/api/v2/reports/${reportName}.json`);
+    } catch (error) {
+      logTunnelError(error, '/api?action=report');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Report proxy failed') });
+    }
+    return;
+  }
+
+  if (action === 'admin_rate_limits') {
+    const isClear = /^(1|true|yes)$/i.test(String((req.body as any)?.clear_all || req.query.clear_all || '').trim());
+    const ipAddress = String((req.body as any)?.ip_address || req.query.ip_address || '').trim();
+    res.json({
+      ok: true,
+      data: [],
+      message: isClear
+        ? 'Rate limits cleared (compatibility shim)'
+        : (ipAddress ? `Rate limit cleared for ${ipAddress} (compatibility shim)` : 'Rate limit list unavailable in local backend shim'),
+      compatibility_shim: true,
+    });
     return;
   }
 
@@ -1473,6 +1586,98 @@ app.get('/api/local/ping', async (_req: Request, res: Response) => {
       reports_api: { ok: false, status: 500 },
       schema: { ok: false, missing_tables: [] },
     });
+  }
+});
+
+let vendorOverrideTableEnsured = false;
+
+async function ensureVendorOverrideTable(): Promise<void> {
+  if (vendorOverrideTableEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS vendor_overrides (
+      vendor_id TEXT PRIMARY KEY,
+      category TEXT,
+      trade_category TEXT,
+      compliant BOOLEAN,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  vendorOverrideTableEnsured = true;
+}
+
+app.get('/api/local/recent_tasks', async (req: Request, res: Response) => {
+  try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+
+    const upstream = await fetch(`${AF_DB_BASE}/api/v0/tasks?page[size]=50`, {
+      headers: afHeaders('v0'),
+    });
+    const text = await upstream.text();
+    let parsed: any = {};
+    try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
+    const results = Array.isArray(parsed?.data)
+      ? parsed.data
+      : (Array.isArray(parsed?.results) ? parsed.results : []);
+
+    if (!upstream.ok) {
+      res.status(upstream.status).json({ ok: false, error: String(parsed?.error || text || `HTTP ${upstream.status}`) });
+      return;
+    }
+
+    res.json({ ok: true, results, count: results.length, source: 'appfolio_live' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/recent_tasks');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Recent tasks query failed') });
+  }
+});
+
+app.get('/api/local/vendor_overrides', async (req: Request, res: Response) => {
+  try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    await ensureVendorOverrideTable();
+    const rows = await queryClient.unsafe(`SELECT vendor_id, category, trade_category, compliant, updated_at FROM vendor_overrides ORDER BY vendor_id`);
+    res.json({ ok: true, results: rows, count: (rows as any[]).length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/vendor_overrides');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Vendor overrides query failed') });
+  }
+});
+
+app.post('/api/local/vendor_overrides/upsert', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+    await ensureVendorOverrideTable();
+
+    const vendorId = String(req.body?.vendor_id || '').trim();
+    if (!vendorId) {
+      res.status(400).json({ ok: false, error: 'vendor_id is required' });
+      return;
+    }
+
+    const category = req.body?.category == null ? null : String(req.body.category || '').trim() || null;
+    const tradeCategory = req.body?.trade_category == null ? null : String(req.body.trade_category || '').trim() || null;
+    const compliant = req.body?.compliant === null || req.body?.compliant === undefined || req.body?.compliant === ''
+      ? null
+      : !!req.body?.compliant;
+
+    await queryClient.unsafe(
+      `INSERT INTO vendor_overrides (vendor_id, category, trade_category, compliant, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (vendor_id) DO UPDATE SET
+         category = EXCLUDED.category,
+         trade_category = EXCLUDED.trade_category,
+         compliant = EXCLUDED.compliant,
+         updated_at = NOW()`,
+      [vendorId, category, tradeCategory, compliant],
+    );
+
+    res.json({ ok: true, vendor_id: vendorId, category, trade_category: tradeCategory, compliant });
+  } catch (error) {
+    logTunnelError(error, '/api/local/vendor_overrides/upsert');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Vendor override upsert failed') });
   }
 });
 
@@ -1914,7 +2119,7 @@ app.get('/api/local/property_group_directory', async (req: Request, res: Respons
     let results: Array<{ property_group_uuid: string; property_group_name: string }> = [];
     try {
       const rows = await queryClient`
-        select coalesce(uuid, id) as group_uuid, coalesce(name, id) as group_name
+        select coalesce(uuid, id) as group_uuid, coalesce(name, id) as group_name, raw_json
         from appfolio_property_groups
         order by coalesce(name, id) asc
         limit ${limit}
@@ -1923,7 +2128,7 @@ app.get('/api/local/property_group_directory', async (req: Request, res: Respons
       results = (rows as any[])
         .map((row) => ({
           property_group_uuid: String(row?.group_uuid || '').trim(),
-          property_group_name: String(row?.group_name || '').trim(),
+          property_group_name: resolvePropertyGroupDisplayName(row),
         }))
         .filter((row) => !!row.property_group_uuid);
     } catch (tableError) {
@@ -2034,7 +2239,7 @@ app.get('/api/local/property_groups', async (req: Request, res: Response) => {
           const inferredIds = keyCandidates.flatMap((key) => groupIdToPropertyIds.get(key) || []);
           const mergedPropertyIds = Array.from(new Set([...explicitIds, ...inferredIds]));
           const inferredName = groupIdToNameHints.get(groupId) || groupIdToNameHints.get(groupUuid) || '';
-          const name = String(group?.name || inferredName || '').trim() || groupId;
+          const name = resolvePropertyGroupDisplayName(group, inferredName) || groupId;
           return {
             id: String(groupUuid || groupId || ''),
             Id: String(groupUuid || groupId || ''),
