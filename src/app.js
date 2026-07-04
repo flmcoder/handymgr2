@@ -6252,10 +6252,21 @@ async function fetchBills(days, opts) {
     }
 
     var results = [];
+    if (!usedRouteLayer && (!routeAction || routeAction === 'bills_list')) {
+      var compatReport = await loadBillingV2Report({ forceRefresh: !!(opts && opts.forceRefresh) });
+      if (compatReport && compatReport.ok && Array.isArray(compatReport.billing_search_results)) {
+        results = normalizeBillingReportRowsToBills(compatReport.billing_search_results);
+        totalRows = results.length;
+        totalPages = Math.max(1, Math.ceil(totalRows / requestedPerPage));
+        currentPage = 1;
+        _lastBillSource = 'v2_report';
+      }
+    }
+
     if (usedRouteLayer) {
       results = Array.isArray(routeRows) ? routeRows : [];
       _lastBillSource = 'cached';
-    } else {
+    } else if (!results.length) {
       var data = await proxyAction('bills', params);
       results = data.results || data.data || [];
       totalRows = Number(data.total || data.count || results.length) || results.length;

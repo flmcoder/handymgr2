@@ -34,8 +34,39 @@ const CLIENT_SECRET = String(
 ).trim();
 const SUBDOMAIN     = String(process.env.AF_SUBDOMAIN || process.env.AF_VHOST || process.env.APPFOLIO_SUBDOMAIN || 'flraz').trim();
 
-export const AF_DB_BASE      = String(process.env.AF_DB_BASE      || 'https://api.appfolio.com').trim();
-export const AF_REPORTS_BASE = String(process.env.AF_REPORTS_BASE || `https://${SUBDOMAIN}.appfolio.com`).trim();
+function normalizeAppfolioBaseUrl(rawValue: string, fallbackValue: string): string {
+  const raw = String(rawValue || '').trim() || fallbackValue;
+  const withScheme = /^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`;
+
+  try {
+    const parsed = new URL(withScheme);
+    let host = String(parsed.hostname || '').trim().toLowerCase();
+
+    // Guard against duplicated domains from env drift such as
+    // flraz.appfolio.com.appfolio.com, which breaks TLS validation.
+    if (host.endsWith('.appfolio.com.appfolio.com')) {
+      host = host.replace(/\.appfolio\.com\.appfolio\.com$/i, '.appfolio.com');
+    }
+
+    parsed.hostname = host;
+    parsed.pathname = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return fallbackValue;
+  }
+}
+
+export const AF_DB_BASE = normalizeAppfolioBaseUrl(
+  String(process.env.AF_DB_BASE || 'https://api.appfolio.com').trim(),
+  'https://api.appfolio.com',
+);
+
+export const AF_REPORTS_BASE = normalizeAppfolioBaseUrl(
+  String(process.env.AF_REPORTS_BASE || `https://${SUBDOMAIN}.appfolio.com`).trim(),
+  `https://${SUBDOMAIN}.appfolio.com`,
+);
 
 let _cachedBasic: string | null = null;
 

@@ -1458,6 +1458,88 @@ async function proxyAppFolioAction(req: Request, res: Response, apiPath: string)
   res.send(text);
 }
 
+function splitCsvParam(value: unknown): string[] {
+  return String(value || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function buildV2ReportPayload(req: Request): Record<string, unknown> {
+  const body = req.body;
+  if (body && typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length > 0) {
+    return body as Record<string, unknown>;
+  }
+
+  const params = toParams(req);
+  const payload: Record<string, unknown> = {};
+  const properties: Record<string, unknown> = {};
+  const scopedGroupId = String(
+    params.group_uuid || params.property_group_uuid || params.group_id || '',
+  ).trim();
+
+  if (scopedGroupId) {
+    properties.property_groups_ids = [scopedGroupId];
+  }
+
+  for (const [key, value] of Object.entries(params)) {
+    if (!value) continue;
+    if (['action', 'report', 'name', 'path', 'group_uuid', 'property_group_uuid', 'group_id'].includes(key)) {
+      continue;
+    }
+
+    if (key === 'property_groups_ids') {
+      properties.property_groups_ids = splitCsvParam(value);
+      continue;
+    }
+
+    if (key === 'properties_ids' || key === 'portfolios_ids' || key === 'owners_ids') {
+      properties[key] = splitCsvParam(value);
+      continue;
+    }
+
+    if (key === 'columns') {
+      payload.columns = splitCsvParam(value);
+      continue;
+    }
+
+    if (/(_ids|_statuses|statuses|events)$/.test(key)) {
+      payload[key] = splitCsvParam(value);
+      continue;
+    }
+
+    payload[key] = value;
+  }
+
+  if (Object.keys(properties).length > 0) {
+    payload.properties = Object.assign({}, payload.properties || {}, properties);
+  }
+
+  if (!payload.property_visibility) payload.property_visibility = 'active';
+  return payload;
+}
+
+async function proxyAppFolioV2Report(req: Request, res: Response, reportName: string): Promise<void> {
+  const safeReportName = String(reportName || '').trim().replace(/[^a-z0-9_]/gi, '');
+  if (!safeReportName) {
+    res.status(400).json({ ok: false, error: 'Missing report name' });
+    return;
+  }
+
+  const targetUrl = `${AF_REPORTS_BASE}/api/v2/reports/${safeReportName}.json`;
+  const payload = buildV2ReportPayload(req);
+  const upstream = await fetch(targetUrl, {
+    method: 'POST',
+    headers: afHeaders('v2'),
+    body: JSON.stringify(payload),
+  });
+
+  const text = await upstream.text();
+  res.status(upstream.status);
+  res.setHeader('content-type', upstream.headers.get('content-type') || 'application/json; charset=utf-8');
+  res.send(text);
+}
+
 app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFunction) => {
   const action = getLegacyAction(req);
   if (!action) {
@@ -1497,10 +1579,55 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
         res.status(400).json({ ok: false, error: 'Missing report name' });
         return;
       }
-      await proxyAppFolioAction(req, res, `/api/v2/reports/${reportName}.json`);
+      await proxyAppFolioV2Report(req, res, reportName);
     } catch (error) {
       logTunnelError(error, '/api?action=report');
       res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Report proxy failed') });
+    }
+    return;
+  }
+
+  if (action === 'v2_report') {
+    try {
+      const session = await requireProxySession(req, res);
+      if (!session) return;
+      const reportName = String(req.query.report || req.query.name || '').trim().replace(/[^a-z0-9_]/gi, '');
+      if (!reportName) {
+        res.status(400).json({ ok: false, error: 'Missing report name' });
+        return;
+      }
+      await proxyAppFolioV2Report(req, res, reportName);
+    } catch (error) {
+      logTunnelError(error, '/api?action=v2_report');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'V2 report proxy failed') });
+    }
+    return;
+  }
+
+  if (action === 'recent_tasks') {
+    try {
+      const session = await requireProxySession(req, res);
+      if (!session) return;
+
+      const upstream = await fetch(`${AF_DB_BASE}/api/v0/tasks?page[size]=50`, {
+        headers: afHeaders('v0'),
+      });
+      const text = await upstream.text();
+      let parsed: any = {};
+      try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
+      const results = Array.isArray(parsed?.data)
+        ? parsed.data
+        : (Array.isArray(parsed?.results) ? parsed.results : []);
+
+      if (!upstream.ok) {
+        res.status(upstream.status).json({ ok: false, error: String(parsed?.error || text || `HTTP ${upstream.status}`) });
+        return;
+      }
+
+      res.json({ ok: true, results, count: results.length, source: 'appfolio_live' });
+    } catch (error) {
+      logTunnelError(error, '/api?action=recent_tasks');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Recent tasks proxy failed') });
     }
     return;
   }
