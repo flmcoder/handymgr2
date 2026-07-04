@@ -9697,6 +9697,82 @@ function normalizeBillingSavedReportRows(rows) {
   });
 }
 
+function normalizeV0BillsToBillingSavedReportRows(rows) {
+  var reportishRows = (Array.isArray(rows) ? rows : []).map(function(row) {
+    var raw = (row && row.raw && typeof row.raw === 'object') ? row.raw : row || {};
+    var lineItems = Array.isArray(raw.LineItems) ? raw.LineItems : [];
+    var firstLine = lineItems.length ? lineItems[0] : {};
+    var propertyId = String(firstLine.PropertyId || raw.PropertyId || '').trim();
+    var unitId = String(firstLine.UnitId || raw.UnitId || '').trim();
+    var propertyMeta = resolvePropertyMetaFromMaps(propertyId, '', '');
+    var vendorId = String(raw.VendorId || raw.PayeeId || '').trim();
+    var vendorName = resolveVendorNameFromMaps(vendorId, raw.PayeeName || raw.VendorName || '');
+    var totalAmount = amountToNumber(raw.TotalAmount || 0);
+    var approvalStatus = String(raw.ApprovalStatus || '').trim();
+    var isPaid = approvalStatus.toLowerCase() === 'paid';
+
+    return {
+      reference_number: raw.Reference || raw.Id || '',
+      bill_date: raw.InvoiceDate || '',
+      due_date: raw.DueDate || '',
+      property: propertyMeta.name || '',
+      property_name: propertyMeta.name || '',
+      property_id: propertyMeta.id || propertyId,
+      property_address: '',
+      unit: String(firstLine.Unit || raw.Unit || '').trim(),
+      payee_name: vendorName || raw.Description || '',
+      paid: isPaid ? totalAmount : 0,
+      unpaid: isPaid ? 0 : totalAmount,
+      check_number: raw.CheckNumber || '',
+      payment_date: raw.PaymentDate || '',
+      description: firstLine.Description || raw.Description || '',
+      work_order: firstLine.WorkOrderId || raw.WorkOrderId || '',
+      txn_id: raw.Id || '',
+      payable_invoice_detail_id: raw.Id || '',
+      unit_id: unitId,
+      approval_status: approvalStatus,
+      approved_by: raw.ApprovedBy || '',
+      last_approver: raw.LastApprover || '',
+      next_approvers: raw.NextApprovers || '',
+      days_pending_approval: raw.DaysPendingApproval || '',
+      created_by: raw.CreatedBy || '',
+      txn_created_at: raw.InvoiceDate || '',
+      txn_updated_at: raw.LastUpdatedAt || '',
+      bank_account: raw.BankAccountId || '',
+      vendor_id: vendorId,
+      party_id: vendorId,
+      party_type: 'Vendor'
+    };
+  });
+
+  return normalizeBillingSavedReportRows(reportishRows);
+}
+
+async function loadBillingCompatFromV0(opts) {
+  opts = opts || {};
+  var payload = buildBillingMainReportPayload();
+  var fromIso = String(payload.occurred_on_from || '').trim();
+  var days = DEFAULT_BILLS_LOOKBACK_DAYS;
+  if (fromIso) {
+    var fromMs = new Date(fromIso).getTime();
+    if (!isNaN(fromMs)) {
+      days = Math.max(1, Math.ceil((Date.now() - fromMs) / 86400000));
+    }
+  }
+
+  var billsData = await proxyAction('bills', {
+    days: String(days),
+    max: '3000',
+    force_refresh: opts.forceRefresh ? 'true' : ''
+  });
+  var rawRows = Array.isArray(billsData && billsData.results) ? billsData.results : [];
+  return {
+    ok: true,
+    source: 'v0_bills',
+    billing_search_results: normalizeV0BillsToBillingSavedReportRows(rawRows)
+  };
+}
+
 function normalizeBillingReportRowsToBills(rows) {
   return (Array.isArray(rows) ? rows : []).map(function(row) {
     var raw = row.raw || row;
@@ -9797,14 +9873,22 @@ async function loadBillingV2Report(opts) {
       return _billingV2CachedReport;
     }
 
-    var reportRows = await fetchReportRows('bill_detail', payload, 'billing_saved_report');
+    var reportRows;
+    try {
+      reportRows = await fetchReportRows('bill_detail', payload, 'billing_saved_report');
+    } catch (reportErr) {
+      var fallback = await loadBillingCompatFromV0(opts);
+      _billingV2CachedReport = fallback;
+      _billingV2CacheKey = cacheKey;
+      return fallback;
+    }
     var report = { ok: true, billing_search_results: normalizeBillingSavedReportRows(reportRows) };
     
     _billingV2CachedReport = report;
     _billingV2CacheKey = cacheKey;
     return report;
   } catch (e) {
-    console.error('[V2 Billing] Exception:', String(e));
+    console.warn('[V2 Billing] Falling back failed:', String(e));
     return { ok: false, error: String(e), billing_search_results: [] };
   } finally {
     _billingV2Loading = false;
