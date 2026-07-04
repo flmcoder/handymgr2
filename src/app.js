@@ -6152,7 +6152,6 @@ async function fetchBills(days, opts) {
     var currentPage = requestedPage;
 
     var allowedRouteActions = {
-      bills_list: true,
       bills_by_vendor: true,
       bills_by_property: true,
       bills_by_wo: true,
@@ -6230,7 +6229,7 @@ async function fetchBills(days, opts) {
       }
     }
 
-    if (!usedRouteLayer && opts.scoped !== false && groupUuid) {
+    if (!usedRouteLayer && routeAction === 'bills_list' && opts.scoped !== false && groupUuid) {
       // Prefer the new SQL route layer when we can provide a concrete group UUID.
       try {
         var routeData = await proxyAction('bills_list', {

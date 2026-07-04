@@ -1519,6 +1519,51 @@ function buildV2ReportPayload(req: Request): Record<string, unknown> {
   return payload;
 }
 
+function buildBillsSinceIso(params: Params): string {
+  const explicit = String(params.updated_from || params.date_from || '').trim();
+  if (explicit) {
+    const d = new Date(explicit);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  const days = parseDays(params.days, 180, 3650);
+  return new Date(Date.now() - (days * 86400000)).toISOString();
+}
+
+async function fetchBillsFromDbApi(params: Params): Promise<{ ok: boolean; results: any[]; total: number; page: number; per_page: number; source: string }> {
+  const limit = parseLimit(params.limit || params.max || params.per_page, 200, 1000);
+  const offset = Math.max(0, Number.parseInt(String(params.offset || '0'), 10) || 0);
+  const page = Math.max(1, Number.parseInt(String(params.page || (Math.floor(offset / Math.max(1, limit)) + 1)), 10) || 1);
+  const perPage = limit;
+  const sinceIso = buildBillsSinceIso(params);
+
+  const upstream = await fetch(
+    `${AF_DB_BASE}/api/v0/bills?filters[LastUpdatedAtFrom]=${encodeURIComponent(sinceIso)}&page[number]=${page}&page[size]=${perPage}`,
+    { headers: afHeaders('v0') },
+  );
+  const text = await upstream.text();
+  let parsed: any = {};
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
+
+  if (!upstream.ok) {
+    throw new Error(String(parsed?.error || text || `Bills fetch failed: HTTP ${upstream.status}`));
+  }
+
+  const results = Array.isArray(parsed?.data)
+    ? parsed.data
+    : (Array.isArray(parsed?.results) ? parsed.results : []);
+
+  return {
+    ok: true,
+    results,
+    total: results.length,
+    count: results.length,
+    page,
+    per_page: perPage,
+    source: 'appfolio_db_v0',
+  } as any;
+}
+
 async function proxyAppFolioV2Report(req: Request, res: Response, reportName: string): Promise<void> {
   const safeReportName = String(reportName || '').trim().replace(/[^a-z0-9_]/gi, '');
   if (!safeReportName) {
@@ -1620,7 +1665,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
         : (Array.isArray(parsed?.results) ? parsed.results : []);
 
       if (!upstream.ok) {
-        res.status(upstream.status).json({ ok: false, error: String(parsed?.error || text || `HTTP ${upstream.status}`) });
+        res.json({ ok: true, results: [], count: 0, warning: 'Tasks API unavailable for this account', source: 'appfolio_live' });
         return;
       }
 
@@ -1628,6 +1673,44 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     } catch (error) {
       logTunnelError(error, '/api?action=recent_tasks');
       res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Recent tasks proxy failed') });
+    }
+    return;
+  }
+
+  if (action === 'bills') {
+    try {
+      const session = await requireProxySession(req, res);
+      if (!session) return;
+      const params = toParams(req);
+      res.json(await fetchBillsFromDbApi(params));
+    } catch (error) {
+      logTunnelError(error, '/api?action=bills');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Bills proxy failed') });
+    }
+    return;
+  }
+
+  if (action === 'bills_list') {
+    try {
+      const session = await requireProxySession(req, res);
+      if (!session) return;
+      const params = toParams(req);
+      const payload = await fetchBillsFromDbApi(params);
+      const offset = Math.max(0, Number.parseInt(String(params.offset || '0'), 10) || 0);
+      const limit = parseLimit(params.limit || params.per_page, 50, 1000);
+      const sliced = payload.results.slice(offset, offset + limit);
+      res.json({
+        ok: true,
+        results: sliced,
+        total: payload.results.length,
+        count: sliced.length,
+        page: Math.floor(offset / Math.max(1, limit)) + 1,
+        per_page: limit,
+        source: payload.source,
+      });
+    } catch (error) {
+      logTunnelError(error, '/api?action=bills_list');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Bills list proxy failed') });
     }
     return;
   }
@@ -1748,7 +1831,7 @@ app.get('/api/local/recent_tasks', async (req: Request, res: Response) => {
       : (Array.isArray(parsed?.results) ? parsed.results : []);
 
     if (!upstream.ok) {
-      res.status(upstream.status).json({ ok: false, error: String(parsed?.error || text || `HTTP ${upstream.status}`) });
+      res.json({ ok: true, results: [], count: 0, warning: 'Tasks API unavailable for this account', source: 'appfolio_live' });
       return;
     }
 
