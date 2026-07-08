@@ -108,6 +108,15 @@ function normalizeGroupName(v: unknown): string {
   return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function chooseReadableGroupName(...values: unknown[]): string {
+  for (const value of values) {
+    const candidate = asStr(value);
+    if (!candidate) continue;
+    if (!isUuidLike(candidate)) return candidate;
+  }
+  return '';
+}
+
 function resolvePropertyGroupInfo(row: any): { groupId: string | null; groupUuid: string | null; groupName: string | null; canonicalGroupKey: string | null } {
   let groupId = asStr(row.PropertyGroupId || row.property_group_id || row.property_group_numeric_id || row.group_id);
   let groupUuid = asStr(row.PropertyGroupUuid || row.property_group_uuid || row.property_group_guid || row.group_uuid);
@@ -196,10 +205,24 @@ export async function upsertPropertyGroups(rows: any[]): Promise<UpsertResult> {
       .filter((value: string) => !!value);
 
     const uuid = inferredUuid || (isUuidLike(id) ? id : null);
+    const normalizedName = chooseReadableGroupName(
+      row.Name,
+      row.name,
+      row.NameOfPropertyGroup,
+      row.name_of_property_group,
+      row.PropertyGroupName,
+      row.property_group_name,
+      row.property_group,
+      row.group_name,
+      row.portfolio_name,
+      row.portfolio,
+      catalogEntry?.name,
+    ) || id;
+
     const normalized = {
       id,
       uuid,
-      name: asStr(row.Name || row.name || row.NameOfPropertyGroup || row.name_of_property_group) || id,
+      name: normalizedName,
       type: asStr(row.Type || row.type),
       propertyIds,
       lastUpdatedAt: asDate(row.LastUpdatedAt || row.last_updated_at || row.updated_at),

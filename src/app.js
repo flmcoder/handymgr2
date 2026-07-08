@@ -984,45 +984,23 @@ function populateGroupFilters() {
   // Fallback: always add portfolio-based groups that aren't already present
   var existingNames = {};
   for (var i = 0; i < el.options.length; i++) {
-    existingNames[el.options[i].value.toLowerCase()] = true;
+    existingNames[String(el.options[i].value || '').toLowerCase()] = true;
   }
-  var grps = {};
-  PROPERTIES.forEach(function(p) {
-    var candidates = [
-      p.portfolio,
-      p.portfolioName,
-      p.propertyGroup,
-      p.group,
-      p.groupName,
-    ];
-    candidates.forEach(function(raw) {
-      var pf = String(raw || '').trim();
-      if (isLikelyGroupUuid(pf)) {
-        var resolved = resolveGroupNameFromUuid(pf);
-        if (resolved) pf = resolved;
-        else return;
-      }
-      if (pf && !existingNames[pf.toLowerCase()]) grps[pf] = true;
-    });
-  });
-  // Secondary fallback: any groups already discovered from UUID/name maps.
   Object.keys(_nameToGroups || {}).forEach(function(k) {
     var groups = _nameToGroups[k] || [];
     groups.forEach(function(g) {
       var gn = String(g || '').trim();
-      if (gn && !existingNames[gn.toLowerCase()]) grps[gn] = true;
+      if (!gn || isLikelyGroupUuid(gn)) return;
+      if (!existingNames[gn.toLowerCase()]) {
+        var opt = document.createElement('option');
+        opt.value = gn;
+        opt.textContent = gn;
+        el.appendChild(opt);
+        existingNames[gn.toLowerCase()] = true;
+        addedCount++;
+      }
     });
   });
-  var pfKeys = Object.keys(grps).sort();
-  if (pfKeys.length > 0) {
-    pfKeys.forEach(function(g) {
-      var opt = document.createElement('option');
-      opt.value = g; opt.textContent = g;
-      el.appendChild(opt);
-      addedCount++;
-    });
-    console.log('[PG] populateGroupFilters: added ' + pfKeys.length + ' portfolio fallback groups');
-  }
 
   if (addedCount === 0) {
     console.log('[PG] populateGroupFilters: NO groups available — PROPERTY_GROUPS=' +
