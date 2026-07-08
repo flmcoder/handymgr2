@@ -323,6 +323,7 @@ const REPORT_POLICY_TTL_MS = 5 * 60_000;
 
 let reportLatencyTableEnsured = false;
 const reportMonitorInFlight = new Set<string>();
+let propertyGroupsTableEnsured = false;
 
 async function ensureReportLatencyPolicyTable(): Promise<void> {
   if (reportLatencyTableEnsured) return;
@@ -341,6 +342,68 @@ async function ensureReportLatencyPolicyTable(): Promise<void> {
     )
   `);
   reportLatencyTableEnsured = true;
+}
+
+async function ensurePropertyGroupsTable(): Promise<void> {
+  if (propertyGroupsTableEnsured) return;
+
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS appfolio_property_groups (
+      id TEXT PRIMARY KEY,
+      uuid TEXT,
+      name TEXT NOT NULL,
+      type TEXT,
+      property_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      last_updated_at TIMESTAMPTZ,
+      cached_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ADD COLUMN IF NOT EXISTS uuid TEXT`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ADD COLUMN IF NOT EXISTS type TEXT`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ADD COLUMN IF NOT EXISTS property_ids JSONB`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ADD COLUMN IF NOT EXISTS raw_json JSONB`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ADD COLUMN IF NOT EXISTS last_updated_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ADD COLUMN IF NOT EXISTS cached_at TIMESTAMPTZ`);
+
+  await queryClient.unsafe(`
+    UPDATE appfolio_property_groups
+    SET uuid = COALESCE(NULLIF(uuid, ''), id)
+    WHERE COALESCE(uuid, '') = ''
+  `);
+
+  await queryClient.unsafe(`
+    UPDATE appfolio_property_groups
+    SET property_ids = '[]'::jsonb
+    WHERE property_ids IS NULL
+  `);
+
+  await queryClient.unsafe(`
+    UPDATE appfolio_property_groups
+    SET raw_json = '{}'::jsonb
+    WHERE raw_json IS NULL
+  `);
+
+  await queryClient.unsafe(`
+    UPDATE appfolio_property_groups
+    SET cached_at = NOW()
+    WHERE cached_at IS NULL
+  `);
+
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ALTER COLUMN name SET NOT NULL`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ALTER COLUMN property_ids SET DEFAULT '[]'::jsonb`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ALTER COLUMN raw_json SET DEFAULT '{}'::jsonb`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ALTER COLUMN cached_at SET DEFAULT NOW()`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ALTER COLUMN property_ids SET NOT NULL`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ALTER COLUMN raw_json SET NOT NULL`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_property_groups ALTER COLUMN cached_at SET NOT NULL`);
+
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_property_groups_uuid_idx ON appfolio_property_groups(uuid)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_property_groups_name_idx ON appfolio_property_groups(name)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_property_groups_updated_idx ON appfolio_property_groups(last_updated_at)`);
+
+  propertyGroupsTableEnsured = true;
 }
 
 async function readReportPolicy(datasetKey: string, propertyGroupId: string): Promise<any | null> {
@@ -2559,6 +2622,7 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
 
 app.get('/api/local/property_group_directory', async (req: Request, res: Response) => {
   try {
+    await ensurePropertyGroupsTable();
     const limit = parseLimit(req.query.limit, 1000, 5000);
     let results: Array<{ property_group_uuid: string; property_group_name: string }> = [];
     try {
@@ -2614,6 +2678,7 @@ app.get('/api/local/property_group_directory', async (req: Request, res: Respons
 
 app.get('/api/local/property_groups', async (req: Request, res: Response) => {
   try {
+    await ensurePropertyGroupsTable();
     const limit = parseLimit(req.query.limit, 1000);
     const includeInactive = String(req.query.include_inactive || '').toLowerCase() === 'true';
     const propertyGroupId = getPropertyGroupFilter(req);
@@ -2773,6 +2838,7 @@ app.get('/api/local/property_groups', async (req: Request, res: Response) => {
 
 app.post('/api/local/property_groups/sync', async (req: Request, res: Response) => {
   try {
+    await ensurePropertyGroupsTable();
     const auth = String(req.headers.authorization || '');
     const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
     if (!token) {
@@ -2810,6 +2876,7 @@ app.post('/api/local/property_groups/sync', async (req: Request, res: Response) 
 
 app.post('/api/local/bootstrap_sync', async (req: Request, res: Response) => {
   try {
+    await ensurePropertyGroupsTable();
     const auth = String(req.headers.authorization || '');
     const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
     if (!token) {
@@ -4997,6 +5064,7 @@ function startRecurringSyncScheduler(): void {
   async function tick(triggerType: string): Promise<void> {
     syncSchedulerState.lastTickTriggerType = triggerType;
     syncSchedulerState.lastTickStartedAt = new Date().toISOString();
+    await ensurePropertyGroupsTable();
     for (const endpointKey of endpoints) {
       await runEndpoint(endpointKey, triggerType);
     }
@@ -5020,5 +5088,12 @@ const HOST = '0.0.0.0';
 app.listen(PORT, HOST, () => {
   console.log(`[server] Express backend listening on ${HOST}:${PORT}`);
   console.log('[server] Runtime command: npx tsx backend/server.ts');
-  startRecurringSyncScheduler();
+  void (async () => {
+    try {
+      await ensurePropertyGroupsTable();
+    } catch (error) {
+      console.error('[server] Failed to ensure property groups table:', String((error as any)?.message || error));
+    }
+    startRecurringSyncScheduler();
+  })();
 });
