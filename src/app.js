@@ -6555,10 +6555,12 @@ async function fetchProperties() {
 
       var groupUuid = String(p.property_group_id || p.property_group_uuid || '').trim();
       var resolvedGroupName = resolveGroupNameFromUuid(groupUuid);
-      var rawPropertyGroup = String(p.property_group || '').trim();
-      var rawGroupName = String(p.group_name || '').trim();
+      var rawPropertyGroup = String(p.property_group || p.property_group_name || '').trim();
+      var rawGroupName = String(p.group_name || p.property_group_name || '').trim();
+      var rawPortfolio = String(p.portfolio || p.portfolio_name || '').trim();
       if (isLikelyGroupUuid(rawPropertyGroup) && resolvedGroupName) rawPropertyGroup = resolvedGroupName;
       if (isLikelyGroupUuid(rawGroupName) && resolvedGroupName) rawGroupName = resolvedGroupName;
+      if (isLikelyGroupUuid(rawPortfolio) && resolvedGroupName) rawPortfolio = resolvedGroupName;
 
       return {
         id: id,
@@ -6569,7 +6571,7 @@ async function fetchProperties() {
         zip: p.zip || '',
         propertyType: p.property_type || '',
         portfolioId: p.portfolio_id || '',
-        portfolio: p.portfolio || '',
+        portfolio: rawPortfolio || '',
         portfolioName: p.portfolio_name || '',
         propertyGroup: rawPropertyGroup || resolvedGroupName || '',
         propertyGroupId: groupUuid,
@@ -17771,6 +17773,11 @@ function renderPropertiesRowsFromCache() {
   var groups = {};
   properties.forEach(function(p) {
     var g = String(p.propertyGroup || p.groupName || p.portfolio || '').trim();
+    if (g && isLikelyGroupUuid(g)) {
+      var resolved = resolveGroupNameFromUuid(g);
+      if (resolved) g = String(resolved).trim();
+    }
+    if (isLikelyGroupUuid(g)) g = '';
     if (g) groups[g] = true;
   });
 
@@ -17873,6 +17880,11 @@ function renderPropertiesRowsFromCache() {
     var cityState = [p.city || '', p.state || ''].filter(Boolean).join(', ');
     if (p.zip) cityState += (cityState ? ' ' : '') + p.zip;
     var groupName = String(p.propertyGroup || p.groupName || p.portfolio || '');
+    if (groupName && isLikelyGroupUuid(groupName)) {
+      var resolvedGroupName = resolveGroupNameFromUuid(groupName);
+      if (resolvedGroupName) groupName = String(resolvedGroupName).trim();
+    }
+    if (isLikelyGroupUuid(groupName)) groupName = '';
     var units = _unitsByPropertyId[pid] || [];
     var unitCount = units.length;
     var unitBadge = unitCount > 1

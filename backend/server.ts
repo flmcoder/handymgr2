@@ -1141,6 +1141,20 @@ function normalizePropertyRow(row: any): Record<string, any> {
   const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
   const siteManager = extractSiteManager(raw);
   const resolvedGroup = resolveGroupFromRaw(raw, siteManager);
+  const rowGroupId = String(row?.property_group_uuid || row?.property_group_id || '').trim();
+  const rowGroupName = String(row?.property_group_name || row?.group_name || '').trim();
+  const propertyGroupLabel = resolvePropertyGroupDisplayName(
+    {
+      ...row,
+      name: rowGroupName || row?.name,
+      group_name: rowGroupName || row?.group_name,
+      uuid: rowGroupId || row?.uuid,
+      id: rowGroupId || row?.id,
+      raw_json: raw,
+    },
+    resolvedGroup.name || rowGroupName,
+  );
+  const effectiveGroupId = rowGroupId || resolvedGroup.id;
   const visibility = String(pickRaw(raw, ['visibility', 'Visibility']) || '');
   const managementEndDate = String(pickRaw(raw, ['management_end_date', 'managementEndDate', 'ManagementEndDate']) || '');
   const managementEndReason = String(pickRaw(raw, ['management_end_reason', 'managementEndReason', 'ManagementEndReason']) || '');
@@ -1157,10 +1171,11 @@ function normalizePropertyRow(row: any): Record<string, any> {
     portfolio_id: String(pickRaw(raw, ['portfolio_id', 'portfolioId', 'PortfolioId']) || ''),
     portfolio: String(pickRaw(raw, ['portfolio', 'portfolio_name', 'portfolioName', 'PortfolioName', 'group_name', 'property_group']) || ''),
     portfolio_name: String(pickRaw(raw, ['portfolio_name', 'portfolioName', 'PortfolioName']) || ''),
-    property_group: String(pickRaw(raw, ['property_group', 'group_name', 'group', 'Group']) || resolvedGroup.name || ''),
-    property_group_id: String(row?.property_group_id || resolvedGroup.id || pickRaw(raw, ['property_group_id', 'PropertyGroupId', 'property_group_uuid', 'PropertyGroupUuid']) || ''),
+    property_group: String(propertyGroupLabel || pickRaw(raw, ['property_group', 'group_name', 'group', 'Group']) || resolvedGroup.name || ''),
+    property_group_name: String(propertyGroupLabel || rowGroupName || ''),
+    property_group_id: String(effectiveGroupId || pickRaw(raw, ['property_group_id', 'PropertyGroupId', 'property_group_uuid', 'PropertyGroupUuid']) || ''),
     group: String(pickRaw(raw, ['group', 'Group']) || ''),
-    group_name: String(pickRaw(raw, ['group_name', 'groupName', 'GroupName']) || ''),
+    group_name: String(rowGroupName || pickRaw(raw, ['group_name', 'groupName', 'GroupName']) || propertyGroupLabel || ''),
     maintenance_limit: String(pickRaw(raw, ['maintenance_limit', 'maintenanceLimit', 'MaintenanceLimit']) || ''),
     maintenance_notes: String(pickRaw(raw, ['maintenance_notes', 'maintenanceNotes', 'MaintenanceNotes']) || ''),
     site_manager: siteManager,
@@ -2358,20 +2373,71 @@ app.get('/api/local/properties', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 5000);
     const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
-      ? await queryClient`
-        select id, name, property_group_id, street, city, state, zip, raw_json
-        from appfolio_properties
-        where property_group_id = ${propertyGroupId}
-        order by name asc
-        limit ${limit}
-      `
-      : await queryClient`
-        select id, name, property_group_id, street, city, state, zip, raw_json
-        from appfolio_properties
-        order by name asc
-        limit ${limit}
-      `;
+    let rows: any[] = [];
+
+    try {
+      rows = propertyGroupId
+        ? await queryClient`
+          select
+            p.id,
+            p.name,
+            p.property_group_id,
+            p.street,
+            p.city,
+            p.state,
+            p.zip,
+            p.raw_json,
+            g.uuid as property_group_uuid,
+            g.name as property_group_name
+          from appfolio_properties p
+          left join appfolio_property_groups g
+            on g.uuid = p.property_group_id
+            or g.id = p.property_group_id
+          where p.property_group_id = ${propertyGroupId}
+          order by p.name asc
+          limit ${limit}
+        `
+        : await queryClient`
+          select
+            p.id,
+            p.name,
+            p.property_group_id,
+            p.street,
+            p.city,
+            p.state,
+            p.zip,
+            p.raw_json,
+            g.uuid as property_group_uuid,
+            g.name as property_group_name
+          from appfolio_properties p
+          left join appfolio_property_groups g
+            on g.uuid = p.property_group_id
+            or g.id = p.property_group_id
+          order by p.name asc
+          limit ${limit}
+        `;
+    } catch (joinError) {
+      const message = String((joinError as any)?.message || joinError || '');
+      const code = String((joinError as any)?.code || '');
+      if (!(code === '42P01' && /appfolio_property_groups/i.test(message))) {
+        throw joinError;
+      }
+
+      rows = propertyGroupId
+        ? await queryClient`
+          select id, name, property_group_id, street, city, state, zip, raw_json
+          from appfolio_properties
+          where property_group_id = ${propertyGroupId}
+          order by name asc
+          limit ${limit}
+        `
+        : await queryClient`
+          select id, name, property_group_id, street, city, state, zip, raw_json
+          from appfolio_properties
+          order by name asc
+          limit ${limit}
+        `;
+    }
 
     const results = (rows as any[])
       .map(normalizePropertyRow)
