@@ -32,6 +32,24 @@ const CLIENT_SECRET = String(
   process.env.GUI_MANAGER_PW ||
   ''
 ).trim();
+const REPORTS_CLIENT_ID = String(
+  process.env.AF_REPORTS_CLIENT_ID ||
+  process.env.AF_V2_CLIENT_ID ||
+  process.env.AF_CLIENT_ID ||
+  process.env.AF_V0_CLIENT_ID ||
+  process.env.AF_V0_CLIENT_ID_store ||
+  process.env.GUI_MANAGER_ID ||
+  ''
+).trim();
+const REPORTS_CLIENT_SECRET = String(
+  process.env.AF_REPORTS_CLIENT_SECRET ||
+  process.env.AF_V2_CLIENT_SECRET ||
+  process.env.AF_CLIENT_SECRET ||
+  process.env.AF_V0_CLIENT_SECRET ||
+  process.env.AF_V0_CLIENT_SECRET_store ||
+  process.env.GUI_MANAGER_PW ||
+  ''
+).trim();
 const SUBDOMAIN     = String(process.env.AF_SUBDOMAIN || process.env.AF_VHOST || process.env.APPFOLIO_SUBDOMAIN || 'flraz').trim();
 
 function normalizeAppfolioBaseUrl(rawValue: string, fallbackValue: string): string {
@@ -68,34 +86,49 @@ export const AF_REPORTS_BASE = normalizeAppfolioBaseUrl(
   `https://${SUBDOMAIN}.appfolio.com`,
 );
 
-let _cachedBasic: string | null = null;
+let _cachedBasicV0: string | null = null;
+let _cachedBasicV2: string | null = null;
 
-function basicToken(): string {
-  if (!_cachedBasic) {
-    if (!CLIENT_ID || !CLIENT_SECRET) {
+function basicToken(apiVersion: string = 'v0'): string {
+  const useReportsCreds = apiVersion === 'v2';
+  const clientId = useReportsCreds ? REPORTS_CLIENT_ID : CLIENT_ID;
+  const clientSecret = useReportsCreds ? REPORTS_CLIENT_SECRET : CLIENT_SECRET;
+  const cached = useReportsCreds ? _cachedBasicV2 : _cachedBasicV0;
+
+  if (!cached) {
+    if (!clientId || !clientSecret) {
       throw new Error(
         '[afCredentials] AppFolio client credentials are required. ' +
         'Set AF_CLIENT_ID/AF_CLIENT_SECRET or the v0 aliases in Render before running sync jobs.',
       );
     }
-    _cachedBasic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+    const encoded = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    if (useReportsCreds) _cachedBasicV2 = encoded;
+    else _cachedBasicV0 = encoded;
   }
-  return _cachedBasic;
+
+  return useReportsCreds ? String(_cachedBasicV2 || '') : String(_cachedBasicV0 || '');
 }
 
 export function afHeaders(apiVersion: string = 'v0'): Record<string, string> {
   const headers: Record<string, string> = {
-    Authorization: `Basic ${basicToken()}`,
+    Authorization: `Basic ${basicToken(apiVersion)}`,
     Accept: 'application/json',
     'Content-Type': 'application/json',
     'User-Agent': 'handymgr2-sync/1.0',
   };
 
-  if (DEVELOPER_ID) {
+  if (apiVersion !== 'v2' && DEVELOPER_ID) {
     headers['X-AppFolio-Developer-ID'] = DEVELOPER_ID;
   }
 
   return headers;
+}
+
+export function afReportCredentialMode(): 'dedicated_reports_creds' | 'shared_creds' {
+  return process.env.AF_REPORTS_CLIENT_ID || process.env.AF_REPORTS_CLIENT_SECRET
+    ? 'dedicated_reports_creds'
+    : 'shared_creds';
 }
 
 export function afBaseUrl(apiVersion: string = 'v0'): string {

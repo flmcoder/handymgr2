@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { pingDatabase, queryClient } from './db';
 import * as deviceAuthHandlers from './deviceAuth';
-import { AF_DB_BASE, AF_REPORTS_BASE, afHeaders } from './sync/afCredentials';
+import { AF_DB_BASE, AF_REPORTS_BASE, afHeaders, afReportCredentialMode } from './sync/afCredentials';
 
 function ensureDenoCompat(): void {
   const globalAny = globalThis as any;
@@ -1736,6 +1736,18 @@ async function proxyAppFolioV2Report(req: Request, res: Response, reportName: st
   });
 
   const text = await upstream.text();
+  if (upstream.status === 401) {
+    res.status(401).json({
+      ok: false,
+      status: 401,
+      error: 'HTTP Basic: Access denied.',
+      hint: 'AppFolio Reports API credentials were rejected. Verify AF_REPORTS_CLIENT_ID/AF_REPORTS_CLIENT_SECRET (or AF_V2_* aliases) for this database.',
+      credential_mode: afReportCredentialMode(),
+      report: safeReportName,
+    });
+    return;
+  }
+
   res.status(upstream.status);
   res.setHeader('content-type', upstream.headers.get('content-type') || 'application/json; charset=utf-8');
   res.send(text);
