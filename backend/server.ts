@@ -1465,22 +1465,179 @@ function splitCsvParam(value: unknown): string[] {
     .filter(Boolean);
 }
 
-function buildV2ReportPayload(req: Request): Record<string, unknown> {
-  const body = req.body;
-  if (body && typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length > 0) {
-    return body as Record<string, unknown>;
-  }
+function isoDateOnly(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
 
-  const params = toParams(req);
-  const payload: Record<string, unknown> = {};
+function isoMonthOnly(value: Date): string {
+  return value.toISOString().slice(0, 7);
+}
+
+function buildScopedPropertiesFromParams(req: Request, params: Params): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
-  const scopedGroupId = String(
-    params.group_uuid || params.property_group_uuid || params.group_id || '',
-  ).trim();
+  const scopedGroupId = String(getPropertyGroupFilter(req) || '').trim();
 
   if (scopedGroupId) {
     properties.property_groups_ids = [scopedGroupId];
   }
+
+  if (params.property_groups_ids) {
+    properties.property_groups_ids = splitCsvParam(params.property_groups_ids);
+  }
+
+  for (const key of ['properties_ids', 'portfolios_ids', 'owners_ids']) {
+    if (params[key]) {
+      properties[key] = splitCsvParam(params[key]);
+    }
+  }
+
+  return properties;
+}
+
+function ensureScopedProperties(payload: Record<string, unknown>, scopedProperties: Record<string, unknown>): void {
+  if (!Object.keys(scopedProperties).length) return;
+  const existing = (payload.properties && typeof payload.properties === 'object' && !Array.isArray(payload.properties))
+    ? payload.properties as Record<string, unknown>
+    : {};
+  payload.properties = {
+    ...existing,
+    ...scopedProperties,
+  };
+}
+
+function applyV2ReportDefaults(reportName: string, payload: Record<string, unknown>): Record<string, unknown> {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const recent30 = new Date(now.getTime() - (30 * 86400000));
+  const withDefaults = { ...payload };
+
+  if (!withDefaults.property_visibility) withDefaults.property_visibility = 'active';
+
+  switch (reportName) {
+    case 'property_performance':
+      if (!withDefaults.posted_on_from) withDefaults.posted_on_from = isoDateOnly(monthStart);
+      if (!withDefaults.posted_on_to) withDefaults.posted_on_to = isoDateOnly(now);
+      break;
+    case 'unit_vacancy':
+      if (!withDefaults.unit_visibility) withDefaults.unit_visibility = 'active';
+      break;
+    case 'tenant_transactions_summary':
+      if (!withDefaults.tenant_visibility) withDefaults.tenant_visibility = 'active';
+      if (!withDefaults.month_of_to) withDefaults.month_of_to = isoMonthOnly(now);
+      break;
+    case 'tenant_directory':
+      if (!withDefaults.tenant_visibility) withDefaults.tenant_visibility = 'active';
+      if (!Array.isArray(withDefaults.tenant_statuses)) withDefaults.tenant_statuses = ['0', '4'];
+      if (!Array.isArray(withDefaults.tenant_types)) withDefaults.tenant_types = ['all'];
+      break;
+    case 'delinquency':
+      if (!Array.isArray(withDefaults.tenant_statuses)) withDefaults.tenant_statuses = ['0', '4'];
+      if (!withDefaults.amount_owed_in_account) withDefaults.amount_owed_in_account = 'all';
+      if (!withDefaults.include_future_dated_charges) withDefaults.include_future_dated_charges = '0';
+      break;
+    case 'rental_applications':
+      if (!withDefaults.rental_applications_filter_date_range_by) {
+        withDefaults.rental_applications_filter_date_range_by = 'Rental Application Received Date';
+      }
+      if (!withDefaults.received_on_from) withDefaults.received_on_from = isoDateOnly(recent30);
+      if (!withDefaults.received_on_to) withDefaults.received_on_to = isoDateOnly(now);
+      break;
+    case 'showings':
+      if (!withDefaults.showing_date_from) withDefaults.showing_date_from = isoDateOnly(recent30);
+      if (!withDefaults.showing_date_to) withDefaults.showing_date_to = isoDateOnly(now);
+      break;
+    case 'guest_cards':
+      if (!withDefaults.received_on_from) withDefaults.received_on_from = isoDateOnly(recent30);
+      if (!withDefaults.received_on_to) withDefaults.received_on_to = isoDateOnly(now);
+      if (!Array.isArray(withDefaults.guest_card_statuses)) {
+        withDefaults.guest_card_statuses = ['prequalified', 'active', 'waitlisted'];
+      }
+      if (!Array.isArray(withDefaults.guest_card_lead_types)) withDefaults.guest_card_lead_types = [];
+      break;
+    case 'owner_withholdings':
+      break;
+    default:
+      if (/(_directory|_summary|_detail|_performance|_vacancy|_withholdings)$/.test(reportName)) {
+        if (!withDefaults.property_visibility) withDefaults.property_visibility = 'active';
+      }
+      if (/(_directory|_summary|tenant_transactions_summary|delinquency)$/.test(reportName) && !withDefaults.tenant_visibility) {
+        withDefaults.tenant_visibility = 'active';
+      }
+      break;
+  }
+
+  if (reportName === 'tenant_directory' || reportName === 'tenant_transactions_summary') {
+    if (!withDefaults.tenant_visibility) withDefaults.tenant_visibility = 'active';
+  }
+
+  if (reportName === 'rental_applications') {
+    delete withDefaults.tenant_visibility;
+  }
+
+  if (reportName === 'showings' || reportName === 'guest_cards') {
+    if (!withDefaults.property_visibility) withDefaults.property_visibility = 'active';
+  }
+
+  if ((reportName === 'showings' || reportName === 'guest_cards' || reportName === 'tenant_directory' || reportName === 'tenant_transactions_summary' || reportName === 'delinquency' || reportName === 'property_performance' || reportName === 'unit_vacancy' || reportName === 'owner_withholdings')
+    && (!withDefaults.properties || typeof withDefaults.properties !== 'object' || Array.isArray(withDefaults.properties))) {
+    withDefaults.properties = { property_groups_ids: [] };
+  }
+
+  if (reportName === 'rental_applications' && withDefaults.properties && !withDefaults.property) {
+    withDefaults.property = withDefaults.properties;
+  }
+
+  if (reportName === 'showings' && !Array.isArray(withDefaults.statuses)) {
+    withDefaults.statuses = [];
+  }
+
+  if (reportName === 'guest_cards' && !Array.isArray(withDefaults.guest_card_sources)) {
+    withDefaults.guest_card_sources = ['all'];
+  }
+
+  if (reportName === 'property_performance' && !Array.isArray(withDefaults.gl_account_ids)) {
+    delete withDefaults.gl_account_ids;
+  }
+
+  if (reportName === 'guest_cards' && !withDefaults.assigned_user) {
+    withDefaults.assigned_user = 'All';
+  }
+
+  if (reportName === 'showings' && !withDefaults.assigned_user) {
+    withDefaults.assigned_user = 'All';
+  }
+
+  if (reportName === 'delinquency' && !withDefaults.tags) {
+    delete withDefaults.tags;
+  }
+
+  if (reportName === 'property_performance' && !withDefaults.columns) {
+    delete withDefaults.columns;
+  }
+
+  if (reportName === 'unit_vacancy' && !withDefaults.tags) {
+    delete withDefaults.tags;
+  }
+
+  if (/(_directory|_summary|_detail|_performance|_vacancy|_withholdings|showings|guest_cards|delinquency|rental_applications)$/.test(reportName)) {
+    if (withDefaults.paginate_results === undefined) withDefaults.paginate_results = false;
+  }
+
+  return withDefaults;
+}
+
+function buildV2ReportPayload(req: Request, reportName: string): Record<string, unknown> {
+  const params = toParams(req);
+  const scopedProperties = buildScopedPropertiesFromParams(req, params);
+  const body = req.body;
+  if (body && typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length > 0) {
+    const payload = { ...(body as Record<string, unknown>) };
+    ensureScopedProperties(payload, scopedProperties);
+    return applyV2ReportDefaults(reportName, payload);
+  }
+
+  const payload: Record<string, unknown> = {};
+  const properties: Record<string, unknown> = { ...scopedProperties };
 
   for (const [key, value] of Object.entries(params)) {
     if (!value) continue;
@@ -1515,8 +1672,7 @@ function buildV2ReportPayload(req: Request): Record<string, unknown> {
     payload.properties = Object.assign({}, payload.properties || {}, properties);
   }
 
-  if (!payload.property_visibility) payload.property_visibility = 'active';
-  return payload;
+  return applyV2ReportDefaults(reportName, payload);
 }
 
 function buildBillsSinceIso(params: Params): string {
@@ -1572,7 +1728,7 @@ async function proxyAppFolioV2Report(req: Request, res: Response, reportName: st
   }
 
   const targetUrl = `${AF_REPORTS_BASE}/api/v2/reports/${safeReportName}.json`;
-  const payload = buildV2ReportPayload(req);
+  const payload = buildV2ReportPayload(req, safeReportName);
   const upstream = await fetch(targetUrl, {
     method: 'POST',
     headers: afHeaders('v2'),
