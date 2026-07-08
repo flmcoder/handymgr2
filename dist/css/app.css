@@ -1990,16 +1990,31 @@ body.role-vendors .cache-badge { display: none; }
 .lock-btn:hover { background: var(--danger); color: #fff; }
 .theme-toggle-btn {
   background: color-mix(in srgb, var(--bg-card) 78%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
   color: var(--text-secondary);
-  font-size: 14px;
-  width: 30px; height: 30px;
-  border-radius: 7px;
+  font-size: 13px;
+  min-width: 88px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
   cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-weight: 700;
   transition: var(--transition);
 }
+.theme-toggle-btn .theme-toggle-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+}
 .theme-toggle-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); transform: translateY(-1px); }
+#vaultThemeToggle .theme-toggle-label {
+  display: none;
+}
 .messages-btn {
   background: rgba(217, 104, 50, 0.75);
   border: 1px solid rgba(217, 104, 50, 0.4);
@@ -3554,7 +3569,11 @@ html.dark .vendor-trade-cat-select option {
   .sync-timestamp { display: none; }
   .rate-badge { display: none; }
   .mobile-nav-toggle { display: inline-flex; }
-  #themeToggle { display: none; }
+  #themeToggle {
+    display: inline-flex;
+    min-width: 76px;
+    height: 34px;
+  }
   .topbar-right { gap: 6px; }
   .refresh-btn,
   .lock-btn {

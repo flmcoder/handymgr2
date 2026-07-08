@@ -54,7 +54,7 @@ function applyInitialTheme() {
     savedTheme = String(localStorage.getItem('hm_theme') || '').toLowerCase();
   } catch (e) { /* */ }
 
-  var isDark = savedTheme ? savedTheme === 'dark' : true;
+  var isDark = savedTheme ? savedTheme === 'dark' : false;
   _manualTheme = isDark ? 'dark' : 'light';
   document.documentElement.classList.toggle('dark', isDark);
 }
@@ -73,7 +73,9 @@ function toggleTheme() {
 }
 function updateThemeIcon() {
   var isDark = document.documentElement.classList.contains('dark');
-  var iconHtml = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+  var iconHtml = isDark
+    ? '<i class="fas fa-sun"></i><span class="theme-toggle-label">Light</span>'
+    : '<i class="fas fa-moon"></i><span class="theme-toggle-label">Dark</span>';
   var title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
   var topbarBtn = $('#themeToggle');
   var vaultBtn = $('#vaultThemeToggle');
@@ -964,11 +966,15 @@ function populateGroupFilters() {
     });
     sorted.forEach(function(g) {
       if (!g.name) return;
+      var plainName = String(g.name || '').trim();
+      var resolved = resolveGroupNameFromUuid(g.id || g.group_uuid || g.group_id || '');
+      if ((isLikelyGroupUuid(plainName) || !plainName) && resolved) plainName = resolved;
+      if (!plainName || isLikelyGroupUuid(plainName)) return;
       var opt = document.createElement('option');
-      opt.value = g.name;
+      opt.value = plainName;
       // Show resolved property count for feedback
       var pCount = (g.resolvedNames && g.resolvedNames.length) || (g.properties && g.properties.length) || 0;
-      opt.textContent = g.name + (pCount > 0 ? ' (' + pCount + ')' : '');
+      opt.textContent = plainName + (pCount > 0 ? ' (' + pCount + ')' : '');
       el.appendChild(opt);
       addedCount++;
     });
@@ -1011,7 +1017,7 @@ function populateGroupFilters() {
   if (pfKeys.length > 0) {
     pfKeys.forEach(function(g) {
       var opt = document.createElement('option');
-      opt.value = g; opt.textContent = g + ' (portfolio)';
+      opt.value = g; opt.textContent = g;
       el.appendChild(opt);
       addedCount++;
     });
@@ -4188,6 +4194,7 @@ var _propertyManagementStateByName = {};
 var _nameToGroups = {};        // property name (lowercase) → [group names]
 var _idToGroups = {};          // Reports API property_id (string) → [group names]
 var _uuidToGroups = {};        // DB API property UUID → [group names]
+var _groupUuidNameMap = {};    // property group UUID/id (lowercase) → group name
 window.AppDB = window.AppDB || {
   vendors: new Map(),
   properties: new Map(),
@@ -4290,6 +4297,8 @@ try { _pmScopeEmail = localStorage.getItem('hm_scope_email') || ''; } catch (e) 
 function resolveGroupNameFromUuid(groupUuid) {
   var gid = String(groupUuid || '').trim();
   if (!gid) return '';
+  var mapped = _groupUuidNameMap[gid.toLowerCase()];
+  if (mapped) return mapped;
   var gidLower = gid.toLowerCase();
   var g = (PROPERTY_GROUPS || []).find(function(x) {
     if (!x) return false;
@@ -6566,6 +6575,13 @@ async function fetchProperties() {
       var normName = normalizePropertyLookupKey(name);
       if (normName) _propertyManagementStateByName[normName] = state;
 
+      var groupUuid = String(p.property_group_id || p.property_group_uuid || '').trim();
+      var resolvedGroupName = resolveGroupNameFromUuid(groupUuid);
+      var rawPropertyGroup = String(p.property_group || '').trim();
+      var rawGroupName = String(p.group_name || '').trim();
+      if (isLikelyGroupUuid(rawPropertyGroup) && resolvedGroupName) rawPropertyGroup = resolvedGroupName;
+      if (isLikelyGroupUuid(rawGroupName) && resolvedGroupName) rawGroupName = resolvedGroupName;
+
       return {
         id: id,
         name: name,
@@ -6577,10 +6593,10 @@ async function fetchProperties() {
         portfolioId: p.portfolio_id || '',
         portfolio: p.portfolio || '',
         portfolioName: p.portfolio_name || '',
-        propertyGroup: p.property_group || '',
-        propertyGroupId: p.property_group_id || '',
+        propertyGroup: rawPropertyGroup || resolvedGroupName || '',
+        propertyGroupId: groupUuid,
         group: p.group || '',
-        groupName: p.group_name || '',
+        groupName: rawGroupName || resolvedGroupName || '',
         maintenanceLimit: p.maintenance_limit || '',
         maintenanceNotes: p.maintenance_notes || '',
         siteManager: siteManager || p.site_manager || '',
@@ -6849,6 +6865,24 @@ async function fetchPropertyGroups() {
       throw new Error(String((data && (data.error || data.message)) || ('Local property groups failed: HTTP ' + localRes.status)));
     }
 
+    _groupUuidNameMap = {};
+    try {
+      var dirRes = await fetchWithTimeout(localBase + '/api/local/property_group_directory?limit=5000', { headers: localHeaders }, 30000);
+      var dirData = {};
+      try { dirData = await dirRes.json(); } catch (eDir) { dirData = {}; }
+      var dirRows = dirData.results || dirData.data || [];
+      if (Array.isArray(dirRows)) {
+        dirRows.forEach(function(row) {
+          var gid = String((row && (row.property_group_uuid || row.group_uuid || row.id)) || '').trim();
+          var gname = String((row && (row.property_group_name || row.group_name || row.name)) || '').trim();
+          if (!gid || !gname) return;
+          _groupUuidNameMap[gid.toLowerCase()] = gname;
+        });
+      }
+    } catch (dirErr) {
+      console.log('[PG] property_group_directory lookup skipped: ' + ((dirErr && dirErr.message) || dirErr));
+    }
+
     console.log('[PG] property_groups response keys: ' + Object.keys(data).join(', '));
 
     var results = data.results || data.data || [];
@@ -6867,9 +6901,16 @@ async function fetchPropertyGroups() {
         return String(pid || '').trim();
       }).filter(Boolean);
 
+      var gid = String(g.Id || g.id || '').trim();
+      var rawName = String(g.Name || g.name || '').trim();
+      var mappedName = _groupUuidNameMap[gid.toLowerCase()] || '';
+      var plainName = rawName;
+      if ((!plainName || isLikelyGroupUuid(plainName)) && mappedName) plainName = mappedName;
+      if (!plainName) plainName = gid;
+
       return {
-        id: g.Id || g.id || '',
-        name: (g.Name || g.name || '').trim(),
+        id: gid,
+        name: plainName,
         properties: normalizedProps,
         propertyNames: [],
         resolvedNames: []
@@ -6896,6 +6937,18 @@ async function fetchPropertyGroups() {
         _addToGroupMap(_uuidToGroups, id, g.name);
         if (propertyNameById[id]) _addNameToGroupMap(propertyNameById[id], g.name);
       });
+    });
+
+    (PROPERTIES || []).forEach(function(p) {
+      if (!p) return;
+      var groupUuid = String(p.propertyGroupId || p.property_group_id || '').trim();
+      var resolvedName = resolveGroupNameFromUuid(groupUuid);
+      if (!resolvedName) return;
+      if (!String(p.propertyGroup || '').trim() || isLikelyGroupUuid(p.propertyGroup)) p.propertyGroup = resolvedName;
+      if (!String(p.groupName || '').trim() || isLikelyGroupUuid(p.groupName)) p.groupName = resolvedName;
+      if (!String(p.group || '').trim() || isLikelyGroupUuid(p.group)) p.group = resolvedName;
+      if (!String(p.portfolio || '').trim() || isLikelyGroupUuid(p.portfolio)) p.portfolio = resolvedName;
+      if (!String(p.portfolioName || '').trim() || isLikelyGroupUuid(p.portfolioName)) p.portfolioName = resolvedName;
     });
 
     console.log('[PG] Parsed groups: ' + PROPERTY_GROUPS.length + ', with PropertyIds: ' +
@@ -22805,7 +22858,7 @@ async function fetchAllLive() {
     }
   }
   // Vendors & Inspections lazy-loaded on tab click — removed from initial sync
-  var steps = ['Work Orders', 'Properties', 'Groups', 'Turns', 'Move-Outs', 'Turn WOs', 'Tasks', 'Turn Tracker'];
+  var steps = ['Work Orders', 'Properties', 'Groups', 'Deferred Hydration'];
   showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
 
   try {
@@ -22838,6 +22891,22 @@ async function fetchAllLive() {
       : 'Groups skipped';
     updateProgress(2, grpOk ? 'done' : 'error', grpMsg);
     if (grpOk) { populateDropdowns(); renderWorkOrders(); }
+
+    // Fast local-first login: return after core local datasets are ready.
+    anySuccess = anySuccess || woOk || propOk || grpOk;
+    renderAll();
+    renderWOCloseAssist();
+    if (anySuccess) {
+      var quickSummary = 'WO:' + WORK_ORDERS.length + ' P:' + PROPERTIES.length + ' G:' + PROPERTY_GROUPS.length;
+      var quickVersionTag = _proxyVersion !== 'v7' ? ' [' + _proxyVersion + ']' : '';
+      setApiStatus('', 'Connected' + quickVersionTag + ' — ' + quickSummary);
+      $('#apiStatus').className = 'topbar-status';
+      await saveAllToCache();
+      updateProgress(3, 'done', 'Core data ready — deferred sync running…');
+      hideProgress();
+      void startDeferredLiveHydration();
+      return;
+    }
 
     // Step 3: Turns — In Progress only, 60-day window (proxy action — Reports API)
     // Short timeout (20s) — turns are supplementary; pipeline works from WOs + move-outs too
@@ -22936,6 +23005,49 @@ async function fetchAllLive() {
     updateCacheBadge('offline');
     hideProgress();
   }
+}
+
+async function startDeferredLiveHydration() {
+  try {
+    await withStepTimeout(function() { return fetchTurns(); }, 20000);
+    renderTurnBoard();
+    renderActivityFeed();
+    renderDashboardKPIs();
+  } catch (eTurns) { /* best effort */ }
+
+  fetchUnitTurnsDB().then(function(ok) { if (ok) renderTurnBoard(); }).catch(function() {});
+  fetchUpcomingMoveouts().then(function(ok) {
+    if (ok) {
+      renderTurnBoard();
+      renderDashboardKPIs();
+    }
+  }).catch(function() {});
+  fetchVacancyV2().then(function() { renderDashboardKPIs(); }).catch(function() {});
+  fetchTurnWorkOrders().then(function(ok) { if (ok) renderTurnBoard(); }).catch(function() {});
+  fetchRecentTasks().then(function(ok) { if (ok) renderActivityFeed(); }).catch(function() {});
+  fetchTurnRecords().then(function() { renderTurnBoard(); }).catch(function() {});
+  loadClosedTurns().catch(function() {});
+  fetchUnitTurnHistory().then(function() { renderTurnHistoryPanel(); }).catch(function() {});
+
+  if (INSPECTIONS.length === 0) {
+    fetchInspections().then(function(ok) {
+      if (ok) {
+        _inspLazyLoaded = true;
+        renderAll();
+      }
+    }).catch(function() {});
+  }
+
+  if (BILLS.length === 0) {
+    withStepTimeout(function() { return fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS); }, 30000)
+      .then(function() {
+        renderWOCloseAssist();
+        renderDashboardKPIs();
+      })
+      .catch(function() {});
+  }
+
+  try { await saveAllToCache(); } catch (eSave) { /* */ }
 }
 
 // Load stale cache as fallback when API is unreachable
