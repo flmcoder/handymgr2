@@ -1831,6 +1831,30 @@ async function proxyAppFolioV2Report(req: Request, res: Response, reportName: st
   res.send(text);
 }
 
+async function fetchV2ReportRows(req: Request, reportName: string, payload: Record<string, unknown>): Promise<any[]> {
+  const scopedProperties = buildScopedPropertiesFromParams(req, toParams(req));
+  const scopedPayload = applyV2ReportDefaults(reportName, { ...payload });
+  ensureScopedProperties(scopedPayload, scopedProperties);
+
+  const targetUrl = `${AF_REPORTS_BASE}/api/v2/reports/${reportName}.json`;
+  const upstream = await fetch(targetUrl, {
+    method: 'POST',
+    headers: afHeaders('v2'),
+    body: JSON.stringify(scopedPayload),
+  });
+
+  const text = await upstream.text();
+  let parsed: any = {};
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
+
+  if (!upstream.ok) {
+    const errText = String(parsed?.error || text || `HTTP ${upstream.status}`).slice(0, 600);
+    throw new Error(`v2 ${reportName} failed: ${errText}`);
+  }
+
+  return Array.isArray(parsed?.results) ? parsed.results : [];
+}
+
 app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFunction) => {
   const action = getLegacyAction(req);
   if (!action) {
@@ -3652,6 +3676,154 @@ app.get('/api/local/estimates', async (req: Request, res: Response) => {
   } catch (error) {
     logTunnelError(error, '/api/local/estimates');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local estimates query failed') });
+  }
+});
+
+app.get('/api/local/manager_review', async (req: Request, res: Response) => {
+  try {
+    const fromRaw = String(req.query.from || '').trim();
+    const toRaw = String(req.query.to || '').trim();
+    const fromDate = /^\d{4}-\d{2}-\d{2}$/.test(fromRaw)
+      ? fromRaw
+      : isoDateOnly(new Date(Date.now() - (90 * 86400000)));
+    const toDate = /^\d{4}-\d{2}-\d{2}$/.test(toRaw)
+      ? toRaw
+      : isoDateOnly(new Date());
+
+    const fromMonth = fromDate.slice(0, 7);
+    const toMonth = toDate.slice(0, 7);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const limit = parseLimit(req.query.limit, 2500, 10000);
+
+    const [ticklerRows, renewalRows, ledgerRows] = await Promise.all([
+      fetchV2ReportRows(req, 'tenant_tickler', {
+        occurred_on_from: fromDate,
+        occurred_on_to: toDate,
+        events: ['Move-in', 'Move-out', 'Notice'],
+        property_visibility: 'active',
+      }),
+      fetchV2ReportRows(req, 'renewal_summary', {
+        start_on_from: fromMonth,
+        start_on_to: toMonth,
+        unit_visibility: 'active',
+        statuses: ['Renewed', 'Did Not Renew', 'Month To Month', 'Pending'],
+      }),
+      fetchV2ReportRows(req, 'general_ledger', {
+        posted_on_from: fromDate,
+        posted_on_to: toDate,
+        property_visibility: 'active',
+      }),
+    ]);
+
+    const estimateRows = propertyGroupId
+      ? await queryClient`
+        select
+          estimate_id,
+          work_order_id,
+          work_order_number,
+          current_status,
+          property_group_id,
+          source,
+          updated_at,
+          created_at,
+          raw_data
+        from appfolio_estimates
+        where property_group_id = ${propertyGroupId}
+        order by coalesce(updated_at, created_at, now()) desc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          estimate_id,
+          work_order_id,
+          work_order_number,
+          current_status,
+          property_group_id,
+          source,
+          updated_at,
+          created_at,
+          raw_data
+        from appfolio_estimates
+        order by coalesce(updated_at, created_at, now()) desc
+        limit ${limit}
+      `;
+
+    const workOrderRows = propertyGroupId
+      ? await queryClient`
+        select
+          id,
+          wo_number,
+          vendor_name,
+          property_group_id,
+          updated_at,
+          created_at,
+          raw_json
+        from appfolio_work_orders
+        where property_group_id = ${propertyGroupId}
+          and coalesce(updated_at, created_at, now()) >= now() - interval '365 days'
+        order by coalesce(updated_at, created_at, now()) desc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          id,
+          wo_number,
+          vendor_name,
+          property_group_id,
+          updated_at,
+          created_at,
+          raw_json
+        from appfolio_work_orders
+        where coalesce(updated_at, created_at, now()) >= now() - interval '365 days'
+        order by coalesce(updated_at, created_at, now()) desc
+        limit ${limit}
+      `;
+
+    const normalizedEstimateRows = (estimateRows as any[]).map((row) => {
+      const raw = (row?.raw_data && typeof row.raw_data === 'object') ? row.raw_data : {};
+      return {
+        estimate_id: String(row.estimate_id || ''),
+        work_order_id: String(row.work_order_id || ''),
+        work_order_number: String(row.work_order_number || pickRaw(raw, ['work_order_number', 'WorkOrderNumber']) || ''),
+        current_status: String(row.current_status || pickRaw(raw, ['current_status', 'ApprovalStatus']) || ''),
+        property_group_id: String(row.property_group_id || pickRaw(raw, ['property_group_id', 'PropertyGroupId']) || ''),
+        source: String(row.source || pickRaw(raw, ['source', 'vendor_name', 'VendorName']) || ''),
+        updated_at: asIso(row.updated_at) || asIso(row.created_at),
+      };
+    });
+
+    const normalizedWorkOrderRows = (workOrderRows as any[]).map((row) => {
+      const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
+      return {
+        id: String(row.id || ''),
+        wo_number: String(row.wo_number || pickRaw(raw, ['wo_number', 'WorkOrderNumber']) || ''),
+        vendor_name: String(row.vendor_name || pickRaw(raw, ['vendor_name', 'VendorName']) || ''),
+        property_group_id: String(row.property_group_id || pickRaw(raw, ['property_group_id', 'PropertyGroupId']) || ''),
+        updated_at: asIso(row.updated_at) || asIso(row.created_at),
+      };
+    });
+
+    res.json({
+      ok: true,
+      source: 'manager_review_aggregate',
+      window: { from: fromDate, to: toDate, from_month: fromMonth, to_month: toMonth },
+      property_group_id: propertyGroupId || '',
+      tickler_rows: ticklerRows,
+      renewal_rows: renewalRows,
+      ledger_rows: ledgerRows,
+      estimate_rows: normalizedEstimateRows,
+      work_order_rows: normalizedWorkOrderRows,
+      counts: {
+        tickler_rows: ticklerRows.length,
+        renewal_rows: renewalRows.length,
+        ledger_rows: ledgerRows.length,
+        estimate_rows: normalizedEstimateRows.length,
+        work_order_rows: normalizedWorkOrderRows.length,
+      },
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/manager_review');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Manager review query failed') });
   }
 });
 

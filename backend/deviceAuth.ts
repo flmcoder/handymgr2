@@ -22,14 +22,18 @@ const OTP_TTL_MINUTES_ENV = Math.max(3, Number(process.env.DEVICE_OTP_TTL_MINUTE
 const GUI_ADMIN = String(process.env.GUI_ADMIN || '').trim();
 const GUI_GM = String(process.env.GUI_GM || '').trim();
 const GUI_VENDORS = String(process.env.GUI_VENDORS || '').trim();
-const RC_SERVER_URL = String(process.env.RC_SERVER_URL || '').trim();
-const RC_TOKEN = String(process.env.RC_ACCESS_TOKEN || '').trim();
-const RC_FROM = String(process.env.RC_FROM_NUMBER || '').trim();
+const RC_SERVER_URL = String(process.env.RC_SERVER_URL || process.env.RINGCENTRAL_SERVER_URL || 'https://platform.ringcentral.com').trim();
+const RC_TOKEN = String(process.env.RC_ACCESS_TOKEN || process.env.RINGCENTRAL_ACCESS_TOKEN || '').trim();
+const RC_JWT = String(process.env.RC_JWT || process.env.RINGCENTRAL_JWT || '').trim();
+const RC_CLIENT_ID = String(process.env.RC_CLIENT_ID || process.env.RINGCENTRAL_CLIENT_ID || '').trim();
+const RC_CLIENT_SECRET = String(process.env.RC_CLIENT_SECRET || process.env.RINGCENTRAL_CLIENT_SECRET || '').trim();
+const RC_FROM = String(process.env.RC_FROM_NUMBER || process.env.RINGCENTRAL_FROM_NUMBER || '').trim();
 const SESSION_SIGN_KEY_RAW = String(process.env.FRONTEND_PROXY_SECRET || '').trim();
 
 const recentTrustedSessions = new Map<string, any>();
 const memoryOtpStore = new Map<string, { code: string; used: boolean; expiresAtMs: number; userName: string; scopeUuid: string }>();
 let authTablesReady = false;
+let rcTokenCache: { token: string; expiresAtMs: number } | null = null;
 
 function getBodyField(body: any, ...keys: string[]): string {
   if (!body || typeof body !== 'object') return '';
@@ -300,14 +304,16 @@ async function getOtpPolicySafe(): Promise<{ enabled: boolean; allowedDomain: st
 async function sendOtpSms(toPhone: string, code: string, ttlMinutes: number): Promise<void> {
   const toNumber = normalizePhone(toPhone);
   if (!toNumber) throw new Error('Missing recipient phone');
-  if (!RC_SERVER_URL || !RC_TOKEN || !RC_FROM) {
-    console.warn('[ringcentral] env vars missing; SMS send skipped');
-    return;
+  if (!RC_FROM) {
+    throw new Error('RingCentral SMS is not configured. Missing RC_FROM_NUMBER/RINGCENTRAL_FROM_NUMBER.');
   }
+
+  const accessToken = await getRingCentralAccessToken();
+
   const resp = await fetch(`${RC_SERVER_URL}/restapi/v1.0/account/~/extension/~/sms`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${RC_TOKEN}`,
+      Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -320,6 +326,51 @@ async function sendOtpSms(toPhone: string, code: string, ttlMinutes: number): Pr
     const body = await resp.text().catch(() => '');
     throw new Error(`RingCentral HTTP ${resp.status}: ${body.slice(0, 180)}`);
   }
+}
+
+async function getRingCentralAccessToken(): Promise<string> {
+  if (RC_TOKEN) return RC_TOKEN;
+
+  if (rcTokenCache && rcTokenCache.expiresAtMs > (Date.now() + 60_000)) {
+    return rcTokenCache.token;
+  }
+
+  if (!RC_JWT || !RC_CLIENT_ID || !RC_CLIENT_SECRET) {
+    throw new Error(
+      'RingCentral auth is not configured. Provide RC_ACCESS_TOKEN/RINGCENTRAL_ACCESS_TOKEN or RC_JWT + RC_CLIENT_ID + RC_CLIENT_SECRET.',
+    );
+  }
+
+  const basic = Buffer.from(`${RC_CLIENT_ID}:${RC_CLIENT_SECRET}`).toString('base64');
+  const form = new URLSearchParams();
+  form.set('grant_type', 'urn:ietf:params:oauth:grant-type:jwt-bearer');
+  form.set('assertion', RC_JWT);
+
+  const resp = await fetch(`${RC_SERVER_URL}/restapi/oauth/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: form.toString(),
+  });
+
+  const text = await resp.text();
+  let parsed: any = {};
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
+
+  if (!resp.ok || !parsed?.access_token) {
+    const reason = String(parsed?.message || parsed?.error_description || parsed?.error || text || `HTTP ${resp.status}`).slice(0, 220);
+    throw new Error(`RingCentral token exchange failed: ${reason}`);
+  }
+
+  const expiresInSeconds = Math.max(60, Number(parsed?.expires_in || 3600) || 3600);
+  rcTokenCache = {
+    token: String(parsed.access_token),
+    expiresAtMs: Date.now() + (expiresInSeconds * 1000),
+  };
+
+  return rcTokenCache.token;
 }
 
 async function buildScopeOptions(scopeUuids: string[]): Promise<ScopeOption[]> {

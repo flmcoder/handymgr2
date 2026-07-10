@@ -159,6 +159,7 @@
       <button class="nav-tab" data-tab="turnboard"><i class="fas fa-exchange-alt"></i> Turn Board <span class="badge" id="turnBadge">—</span></button>
       <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
       <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Billing <span class="badge" id="billingBadge" style="display:none">0</span></button>
+      <button class="nav-tab nav-role-gm" data-tab="managerreview"><i class="fas fa-chart-pie"></i> Manager Review</button>
       <button class="nav-tab nav-role-gm" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
     </div>
     <div class="nav-section" id="navGroupResources">
@@ -1383,6 +1384,97 @@
         <thead><tr><th>Prospect</th><th>Property</th><th>Interested In</th><th>Source</th><th>Created</th><th>Status</th></tr></thead>
         <tbody id="guestCardsBody"><tr><td colspan="6" class="u-table-empty-cell">Click Refresh to load guest cards</td></tr></tbody>
       </table></div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="sec-managerreview">
+  <div class="section-header">
+    <div>
+      <div class="section-title"><i class="fas fa-chart-pie" style="color:var(--accent)"></i> Manager Review Hub</div>
+      <div class="section-subtitle">Merged visibility across Tenant Tickler, Renewal Summary, General Ledger evidence, and estimate approval workflow.</div>
+    </div>
+    <div class="u-toolbar-row">
+      <label for="mgrReviewFrom" style="font-size:11px;color:var(--text-muted)">From</label>
+      <input type="date" id="mgrReviewFrom" class="u-input-compact" style="min-width:140px">
+      <label for="mgrReviewTo" style="font-size:11px;color:var(--text-muted)">To</label>
+      <input type="date" id="mgrReviewTo" class="u-input-compact" style="min-width:140px">
+      <input type="text" id="mgrReviewSearch" class="u-input-compact" placeholder="Search tenant, property, unit..." style="min-width:220px">
+      <button class="action-btn" id="refreshMgrReviewBtn"><i class="fas fa-sync-alt"></i> Refresh</button>
+    </div>
+  </div>
+
+  <div class="kpi-grid" id="mgrReviewKpis">
+    <div class="kpi-card blue"><div class="kpi-label">Tickler Events</div><div class="kpi-value" id="kpiMgrTickler">—</div><div class="kpi-sub" id="kpiMgrTicklerSub">loading</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Renewal Rows</div><div class="kpi-value" id="kpiMgrRenewals">—</div><div class="kpi-sub" id="kpiMgrRenewalsSub">loading</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">GL Leasing Fee Rows</div><div class="kpi-value" id="kpiMgrLeasingFees">—</div><div class="kpi-sub" id="kpiMgrLeasingFeesSub">renewal/move-in evidence</div></div>
+    <div class="kpi-card red"><div class="kpi-label">Estimate Approval Pipeline</div><div class="kpi-value" id="kpiMgrEstimatePipeline">—</div><div class="kpi-sub" id="kpiMgrEstimatePipelineSub">materials done -> approval</div></div>
+  </div>
+
+  <div class="kpi-insights-grid" id="mgrReviewCharts" style="margin-top:8px">
+    <article class="kpi-insight-card">
+      <header><h4>Tickler Event Mix</h4><span id="mgrTicklerChartMeta">—</span></header>
+      <div class="billing-mini-chart" id="mgrTicklerChart"></div>
+    </article>
+    <article class="kpi-insight-card">
+      <header><h4>Renewal Status Mix</h4><span id="mgrRenewalChartMeta">—</span></header>
+      <div class="billing-mini-chart" id="mgrRenewalChart"></div>
+    </article>
+    <article class="kpi-insight-card">
+      <header><h4>Estimate Stage Mix</h4><span id="mgrEstimateChartMeta">—</span></header>
+      <div class="billing-mini-chart" id="mgrEstimateChart"></div>
+    </article>
+  </div>
+
+  <div class="table-wrapper" style="margin-top:14px">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-clock" style="color:var(--info)"></i> Tenant Tickler</div>
+      <div id="mgrTicklerSummary" style="font-size:12px;color:var(--text-muted)">No data loaded.</div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Date</th><th>Event</th><th>Property</th><th>Tenant</th><th>Lease From</th><th>Lease To</th></tr></thead>
+        <tbody id="mgrTicklerBody"><tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">Open Manager Review to load data.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="table-wrapper" style="margin-top:14px">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-file-signature" style="color:var(--accent)"></i> Renewal Summary (No $ Difference)</div>
+      <div id="mgrRenewalSummary" style="font-size:12px;color:var(--text-muted)">No data loaded.</div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Status</th><th>Property</th><th>Unit</th><th>Tenant</th><th>Lease Start</th><th>Lease End</th><th>Previous Rent</th><th>Rent</th><th>Turn</th></tr></thead>
+        <tbody id="mgrRenewalBody"><tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text-muted)">Open Manager Review to load data.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="table-wrapper" style="margin-top:14px">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-receipt" style="color:var(--warning)"></i> Leasing Fee Evidence (Renewal + Move-In)</div>
+      <div id="mgrLedgerSummary" style="font-size:12px;color:var(--text-muted)">No data loaded.</div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Date</th><th>Property</th><th>Unit</th><th>Tenant</th><th>GL Account</th><th>Description</th><th>Amount</th><th>Charge Type</th></tr></thead>
+        <tbody id="mgrLedgerBody"><tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted)">Open Manager Review to load data.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="table-wrapper" style="margin-top:14px">
+    <div class="table-header">
+      <div class="table-title"><i class="fas fa-clipboard-check" style="color:var(--success)"></i> Materials Done Sent to Estimate for Approval</div>
+      <div id="mgrEstimateSummary" style="font-size:12px;color:var(--text-muted)">No data loaded.</div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Estimate</th><th>WO #</th><th>Source</th><th>Status</th><th>Property Group</th><th>Vendor</th><th>Updated</th></tr></thead>
+        <tbody id="mgrEstimateBody"><tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)">Open Manager Review to load data.</td></tr></tbody>
+      </table>
     </div>
   </div>
 </section>
