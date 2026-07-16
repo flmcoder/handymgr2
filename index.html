@@ -393,7 +393,7 @@
 
 <section class="section" id="sec-workorders">
   <div class="section-header">
-    <div><div class="section-title"><i class="fas fa-wrench" style="color:var(--accent)"></i> Work Order Management</div><div class="section-subtitle">Reports API v2 — work_order.json &bull; Open orders (last 180 days) &bull; Click column headers to filter</div></div>
+    <div><div class="section-title"><i class="fas fa-wrench" style="color:var(--accent)"></i> Work Order Operations</div><div class="section-subtitle">Operations queue first, Kanban on demand. Triage, prioritize, and route work without losing board context.</div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search orders…" id="woSearch"></div>
       <button class="sec-refresh" id="btnRefreshWO"><i class="fas fa-sync-alt"></i> Refresh</button>
@@ -410,8 +410,8 @@
   <div class="wo-subpanel" id="wo-subpanel-active">
     <div class="wo-view-toggle-bar">
       <div class="wo-view-btns">
-        <button id="btnWOViewBoard" class="wo-view-btn active" onclick="setWOView('board')" title="Kanban Board View"><i class="fas fa-table-columns"></i> Board</button>
-        <button id="btnWOViewList"  class="wo-view-btn"        onclick="setWOView('list')"  title="Condensed List View"><i class="fas fa-list"></i> List</button>
+        <button id="btnWOViewList"  class="wo-view-btn active" onclick="setWOView('list')"  title="Operations Queue View"><i class="fas fa-list"></i> Queue</button>
+        <button id="btnWOViewBoard" class="wo-view-btn"        onclick="setWOView('board')" title="Kanban Board View"><i class="fas fa-table-columns"></i> Kanban</button>
       </div>
     </div>
     <div class="kanban-filters" id="woFilters">

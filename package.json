@@ -23,13 +23,14 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@libsql/client": "^0.17.3",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "drizzle-orm": "^0.44.2",
+    "echarts": "^6.0.0",
     "express": "^5.1.0",
-    "postgres": "^3.4.7",
-    "@libsql/client": "^0.17.3",
-    "echarts": "^6.0.0"
+    "jose": "^6.2.3",
+    "postgres": "^3.4.7"
   },
   "devDependencies": {
     "gh-pages": "^6.3.0",

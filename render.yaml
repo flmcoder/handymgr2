@@ -1,4 +1,7 @@
 # Exported from Render on 2026-06-16T07:01:28Z
+# Environment contract reference: docs/environment-contract.md
+# This export only captures the keys currently mirrored from Render.
+# The backend consumes additional dashboard-only keys listed in the contract doc.
 version: "1"
 projects:
 - name: My project

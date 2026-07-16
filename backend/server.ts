@@ -3,6 +3,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { flattenedVerify } from 'jose';
 import { pingDatabase, queryClient } from './db';
 import * as deviceAuthHandlers from './deviceAuth';
 import { AF_DB_BASE, AF_REPORTS_BASE, afHeaders, afReportCredentialMode } from './sync/afCredentials';
@@ -99,6 +100,102 @@ function logTunnelError(error: unknown, route: string): void {
       message,
     });
   }
+}
+
+function getBuildVersion(): string {
+  return String(process.env.APP_VERSION || process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'server-local').trim() || 'server-local';
+}
+
+function isAuthDegradationMessage(text: string): boolean {
+  return /401|403|unauthoriz|forbidden|invalid client|auth(?:entication)?|token exchange|credentials rejected|expired token|permission/i.test(String(text || ''));
+}
+
+function getSyncStatusDiagnostics(): { degraded: boolean; auth_degraded: boolean; reasons: string[]; failing_endpoints: Array<{ endpoint_key: string; status: string; last_error: string }> } {
+  const reasons: string[] = [];
+  const failingEndpoints: Array<{ endpoint_key: string; status: string; last_error: string }> = [];
+  let authDegraded = false;
+
+  if (syncSchedulerState.lastError) {
+    reasons.push(syncSchedulerState.lastError);
+    authDegraded = authDegraded || isAuthDegradationMessage(syncSchedulerState.lastError);
+  }
+
+  if (syncSchedulerState.rejectedEndpoints.length > 0) {
+    reasons.push(`rejected endpoints: ${syncSchedulerState.rejectedEndpoints.join(', ')}`);
+  }
+
+  Object.entries(syncSchedulerState.endpointSummaries || {}).forEach(([endpointKey, summary]) => {
+    const status = String((summary as any)?.status || '').trim();
+    const lastError = String((summary as any)?.last_error || (summary as any)?.lastError || '').trim();
+    if (status && status !== 'completed') {
+      reasons.push(`${endpointKey}: ${status}`);
+    }
+    if (lastError) {
+      failingEndpoints.push({ endpoint_key: endpointKey, status, last_error: lastError });
+      reasons.push(`${endpointKey}: ${lastError}`);
+      authDegraded = authDegraded || isAuthDegradationMessage(lastError);
+    }
+  });
+
+  const uniqueReasons = Array.from(new Set(reasons.filter(Boolean)));
+  const degraded = uniqueReasons.length > 0 || failingEndpoints.length > 0;
+  return { degraded, auth_degraded: authDegraded, reasons: uniqueReasons, failing_endpoints: failingEndpoints };
+}
+
+function buildProviderDiagnostics() {
+  const ringCentralAccessToken = String(process.env.RC_ACCESS_TOKEN || process.env.RINGCENTRAL_ACCESS_TOKEN || '').trim();
+  const ringCentralJwt = String(process.env.RC_JWT || process.env.RINGCENTRAL_JWT || '').trim();
+  const ringCentralClientId = String(process.env.RC_CLIENT_ID || process.env.RINGCENTRAL_CLIENT_ID || '').trim();
+  const ringCentralClientSecret = String(process.env.RC_CLIENT_SECRET || process.env.RINGCENTRAL_CLIENT_SECRET || '').trim();
+  const ringCentralFrom = String(process.env.RC_FROM_NUMBER || process.env.RINGCENTRAL_FROM_NUMBER || '').trim();
+  const ringCentralServerUrl = String(process.env.RC_SERVER_URL || process.env.RINGCENTRAL_SERVER_URL || 'https://platform.ringcentral.com').trim();
+  const ringCentralMode = ringCentralAccessToken
+    ? 'access_token'
+    : (ringCentralJwt && ringCentralClientId && ringCentralClientSecret ? 'jwt' : 'missing');
+  const ringCentralConfigured = ringCentralMode !== 'missing' && !!ringCentralFrom;
+
+  const otpAllowedDomain = String(process.env.OTP_ALLOWED_DOMAIN || 'flraz.com').replace(/^@/, '').toLowerCase();
+  const otpTtlMinutes = Math.max(3, Number(process.env.DEVICE_OTP_TTL_MINUTES || '10') || 10);
+  const deviceSetupPinConfigured = !!String(process.env.DEVICE_SETUP_PIN || '').trim();
+
+  return {
+    version: getBuildVersion(),
+    ringcentral: {
+      ok: ringCentralConfigured,
+      configured: ringCentralConfigured,
+      mode: ringCentralMode,
+      server_url: ringCentralServerUrl,
+      from_number_configured: !!ringCentralFrom,
+      client_id_configured: !!ringCentralClientId,
+      client_secret_configured: !!ringCentralClientSecret,
+      access_token_configured: !!ringCentralAccessToken,
+      jwt_configured: !!ringCentralJwt,
+      issues: [
+        !ringCentralFrom ? 'missing from number' : '',
+        ringCentralMode === 'missing' ? 'missing access token or JWT client credentials' : '',
+      ].filter(Boolean),
+    },
+    otp: {
+      ok: deviceSetupPinConfigured,
+      configured: deviceSetupPinConfigured,
+      allowed_domain: otpAllowedDomain,
+      ttl_minutes: otpTtlMinutes,
+      device_setup_pin_configured: deviceSetupPinConfigured,
+      handlers_ready: true,
+      issues: [
+        !deviceSetupPinConfigured ? 'missing DEVICE_SETUP_PIN' : '',
+      ].filter(Boolean),
+    },
+    webhook: {
+      ok: WEBHOOK_VERIFY_SIGNATURE ? !!WEBHOOK_JWKS_URL : true,
+      signature_verification_enabled: WEBHOOK_VERIFY_SIGNATURE,
+      jwks_url: WEBHOOK_JWKS_URL,
+      jwks_cache_ttl_ms: WEBHOOK_JWKS_TTL_MS,
+      jwks_cached_keys: webhookJwksCache.keys.length,
+      jwks_cache_age_ms: webhookJwksCache.fetchedAt ? Math.max(0, Date.now() - webhookJwksCache.fetchedAt) : null,
+      table_ready: webhookTableEnsured,
+    },
+  };
 }
 
 function wrapDenoHandler(handler: any, mode: Mode = 'params') {
@@ -649,15 +746,15 @@ const WEBHOOK_JWKS_URL = 'https://api.appfolio.com/.well-known/jwks.json';
 const WEBHOOK_JWKS_TTL_MS = Math.max(60_000, Number(process.env.WEBHOOK_JWKS_TTL_MS || String(6 * 60 * 60 * 1000)) || (6 * 60 * 60 * 1000));
 const WEBHOOK_VERIFY_SIGNATURE = !/^(0|false|no|off)$/i.test(String(process.env.WEBHOOK_VERIFY_SIGNATURE || 'true').trim());
 
-function base64UrlToUint8Array(input: string): Uint8Array {
+function bufferToBase64Url(input: Buffer): string {
+  return input.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function decodeBase64Url(input: string): Buffer {
   const normalized = String(input || '').replace(/-/g, '+').replace(/_/g, '/');
   const padLen = normalized.length % 4;
   const padded = padLen === 0 ? normalized : normalized + '='.repeat(4 - padLen);
-  return new Uint8Array(Buffer.from(padded, 'base64'));
-}
-
-function bufferToBase64Url(input: Buffer): string {
-  return input.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return Buffer.from(padded, 'base64');
 }
 
 function singularizeTopic(topicRaw: string): string {
@@ -689,17 +786,32 @@ async function ensureWebhookEventsTable(): Promise<void> {
   await queryClient.unsafe(`
     CREATE TABLE IF NOT EXISTS webhook_events (
       id BIGSERIAL PRIMARY KEY,
-      event_uuid TEXT,
+      event_id TEXT,
       topic TEXT NOT NULL,
       event_type TEXT,
       resource_type TEXT,
       resource_id TEXT,
       signature TEXT,
-      payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
       received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       processed_at TIMESTAMPTZ,
       processing_status TEXT DEFAULT 'pending'
     )
+  `);
+  await queryClient.unsafe(`ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS event_id TEXT`);
+  await queryClient.unsafe(`ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb`);
+  await queryClient.unsafe(`ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS processing_status TEXT DEFAULT 'pending'`);
+  await queryClient.unsafe(`ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS payload_json JSONB`);
+  await queryClient.unsafe(`ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS event_uuid TEXT`);
+  await queryClient.unsafe(`
+    UPDATE webhook_events
+    SET event_id = COALESCE(event_id, event_uuid)
+    WHERE event_id IS NULL AND event_uuid IS NOT NULL
+  `);
+  await queryClient.unsafe(`
+    UPDATE webhook_events
+    SET raw_payload = COALESCE(raw_payload, payload_json, '{}'::jsonb)
+    WHERE raw_payload IS NULL OR raw_payload = '{}'::jsonb
   `);
   await queryClient.unsafe(`
     CREATE INDEX IF NOT EXISTS webhook_events_topic_idx
@@ -714,9 +826,9 @@ async function ensureWebhookEventsTable(): Promise<void> {
       ON webhook_events(processing_status)
   `);
   await queryClient.unsafe(`
-    CREATE UNIQUE INDEX IF NOT EXISTS webhook_events_event_uuid_unique
-      ON webhook_events(event_uuid)
-      WHERE event_uuid IS NOT NULL AND event_uuid <> ''
+    CREATE UNIQUE INDEX IF NOT EXISTS webhook_events_event_id_unique
+      ON webhook_events(event_id)
+      WHERE event_id IS NOT NULL AND event_id <> ''
   `);
   webhookTableEnsured = true;
 }
@@ -748,7 +860,7 @@ async function fetchWebhookJwks(force = false): Promise<JwkKey[]> {
   }
 }
 
-async function verifyAppfolioDetachedJws(rawBody: string, detachedSignatureHeader: string): Promise<{ ok: boolean; kid: string; alg: string }> {
+async function verifyAppfolioDetachedJws(rawBody: Buffer, detachedSignatureHeader: string): Promise<{ ok: boolean; kid: string; alg: string }> {
   const detached = String(detachedSignatureHeader || '').trim();
   if (!detached) return { ok: false, kid: '', alg: '' };
 
@@ -760,7 +872,7 @@ async function verifyAppfolioDetachedJws(rawBody: string, detachedSignatureHeade
 
   let protectedHeader: any = {};
   try {
-    protectedHeader = JSON.parse(Buffer.from(base64UrlToUint8Array(protectedB64)).toString('utf8'));
+    protectedHeader = JSON.parse(decodeBase64Url(protectedB64).toString('utf8'));
   } catch {
     return { ok: false, kid: '', alg: '' };
   }
@@ -771,10 +883,6 @@ async function verifyAppfolioDetachedJws(rawBody: string, detachedSignatureHeade
     return { ok: false, kid, alg };
   }
 
-  const payloadB64 = bufferToBase64Url(Buffer.from(String(rawBody || ''), 'utf8'));
-  const signingInput = new Uint8Array(Buffer.from(`${protectedB64}.${payloadB64}`, 'utf8'));
-  const signature = base64UrlToUint8Array(signatureB64);
-
   let keys = await fetchWebhookJwks(false);
   let key = keys.find((entry) => String(entry?.kid || '').trim() === kid);
   if (!key) {
@@ -783,22 +891,21 @@ async function verifyAppfolioDetachedJws(rawBody: string, detachedSignatureHeade
   }
   if (!key) return { ok: false, kid, alg };
 
-  const cryptoKey = await crypto.subtle.importKey(
-    'jwk',
-    key as any,
-    { name: 'RSA-PSS', hash: 'SHA-256' },
-    false,
-    ['verify'],
-  );
+  try {
+    const verified = await flattenedVerify(
+      {
+        protected: protectedB64,
+        payload: bufferToBase64Url(rawBody),
+        signature: signatureB64,
+      },
+      key as any,
+      { algorithms: ['PS256'] },
+    );
 
-  const verified = await crypto.subtle.verify(
-    { name: 'RSA-PSS', saltLength: 32 },
-    cryptoKey,
-    signature as any,
-    signingInput as any,
-  );
-
-  return { ok: !!verified, kid, alg };
+    return { ok: !!verified?.payload, kid, alg };
+  } catch {
+    return { ok: false, kid, alg };
+  }
 }
 
 function mapWebhookToSyncEndpoints(resourceTypeRaw: string, topicRaw: string): string[] {
@@ -827,20 +934,24 @@ function mapWebhookToSyncEndpoints(resourceTypeRaw: string, topicRaw: string): s
   }
 }
 
-async function runWebhookDeltaSync(resourceTypeRaw: string, topicRaw: string): Promise<string[]> {
+async function runWebhookDeltaSync(resourceTypeRaw: string, topicRaw: string): Promise<{ syncedEndpoints: string[]; failed: boolean }> {
   const endpoints = mapWebhookToSyncEndpoints(resourceTypeRaw, topicRaw)
     .filter((endpoint) => SYNC_ENDPOINT_ALLOWLIST.has(endpoint) && !SYNC_ENDPOINT_BLOCKLIST.has(endpoint));
-  if (!endpoints.length) return [];
+  if (!endpoints.length) return { syncedEndpoints: [], failed: false };
 
   const { runSync } = await import('./sync/syncRunner.ts');
+  let failed = false;
+  const syncedEndpoints: string[] = [];
   for (const endpointKey of endpoints) {
     try {
       await runSync({ endpointKey, triggerType: 'webhook', maxPages: 1 });
+      syncedEndpoints.push(endpointKey);
     } catch (error) {
+      failed = true;
       console.error('[webhook:delta-sync] failed', endpointKey, String((error as any)?.message || error));
     }
   }
-  return endpoints;
+  return { syncedEndpoints, failed };
 }
 
 const WORK_ORDER_DETAIL_CACHE_TTL_MS = Math.max(
@@ -1331,10 +1442,10 @@ const DIST_DIR = path.resolve(process.cwd(), 'dist');
 
 // AppFolio webhook ingress uses detached JWS verification on the exact raw payload.
 // Keep this route above express.json middleware to avoid body mutation.
-app.post('/api/webhooks/appfolio', express.text({ type: '*/*', limit: '2mb' }), async (req: Request, res: Response) => {
+app.post('/api/webhooks/appfolio', express.raw({ type: '*/*', limit: '2mb' }), async (req: Request, res: Response) => {
   try {
     await ensureWebhookEventsTable();
-    const rawBody = typeof req.body === 'string' ? req.body : String(req.body || '');
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
     const signatureHeader = String(req.header('x-jws-signature') || req.header('X-JWS-Signature') || '').trim();
 
     const verification = WEBHOOK_VERIFY_SIGNATURE
@@ -1342,23 +1453,14 @@ app.post('/api/webhooks/appfolio', express.text({ type: '*/*', limit: '2mb' }), 
       : { ok: true, kid: '', alg: '' };
 
     if (WEBHOOK_VERIFY_SIGNATURE && !verification.ok) {
-      await queryClient`
-        insert into webhook_events (
-          event_uuid, topic, event_type, resource_type, resource_id,
-          signature, payload_json, processed_at, processing_status
-        )
-        values (
-          null, 'unverified', '', '', '',
-          ${signatureHeader}, ${JSON.stringify({ raw: rawBody, verification })}::jsonb, now(), 'invalid_signature'
-        )
-      `;
       res.status(401).json({ ok: false, error: 'Invalid webhook signature' });
       return;
     }
 
+    const rawText = rawBody.toString('utf8');
     let payload: any = {};
     try {
-      payload = rawBody ? JSON.parse(rawBody) : {};
+      payload = rawText ? JSON.parse(rawText) : {};
     } catch {
       res.status(400).json({ ok: false, error: 'Invalid JSON payload' });
       return;
@@ -1368,43 +1470,52 @@ app.post('/api/webhooks/appfolio', express.text({ type: '*/*', limit: '2mb' }), 
     const eventType = parseWebhookEventType(String(payload?.event_type || payload?.type || ''));
     const resourceType = normalizeWebhookResourceType(String(payload?.resource_type || ''), topic);
     const resourceId = String(payload?.resource_id || '').trim();
-    const eventUuid = String(payload?.event_id || '').trim();
+    const eventId = String(payload?.event_id || payload?.event_uuid || payload?.id || '').trim();
 
-    if (eventUuid) {
+    if (eventId) {
       const existing = await queryClient`
-        select id from webhook_events where event_uuid = ${eventUuid} limit 1
+        select id from webhook_events where event_id = ${eventId} limit 1
       `;
       if ((existing as any[]).length > 0) {
-        res.status(200).json({ ok: true, duplicate: true, event_uuid: eventUuid });
+        res.status(200).json({ ok: true, duplicate: true, event_id: eventId });
         return;
       }
     }
 
     const insertRows = await queryClient`
       insert into webhook_events (
-        event_uuid, topic, event_type, resource_type, resource_id,
-        signature, payload_json, processing_status
+        event_id, topic, event_type, resource_type, resource_id,
+        signature, raw_payload, payload_json, processing_status
       )
       values (
-        ${eventUuid || null}, ${topic || 'unknown'}, ${eventType || ''}, ${resourceType || ''}, ${resourceId || ''},
-        ${signatureHeader}, ${JSON.stringify(payload)}::jsonb, 'received'
+        ${eventId || null}, ${topic || 'unknown'}, ${eventType || ''}, ${resourceType || ''}, ${resourceId || ''},
+        ${signatureHeader}, ${JSON.stringify(payload)}::jsonb, ${JSON.stringify(payload)}::jsonb, 'pending'
       )
       returning id
     `;
     const webhookRowId = Number((insertRows as any[])[0]?.id || 0) || 0;
 
-    const syncedEndpoints = await runWebhookDeltaSync(resourceType, topic);
+    let syncedEndpoints: string[] = [];
+    let processingStatus = 'processed';
+    try {
+      const deltaSync = await runWebhookDeltaSync(resourceType, topic);
+      syncedEndpoints = deltaSync.syncedEndpoints;
+      processingStatus = deltaSync.failed ? 'failed' : 'processed';
+    } catch (error) {
+      processingStatus = 'failed';
+      console.error('[webhook:delta-sync] failed', String((error as any)?.message || error));
+    }
     await queryClient`
       update webhook_events
       set processed_at = now(),
-          processing_status = ${syncedEndpoints.length ? 'processed' : 'stored'}
+          processing_status = ${processingStatus}
       where id = ${webhookRowId}
     `;
 
     res.status(200).json({
       ok: true,
       verified: verification.ok,
-      event_uuid: eventUuid || null,
+      event_id: eventId || null,
       topic,
       event_type: eventType,
       resource_type: resourceType,
@@ -1634,6 +1745,27 @@ function applyV2ReportDefaults(reportName: string, payload: Record<string, unkno
       break;
     case 'owner_withholdings':
       break;
+    case 'general_ledger':
+      if (!Array.isArray(withDefaults.columns) || !withDefaults.columns.length) {
+        withDefaults.columns = [
+          'AccountName',
+          'Number',
+          'AccountType',
+          'account_name',
+          'account_number',
+          'account_type',
+          'property_name',
+          'property_id',
+          'unit',
+          'post_date',
+          'reference',
+          'description',
+          'debit',
+          'credit',
+          'credit_debit_balance',
+        ];
+      }
+      break;
     default:
       if (/(_directory|_summary|_detail|_performance|_vacancy|_withholdings)$/.test(reportName)) {
         if (!withDefaults.property_visibility) withDefaults.property_visibility = 'active';
@@ -1702,6 +1834,54 @@ function applyV2ReportDefaults(reportName: string, payload: Record<string, unkno
   }
 
   return withDefaults;
+}
+
+const STRICT_GL_ACCOUNT_TYPES = new Set(['asset', 'expense', 'income']);
+
+function normalizeGlAccountType(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z_]/g, '');
+}
+
+function getLedgerField(row: any, keys: string[]): string {
+  for (const key of keys) {
+    const value = row?.[key];
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+  return '';
+}
+
+function normalizeStrictLedgerRow(row: any): Record<string, any> | null {
+  const accountType = normalizeGlAccountType(getLedgerField(row, ['AccountType', 'account_type', 'type']));
+  if (!STRICT_GL_ACCOUNT_TYPES.has(accountType)) return null;
+
+  const accountName = getLedgerField(row, ['AccountName', 'account_name', 'account']);
+  const accountNumber = getLedgerField(row, ['Number', 'account_number']);
+
+  return {
+    AccountName: accountName,
+    Number: accountNumber,
+    AccountType: accountType,
+    account_name: accountName,
+    account_number: accountNumber,
+    account_type: accountType,
+    account_label: `${accountType}:${accountNumber || accountName}`,
+    is_strict_account_type: true,
+    property_name: getLedgerField(row, ['property_name', 'property', 'PropertyName']),
+    property_id: getLedgerField(row, ['property_id', 'PropertyId']),
+    unit: getLedgerField(row, ['unit', 'Unit']),
+    post_date: getLedgerField(row, ['post_date', 'PostDate']),
+    reference: getLedgerField(row, ['reference', 'Reference']),
+    description: getLedgerField(row, ['description', 'Description', 'remarks', 'Remarks']),
+    debit: getLedgerField(row, ['debit', 'Debit']),
+    credit: getLedgerField(row, ['credit', 'Credit']),
+    credit_debit_balance: getLedgerField(row, ['credit_debit_balance', 'CreditDebitBalance']),
+    _source: 'appfolio_live',
+  };
 }
 
 function buildV2ReportPayload(req: Request, reportName: string): Record<string, unknown> {
@@ -2010,7 +2190,45 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
 
 app.get('/health', async (_req: Request, res: Response) => {
   const dbOk = await pingDatabase();
-  res.status(dbOk ? 200 : 503).json({ ok: dbOk, service: 'handymgr-backend', database: dbOk ? 'up' : 'down' });
+  res.status(dbOk ? 200 : 503).json({
+    ok: dbOk,
+    service: 'handymgr-backend',
+    version: getBuildVersion(),
+    database: dbOk ? 'up' : 'down',
+  });
+});
+
+app.get(['/api/health/providers', '/api/local/health/providers'], async (_req: Request, res: Response) => {
+  try {
+    const dbOk = await pingDatabase();
+    const providerDiagnostics = buildProviderDiagnostics();
+    let authTablesReady = true;
+    let authTablesError = '';
+
+    try {
+      await queryClient.unsafe(`select to_regclass('public.trusted_devices') as trusted_devices, to_regclass('public.device_otps') as device_otps, to_regclass('public.proxy_config') as proxy_config`);
+    } catch (error) {
+      authTablesReady = false;
+      authTablesError = String((error as any)?.message || error || 'Auth tables check failed');
+    }
+
+    const ok = dbOk && providerDiagnostics.ringcentral.ok && providerDiagnostics.otp.ok && authTablesReady;
+    res.status(ok ? 200 : 503).json({
+      ok,
+      version: providerDiagnostics.version,
+      database: { ok: dbOk },
+      ringcentral: providerDiagnostics.ringcentral,
+      otp: {
+        ...providerDiagnostics.otp,
+        db_tables_ready: authTablesReady,
+        db_tables_error: authTablesError || null,
+      },
+      webhook: providerDiagnostics.webhook,
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/health/providers');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Provider diagnostics failed') });
+  }
 });
 
 app.get('/api/local/webhook_events', async (req: Request, res: Response) => {
@@ -2054,7 +2272,7 @@ app.get('/api/local/ping', async (_req: Request, res: Response) => {
       db_api: { ok: dbOk, status },
       reports_api: { ok: true, status: 200 },
       schema: { ok: true, missing_tables: [] },
-      version: String(process.env.APP_VERSION || process.env.RENDER_GIT_COMMIT || 'server-local'),
+      version: getBuildVersion(),
     });
   } catch (error) {
     logTunnelError(error, '/api/local/ping');
@@ -3715,6 +3933,10 @@ app.get('/api/local/manager_review', async (req: Request, res: Response) => {
       }),
     ]);
 
+    const normalizedLedgerRows = ledgerRows
+      .map((row) => normalizeStrictLedgerRow(row))
+      .filter((row): row is Record<string, any> => !!row);
+
     const estimateRows = propertyGroupId
       ? await queryClient`
         select
@@ -3810,13 +4032,13 @@ app.get('/api/local/manager_review', async (req: Request, res: Response) => {
       property_group_id: propertyGroupId || '',
       tickler_rows: ticklerRows,
       renewal_rows: renewalRows,
-      ledger_rows: ledgerRows,
+      ledger_rows: normalizedLedgerRows,
       estimate_rows: normalizedEstimateRows,
       work_order_rows: normalizedWorkOrderRows,
       counts: {
         tickler_rows: ticklerRows.length,
         renewal_rows: renewalRows.length,
-        ledger_rows: ledgerRows.length,
+        ledger_rows: normalizedLedgerRows.length,
         estimate_rows: normalizedEstimateRows.length,
         work_order_rows: normalizedWorkOrderRows.length,
       },
@@ -4978,8 +5200,13 @@ function getSchedulerEndpointGroups(endpoints: string[]): { v0: string[]; v2: st
 app.get('/api/local/sync/status', async (_req: Request, res: Response) => {
   try {
     const endpointGroups = getSchedulerEndpointGroups(syncSchedulerState.endpoints);
+    const syncDiagnostics = getSyncStatusDiagnostics();
     const payload: Record<string, any> = {
       ok: true,
+      degraded: syncDiagnostics.degraded,
+      auth_degraded: syncDiagnostics.auth_degraded,
+      degradation_reasons: syncDiagnostics.reasons,
+      failing_endpoints: syncDiagnostics.failing_endpoints,
       scheduler: {
         enabled: syncSchedulerState.enabled,
         interval_minutes: syncSchedulerState.intervalMinutes,

@@ -5033,6 +5033,134 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   letter-spacing: .3px;
 }
 
+/* =================================================================
+   WORK ORDERS UX REFINEMENT (queue-first + consistent control geometry)
+   ================================================================= */
+#sec-workorders .section-header .search-box {
+  border-radius: 6px;
+  min-height: 36px;
+}
+
+#sec-workorders .sec-refresh,
+#sec-workorders .action-btn,
+#sec-workorders .filter-btn,
+#sec-workorders .wo-view-btn,
+#sec-workorders .wo-subtab {
+  min-height: 34px;
+  border-radius: 6px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+#sec-workorders .wo-view-toggle-bar {
+  margin-bottom: 8px;
+}
+
+#sec-workorders .wo-view-btns {
+  padding: 2px;
+  border-radius: 7px;
+  gap: 2px;
+  border-color: color-mix(in srgb, var(--border) 82%, var(--accent) 18%);
+}
+
+#sec-workorders .wo-view-btn {
+  padding: 6px 12px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+}
+
+#sec-workorders .wo-view-btn.active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--border));
+  background: color-mix(in srgb, var(--bg-card) 86%, var(--accent-dim));
+}
+
+#sec-workorders .kanban-filters {
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+#sec-workorders .kanban-filters select {
+  min-height: 34px;
+  border-radius: 6px;
+  min-width: 132px;
+}
+
+#sec-workorders .wo-status-tabs {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent) 22%);
+}
+
+#sec-workorders .wo-status-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+#sec-workorders .wo-status-tab:hover {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-input) 72%, var(--bg-card));
+}
+
+#sec-workorders .wo-status-tab.active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  background: color-mix(in srgb, var(--accent-dim) 58%, var(--bg-card));
+}
+
+#sec-workorders .wo-status-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-dim) 66%, var(--bg-card));
+}
+
+#sec-workorders .table-wrapper .data-table thead th {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+#sec-workorders .table-wrapper .data-table tbody td {
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+@media (max-width: 820px) {
+  #sec-workorders .wo-status-tabs {
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+
+  #sec-workorders .wo-status-tab {
+    white-space: nowrap;
+  }
+}
+
 .pm-inbox-fab{
   bottom:132px;
   background:var(--success);

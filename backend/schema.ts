@@ -420,13 +420,13 @@ export const webhookEvents = pgTable(
   'webhook_events',
   {
     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
-    eventUuid: text('event_uuid'),
+    eventId: text('event_id'),
     topic: text('topic').notNull(),
     eventType: text('event_type'),
     resourceType: text('resource_type'),
     resourceId: text('resource_id'),
     signature: text('signature'),
-    payloadJson: jsonb('payload_json').notNull().default({}),
+    rawPayload: jsonb('raw_payload').notNull().default({}),
     receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
     processedAt: timestamp('processed_at', { withTimezone: true }),
     processingStatus: text('processing_status').default('pending'),
@@ -435,6 +435,7 @@ export const webhookEvents = pgTable(
     topicIdx: index('webhook_events_topic_idx').on(table.topic),
     resourceIdx: index('webhook_events_resource_idx').on(table.resourceType, table.resourceId),
     statusIdx: index('webhook_events_status_idx').on(table.processingStatus),
+    eventIdIdx: index('webhook_events_event_id_idx').on(table.eventId),
   }),
 );
 
