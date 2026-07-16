@@ -2250,6 +2250,13 @@ function setVaultFeedback(message, state) {
   el.classList.add('show');
 }
 
+function showUnlockedAppShell() {
+  var vault = $('#vaultScreen');
+  var shell = $('#appShell');
+  if (vault) vault.style.display = 'none';
+  if (shell) shell.classList.add('unlocked');
+}
+
 function formatOtpIdentifierSummary(identifier) {
   return _authModule.formatOtpIdentifierSummary(identifier);
 }
@@ -5235,6 +5242,7 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
       markProxySessionHealthy();
     }
   } catch (sessErr) { /* non-fatal — use stored role */ }
+  showUnlockedAppShell();
   await enforceSessionTypeTransitionReset(previousRole, _accessRole);
   persistAccessRole(_accessRole);
   try { localStorage.setItem('hm_auth_token', existingDeviceToken); } catch (eA) { /* */ }
@@ -5360,6 +5368,7 @@ setVaultPanel('main');
 })();
 
 if ($('#vaultResumeBtn')) {
+      showUnlockedAppShell();
   $('#vaultResumeBtn').addEventListener('click', async function() {
     try {
       await resumeFromPendingSession();
@@ -5458,8 +5467,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       await saveVaultConfig(getVaultConfigFromInputs());
     }
     $('#vaultPassphrase').value = '';
-    $('#vaultScreen').style.display = 'none';
-    $('#appShell').classList.add('unlocked');
+    showUnlockedAppShell();
     applyAccessRole();
     initApp().catch(function(err) {
       console.warn('initApp background bootstrap failed:', err && (err.message || err));
