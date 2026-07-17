@@ -397,6 +397,14 @@ function looksLikeUuidLabel(value: unknown): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw);
 }
 
+function preferNonUuidLabel(...values: unknown[]): string {
+  const candidates = values
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  const nonUuid = candidates.find((value) => !looksLikeUuidLabel(value));
+  return nonUuid || '';
+}
+
 function resolvePropertyGroupDisplayName(row: any, fallback = ''): string {
   const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
   const direct = String(row?.name || row?.group_name || '').trim();
@@ -1386,6 +1394,11 @@ function normalizeWorkOrderRow(row: any): Record<string, any> {
   const createdAt = asIso(row?.created_at) || String(pickRaw(raw, ['CreatedAt', 'created_at', 'created_date']) || '');
   const updatedAt = asIso(row?.updated_at) || String(pickRaw(raw, ['LastUpdatedAt', 'last_updated_at', 'updated_at']) || '');
   const status = String(row?.status || pickRaw(raw, ['Status', 'status']) || '');
+  const vendorLabel = preferNonUuidLabel(
+    row?.vendor_name,
+    pickRaw(raw, ['vendor_name', 'VendorName']),
+    pickRaw(raw, ['assigned_user_name', 'AssignedUserName']),
+  );
   const workOrderUuid = String(
     row?.work_order_uuid || pickRaw(raw, ['work_order_uuid', 'v0_uuid', 'UUID', 'uuid']) || '',
   );
@@ -1402,8 +1415,8 @@ function normalizeWorkOrderRow(row: any): Record<string, any> {
     status,
     priority: String(row?.priority || pickRaw(raw, ['priority', 'Priority']) || ''),
     vendor_id: String(row?.vendor_id || pickRaw(raw, ['vendor_id', 'VendorId']) || ''),
-    vendor_name: String(row?.vendor_name || pickRaw(raw, ['vendor_name', 'VendorName']) || ''),
-    vendor: String(row?.vendor_name || pickRaw(raw, ['vendor_name', 'VendorName']) || ''),
+    vendor_name: vendorLabel,
+    vendor: vendorLabel,
     description: String(row?.description || pickRaw(raw, ['description', 'Description', 'subject', 'Subject']) || ''),
     created_at: createdAt,
     completed_on: updatedAt,
@@ -2833,14 +2846,17 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
       `;
 
     const results = (rows as any[])
-      .map((row) => ({
-        vendor_id: String(row?.vendor_id || '').trim(),
-        company_name: String(row?.vendor_name || '').trim(),
-        vendor_name: String(row?.vendor_name || '').trim(),
+      .map((row) => {
+        const vendorLabel = preferNonUuidLabel(row?.vendor_name);
+        return {
+          vendor_id: String(row?.vendor_id || '').trim(),
+          company_name: vendorLabel,
+          vendor_name: vendorLabel,
         open_work_order_count: Number(row?.open_work_order_count || 0),
         last_seen_at: asIso(row?.last_seen_at),
         _source: 'postgres_local',
-      }))
+        };
+      })
       .filter((row) => !!row.company_name || !!row.vendor_id);
 
     res.json({
@@ -3880,7 +3896,11 @@ app.get('/api/local/estimates', async (req: Request, res: Response) => {
         work_order_id: String(row.work_order_id || ''),
         work_order_number: String(row.work_order_number || pickRaw(raw, ['work_order_number', 'WorkOrderNumber']) || ''),
         property_unit_address: [propertyName, unitName].filter(Boolean).join(' · '),
-        vendor_name: String(row.vendor_name || pickRaw(raw, ['vendor_name', 'VendorName']) || ''),
+        vendor_name: preferNonUuidLabel(
+          row.vendor_name,
+          pickRaw(raw, ['vendor_name', 'VendorName']),
+          pickRaw(raw, ['assigned_user_name', 'AssignedUserName']),
+        ),
         estimate_amount: pickRaw(raw, ['estimate_amount', 'EstimateAmount', 'amount', 'Amount']),
         approval_status: String(row.current_status || pickRaw(raw, ['approval_status', 'ApprovalStatus', 'current_status']) || 'Pending'),
         property_group_id: String(row.property_group_id || pickRaw(raw, ['property_group_id', 'property_group_uuid', 'PropertyGroupId']) || ''),
