@@ -3912,7 +3912,7 @@ app.get('/api/local/manager_review', async (req: Request, res: Response) => {
     const propertyGroupId = getPropertyGroupFilter(req);
     const limit = parseLimit(req.query.limit, 2500, 10000);
 
-    const [ticklerRows, renewalRows, ledgerRows] = await Promise.all([
+    const reportResults = await Promise.allSettled([
       fetchV2ReportRows(req, 'tenant_tickler', {
         occurred_on_from: fromDate,
         occurred_on_to: toDate,
@@ -3931,6 +3931,15 @@ app.get('/api/local/manager_review', async (req: Request, res: Response) => {
         property_visibility: 'active',
       }),
     ]);
+
+    const ticklerRows = reportResults[0].status === 'fulfilled' ? reportResults[0].value : [];
+    const renewalRows = reportResults[1].status === 'fulfilled' ? reportResults[1].value : [];
+    const ledgerRows = reportResults[2].status === 'fulfilled' ? reportResults[2].value : [];
+    const v2Errors = [
+      reportResults[0].status === 'rejected' ? ('tenant_tickler: ' + String((reportResults[0].reason as any)?.message || reportResults[0].reason || 'failed')) : '',
+      reportResults[1].status === 'rejected' ? ('renewal_summary: ' + String((reportResults[1].reason as any)?.message || reportResults[1].reason || 'failed')) : '',
+      reportResults[2].status === 'rejected' ? ('general_ledger: ' + String((reportResults[2].reason as any)?.message || reportResults[2].reason || 'failed')) : '',
+    ].filter(Boolean);
 
     const normalizedLedgerRows = ledgerRows
       .map((row) => normalizeStrictLedgerRow(row))
@@ -4041,6 +4050,7 @@ app.get('/api/local/manager_review', async (req: Request, res: Response) => {
         estimate_rows: normalizedEstimateRows.length,
         work_order_rows: normalizedWorkOrderRows.length,
       },
+      v2_errors: v2Errors,
     });
   } catch (error) {
     logTunnelError(error, '/api/local/manager_review');
