@@ -5368,7 +5368,6 @@ setVaultPanel('main');
 })();
 
 if ($('#vaultResumeBtn')) {
-      showUnlockedAppShell();
   $('#vaultResumeBtn').addEventListener('click', async function() {
     try {
       await resumeFromPendingSession();
