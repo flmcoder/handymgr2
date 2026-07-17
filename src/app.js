@@ -319,6 +319,19 @@ var DASHBOARD_KPI_HISTORY_MAX = 16;
 var DASHBOARD_KPI_CHART_MODE = false;
 var DASHBOARD_KPI_ROTATE_TIMER = null;
 
+function normalizeComparableReleaseVersion(version) {
+  var value = String(version || '').trim();
+  if (!value) return '';
+  var normalized = value.toLowerCase().replace(/^v/, '');
+  // Only compare app-style release tags like 9.7.9, 9.7.9:r1, or 9.7.9:r1.1.
+  // Backend git SHAs also arrive in `ping.version`; treating them as semver causes
+  // false "newer server" reloads during auth bootstrap.
+  if (!/^\d+(?:\.\d+)*(?::[a-z0-9]+(?:\.\d+)*)?$/.test(normalized)) {
+    return '';
+  }
+  return normalized;
+}
+
 function compareVersions(v1, v2) {
   var p1 = String(v1).toLowerCase().replace(/^v/, '').split(/[\.\-]/);
   var p2 = String(v2).toLowerCase().replace(/^v/, '').split(/[\.\-]/);
@@ -329,6 +342,13 @@ function compareVersions(v1, v2) {
     if (n1 < n2) return -1;
   }
   return 0;
+}
+
+function shouldForceVersionReload(serverVersion, appVersion) {
+  var normalizedServer = normalizeComparableReleaseVersion(serverVersion);
+  var normalizedApp = normalizeComparableReleaseVersion(appVersion);
+  if (!normalizedServer || !normalizedApp) return false;
+  return normalizedServer !== normalizedApp && compareVersions(normalizedServer, normalizedApp) > 0;
 }
 
 function syncDisplayedAppVersion() {
@@ -22715,9 +22735,11 @@ async function initApp() {
     if (pingData && pingData.version) {
       SERVER_VERSION = String(pingData.version);
       localStorage.setItem('hm_server_version', SERVER_VERSION);
-      if (SERVER_VERSION !== APP_VERSION && compareVersions(SERVER_VERSION, APP_VERSION) > 0) {
+      if (shouldForceVersionReload(SERVER_VERSION, APP_VERSION)) {
         localStorage.setItem('hm_version_mismatch', '1');
         setTimeout(function() { location.reload(); }, 2000);
+      } else {
+        localStorage.removeItem('hm_version_mismatch');
       }
     }
 
@@ -25819,8 +25841,11 @@ function decodeWebhookEventV9(evt) {
     // Check for version mismatch before initializing
     if (localStorage.getItem('hm_version_mismatch') === '1') {
       localStorage.removeItem('hm_version_mismatch');
-      location.reload();
-      return;
+      var storedServerVersion = localStorage.getItem('hm_server_version') || '';
+      if (shouldForceVersionReload(storedServerVersion, APP_VERSION)) {
+        location.reload();
+        return;
+      }
     }
 
     _seedLastId().then(function(){
