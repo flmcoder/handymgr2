@@ -13,7 +13,7 @@ export function createTabsModule(deps) {
       return pmAllowedTabs.indexOf(tabName) !== -1;
     }
     if (role === 'manager') {
-      var gmAllowedTabs = ['dashboard', 'workorders', 'estimates', 'routing', 'billing', 'occupancy', 'properties', 'turnboard', 'vendors', 'inspections', 'managerreview', 'payroll', 'errors'];
+      var gmAllowedTabs = ['dashboard', 'workorders', 'estimates', 'routing', 'billing', 'occupancy', 'properties', 'turnboard', 'vendors', 'inspections', 'managerreview', 'payroll', 'dbadmin', 'errors'];
       return gmAllowedTabs.indexOf(tabName) !== -1;
     }
     return true;
