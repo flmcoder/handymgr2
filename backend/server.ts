@@ -3157,13 +3157,12 @@ app.post('/api/local/bootstrap_sync', async (req: Request, res: Response) => {
     const { runSync } = await import('./sync/syncRunner.ts');
     const summaries: Record<string, unknown> = {};
     for (const endpointKey of finalEndpoints) {
-      const useLookbackControls = endpointKey === 'v0:work_orders';
       summaries[endpointKey] = await runSync({
         endpointKey,
         triggerType,
         maxPages,
-        lookbackDays: useLookbackControls ? lookbackDays : 180,
-        forceLookback: useLookbackControls ? forceLookback : false,
+        lookbackDays,
+        forceLookback,
       });
     }
 

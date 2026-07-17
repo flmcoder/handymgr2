@@ -6908,7 +6908,7 @@ async function syncCoreDatasetsToLocalDb() {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer ' + token
     },
-    body: JSON.stringify({ maxPages: 0 })
+    body: JSON.stringify({ maxPages: 0, lookback_days: 3650, force_lookback: true })
   }, 180000);
 
   var data = {};

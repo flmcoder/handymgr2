@@ -60,10 +60,13 @@ function buildV2ReportRequest(report: string, body: Record<string, any>): { url:
 const ENDPOINTS: Record<string, EndpointDef> = {
   'v0:units': {
     apiVersion: 'v0',
-    buildFirstUrl: ({ baseUrl, incrementalFrom }) => {
+    buildFirstUrl: ({ baseUrl, incrementalFrom, lookbackDays, forceLookback }) => {
+      const clampedLookback = Math.max(1, Math.min(3650, Number(lookbackDays || 180)));
       const from = incrementalFrom
-        ? new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z'
-        : new Date(Date.now() - 5 * 365 * 86400_000).toISOString().slice(0, 19) + 'Z';
+        ? (forceLookback
+          ? new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z'
+          : new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z')
+        : new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z';
       return `${baseUrl}/api/v0/units?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
     },
     extractRows: (data) => data?.data ?? data?.results ?? [],
@@ -72,10 +75,13 @@ const ENDPOINTS: Record<string, EndpointDef> = {
 
   'v0:properties': {
     apiVersion: 'v0',
-    buildFirstUrl: ({ baseUrl, incrementalFrom }) => {
+    buildFirstUrl: ({ baseUrl, incrementalFrom, lookbackDays, forceLookback }) => {
+      const clampedLookback = Math.max(1, Math.min(3650, Number(lookbackDays || 180)));
       const from = incrementalFrom
-        ? new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z'
-        : new Date(Date.now() - 5 * 365 * 86400_000).toISOString().slice(0, 19) + 'Z';
+        ? (forceLookback
+          ? new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z'
+          : new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z')
+        : new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z';
       return `${baseUrl}/api/v0/properties?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
     },
     extractRows: (data) => data?.data ?? data?.results ?? [],
@@ -84,10 +90,13 @@ const ENDPOINTS: Record<string, EndpointDef> = {
 
   'v0:property_groups': {
     apiVersion: 'v0',
-    buildFirstUrl: ({ baseUrl, incrementalFrom }) => {
+    buildFirstUrl: ({ baseUrl, incrementalFrom, lookbackDays, forceLookback }) => {
+      const clampedLookback = Math.max(1, Math.min(3650, Number(lookbackDays || 180)));
       const from = incrementalFrom
-        ? new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z'
-        : new Date(Date.now() - 5 * 365 * 86400_000).toISOString().slice(0, 19) + 'Z';
+        ? (forceLookback
+          ? new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z'
+          : new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z')
+        : new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z';
       return `${baseUrl}/api/v0/property_groups?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
     },
     extractRows: (data) => data?.data ?? data?.results ?? [],
@@ -111,9 +120,13 @@ const ENDPOINTS: Record<string, EndpointDef> = {
 
   'v2:unit_inspection': {
     apiVersion: 'v2',
-    buildFirstRequest: ({ incrementalFrom }) => buildV2ReportRequest('unit_inspection', {
+    buildFirstRequest: ({ incrementalFrom, lookbackDays, forceLookback }) => buildV2ReportRequest('unit_inspection', {
       unit_visibility: 'active',
-      last_inspection_on_from: toIsoDate(incrementalFrom || new Date()),
+      last_inspection_on_from: toIsoDate(
+        forceLookback
+          ? new Date(Date.now() - Math.max(1, Math.min(3650, Number(lookbackDays || 180))) * 86400_000)
+          : (incrementalFrom || new Date()),
+      ),
       include_blank_inspection_date: '1',
       columns: [
         'property', 'property_name', 'property_id', 'property_address', 'property_street', 'property_street2',
@@ -127,12 +140,16 @@ const ENDPOINTS: Record<string, EndpointDef> = {
 
   'v2:tenant_directory': {
     apiVersion: 'v2',
-    buildFirstRequest: ({ incrementalFrom }) => buildV2ReportRequest('tenant_directory', {
+    buildFirstRequest: ({ incrementalFrom, lookbackDays, forceLookback }) => buildV2ReportRequest('tenant_directory', {
       tenant_visibility: 'active',
       tenant_statuses: ['0', '4'],
       tenant_types: 'all',
       property_visibility: 'active',
-      last_updated_at_from: toIsoDate(incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
+      last_updated_at_from: toIsoDate(
+        forceLookback
+          ? new Date(Date.now() - Math.max(1, Math.min(3650, Number(lookbackDays || 180))) * 86400_000)
+          : (incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
+      ),
       columns: [
         'property', 'property_name', 'property_id', 'property_address', 'unit', 'tenant', 'status', 'tenant_type',
         'phone_numbers', 'emails', 'move_in', 'lease_to', 'rent', 'tenant_tags', 'tenant_agent', 'tenant_visibility',
@@ -145,9 +162,13 @@ const ENDPOINTS: Record<string, EndpointDef> = {
 
   'v2:unit_turn_detail': {
     apiVersion: 'v2',
-    buildFirstRequest: ({ incrementalFrom }) => buildV2ReportRequest('unit_turn_detail', {
+    buildFirstRequest: ({ incrementalFrom, lookbackDays, forceLookback }) => buildV2ReportRequest('unit_turn_detail', {
       property_visibility: 'active',
-      move_out_date_from: toIsoDate(incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
+      move_out_date_from: toIsoDate(
+        forceLookback
+          ? new Date(Date.now() - Math.max(1, Math.min(3650, Number(lookbackDays || 180))) * 86400_000)
+          : (incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
+      ),
       move_out_date_to: toIsoDate(new Date(Date.now() + 365 * 86400_000)),
       unit_turn_status: 'All',
       columns: [
@@ -163,9 +184,13 @@ const ENDPOINTS: Record<string, EndpointDef> = {
 
   'v2:unit_vacancy': {
     apiVersion: 'v2',
-    buildFirstRequest: ({ incrementalFrom }) => buildV2ReportRequest('unit_vacancy', {
+    buildFirstRequest: ({ incrementalFrom, lookbackDays, forceLookback }) => buildV2ReportRequest('unit_vacancy', {
       property_visibility: 'active',
-      vacant_from_from: toIsoDate(incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
+      vacant_from_from: toIsoDate(
+        forceLookback
+          ? new Date(Date.now() - Math.max(1, Math.min(3650, Number(lookbackDays || 180))) * 86400_000)
+          : (incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
+      ),
       vacant_from_to: toIsoDate(new Date()),
       columns: [
         'property', 'property_name', 'property_id', 'unit', 'unit_name', 'unit_id',
