@@ -3598,14 +3598,16 @@ function showCorsError(detail) {
     setApiStatus('error', 'CORS Blocked');
   }
   if (detailEl) { detailEl.textContent = detailStr; }
-  banner.classList.add('show');
+  if (banner && banner.classList) {
+    banner.classList.add('show');
+  }
 }
 
 function setApiStatus(state, text) {
   var el = $('#apiStatus');
   var textEl = $('#apiStatusText');
-  el.className = 'topbar-status ' + state;
-  textEl.textContent = text;
+  if (el) el.className = 'topbar-status ' + state;
+  if (textEl) textEl.textContent = text;
 }
 
 function setSectionBusy(sectionId, busy, message) {
