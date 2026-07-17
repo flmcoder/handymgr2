@@ -22824,12 +22824,12 @@ async function fetchAllLive() {
     && (!TURNS || TURNS.length === 0)
     && (!INSPECTIONS || INSPECTIONS.length === 0);
   if (needsBootstrap) {
-    try {
-      setApiStatus('loading', 'Bootstrapping local tables from AppFolio…');
-      await syncCoreDatasetsToLocalDb();
-    } catch (bootstrapErr) {
+    setApiStatus('loading', 'Bootstrapping local tables from AppFolio…');
+    // Do not block local reads on bootstrap: cross-origin/session hiccups can make
+    // bootstrap slow or fail while local tables are still readable.
+    syncCoreDatasetsToLocalDb().catch(function(bootstrapErr) {
       console.warn('fetchAllLive bootstrap sync failed:', bootstrapErr && (bootstrapErr.message || bootstrapErr));
-    }
+    });
   }
   // Vendors & Inspections lazy-loaded on tab click — removed from initial sync
   var steps = ['Work Orders', 'Properties', 'Groups', 'Deferred Hydration'];
