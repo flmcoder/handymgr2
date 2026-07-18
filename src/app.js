@@ -667,8 +667,16 @@ function registerOfflineServiceWorker() {
 
 registerOfflineServiceWorker();
 
-function closeModal(id) { document.getElementById(id).classList.remove('show'); }
-function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove('show');
+}
+function openModal(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add('show');
+}
 function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 var escHtml = escapeHtml;
 var SESSION_IDLE_TIMEOUT_MS = 3 * 60 * 60 * 1000;
@@ -13507,6 +13515,18 @@ function setWOView(viewType) {
   renderWorkOrders();
 }
 
+function exposeLegacyInlineHandlers() {
+  if (typeof window === 'undefined') return;
+  // Keep inline index.html controls functional while module scripts run in strict scope.
+  window.setWOView = setWOView;
+  window.toggleTurnView = toggleTurnView;
+  window.openBulkNoteModal = openBulkNoteModal;
+  window.executeBulkNoteUpdate = executeBulkNoteUpdate;
+  window.showPropertyDetailModal = showPropertyDetailModal;
+}
+
+exposeLegacyInlineHandlers();
+
 function setWOSubtab(tab) {
   var allowed = { active: true, completed: true, closure: true, followup: true };
   var target = allowed[tab] ? tab : 'active';
@@ -16105,7 +16125,7 @@ function renderWorkOrders() {
       { label: 'WO #',        render: function(wo) { return '<strong>#' + escapeHtml(String(wo.id || '')) + '</strong>'; } },
       { label: 'Property',    render: function(wo) { return escapeHtml(wo.propertyName || '\u2014'); } },
       { label: 'Unit',        render: function(wo) { return escapeHtml(wo.unit || '\u2014'); } },
-      { label: 'Description', render: function(wo) { return '<span style="font-size:12px">' + escapeHtml(wo.description || '\u2014') + '</span>'; } },
+      { label: 'Description', render: function(wo) { return '<span class="wo-desc-cell">' + escapeHtml(wo.description || '\u2014') + '</span>'; } },
       { label: 'Status',      render: function(wo) { return '<span class="tag">' + escapeHtml(wo.status || '\u2014') + '</span>'; } },
       { label: 'Priority',    render: function(wo) { var pc = String(wo.priority || 'normal').toLowerCase(); return '<span class="tag ' + pc + '">' + escapeHtml(wo.priority || 'Normal') + '</span>'; } },
       { label: 'Vendor',      render: function(wo) { return escapeHtml(wo.vendorName || '\u2014'); } },
@@ -16117,11 +16137,19 @@ function renderWorkOrders() {
     });
     var thHtml = ['WO #', 'Property', 'Unit', 'Description', 'Status', 'Priority', 'Vendor', 'Age']
       .map(function(h) { return '<th>' + h + '</th>'; }).join('');
-    board.innerHTML = tabsHtml + '<div class="table-wrapper">' +
+    board.innerHTML = tabsHtml + '<div class="table-wrapper wo-compact-list">' +
       '<table class="data-table"><thead><tr>' + thHtml + '</tr></thead>' +
       '<tbody>' + woListResult.html + '</tbody></table>' +
       '<div class="u-table-footer-split" id="woListFooter"></div>' +
       '</div>';
+    Array.prototype.forEach.call(board.querySelectorAll('tbody .u-row-click[data-woid]'), function(row) {
+      row.addEventListener('click', function(e) {
+        if (e.target.closest('button,a,input,select,textarea')) return;
+        var woId = row.getAttribute('data-woid');
+        if (!woId) return;
+        showWODetail(woId);
+      });
+    });
     var woListFooter = document.getElementById('woListFooter');
     if (woListFooter) {
       if (woListResult.total <= 0) {
@@ -21413,6 +21441,54 @@ function wireUpUI() {
   }
   if ($('#woSort')) {
     $('#woSort').addEventListener('change', function() { currentWOSort = this.value || 'oldest'; renderWorkOrders(); });
+  }
+  var btnWOViewList = $('#btnWOViewList');
+  if (btnWOViewList) {
+    btnWOViewList.removeAttribute('onclick');
+    btnWOViewList.addEventListener('click', function(e) {
+      e.preventDefault();
+      setWOView('list');
+    });
+  }
+  var btnWOViewBoard = $('#btnWOViewBoard');
+  if (btnWOViewBoard) {
+    btnWOViewBoard.removeAttribute('onclick');
+    btnWOViewBoard.addEventListener('click', function(e) {
+      e.preventDefault();
+      setWOView('board');
+    });
+  }
+  var btnTurnViewList = $('#btnTurnViewList');
+  if (btnTurnViewList) {
+    btnTurnViewList.removeAttribute('onclick');
+    btnTurnViewList.addEventListener('click', function(e) {
+      e.preventDefault();
+      toggleTurnView('list');
+    });
+  }
+  var btnTurnViewKanban = $('#btnTurnViewKanban');
+  if (btnTurnViewKanban) {
+    btnTurnViewKanban.removeAttribute('onclick');
+    btnTurnViewKanban.addEventListener('click', function(e) {
+      e.preventDefault();
+      toggleTurnView('kanban');
+    });
+  }
+  var btnBulkNoteOpen = $('#btnBulkNoteOpen');
+  if (btnBulkNoteOpen) {
+    btnBulkNoteOpen.removeAttribute('onclick');
+    btnBulkNoteOpen.addEventListener('click', function(e) {
+      e.preventDefault();
+      openBulkNoteModal();
+    });
+  }
+  var bulkNoteSubmitBtn = $('#bulkNoteSubmitBtn');
+  if (bulkNoteSubmitBtn) {
+    bulkNoteSubmitBtn.removeAttribute('onclick');
+    bulkNoteSubmitBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      executeBulkNoteUpdate();
+    });
   }
   if ($('#btnSaveWOAging')) {
     $('#btnSaveWOAging').addEventListener('click', function() {
