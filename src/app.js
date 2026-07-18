@@ -318,6 +318,10 @@ var DASHBOARD_KPI_HISTORY = [];
 var DASHBOARD_KPI_HISTORY_MAX = 16;
 var DASHBOARD_KPI_CHART_MODE = false;
 var DASHBOARD_KPI_ROTATE_TIMER = null;
+var FORCE_REFRESH_DEFAULT_MS = 4 * 60 * 60 * 1000; // 4h
+var FORCE_REFRESH_MIN_MS = 5 * 60 * 1000; // 5m safety floor
+var FORCE_REFRESH_LAST_AT_KEY = 'hm_force_refresh_last_at';
+var _forceRefreshTimer = null;
 
 function normalizeComparableReleaseVersion(version) {
   var value = String(version || '').trim();
@@ -351,6 +355,82 @@ function shouldForceVersionReload(serverVersion, appVersion) {
   return normalizedServer !== normalizedApp && compareVersions(normalizedServer, normalizedApp) > 0;
 }
 
+function getConfiguredForceRefreshIntervalMs() {
+  var configuredMs = 0;
+  var configuredMinutes = 0;
+  try {
+    configuredMs = Number(window.HM_FORCE_REFRESH_INTERVAL_MS || 0) || 0;
+    configuredMinutes = Number(window.HM_FORCE_REFRESH_INTERVAL_MINUTES || 0) || 0;
+  } catch (e) { /* */ }
+  var storageMs = 0;
+  try { storageMs = Number(localStorage.getItem('hm_force_refresh_interval_ms') || '0') || 0; } catch (e2) { /* */ }
+
+  var resolved = storageMs || configuredMs || (configuredMinutes > 0 ? configuredMinutes * 60000 : 0) || FORCE_REFRESH_DEFAULT_MS;
+  if (!isFinite(resolved) || resolved <= 0) resolved = FORCE_REFRESH_DEFAULT_MS;
+  return Math.max(FORCE_REFRESH_MIN_MS, Math.floor(resolved));
+}
+
+function scrubForceRefreshQueryParams() {
+  try {
+    var url = new URL(window.location.href);
+    var hadMarker = url.searchParams.has('hmfr') || url.searchParams.has('hmfr_reason');
+    if (!hadMarker) return;
+    url.searchParams.delete('hmfr');
+    url.searchParams.delete('hmfr_reason');
+    window.history.replaceState({}, document.title, url.toString());
+  } catch (e) { /* */ }
+}
+
+function triggerForcedClientRefresh(reason) {
+  var now = Date.now();
+  try { localStorage.setItem(FORCE_REFRESH_LAST_AT_KEY, String(now)); } catch (e) { /* */ }
+  try {
+    var url = new URL(window.location.href);
+    url.searchParams.set('hmfr', String(now));
+    url.searchParams.set('hmfr_reason', String(reason || 'interval'));
+    window.location.replace(url.toString());
+  } catch (e2) {
+    window.location.reload();
+  }
+}
+
+function scheduleForcedClientRefresh(delayMs, intervalMs) {
+  if (_forceRefreshTimer) {
+    clearTimeout(_forceRefreshTimer);
+    _forceRefreshTimer = null;
+  }
+  var waitMs = Math.max(5000, Number(delayMs || 0) || intervalMs || FORCE_REFRESH_DEFAULT_MS);
+  _forceRefreshTimer = setTimeout(function() {
+    if (document.hidden) {
+      scheduleForcedClientRefresh(60000, intervalMs);
+      return;
+    }
+    triggerForcedClientRefresh('interval_elapsed');
+  }, waitMs);
+}
+
+function initForcedClientRefreshPolicy() {
+  scrubForceRefreshQueryParams();
+  var intervalMs = getConfiguredForceRefreshIntervalMs();
+  var now = Date.now();
+  var lastRefreshAt = 0;
+  try { lastRefreshAt = Number(localStorage.getItem(FORCE_REFRESH_LAST_AT_KEY) || '0') || 0; } catch (e) { /* */ }
+
+  if (!lastRefreshAt || !isFinite(lastRefreshAt) || lastRefreshAt <= 0) {
+    try { localStorage.setItem(FORCE_REFRESH_LAST_AT_KEY, String(now)); } catch (e2) { /* */ }
+    scheduleForcedClientRefresh(intervalMs, intervalMs);
+    return;
+  }
+
+  var elapsedMs = Math.max(0, now - lastRefreshAt);
+  if (elapsedMs >= intervalMs) {
+    triggerForcedClientRefresh('interval_elapsed');
+    return;
+  }
+
+  scheduleForcedClientRefresh(intervalMs - elapsedMs, intervalMs);
+}
+
 function syncDisplayedAppVersion() {
   var bareVersion = String(APP_VERSION || '').replace(/^v/i, '');
   var buildTag = $('#buildBadgeTag');
@@ -365,6 +445,7 @@ syncDisplayedAppVersion();
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', syncDisplayedAppVersion);
 }
+initForcedClientRefreshPolicy();
 
 function applyBrandConfig(brand) {
   if (!brand || typeof brand !== 'object') return;
