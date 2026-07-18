@@ -681,6 +681,7 @@ async function resumeFromPendingSession() {
   var prevRole = getStoredAccessRole();
   _sessionExpiryHandled = false;
   beginProxySessionStartupGrace(60000);
+  markProxySessionIssued();
   API_PROXY = proxyUrl;
   API_VHOST = vhost;
   API_CREDS = { p: token };
@@ -1956,6 +1957,7 @@ var _proxySessionWarmupFailures = 0;
 var _proxySessionConsecutive401 = 0;
 var _proxySessionLastHealthyAt = 0;
 var _proxySessionStartupGraceUntil = 0;
+var _proxySessionIssuedAt = 0;
 
 function markProxySessionHealthy() {
   _proxySessionLastHealthyAt = Date.now();
@@ -1967,6 +1969,16 @@ function beginProxySessionStartupGrace(ms) {
   var graceMs = Math.max(30000, Number(ms || 0) || 60000);
   _proxySessionStartupGraceUntil = Date.now() + graceMs;
   markProxySessionWarmup(Math.max(20000, graceMs));
+}
+
+function markProxySessionIssued() {
+  _proxySessionIssuedAt = Date.now();
+}
+
+function isProxySessionFreshIssueWindow(ms) {
+  var windowMs = Math.max(60000, Number(ms || 0) || 300000);
+  if (!_proxySessionIssuedAt) return false;
+  return (Date.now() - _proxySessionIssuedAt) <= windowMs;
 }
 
 function markProxySessionWarmup(ms) {
@@ -1990,21 +2002,33 @@ function shouldProbeProxySessionBeforeLockout() {
 }
 
 async function probeProxySessionStillValid() {
-  if (!API_PROXY) return false;
+  if (!API_PROXY) return { state: 'transient' };
   var token = getProxyAccessToken();
-  if (!token) return false;
+  if (!token) return { state: 'invalid' };
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=session_info';
-  var res = await fetchWithTimeout(url, {
-    headers: {
-      'Accept': 'application/json',
-      'Authorization': 'Bearer ' + token
-    }
-  }, 12000);
-  if (!res.ok) return false;
+  var res;
+  try {
+    res = await fetchWithTimeout(url, {
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ' + token
+      }
+    }, 12000);
+  } catch (eFetch) {
+    return { state: 'transient' };
+  }
+  if (res.status === 401 || res.status === 403) return { state: 'invalid' };
+  if (!res.ok) return { state: 'transient' };
   var data = {};
-  try { data = await res.json(); } catch (e) { return false; }
-  return !!(data && data.ok && data.session);
+  try { data = await res.json(); } catch (e) { return { state: 'transient' }; }
+  if (data && data.ok && data.authenticated && data.session) {
+    return { state: 'valid' };
+  }
+  if (data && (data.authenticated === false || data.ok === false)) {
+    return { state: 'invalid' };
+  }
+  return { state: 'transient' };
 }
 
 function forceProxySessionExpiryLockout(contextLabel) {
@@ -2091,24 +2115,47 @@ function handleProxySessionExpired(contextLabel) {
   if (shouldProbeProxySessionBeforeLockout()) {
     _proxySessionProbeInFlight = true;
     (async function() {
+      var currentNow = Date.now();
       try {
-        var stillValid = await probeProxySessionStillValid();
-        if (stillValid) {
+        var probeState = await probeProxySessionStillValid();
+        if (probeState && probeState.state === 'valid') {
           _proxySessionProbeInFlight = false;
           markProxySessionHealthy();
           markProxySessionWarmup(4000);
           return;
         }
+        if (!probeState || probeState.state !== 'invalid') {
+          _proxySessionProbeInFlight = false;
+          _proxySessionWarmupFailures++;
+          var transientStartupGrace = currentNow <= _proxySessionStartupGraceUntil;
+          if (transientStartupGrace || isProxySessionFreshIssueWindow(300000)) {
+            markProxySessionWarmup(10000);
+            return;
+          }
+          if (_proxySessionWarmupFailures < 8) {
+            markProxySessionWarmup(8000);
+            return;
+          }
+          // Treat prolonged probe uncertainty as a soft failure, not a hard
+          // sign-out. This prevents immediate lockouts during backend warmups.
+          markProxySessionWarmup(12000);
+          return;
+        }
       } catch (e) { /* fall through to lockout */ }
       _proxySessionProbeInFlight = false;
       _proxySessionWarmupFailures++;
-      var inStartupGrace = now <= _proxySessionStartupGraceUntil;
-      var recentlyHealthy = _proxySessionLastHealthyAt && ((now - _proxySessionLastHealthyAt) <= 120000);
+      var inStartupGrace = currentNow <= _proxySessionStartupGraceUntil;
+      var recentlyHealthy = _proxySessionLastHealthyAt && ((currentNow - _proxySessionLastHealthyAt) <= 120000);
+      var freshIssue = isProxySessionFreshIssueWindow(300000);
       // Never force relock during the explicit post-login grace window.
       // Initial sync can trigger a burst of transient 401s before all
       // backend session state settles.
       if (inStartupGrace) {
         markProxySessionWarmup(7000);
+        return;
+      }
+      if (freshIssue && _proxySessionConsecutive401 < 8) {
+        markProxySessionWarmup(9000);
         return;
       }
       // During immediate post-login startup, tolerate a few transient 401s
@@ -2134,6 +2181,7 @@ function lockVault() {
   _proxySessionConsecutive401 = 0;
   _proxySessionLastHealthyAt = 0;
   _proxySessionStartupGraceUntil = 0;
+  _proxySessionIssuedAt = 0;
   appInitialized = false;
   WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
   CLOSED_TURNS = new Set();
@@ -5234,6 +5282,7 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
   var previousRole = getStoredAccessRole();
   _sessionExpiryHandled = false;
   beginProxySessionStartupGrace(60000);
+  markProxySessionIssued();
   API_VHOST = vhost;
   API_PROXY = proxyUrl;
   API_CREDS = { p: existingDeviceToken };
@@ -5463,6 +5512,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
       }
       _sessionExpiryHandled = false;
       beginProxySessionStartupGrace(60000);
+      markProxySessionIssued();
       API_CREDS = { p: sessionToken };
       if (sessionToken) {
         try { localStorage.setItem('hm_auth_token', sessionToken); } catch (eTokA) { /* */ }
