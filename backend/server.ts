@@ -1175,15 +1175,40 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
 
   const rowsToUpsert: Array<Record<string, unknown>> = [];
   const bodyTechs = safeParseArray((params.techs || params.technicians || params.records) as unknown);
+  const reasonCounts: Record<string, number> = {};
+  const diagnostics: Record<string, unknown> = {
+    mode: bodyTechs.length > 0 ? 'request_payload' : 'work_order_inference',
+    source: bodyTechs.length > 0 ? 'request_payload' : 'postgres_work_orders',
+    examined: 0,
+    candidates: 0,
+    inserted: 0,
+    skipped: 0,
+    reason_counts: reasonCounts,
+  };
+  const addReason = (key: string) => {
+    const safeKey = String(key || '').trim() || 'unknown';
+    reasonCounts[safeKey] = (reasonCounts[safeKey] || 0) + 1;
+  };
 
   if (bodyTechs.length > 0) {
     for (const tech of bodyTechs) {
+      diagnostics.examined = Number(diagnostics.examined || 0) + 1;
+      const techId = String(tech?.tech_id || tech?.techId || tech?.id || '').trim();
+      if (!techId) {
+        addReason('missing_tech_id');
+        continue;
+      }
+      const techName = String(tech?.tech_name || tech?.techName || tech?.name || '').trim();
+      if (!techName) addReason('missing_tech_name_fallback_to_id');
+      const groupUuid = String(tech?.property_group_uuid || tech?.propertyGroupUuid || '').trim();
+      const geoZone = String(tech?.geo_zone || tech?.branch || tech?.zone || '').trim();
+      if (!groupUuid && !geoZone) addReason('missing_group_uuid_and_geo_zone');
       rowsToUpsert.push({
-        tech_id: String(tech?.tech_id || tech?.techId || tech?.id || '').trim(),
-        tech_name: String(tech?.tech_name || tech?.techName || tech?.name || '').trim(),
+        tech_id: techId,
+        tech_name: techName,
         tech_phone: String(tech?.tech_phone || tech?.phone || '').trim(),
-        geo_zone: String(tech?.geo_zone || tech?.branch || tech?.zone || '').trim(),
-        property_group_uuid: String(tech?.property_group_uuid || tech?.propertyGroupUuid || '').trim(),
+        geo_zone: geoZone,
+        property_group_uuid: groupUuid,
         tier: asNumericLike(tech?.tier, 1),
         active: asBooleanLike(tech?.active, true),
         performance_score: asNumericLike(tech?.performance_score ?? tech?.grade, 100),
@@ -1192,15 +1217,25 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
     }
   } else {
     const workOrders = await fetchDispatchWorkOrders(3650);
+    diagnostics.examined = workOrders.length;
     const dedupe = new Map<string, Record<string, unknown>>();
     for (const row of workOrders) {
       const techId = String(row?.assigned_user_id || '').trim();
       const techName = String(row?.assigned_user_name || '').trim();
-      if (!techId && !techName) continue;
+      if (!techId && !techName) {
+        addReason('missing_assignee_id_and_name');
+        continue;
+      }
       const key = techId || techName;
-      if (dedupe.has(key)) continue;
+      if (dedupe.has(key)) {
+        addReason('duplicate_assignee_in_work_orders');
+        continue;
+      }
       const propertyGroupUuid = String(row?.property_group_id || '').trim();
+      if (!propertyGroupUuid) addReason('missing_property_group_uuid_in_work_order');
       const branch = deriveDispatchBranch(propertyGroupUuid, tier1GroupUuid, tier2GroupUuid);
+      if (branch === 'unknown') addReason('unmapped_property_group_uuid');
+      if (!techId) addReason('missing_assigned_user_id_using_name_key');
       dedupe.set(key, {
         tech_id: techId || key,
         tech_name: techName || techId || key,
@@ -1216,10 +1251,15 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
     rowsToUpsert.push(...dedupe.values());
   }
 
+  diagnostics.candidates = rowsToUpsert.length;
+
   let upserted = 0;
   for (const tech of rowsToUpsert) {
     const techId = String(tech.tech_id || '').trim();
-    if (!techId) continue;
+    if (!techId) {
+      addReason('upsert_skipped_missing_tech_id');
+      continue;
+    }
     await queryClient.unsafe(
       `insert into tech_grades (
          tech_id, tech_name, tech_phone, geo_zone, property_group_uuid, tier, grade,
@@ -1259,7 +1299,18 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
     upserted += 1;
   }
 
-  return { ok: true, inserted: upserted, count: upserted, source: 'postgres_local' };
+  diagnostics.inserted = upserted;
+  diagnostics.skipped = Math.max(0, Number(diagnostics.candidates || 0) - upserted);
+  console.info(`[dispatch:sync_assignees] mode=${String(diagnostics.mode || '')} examined=${Number(diagnostics.examined || 0)} candidates=${rowsToUpsert.length} inserted=${upserted} skipped=${Number(diagnostics.skipped || 0)} reasons=${JSON.stringify(reasonCounts)}`);
+
+  return {
+    ok: true,
+    inserted: upserted,
+    count: upserted,
+    skipped: Number(diagnostics.skipped || 0),
+    source: 'postgres_local',
+    diagnostics,
+  };
 }
 
 async function refreshDispatchQueue(params: Record<string, string>): Promise<any> {

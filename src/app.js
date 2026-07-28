@@ -24286,6 +24286,7 @@ var DISPATCH = {
   _lastAssigneeSyncAt: 0,
   tier1GroupUuid: '',
   tier2GroupUuid: '',
+  lastRosterSyncReport: null,
   _pollTimer: null, _lastAuditMax: 0, POLL_MS: 30000,
 };
 
@@ -24690,6 +24691,7 @@ function renderDispatchRoster(techs) {
   if (!tbody) return;
   if(!techs||techs.length===0){
     tbody.innerHTML='<tr><td colspan="9"><div class="dispatch-empty"><i class="fas fa-hard-hat"></i>No techs yet. Click <strong>+ Add Tech</strong>.</div></td></tr>';
+    renderDispatchRosterSyncReport();
     return;
   }
   var html='';
@@ -24725,9 +24727,88 @@ function renderDispatchRoster(techs) {
   });
   if (!html) {
     tbody.innerHTML='<tr><td colspan="9"><div class="dispatch-empty"><i class="fas fa-filter"></i>No roster entries for the selected branch.</div></td></tr>';
+    renderDispatchRosterSyncReport();
     return;
   }
   tbody.innerHTML=html;
+  renderDispatchRosterSyncReport();
+}
+
+function _incrementSyncReason(map, key, amount) {
+  if (!map || !key) return;
+  var inc = Number(amount || 1);
+  if (!isFinite(inc) || inc <= 0) inc = 1;
+  map[key] = (Number(map[key] || 0) || 0) + inc;
+}
+
+function _mergeSyncReasons(target, source) {
+  if (!target || !source || typeof source !== 'object') return;
+  Object.keys(source).forEach(function(key) {
+    _incrementSyncReason(target, key, Number(source[key] || 0) || 1);
+  });
+}
+
+function setDispatchRosterSyncReport(report) {
+  DISPATCH.lastRosterSyncReport = report || null;
+  renderDispatchRosterSyncReport();
+}
+
+function renderDispatchRosterSyncReport() {
+  var el = document.getElementById('dispatchRosterSyncReport');
+  if (!el) return;
+  var report = DISPATCH.lastRosterSyncReport;
+  if (!report) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+
+  var status = String(report.status || 'info').toLowerCase();
+  var statusColor = status === 'error'
+    ? 'var(--danger)'
+    : (status === 'success' ? 'var(--success)' : (status === 'running' ? 'var(--warning)' : 'var(--accent)'));
+  var reasonMap = report.reason_counts || {};
+  var reasonEntries = Object.keys(reasonMap).map(function(key) {
+    return { key: key, count: Number(reasonMap[key] || 0) || 0 };
+  }).filter(function(item) { return item.count > 0; }).sort(function(a, b) {
+    return b.count - a.count;
+  });
+
+  var reasonHtml = reasonEntries.length
+    ? ('<div style="margin-top:.45rem"><strong>Skip/Error reasons:</strong> ' + reasonEntries.slice(0, 8).map(function(item) {
+        return escapeHtml(item.key) + ' (' + item.count + ')';
+      }).join(' · ') + '</div>')
+    : '';
+
+  var imported = Number(report.imported || report.inserted || 0) || 0;
+  var examined = Number(report.examined || report.users_total || 0) || 0;
+  var candidates = Number(report.candidates || report.eligible || 0) || 0;
+  var skipped = Number(report.skipped || Math.max(0, candidates - imported)) || 0;
+  var source = String(report.source || 'sync');
+  var stage = String(report.stage || '');
+  var stamp = report.completed_at || report.started_at || new Date().toISOString();
+
+  var attempts = Array.isArray(report.attempts) ? report.attempts : [];
+  var attemptsHtml = attempts.length
+    ? '<div style="margin-top:.4rem;color:var(--text-muted)"><strong>Attempts:</strong> ' + attempts.map(function(a) {
+        var label = String((a && a.label) || 'step');
+        var outcome = String((a && a.outcome) || 'n/a');
+        var detail = String((a && a.detail) || '').trim();
+        return escapeHtml(label + '=' + outcome + (detail ? ' (' + detail + ')' : ''));
+      }).join(' · ') + '</div>'
+    : '';
+
+  el.style.display = '';
+  el.style.borderColor = statusColor;
+  el.innerHTML =
+    '<div style="display:flex;justify-content:space-between;gap:.5rem;align-items:flex-start;flex-wrap:wrap">' +
+      '<div><strong style="color:' + statusColor + '">Roster Sync Diagnostics</strong>' +
+      '<div style="color:var(--text-muted)">' + escapeHtml(source + (stage ? ' · ' + stage : '')) + '</div></div>' +
+      '<div style="font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted)">' + escapeHtml(String(stamp)) + '</div>' +
+    '</div>' +
+    '<div style="margin-top:.35rem;font-family:var(--font-mono)">examined=' + examined + ' · candidates=' + candidates + ' · imported=' + imported + ' · skipped=' + skipped + '</div>' +
+    reasonHtml +
+    attemptsHtml;
 }
 
 function renderDispatchConfig(configRows) {
@@ -25446,6 +25527,34 @@ var DispatchConfig = {
     var actions=['dispatch_sync_assignees','sync_assignee_roster','reassignment_sync_assignees'];
     var payload={tier1_group_uuid:g.tier1,tier2_group_uuid:g.tier2,source:'assignee_role'};
     var lastErr='';
+    var reasonCounts = {};
+    var attempts = [];
+    var reportBase = {
+      status: 'running',
+      source: 'dispatch_sync',
+      stage: 'starting',
+      started_at: new Date().toISOString(),
+      reason_counts: reasonCounts,
+      attempts: attempts,
+      examined: 0,
+      candidates: 0,
+      imported: 0,
+      skipped: 0,
+    };
+    setDispatchRosterSyncReport(reportBase);
+
+    function noteAttempt(label, outcome, detail) {
+      attempts.push({ label: label, outcome: outcome, detail: detail || '' });
+    }
+    function finalizeReport(overrides) {
+      var done = Object.assign({}, reportBase, overrides || {});
+      done.completed_at = new Date().toISOString();
+      var imported = Number(done.imported || done.inserted || 0) || 0;
+      var candidates = Number(done.candidates || 0) || 0;
+      done.skipped = Number(done.skipped || Math.max(0, candidates - imported)) || 0;
+      setDispatchRosterSyncReport(done);
+      return done;
+    }
 
     // Primary path: direct AppFolio users endpoint via proxy action=users.
     // This keeps roster sync working even when dispatch sync aliases are unavailable.
@@ -25468,8 +25577,13 @@ var DispatchConfig = {
         since: '2020-01-01T00:00:00Z'
       });
       var users = (usersResp && usersResp.results) || [];
+      reportBase.stage = 'users_endpoint';
+      reportBase.examined = Array.isArray(users) ? users.length : 0;
+      reportBase.source = 'appfolio_users';
       if (Array.isArray(users) && users.length) {
         var countFromUsers = 0;
+        var eligibleFromUsers = 0;
+        var userRows = [];
         var isUserActive = function(u) {
           var candidates = [u.active, u.Active, u.is_active, u.IsActive, u.status, u.Status];
           for (var ii = 0; ii < candidates.length; ii++) {
@@ -25485,19 +25599,22 @@ var DispatchConfig = {
         for (var ui = 0; ui < users.length; ui++) {
           var u = users[ui] || {};
           var techId = String(u.id || u.Id || '').trim();
-          if (!techId || isTechHidden(techId)) continue;
-          if (!isUserActive(u)) continue;
+          if (!techId) { _incrementSyncReason(reasonCounts, 'missing_user_id'); continue; }
+          if (isTechHidden(techId)) { _incrementSyncReason(reasonCounts, 'hidden_assignee_filtered'); continue; }
+          if (!isUserActive(u)) { _incrementSyncReason(reasonCounts, 'inactive_user_filtered'); continue; }
+          eligibleFromUsers += 1;
 
           var inferredBranch = branchByTechId[techId] || (DISPATCH.activeBranch === 'all' ? 'phoenix' : DISPATCH.activeBranch);
           var inferredGroupUuid = getDispatchGroupUuidForBranch(inferredBranch);
+          if (!inferredGroupUuid) _incrementSyncReason(reasonCounts, 'missing_branch_group_uuid_mapping');
 
           var techName = String(
             u.name ||
             [u.firstName || u.FirstName || '', u.lastName || u.LastName || ''].join(' ').trim() ||
             u.email || u.Email || techId
           ).trim();
-
-          var upFromUsers = await dispatchPost('tech_roster', {
+          if (!techName) _incrementSyncReason(reasonCounts, 'missing_name_fallback_to_id');
+          userRows.push({
             tech_id: techId,
             tech_name: techName,
             tier: inferredBranch === 'phoenix' ? 1 : 2,
@@ -25505,30 +25622,88 @@ var DispatchConfig = {
             property_group_uuid: inferredGroupUuid,
             active: 1
           });
-          if (upFromUsers && upFromUsers.ok) countFromUsers += 1;
+        }
+        reportBase.candidates = eligibleFromUsers;
+        if (userRows.length > 0) {
+          try {
+            var usersBulk = await dispatchPost('dispatch_sync_assignees', {
+              tier1_group_uuid: g.tier1,
+              tier2_group_uuid: g.tier2,
+              source: 'appfolio_users',
+              techs: userRows
+            });
+            if (usersBulk && usersBulk.ok) {
+              countFromUsers = Number(usersBulk.inserted || usersBulk.count || 0) || 0;
+              reportBase.imported = countFromUsers;
+              if (usersBulk.diagnostics && usersBulk.diagnostics.reason_counts) {
+                _mergeSyncReasons(reasonCounts, usersBulk.diagnostics.reason_counts);
+              }
+              noteAttempt('users_endpoint', countFromUsers > 0 ? 'ok' : 'zero_import', countFromUsers + '/' + eligibleFromUsers + ' imported');
+            } else {
+              _incrementSyncReason(reasonCounts, 'users_bulk_sync_not_ok');
+              noteAttempt('users_endpoint', 'not_ok', (usersBulk && usersBulk.error) ? usersBulk.error : 'bulk response not ok');
+            }
+          } catch (usersBulkErr) {
+            _incrementSyncReason(reasonCounts, 'users_bulk_sync_error');
+            lastErr = usersBulkErr.message || String(usersBulkErr);
+            noteAttempt('users_endpoint', 'error', lastErr);
+          }
+        } else {
+          _incrementSyncReason(reasonCounts, 'users_endpoint_no_eligible_rows');
+          noteAttempt('users_endpoint', 'empty', 'No eligible active users for bulk sync');
         }
 
         if (countFromUsers > 0) {
-          v9Toast('Assignees synced', countFromUsers + ' techs imported from AppFolio users', 'success');
+          var usersDone = finalizeReport({
+            status: 'success',
+            stage: 'users_endpoint',
+            source: 'appfolio_users',
+            examined: users.length,
+            candidates: eligibleFromUsers,
+            imported: countFromUsers,
+          });
+          v9Toast('Assignees synced', usersDone.imported + ' imported, ' + usersDone.skipped + ' skipped', 'success');
           DispatchControl.refresh();
           return;
         }
+        _incrementSyncReason(reasonCounts, 'users_endpoint_zero_imported');
+      }
+      if (!Array.isArray(users) || users.length === 0) {
+        _incrementSyncReason(reasonCounts, 'users_endpoint_empty');
+        noteAttempt('users_endpoint', 'empty', 'No users returned');
       }
     } catch (usersErr) {
       lastErr = usersErr.message || String(usersErr);
+      _incrementSyncReason(reasonCounts, 'users_endpoint_error');
+      noteAttempt('users_endpoint', 'error', lastErr);
     }
 
     for (var i = 0; i < actions.length; i++) {
       try {
         var resp = await dispatchPost(actions[i], payload);
         if (resp && resp.ok) {
-          v9Toast('Assignees synced', String(resp.inserted || resp.count || 0) + ' techs synchronized', 'success');
+          var diag = resp.diagnostics || {};
+          if (diag.reason_counts) _mergeSyncReasons(reasonCounts, diag.reason_counts);
+          noteAttempt(actions[i], 'ok', 'inserted=' + String(resp.inserted || resp.count || 0));
+          var actionDone = finalizeReport({
+            status: 'success',
+            stage: actions[i],
+            source: String(diag.source || 'dispatch_action'),
+            examined: Number(diag.examined || 0) || 0,
+            candidates: Number(diag.candidates || 0) || Number(resp.count || 0) || 0,
+            imported: Number(resp.inserted || resp.count || 0) || 0,
+          });
+          v9Toast('Assignees synced', actionDone.imported + ' imported, ' + actionDone.skipped + ' skipped', 'success');
           DispatchControl.refresh();
           return;
         }
         lastErr = (resp && resp.error) ? resp.error : 'not supported';
+        _incrementSyncReason(reasonCounts, actions[i] + '_not_supported');
+        noteAttempt(actions[i], 'not_ok', lastErr);
       } catch (e) {
         lastErr = e.message || String(e);
+        _incrementSyncReason(reasonCounts, actions[i] + '_error');
+        noteAttempt(actions[i], 'error', lastErr);
       }
     }
 
@@ -25539,13 +25714,18 @@ var DispatchConfig = {
       }
       var wo = await fetchLocalWorkOrders('90');
       var candidates = extractAssigneeCandidatesFromWorkOrders((wo && wo.results) || []);
+      reportBase.stage = 'work_orders_fallback';
+      reportBase.source = 'work_orders_fallback';
+      reportBase.examined = Number((wo && wo.results && wo.results.length) || 0) || 0;
       if (candidates.length) {
         var selected = candidates;
+        reportBase.candidates = selected.length;
         var count = 0;
+        var fallbackRows = [];
         for (var ci = 0; ci < selected.length; ci++) {
           var c = selected[ci];
-          if (isTechHidden(c.tech_id)) continue;
-          var up = await dispatchPost('tech_roster', {
+          if (isTechHidden(c.tech_id)) { _incrementSyncReason(reasonCounts, 'fallback_hidden_assignee_filtered'); continue; }
+          fallbackRows.push({
             tech_id: c.tech_id,
             tech_name: c.tech_name,
             tier: c.branch === 'phoenix' ? 1 : 2,
@@ -25553,16 +25733,55 @@ var DispatchConfig = {
             property_group_uuid: getDispatchGroupUuidForBranch(c.branch),
             active: 1
           });
-          if (up && up.ok) count += 1;
+        }
+        if (fallbackRows.length > 0) {
+          try {
+            var fallbackBulk = await dispatchPost('dispatch_sync_assignees', {
+              tier1_group_uuid: g.tier1,
+              tier2_group_uuid: g.tier2,
+              source: 'work_orders_fallback',
+              techs: fallbackRows
+            });
+            if (fallbackBulk && fallbackBulk.ok) {
+              count = Number(fallbackBulk.inserted || fallbackBulk.count || 0) || 0;
+              if (fallbackBulk.diagnostics && fallbackBulk.diagnostics.reason_counts) {
+                _mergeSyncReasons(reasonCounts, fallbackBulk.diagnostics.reason_counts);
+              }
+            } else {
+              _incrementSyncReason(reasonCounts, 'fallback_bulk_sync_not_ok');
+            }
+          } catch (upErr) {
+            _incrementSyncReason(reasonCounts, 'fallback_bulk_sync_error');
+            lastErr = upErr.message || String(upErr);
+          }
+        } else {
+          _incrementSyncReason(reasonCounts, 'fallback_no_eligible_rows');
         }
         if (count > 0) {
-          v9Toast('Assignees synced', count + ' assignees imported from AppFolio work orders', 'success');
+          noteAttempt('work_orders_fallback', 'ok', count + '/' + selected.length + ' imported');
+          var fallbackDone = finalizeReport({
+            status: 'success',
+            stage: 'work_orders_fallback',
+            source: 'work_orders_fallback',
+            examined: reportBase.examined,
+            candidates: selected.length,
+            imported: count,
+          });
+          v9Toast('Assignees synced', fallbackDone.imported + ' imported, ' + fallbackDone.skipped + ' skipped', 'success');
           DispatchControl.refresh();
           return;
         }
+        _incrementSyncReason(reasonCounts, 'work_orders_fallback_zero_imported');
+        noteAttempt('work_orders_fallback', 'zero_import', 'No candidates imported');
+      }
+      if (!candidates.length) {
+        _incrementSyncReason(reasonCounts, 'work_orders_fallback_no_candidates');
+        noteAttempt('work_orders_fallback', 'empty', 'No assignee candidates in work orders');
       }
     } catch (fallbackErr) {
       lastErr = fallbackErr.message || String(fallbackErr);
+      _incrementSyncReason(reasonCounts, 'work_orders_fallback_error');
+      noteAttempt('work_orders_fallback', 'error', lastErr);
     }
 
     try {
@@ -25573,11 +25792,26 @@ var DispatchConfig = {
         tier2_group_uuid:g.tier2
       });
       if(fallback && fallback.ok){
+        noteAttempt('reassignment_queue_sync_assignees', 'ok', 'Fallback endpoint succeeded');
+        finalizeReport({
+          status: 'info',
+          stage: 'reassignment_queue_sync_assignees',
+          source: 'reassignment_queue',
+          examined: Number(fallback.examined || 0) || reportBase.examined,
+          candidates: Number(fallback.candidates || 0) || reportBase.candidates,
+          imported: Number(fallback.inserted || fallback.count || 0) || reportBase.imported,
+        });
         v9Toast('Assignees synced','Sync completed through reassignment_queue fallback','success');
         DispatchControl.refresh();
         return;
       }
-    } catch(ignoreErr) {}
+      _incrementSyncReason(reasonCounts, 'reassignment_queue_fallback_not_ok');
+      noteAttempt('reassignment_queue_sync_assignees', 'not_ok', 'Fallback returned not ok');
+    } catch(ignoreErr) {
+      _incrementSyncReason(reasonCounts, 'reassignment_queue_fallback_error');
+      noteAttempt('reassignment_queue_sync_assignees', 'error', ignoreErr.message || String(ignoreErr));
+    }
+    finalizeReport({ status: 'error', stage: 'failed', source: 'dispatch_sync', imported: 0, candidates: reportBase.candidates, examined: reportBase.examined });
     v9Toast('Sync unavailable','Proxy needs a sync_assignees action. Last error: '+lastErr,'danger',6500);
   },
   populateTestQueue: async function() {
