@@ -67,6 +67,22 @@ function toParams(req: Request): Params {
   return out;
 }
 
+function toActionParams(req: Request): Params {
+  const params = toParams(req);
+  const body = (req.body && typeof req.body === 'object' && !Array.isArray(req.body))
+    ? req.body as Record<string, unknown>
+    : null;
+
+  if (body) {
+    for (const [key, value] of Object.entries(body)) {
+      if (value === undefined || value === null) continue;
+      params[key] = typeof value === 'string' ? value : JSON.stringify(value);
+    }
+  }
+
+  return params;
+}
+
 function toRequestLike(req: Request): Request {
   const headers = new Headers();
   Object.entries(req.headers || {}).forEach(([key, value]) => {
@@ -403,6 +419,23 @@ function preferNonUuidLabel(...values: unknown[]): string {
     .filter(Boolean);
   const nonUuid = candidates.find((value) => !looksLikeUuidLabel(value));
   return nonUuid || '';
+}
+
+function normalizeVendorDisplayLabel(...values: unknown[]): string {
+  const candidates = values
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .filter((value) => !looksLikeUuidLabel(value));
+
+  return candidates.find((value) => value.length > 1) || '';
+}
+
+function isLikelyVendorRow(vendorId: string, vendorName: string): boolean {
+  const id = String(vendorId || '').trim();
+  const name = String(vendorName || '').trim();
+  if (id && !looksLikeUuidLabel(id)) return true;
+  if (name && !looksLikeUuidLabel(name)) return true;
+  return false;
 }
 
 function resolvePropertyGroupDisplayName(row: any, fallback = ''): string {
@@ -839,6 +872,779 @@ async function ensureWebhookEventsTable(): Promise<void> {
       WHERE event_id IS NOT NULL AND event_id <> ''
   `);
   webhookTableEnsured = true;
+}
+
+let dispatchControlTablesEnsured = false;
+
+function asBooleanLike(value: unknown, fallback = false): boolean {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return fallback;
+  return ['1', 'true', 'yes', 'on', 'y'].includes(raw);
+}
+
+function asNumericLike(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function safeParseArray(raw: unknown): any[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseDispatchJson(row: any): Record<string, any> {
+  return (row && row.raw_json && typeof row.raw_json === 'object') ? row.raw_json as Record<string, any> : {};
+}
+
+function pickFirstDate(raw: Record<string, any>, keys: string[]): string {
+  for (const key of keys) {
+    const value = asIso(raw[key]);
+    if (value) return value;
+  }
+  return '';
+}
+
+function buildPropertyAddress(row: any, raw: Record<string, any>): string {
+  const street = String(row?.street || raw?.street || raw?.address1 || raw?.Address1 || '').trim();
+  const city = String(row?.city || raw?.city || raw?.City || '').trim();
+  const state = String(row?.state || raw?.state || raw?.State || '').trim();
+  const zip = String(row?.zip || raw?.zip || raw?.Zip || '').trim();
+  const cityLine = [city, state].filter(Boolean).join(', ');
+  const parts = [street, cityLine, zip].filter(Boolean);
+  return parts.join(parts.length > 1 ? ' • ' : '') || String(row?.property_id || raw?.property_id || '').trim();
+}
+
+function getQueueStatus(row: Record<string, any>): string {
+  if (asBooleanLike(row.auto_exempt)) return 'exempt';
+  if (asBooleanLike(row.escalated)) return 'escalated';
+  if (Number(row.reassignment_count || 0) > 0) return 'reassigned';
+  if (asBooleanLike(row.warning_sent)) return 'warned';
+  if (asBooleanLike(row.grace_used)) return 'grace';
+  return 'monitoring';
+}
+
+function ageHoursSince(value: string): number {
+  if (!value) return 0;
+  const startedAt = new Date(value);
+  const diff = Date.now() - startedAt.getTime();
+  return Number.isFinite(diff) ? diff / 3_600_000 : 0;
+}
+
+function deriveDispatchBranch(propertyGroupId: string, tier1GroupId: string, tier2GroupId: string): string {
+  if (propertyGroupId && tier1GroupId && propertyGroupId === tier1GroupId) return 'phoenix';
+  if (propertyGroupId && tier2GroupId && propertyGroupId === tier2GroupId) return 'tucson';
+  return '';
+}
+
+async function ensureDispatchControlTables(): Promise<void> {
+  if (dispatchControlTablesEnsured) return;
+
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS reassignment_queue (
+      wo_id TEXT PRIMARY KEY,
+      wo_number TEXT,
+      property_id TEXT,
+      property_group_uuid TEXT,
+      property_address TEXT,
+      category TEXT,
+      priority TEXT,
+      status TEXT DEFAULT 'monitoring',
+      assigned_user_id TEXT,
+      assigned_user_name TEXT,
+      assigned_tech_id TEXT,
+      assigned_tech_name TEXT,
+      branch TEXT,
+      auto_exempt BOOLEAN DEFAULT FALSE,
+      auto_exempt_at TIMESTAMPTZ,
+      auto_exempt_by TEXT,
+      warning_sent BOOLEAN DEFAULT FALSE,
+      warning_sent_at TIMESTAMPTZ,
+      grace_used BOOLEAN DEFAULT FALSE,
+      grace_used_at TIMESTAMPTZ,
+      reassignment_count INTEGER DEFAULT 0,
+      last_reassigned_at TIMESTAMPTZ,
+      escalated BOOLEAN DEFAULT FALSE,
+      escalated_at TIMESTAMPTZ,
+      first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS property_id TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS property_group_uuid TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS property_address TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS category TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS priority TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'monitoring'`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS assigned_user_id TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS assigned_user_name TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS assigned_tech_id TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS assigned_tech_name TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS branch TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS auto_exempt BOOLEAN DEFAULT FALSE`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS auto_exempt_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS auto_exempt_by TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS warning_sent BOOLEAN DEFAULT FALSE`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS warning_sent_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS grace_used BOOLEAN DEFAULT FALSE`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS grace_used_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS reassignment_count INTEGER DEFAULT 0`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS last_reassigned_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS escalated BOOLEAN DEFAULT FALSE`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`UPDATE reassignment_queue SET first_seen_at = COALESCE(first_seen_at, created_at, updated_at, NOW()) WHERE first_seen_at IS NULL`);
+  await queryClient.unsafe(`UPDATE reassignment_queue SET updated_at = COALESCE(updated_at, created_at, first_seen_at, NOW()) WHERE updated_at IS NULL`);
+  await queryClient.unsafe(`UPDATE reassignment_queue SET created_at = COALESCE(created_at, first_seen_at, updated_at, NOW()) WHERE created_at IS NULL`);
+
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS tech_grades (
+      tech_id TEXT PRIMARY KEY,
+      tech_name TEXT,
+      tech_phone TEXT,
+      geo_zone TEXT,
+      tier INTEGER DEFAULT 1,
+      grade REAL DEFAULT 0,
+      performance_score REAL DEFAULT 100,
+      target_share_pct REAL DEFAULT 0,
+      active_wo_count INTEGER DEFAULT 0,
+      go_back_pct REAL DEFAULT 0,
+      reassign_pct REAL DEFAULT 0,
+      jobs_completed INTEGER DEFAULT 0,
+      no_contact_count INTEGER DEFAULT 0,
+      active BOOLEAN DEFAULT TRUE,
+      last_warning_at TIMESTAMPTZ,
+      last_reassigned_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS tech_phone TEXT`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS geo_zone TEXT`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS performance_score REAL DEFAULT 100`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS target_share_pct REAL DEFAULT 0`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS active_wo_count INTEGER DEFAULT 0`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS go_back_pct REAL DEFAULT 0`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS reassign_pct REAL DEFAULT 0`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS last_warning_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS last_reassigned_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`UPDATE tech_grades SET performance_score = COALESCE(performance_score, grade, 100) WHERE performance_score IS NULL`);
+  await queryClient.unsafe(`UPDATE tech_grades SET target_share_pct = COALESCE(target_share_pct, 0) WHERE target_share_pct IS NULL`);
+  await queryClient.unsafe(`UPDATE tech_grades SET active_wo_count = COALESCE(active_wo_count, 0) WHERE active_wo_count IS NULL`);
+  await queryClient.unsafe(`UPDATE tech_grades SET go_back_pct = COALESCE(go_back_pct, 0) WHERE go_back_pct IS NULL`);
+  await queryClient.unsafe(`UPDATE tech_grades SET reassign_pct = COALESCE(reassign_pct, 0) WHERE reassign_pct IS NULL`);
+
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS reassignment_audit (
+      id BIGSERIAL PRIMARY KEY,
+      wo_id TEXT,
+      event_type TEXT NOT NULL,
+      event_message TEXT,
+      payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS reassignment_queue_status_idx ON reassignment_queue(status)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS reassignment_queue_assigned_tech_idx ON reassignment_queue(assigned_tech_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS reassignment_queue_branch_idx ON reassignment_queue(branch)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS tech_grades_active_idx ON tech_grades(active)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS tech_grades_tier_idx ON tech_grades(tier)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS reassignment_audit_wo_idx ON reassignment_audit(wo_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS reassignment_audit_created_idx ON reassignment_audit(created_at)`);
+
+  dispatchControlTablesEnsured = true;
+}
+
+async function readDispatchConfig(keys: string[]): Promise<Record<string, string>> {
+  const result: Record<string, string> = {};
+  const wanted = Array.from(new Set(keys.map((key) => String(key || '').trim()).filter(Boolean)));
+  if (!wanted.length) return result;
+
+  try {
+    const rows = await queryClient.unsafe(
+      `select key, value from proxy_config where key = any($1::text[])`,
+      [wanted],
+    );
+    for (const row of rows as any[]) {
+      const key = String(row?.key || '').trim();
+      const value = String(row?.value ?? '').trim();
+      if (key && value && result[key] === undefined) result[key] = value;
+    }
+  } catch {
+    // Ignore missing settings tables.
+  }
+
+  try {
+    const rows = await queryClient.unsafe(
+      `select key, value from app_settings where key = any($1::text[])`,
+      [wanted],
+    );
+    for (const row of rows as any[]) {
+      const key = String(row?.key || '').trim();
+      const value = String(row?.value ?? '').trim();
+      if (key && value && result[key] === undefined) result[key] = value;
+    }
+  } catch {
+    // Ignore missing settings tables.
+  }
+
+  return result;
+}
+
+async function writeDispatchAudit(
+  woId: string,
+  eventType: string,
+  message: string,
+  payload: Record<string, unknown> = {},
+): Promise<void> {
+  await ensureDispatchControlTables();
+  await queryClient.unsafe(
+    `insert into reassignment_audit (wo_id, event_type, event_message, payload_json)
+     values ($1, $2, $3, $4::jsonb)`,
+    [woId || null, eventType, message, JSON.stringify(payload)],
+  );
+}
+
+async function fetchDispatchWorkOrders(days = 3650): Promise<any[]> {
+  const openFilter = `(
+    coalesce(lower(status), '') not like '%completed%'
+    and coalesce(lower(status), '') not like '%cancel%'
+    and coalesce(lower(status), '') not like '%no need to bill%'
+  )`;
+
+  try {
+    return (await queryClient.unsafe(
+      `select wo.id, wo.work_order_uuid, wo.wo_number, wo.property_id, wo.unit_id, wo.property_group_id,
+              wo.description, wo.category, wo.priority, wo.status, wo.assigned_user_id, wo.assigned_user_name,
+              wo.vendor_id, wo.vendor_name, wo.estimated_amount, wo.total_cost,
+              wo.created_at, wo.updated_at, wo.raw_json,
+              p.street, p.city, p.state, p.zip
+         from appfolio_work_orders wo
+         left join appfolio_properties p on p.id = wo.property_id
+        where coalesce(wo.updated_at, wo.created_at) >= now() - (${days}::int * interval '1 day')
+          and ${openFilter}
+        order by coalesce(wo.updated_at, wo.created_at) desc
+        limit 5000`
+    )) as any[];
+  } catch (error) {
+    const message = String((error as any)?.message || error || '');
+    const code = String((error as any)?.code || '');
+    if (!(code === '42703' && /work_order_uuid/i.test(message))) throw error;
+
+    return (await queryClient.unsafe(
+      `select wo.id, null::text as work_order_uuid, wo.wo_number, wo.property_id, wo.unit_id, wo.property_group_id,
+              wo.description, wo.category, wo.priority, wo.status, wo.assigned_user_id, wo.assigned_user_name,
+              wo.vendor_id, wo.vendor_name, wo.estimated_amount, wo.total_cost,
+              wo.created_at, wo.updated_at, wo.raw_json,
+              p.street, p.city, p.state, p.zip
+         from appfolio_work_orders wo
+         left join appfolio_properties p on p.id = wo.property_id
+        where coalesce(wo.updated_at, wo.created_at) >= now() - (${days}::int * interval '1 day')
+          and ${openFilter}
+        order by coalesce(wo.updated_at, wo.created_at) desc
+        limit 5000`
+    )) as any[];
+  }
+}
+
+async function syncDispatchAssignees(params: Record<string, string>): Promise<any> {
+  await ensureDispatchControlTables();
+
+  const rowsToUpsert: Array<Record<string, unknown>> = [];
+  const bodyTechs = safeParseArray((params.techs || params.technicians || params.records) as unknown);
+
+  if (bodyTechs.length > 0) {
+    for (const tech of bodyTechs) {
+      rowsToUpsert.push({
+        tech_id: String(tech?.tech_id || tech?.techId || tech?.id || '').trim(),
+        tech_name: String(tech?.tech_name || tech?.techName || tech?.name || '').trim(),
+        tech_phone: String(tech?.tech_phone || tech?.phone || '').trim(),
+        geo_zone: String(tech?.geo_zone || tech?.branch || tech?.zone || '').trim(),
+        tier: asNumericLike(tech?.tier, 1),
+        active: asBooleanLike(tech?.active, true),
+        performance_score: asNumericLike(tech?.performance_score ?? tech?.grade, 100),
+        target_share_pct: asNumericLike(tech?.target_share_pct, 0),
+      });
+    }
+  } else {
+    const workOrders = await fetchDispatchWorkOrders(3650);
+    const dedupe = new Map<string, Record<string, unknown>>();
+    for (const row of workOrders) {
+      const techId = String(row?.assigned_user_id || '').trim();
+      const techName = String(row?.assigned_user_name || '').trim();
+      if (!techId && !techName) continue;
+      const key = techId || techName;
+      if (dedupe.has(key)) continue;
+      dedupe.set(key, {
+        tech_id: techId || key,
+        tech_name: techName || techId || key,
+        tech_phone: '',
+        geo_zone: '',
+        tier: 1,
+        active: true,
+        performance_score: 100,
+        target_share_pct: 0,
+      });
+    }
+    rowsToUpsert.push(...dedupe.values());
+  }
+
+  let upserted = 0;
+  for (const tech of rowsToUpsert) {
+    const techId = String(tech.tech_id || '').trim();
+    if (!techId) continue;
+    await queryClient.unsafe(
+      `insert into tech_grades (
+         tech_id, tech_name, tech_phone, geo_zone, tier, grade,
+         performance_score, target_share_pct, active,
+         jobs_completed, no_contact_count, active_wo_count,
+         go_back_pct, reassign_pct, updated_at
+       ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, coalesce($10, 0), coalesce($11, 0), coalesce($12, 0), coalesce($13, 0), coalesce($14, 0), NOW())
+       on conflict (tech_id) do update set
+         tech_name = excluded.tech_name,
+         tech_phone = excluded.tech_phone,
+         geo_zone = excluded.geo_zone,
+         tier = excluded.tier,
+         grade = excluded.grade,
+         performance_score = excluded.performance_score,
+         target_share_pct = excluded.target_share_pct,
+         active = excluded.active,
+         updated_at = NOW()`,
+      [
+        techId,
+        String(tech.tech_name || techId),
+        String(tech.tech_phone || ''),
+        String(tech.geo_zone || ''),
+        Math.max(1, Math.round(asNumericLike(tech.tier, 1))),
+        asNumericLike(tech.performance_score, 100),
+        asNumericLike(tech.performance_score, 100),
+        asNumericLike(tech.target_share_pct, 0),
+        asBooleanLike(tech.active, true),
+        asNumericLike(tech.jobs_completed, 0),
+        asNumericLike(tech.no_contact_count, 0),
+        asNumericLike(tech.active_wo_count, 0),
+        asNumericLike(tech.go_back_pct, 0),
+        asNumericLike(tech.reassign_pct, 0),
+      ],
+    );
+    upserted += 1;
+  }
+
+  return { ok: true, inserted: upserted, count: upserted, source: 'postgres_local' };
+}
+
+async function refreshDispatchQueue(params: Record<string, string>): Promise<any> {
+  await ensureDispatchControlTables();
+
+  const config = await readDispatchConfig([
+    'dispatch_tier1_group_uuid',
+    'dispatch_tier2_group_uuid',
+    'reassign_threshold_hours',
+    'grace_period_enabled',
+    'max_reassigns_before_escalate',
+  ]);
+
+  const tier1GroupUuid = String(params.tier1_group_uuid || config.dispatch_tier1_group_uuid || '').trim();
+  const tier2GroupUuid = String(params.tier2_group_uuid || config.dispatch_tier2_group_uuid || '').trim();
+  const thresholdHours = Math.max(12, asNumericLike(config.reassign_threshold_hours, 48));
+  const warningLeadHours = Math.max(12, thresholdHours - 12);
+  const maxReassignsBeforeEscalate = Math.max(1, Math.round(asNumericLike(config.max_reassigns_before_escalate, 2)));
+
+  const workOrders = await fetchDispatchWorkOrders(Math.max(30, thresholdHours * 4));
+  const openIds = workOrders.map((row) => String(row?.id || row?.work_order_uuid || '').trim()).filter(Boolean);
+  if (openIds.length > 0) {
+    await queryClient.unsafe(`delete from reassignment_queue where not (wo_id = any($1::text[]))`, [openIds]);
+  } else {
+    await queryClient.unsafe(`delete from reassignment_queue`);
+  }
+
+  const existingRows = await queryClient.unsafe(`select * from reassignment_queue order by updated_at desc limit 5000`);
+  const existingByWoId = new Map<string, any>();
+  for (const row of existingRows as any[]) {
+    const key = String(row?.wo_id || '').trim();
+    if (key) existingByWoId.set(key, row);
+  }
+
+  const includedRows: any[] = [];
+  for (const row of workOrders) {
+    const woId = String(row?.id || row?.work_order_uuid || '').trim();
+    if (!woId) continue;
+    const raw = parseDispatchJson(row);
+    const createdAt = asIso(row?.updated_at) || asIso(row?.created_at) || pickFirstDate(raw, ['created_at', 'updated_at', 'created_date']) || new Date().toISOString();
+    const ageHours = ageHoursSince(createdAt);
+    const scheduledAt = pickFirstDate(raw, [
+      'scheduled_at', 'scheduled_date', 'schedule_date', 'appointment_date',
+      'next_appointment_date', 'visit_date', 'service_date', 'due_date', 'target_date',
+    ]);
+    const scheduledExemption = scheduledAt ? (() => {
+      const scheduledDate = new Date(scheduledAt);
+      const leadHours = (scheduledDate.getTime() - Date.now()) / 3_600_000;
+      return Number.isFinite(leadHours) && leadHours >= 48 && leadHours <= 72;
+    })() : false;
+    const existing = existingByWoId.get(woId);
+    const warningSent = asBooleanLike(existing?.warning_sent) || asBooleanLike(existing?.warning_sent_at);
+    const graceUsed = asBooleanLike(existing?.grace_used);
+    const autoExempt = asBooleanLike(existing?.auto_exempt) || scheduledExemption;
+    const reassignmentCount = Math.max(0, Math.round(asNumericLike(existing?.reassignment_count, 0)));
+    const escalated = asBooleanLike(existing?.escalated) || reassignmentCount >= maxReassignsBeforeEscalate;
+    const shouldTrack = autoExempt || warningSent || graceUsed || reassignmentCount > 0 || escalated || ageHours >= warningLeadHours;
+    if (!shouldTrack) continue;
+
+    const branch = deriveDispatchBranch(String(row?.property_group_id || ''), tier1GroupUuid, tier2GroupUuid);
+    includedRows.push({
+      wo_id: woId,
+      wo_number: String(row?.wo_number || '').trim(),
+      property_id: String(row?.property_id || '').trim(),
+      property_group_uuid: String(row?.property_group_id || '').trim(),
+      property_address: buildPropertyAddress(row, raw),
+      category: String(row?.category || '').trim(),
+      priority: String(row?.priority || '').trim(),
+      status: getQueueStatus({
+        auto_exempt: autoExempt,
+        escalated,
+        reassignment_count: reassignmentCount,
+        warning_sent: warningSent,
+        grace_used: graceUsed,
+      }),
+      assigned_user_id: String(row?.assigned_user_id || '').trim(),
+      assigned_user_name: String(row?.assigned_user_name || '').trim(),
+      assigned_tech_id: String(row?.assigned_user_id || '').trim(),
+      assigned_tech_name: String(row?.assigned_user_name || '').trim(),
+      branch,
+      auto_exempt: autoExempt,
+      auto_exempt_at: autoExempt ? (existing?.auto_exempt_at || row?.updated_at || row?.created_at || new Date().toISOString()) : null,
+      auto_exempt_by: scheduledExemption ? (existing?.auto_exempt_by || 'scheduled_window') : (existing?.auto_exempt_by || null),
+      warning_sent: warningSent,
+      warning_sent_at: existing?.warning_sent_at || null,
+      grace_used: graceUsed,
+      grace_used_at: existing?.grace_used_at || null,
+      reassignment_count: reassignmentCount,
+      last_reassigned_at: existing?.last_reassigned_at || null,
+      escalated,
+      escalated_at: existing?.escalated_at || null,
+      first_seen_at: existing?.first_seen_at || row?.created_at || row?.updated_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      created_at: existing?.created_at || row?.created_at || row?.updated_at || new Date().toISOString(),
+    });
+  }
+
+  for (const row of includedRows) {
+    await queryClient.unsafe(
+      `insert into reassignment_queue (
+         wo_id, wo_number, property_id, property_group_uuid, property_address,
+         category, priority, status, assigned_user_id, assigned_user_name,
+         assigned_tech_id, assigned_tech_name, branch,
+         auto_exempt, auto_exempt_at, auto_exempt_by,
+         warning_sent, warning_sent_at,
+         grace_used, grace_used_at,
+         reassignment_count, last_reassigned_at,
+         escalated, escalated_at,
+         first_seen_at, updated_at, created_at
+       ) values (
+         $1,$2,$3,$4,$5,
+         $6,$7,$8,$9,$10,
+         $11,$12,$13,
+         $14,$15,$16,
+         $17,$18,
+         $19,$20,
+         $21,$22,
+         $23,$24,
+         $25,$26,$27
+       )
+       on conflict (wo_id) do update set
+         wo_number = excluded.wo_number,
+         property_id = excluded.property_id,
+         property_group_uuid = excluded.property_group_uuid,
+         property_address = excluded.property_address,
+         category = excluded.category,
+         priority = excluded.priority,
+         status = excluded.status,
+         assigned_user_id = excluded.assigned_user_id,
+         assigned_user_name = excluded.assigned_user_name,
+         assigned_tech_id = excluded.assigned_tech_id,
+         assigned_tech_name = excluded.assigned_tech_name,
+         branch = excluded.branch,
+         auto_exempt = reassignment_queue.auto_exempt or excluded.auto_exempt,
+         auto_exempt_at = coalesce(reassignment_queue.auto_exempt_at, excluded.auto_exempt_at),
+         auto_exempt_by = coalesce(reassignment_queue.auto_exempt_by, excluded.auto_exempt_by),
+         warning_sent = reassignment_queue.warning_sent or excluded.warning_sent,
+         warning_sent_at = coalesce(reassignment_queue.warning_sent_at, excluded.warning_sent_at),
+         grace_used = reassignment_queue.grace_used or excluded.grace_used,
+         grace_used_at = coalesce(reassignment_queue.grace_used_at, excluded.grace_used_at),
+         reassignment_count = greatest(reassignment_queue.reassignment_count, excluded.reassignment_count),
+         last_reassigned_at = coalesce(reassignment_queue.last_reassigned_at, excluded.last_reassigned_at),
+         escalated = reassignment_queue.escalated or excluded.escalated,
+         escalated_at = coalesce(reassignment_queue.escalated_at, excluded.escalated_at),
+         first_seen_at = coalesce(reassignment_queue.first_seen_at, excluded.first_seen_at),
+         updated_at = NOW(),
+         created_at = coalesce(reassignment_queue.created_at, excluded.created_at)`,
+      [
+        row.wo_id,
+        row.wo_number,
+        row.property_id,
+        row.property_group_uuid,
+        row.property_address,
+        row.category,
+        row.priority,
+        row.status,
+        row.assigned_user_id,
+        row.assigned_user_name,
+        row.assigned_tech_id,
+        row.assigned_tech_name,
+        row.branch,
+        row.auto_exempt,
+        row.auto_exempt_at,
+        row.auto_exempt_by,
+        row.warning_sent,
+        row.warning_sent_at,
+        row.grace_used,
+        row.grace_used_at,
+        row.reassignment_count,
+        row.last_reassigned_at,
+        row.escalated,
+        row.escalated_at,
+        row.first_seen_at,
+        row.updated_at,
+        row.created_at,
+      ],
+    );
+  }
+
+  const queueRows = await queryClient.unsafe(`select * from reassignment_queue order by updated_at desc limit 5000`);
+  const techRows = await queryClient.unsafe(`select * from tech_grades order by active desc, tier asc, performance_score desc, tech_name asc limit 5000`);
+  const auditRows = await queryClient.unsafe(`select id, wo_id, event_type, event_message, payload_json, created_at from reassignment_audit order by id desc limit 300`);
+
+  const queue = (queueRows as any[]).map((row) => ({
+    wo_id: String(row.wo_id || ''),
+    wo_number: String(row.wo_number || ''),
+    property_id: String(row.property_id || ''),
+    property_group_uuid: String(row.property_group_uuid || ''),
+    property_address: String(row.property_address || ''),
+    category: String(row.category || ''),
+    priority: String(row.priority || ''),
+    status: String(row.status || getQueueStatus(row)),
+    assigned_user_id: String(row.assigned_user_id || ''),
+    assigned_user_name: String(row.assigned_user_name || ''),
+    assigned_tech_id: String(row.assigned_tech_id || row.assigned_user_id || ''),
+    assigned_tech_name: String(row.assigned_tech_name || row.assigned_user_name || ''),
+    branch: String(row.branch || ''),
+    auto_exempt: asBooleanLike(row.auto_exempt),
+    auto_exempt_at: asIso(row.auto_exempt_at),
+    auto_exempt_by: String(row.auto_exempt_by || ''),
+    warning_sent: asBooleanLike(row.warning_sent),
+    warning_sent_at: asIso(row.warning_sent_at),
+    grace_used: asBooleanLike(row.grace_used),
+    grace_used_at: asIso(row.grace_used_at),
+    reassignment_count: Number(row.reassignment_count || 0),
+    last_reassigned_at: asIso(row.last_reassigned_at),
+    escalated: asBooleanLike(row.escalated),
+    escalated_at: asIso(row.escalated_at),
+    first_seen_at: asIso(row.first_seen_at) || asIso(row.created_at) || asIso(row.updated_at),
+    updated_at: asIso(row.updated_at),
+    created_at: asIso(row.created_at),
+  }));
+
+  const queueByTech = new Map<string, number>();
+  const queueByTechReassign = new Map<string, number>();
+  for (const row of queue) {
+    const techId = String(row.assigned_tech_id || '').trim();
+    if (!techId) continue;
+    queueByTech.set(techId, (queueByTech.get(techId) || 0) + 1);
+    if (Number(row.reassignment_count || 0) > 0) {
+      queueByTechReassign.set(techId, (queueByTechReassign.get(techId) || 0) + 1);
+    }
+  }
+
+  const roster = (techRows as any[]).map((row) => {
+    const techId = String(row.tech_id || '').trim();
+    const activeCount = queueByTech.get(techId) || 0;
+    const jobsCompleted = Number(row.jobs_completed || 0);
+    const noContactCount = Number(row.no_contact_count || 0);
+    const reassignCount = queueByTechReassign.get(techId) || 0;
+    const performanceScore = Number(row.performance_score ?? row.grade ?? 100);
+    const score = Number.isFinite(performanceScore) ? performanceScore : 100;
+    const targetShare = queue.length > 0 ? (activeCount / queue.length) * 100 : 0;
+    return {
+      tech_id: techId,
+      tech_name: String(row.tech_name || techId),
+      tech_phone: String(row.tech_phone || ''),
+      geo_zone: String(row.geo_zone || ''),
+      tier: Number(row.tier || 1),
+      active: asBooleanLike(row.active, true) ? 1 : 0,
+      grade: Number(row.grade ?? score),
+      performance_score: score,
+      target_share_pct: Number.isFinite(Number(row.target_share_pct)) && Number(row.target_share_pct) > 0 ? Number(row.target_share_pct) : targetShare,
+      active_wo_count: activeCount,
+      go_back_pct: Number.isFinite(Number(row.go_back_pct)) ? Number(row.go_back_pct) : (jobsCompleted > 0 ? Math.min(100, (noContactCount / jobsCompleted) * 100) : 0),
+      reassign_pct: Number.isFinite(Number(row.reassign_pct)) ? Number(row.reassign_pct) : (activeCount > 0 ? Math.min(100, (reassignCount / activeCount) * 100) : 0),
+      jobs_completed: jobsCompleted,
+      no_contact_count: noContactCount,
+      last_warning_at: asIso(row.last_warning_at),
+      last_reassigned_at: asIso(row.last_reassigned_at),
+      updated_at: asIso(row.updated_at),
+    };
+  });
+
+  return {
+    ok: true,
+    queue,
+    tech_roster: roster,
+    audit: (auditRows as any[]).map((row) => ({
+      id: Number(row.id || 0),
+      wo_id: String(row.wo_id || ''),
+      event_type: String(row.event_type || ''),
+      event_message: String(row.event_message || ''),
+      payload_json: row.payload_json || {},
+      created_at: asIso(row.created_at),
+    })),
+    blasts: [],
+    tier2_claims: [],
+    monitored_work_orders: queue.filter((row) => row.warning_sent || row.reassignment_count > 0),
+    stats: {
+      total_queue: queue.length,
+      total_techs: roster.length,
+      pending: queue.filter((row) => row.status === 'monitoring').length,
+      exempt: queue.filter((row) => row.auto_exempt).length,
+      warned: queue.filter((row) => row.warning_sent).length,
+      reassigned: queue.filter((row) => Number(row.reassignment_count || 0) > 0).length,
+      escalated: queue.filter((row) => row.escalated).length,
+    },
+    source: 'postgres_local',
+  };
+}
+
+async function runDispatchWarningCron(params: Record<string, string>): Promise<any> {
+  const snapshot = await refreshDispatchQueue(params);
+  const config = await readDispatchConfig(['reassign_threshold_hours', 'grace_period_enabled', 'max_reassigns_before_escalate']);
+  const thresholdHours = Math.max(12, asNumericLike(config.reassign_threshold_hours, 48));
+  const warningLeadHours = Math.max(12, thresholdHours - 12);
+  const graceEnabled = asBooleanLike(config.grace_period_enabled, true);
+  const maxReassignsBeforeEscalate = Math.max(1, Math.round(asNumericLike(config.max_reassigns_before_escalate, 2)));
+  const nowIso = new Date().toISOString();
+  let warned = 0;
+  let skipped = 0;
+  let escalated = 0;
+
+  for (const row of snapshot.queue as any[]) {
+    const createdAt = row.first_seen_at || row.updated_at || row.created_at;
+    const ageHours = ageHoursSince(createdAt);
+    if (row.auto_exempt || ageHours < warningLeadHours) {
+      skipped += 1;
+      continue;
+    }
+    if (row.warning_sent) {
+      skipped += 1;
+      continue;
+    }
+
+    const nextGrace = graceEnabled && !row.grace_used;
+    await queryClient.unsafe(
+      `update reassignment_queue
+          set warning_sent = true,
+              warning_sent_at = coalesce(warning_sent_at, $2::timestamptz),
+              grace_used = grace_used or $3,
+              grace_used_at = coalesce(grace_used_at, case when $3 then $2::timestamptz else null end),
+              status = case when auto_exempt then status else 'warned' end,
+              updated_at = NOW()
+        where wo_id = $1`,
+      [row.wo_id, nowIso, nextGrace],
+    );
+    await writeDispatchAudit(row.wo_id, 'pre_reassign_warning', 'Warning pass marked work order for follow-up', {
+      age_hours: ageHours,
+      grace_used: nextGrace,
+      threshold_hours: thresholdHours,
+    });
+    warned += 1;
+    if (Number(row.reassignment_count || 0) >= maxReassignsBeforeEscalate) escalated += 1;
+  }
+
+  const refreshed = await refreshDispatchQueue(params);
+  return {
+    ok: true,
+    run: 'noon_warning_cron',
+    candidates: snapshot.queue.length,
+    warned,
+    skipped,
+    escalated,
+    queue: refreshed.queue,
+    tech_roster: refreshed.tech_roster,
+    audit: refreshed.audit,
+    blasts: refreshed.blasts,
+    tier2_claims: refreshed.tier2_claims,
+    monitored_work_orders: refreshed.monitored_work_orders,
+    stats: refreshed.stats,
+  };
+}
+
+async function runDispatchReassignCron(params: Record<string, string>): Promise<any> {
+  const snapshot = await refreshDispatchQueue(params);
+  const config = await readDispatchConfig(['reassign_threshold_hours', 'max_reassigns_before_escalate']);
+  const thresholdHours = Math.max(12, asNumericLike(config.reassign_threshold_hours, 48));
+  const maxReassignsBeforeEscalate = Math.max(1, Math.round(asNumericLike(config.max_reassigns_before_escalate, 2)));
+  const nowIso = new Date().toISOString();
+  let reassigned = 0;
+  let skipped = 0;
+  let escalated = 0;
+
+  for (const row of snapshot.queue as any[]) {
+    const createdAt = row.first_seen_at || row.updated_at || row.created_at;
+    const ageHours = ageHoursSince(createdAt);
+    if (row.auto_exempt || ageHours < thresholdHours) {
+      skipped += 1;
+      continue;
+    }
+
+    const nextCount = Number(row.reassignment_count || 0) + 1;
+    const nextEscalated = nextCount >= maxReassignsBeforeEscalate;
+    await queryClient.unsafe(
+      `update reassignment_queue
+          set reassignment_count = coalesce(reassignment_count, 0) + 1,
+              last_reassigned_at = $2::timestamptz,
+              escalated = escalated or $3,
+              escalated_at = case when $3 then coalesce(escalated_at, $2::timestamptz) else escalated_at end,
+              warning_sent = true,
+              warning_sent_at = coalesce(warning_sent_at, $2::timestamptz),
+              status = case when $3 then 'escalated' else 'reassigned' end,
+              updated_at = NOW()
+        where wo_id = $1`,
+      [row.wo_id, nowIso, nextEscalated],
+    );
+    await writeDispatchAudit(row.wo_id, nextEscalated ? 'escalation_reassign' : 'auto_reassigned', 'Auto-reassignment pass executed', {
+      age_hours: ageHours,
+      reassignment_count: nextCount,
+      threshold_hours: thresholdHours,
+    });
+    reassigned += 1;
+    if (nextEscalated) escalated += 1;
+  }
+
+  const refreshed = await refreshDispatchQueue(params);
+  return {
+    ok: true,
+    run: 'midnight_reassign_cron',
+    candidates: snapshot.queue.length,
+    reassigned,
+    skipped,
+    escalated,
+    queue: refreshed.queue,
+    tech_roster: refreshed.tech_roster,
+    audit: refreshed.audit,
+    blasts: refreshed.blasts,
+    tier2_claims: refreshed.tier2_claims,
+    monitored_work_orders: refreshed.monitored_work_orders,
+    stats: refreshed.stats,
+  };
 }
 
 async function fetchWebhookJwks(force = false): Promise<JwkKey[]> {
@@ -1604,8 +2410,6 @@ const legacyActionRoutes = {
   turns_incremental: wrapDenoHandler(turnsHandlers.handleTurnsIncremental, 'params'),
   unit_turns_history: wrapDenoHandler(turnsHandlers.handleUnitTurnsHistory, 'params'),
   estimates: wrapDenoHandler(estimatesHandlers.handleEstimates, 'params'),
-  queue: wrapDenoHandler(queueHandlers.handleReassignmentQueue, 'params'),
-  reassignment_queue: wrapDenoHandler(queueHandlers.handleReassignmentQueue, 'params'),
   device_setup: wrapDenoHandler(deviceAuthHandlers.handleDeviceSetup, 'request'),
   device_otp_request: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpRequest, 'request'),
   device_otp_verify: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpVerify, 'request'),
@@ -2189,6 +2993,81 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
         : (ipAddress ? `Rate limit cleared for ${ipAddress} (compatibility shim)` : 'Rate limit list unavailable in local backend shim'),
       compatibility_shim: true,
     });
+    return;
+  }
+
+  if (action === 'tech_roster') {
+    try {
+      const params = toActionParams(req);
+      res.json(await syncDispatchAssignees(params));
+    } catch (error) {
+      logTunnelError(error, '/api?action=tech_roster');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Tech roster sync failed') });
+    }
+    return;
+  }
+
+  if (action === 'dispatch_sync_assignees') {
+    try {
+      const params = toActionParams(req);
+      res.json(await syncDispatchAssignees(params));
+    } catch (error) {
+      logTunnelError(error, '/api?action=dispatch_sync_assignees');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Assignee sync failed') });
+    }
+    return;
+  }
+
+  if (action === 'dispatch_seed_reassignment_test' || action === 'seed_reassignment_queue_test' || action === 'reassignment_queue_seed') {
+    try {
+      const params = toActionParams(req);
+      res.json(await refreshDispatchQueue(params));
+    } catch (error) {
+      logTunnelError(error, '/api?action=dispatch_seed_reassignment_test');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Queue seed failed') });
+    }
+    return;
+  }
+
+  if (action === 'reassignment_queue' || action === 'queue') {
+    try {
+      const params = toActionParams(req);
+      if (String(params.sync_assignees || '').trim() === '1') {
+        res.json(await syncDispatchAssignees(params));
+        return;
+      }
+      res.json(await refreshDispatchQueue(params));
+    } catch (error) {
+      logTunnelError(error, '/api?action=reassignment_queue');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Reassignment queue failed') });
+    }
+    return;
+  }
+
+  if (action === 'noon_warning_cron') {
+    try {
+      const params = toActionParams(req);
+      res.json(await runDispatchWarningCron(params));
+    } catch (error) {
+      logTunnelError(error, '/api?action=noon_warning_cron');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Warning cron failed') });
+    }
+    return;
+  }
+
+  if (action === 'midnight_reassign_cron') {
+    try {
+      const params = toActionParams(req);
+      res.json(await runDispatchReassignCron(params));
+    } catch (error) {
+      logTunnelError(error, '/api?action=midnight_reassign_cron');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Reassign cron failed') });
+    }
+    return;
+  }
+
+  if (action === 'manager_review') {
+    await respondManagerReviewAggregate(req, res);
     return;
   }
 
@@ -2786,9 +3665,6 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
             nullif(vendor_name, ''),
             nullif(raw_json->>'vendor_name', ''),
             nullif(raw_json->>'VendorName', ''),
-            nullif(assigned_user_name, ''),
-            nullif(raw_json->>'assigned_user_name', ''),
-            nullif(raw_json->>'AssignedUserName', ''),
             nullif(vendor_id, ''),
             nullif(raw_json->>'vendor_id', ''),
             nullif(raw_json->>'VendorId', '')
@@ -2802,9 +3678,6 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
           nullif(vendor_name, ''),
           nullif(raw_json->>'vendor_name', ''),
           nullif(raw_json->>'VendorName', ''),
-          nullif(assigned_user_name, ''),
-          nullif(raw_json->>'assigned_user_name', ''),
-          nullif(raw_json->>'AssignedUserName', ''),
           nullif(vendor_id, ''),
           nullif(raw_json->>'vendor_id', ''),
           nullif(raw_json->>'VendorId', '')
@@ -2834,9 +3707,6 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
           nullif(vendor_name, ''),
           nullif(raw_json->>'vendor_name', ''),
           nullif(raw_json->>'VendorName', ''),
-          nullif(assigned_user_name, ''),
-          nullif(raw_json->>'assigned_user_name', ''),
-          nullif(raw_json->>'AssignedUserName', ''),
           nullif(vendor_id, ''),
           nullif(raw_json->>'vendor_id', ''),
           nullif(raw_json->>'VendorId', '')
@@ -2845,19 +3715,49 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
         limit ${limit}
       `;
 
-    const results = (rows as any[])
-      .map((row) => {
-        const vendorLabel = preferNonUuidLabel(row?.vendor_name);
-        return {
-          vendor_id: String(row?.vendor_id || '').trim(),
-          company_name: vendorLabel,
-          vendor_name: vendorLabel,
+    const deduped = new Map<string, any>();
+    for (const row of rows as any[]) {
+      const vendorId = String(row?.vendor_id || '').trim();
+      const vendorName = normalizeVendorDisplayLabel(
+        row?.vendor_name,
+        row?.company_name,
+        row?.raw_json?.vendor_name,
+        row?.raw_json?.VendorName,
+      );
+
+      if (!isLikelyVendorRow(vendorId, vendorName)) continue;
+
+      const key = vendorId || vendorName.toLowerCase();
+      const current = {
+        vendor_id: vendorId,
+        company_name: vendorName,
+        vendor_name: vendorName,
         open_work_order_count: Number(row?.open_work_order_count || 0),
         last_seen_at: asIso(row?.last_seen_at),
         _source: 'postgres_local',
-        };
-      })
-      .filter((row) => !!row.company_name || !!row.vendor_id);
+      };
+      const previous = deduped.get(key);
+      if (!previous) {
+        deduped.set(key, current);
+        continue;
+      }
+
+      const previousHasId = !!String(previous.vendor_id || '').trim();
+      const currentHasId = !!vendorId;
+      if (currentHasId && !previousHasId) {
+        deduped.set(key, current);
+        continue;
+      }
+
+      if (Number(current.open_work_order_count) > Number(previous.open_work_order_count || 0)) {
+        deduped.set(key, current);
+      }
+    }
+
+    const results = Array.from(deduped.values())
+      .filter((row) => !!row.company_name || !!row.vendor_id)
+      .sort((a, b) => String(a.vendor_name || '').localeCompare(String(b.vendor_name || '')))
+      .slice(0, limit);
 
     res.json({
       ok: true,
@@ -3916,7 +4816,18 @@ app.get('/api/local/estimates', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/local/manager_review', async (req: Request, res: Response) => {
+app.get('/api/local/bills', async (req: Request, res: Response) => {
+  try {
+    const params = toParams(req);
+    const payload = await fetchBillsFromDbApi(params);
+    res.json(payload);
+  } catch (error) {
+    logTunnelError(error, '/api/local/bills');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local bills query failed') });
+  }
+});
+
+async function respondManagerReviewAggregate(req: Request, res: Response): Promise<void> {
   try {
     const fromRaw = String(req.query.from || '').trim();
     const toRaw = String(req.query.to || '').trim();
@@ -4076,6 +4987,10 @@ app.get('/api/local/manager_review', async (req: Request, res: Response) => {
     logTunnelError(error, '/api/local/manager_review');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Manager review query failed') });
   }
+}
+
+app.get('/api/local/manager_review', async (req: Request, res: Response) => {
+  await respondManagerReviewAggregate(req, res);
 });
 
 app.get('/api/local/work_orders_completed_history', async (req: Request, res: Response) => {
@@ -4739,8 +5654,32 @@ app.post('/api/unit_turns_history', wrapDenoHandler(turnsHandlers.handleUnitTurn
 app.post('/api/estimates', wrapDenoHandler(estimatesHandlers.handleEstimates, 'params'));
 
 // Queue
-app.post('/api/queue', wrapDenoHandler(queueHandlers.handleReassignmentQueue, 'params'));
-app.post('/api/reassignment_queue', wrapDenoHandler(queueHandlers.handleReassignmentQueue, 'params'));
+app.post('/api/queue', async (req: Request, res: Response) => {
+  try {
+    const params = toActionParams(req);
+    if (String(params.sync_assignees || '').trim() === '1') {
+      res.json(await syncDispatchAssignees(params));
+      return;
+    }
+    res.json(await refreshDispatchQueue(params));
+  } catch (error) {
+    logTunnelError(error, '/api/queue');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Queue failed') });
+  }
+});
+app.post('/api/reassignment_queue', async (req: Request, res: Response) => {
+  try {
+    const params = toActionParams(req);
+    if (String(params.sync_assignees || '').trim() === '1') {
+      res.json(await syncDispatchAssignees(params));
+      return;
+    }
+    res.json(await refreshDispatchQueue(params));
+  } catch (error) {
+    logTunnelError(error, '/api/reassignment_queue');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Reassignment queue failed') });
+  }
+});
 
 // Device Auth
 app.post('/api/device/setup', wrapDenoHandler(deviceAuthHandlers.handleDeviceSetup, 'request'));

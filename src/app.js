@@ -304,7 +304,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.7.9:R1.1';
+var APP_VERSION = 'v9.8.0:R1.1';
 var RENDER_API_BASE_URL = 'https://handymgr2.onrender.com';
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
@@ -6723,31 +6723,48 @@ function normalizeTurnRecord(t) {
     inventory: t.inventory_from_work_orders || t.inventory || '$0.00',
     totalBilled: t.total_billed || t.totalBilled || '$0.00',
     status: t.unit_turn_status || t.status || '',
-    siteManager: t.site_manager || t.property_site_manager || '',
-    maintenanceLimit: t.maintenance_limit || t.property_maintenance_limit || '',
-    propertyNotes: t.property_notes || t.maintenance_notes || '',
-    isRegisteredUnitTurn: !!(t.registered_unit_turn || t.is_registered_unit_turn || t.registered_turn || t.registered_unit_turn_id),
-    registeredUnitTurnId: t.registered_unit_turn_id || t.registered_turn_id || '',
-    registrationSource: t.registered_unit_turn_source || t.registration_source || ''
-  };
-}
+      var seen = {};
+      VENDORS = results.map(function(v) {
+        var vendorId = String(v.vendor_id || v.vendorId || v.id || '').trim();
+        var displayName = String(
+          v.company_name ||
+          v.vendor_name ||
+          ((v.first_name || '') + ' ' + (v.last_name || '')).trim() ||
+          v.name ||
+          vendorId ||
+          ''
+        ).trim();
+        if (!displayName && !vendorId) return null;
+        if (!displayName && vendorId && /^[0-9a-f-]{12,}$/i.test(vendorId)) return null;
+        if (displayName && /^[0-9a-f-]{12,}$/i.test(displayName)) return null;
 
-// Turns: Proxy ?action=turns — merged In Progress + Completed for richer detail context
-async function fetchTurns() {
-  setDataSourceState('turns', 'loading', { error: '' });
-  try {
-    setApiStatus('loading', 'Loading turns (In Progress + Completed)…');
-    var activeData = await proxyAction('turns', { days: 60, status: 'In Progress' });
-    var activeRows = activeData.results || activeData.data || [];
-    var completedRows = [];
-    try {
-      var completedData = await proxyAction('turns', { days: 30, status: 'Completed' });
-      completedRows = completedData.results || completedData.data || [];
-    } catch (e) {
-      console.log('Completed turns fetch skipped: ' + (e.message || e));
-    }
+        var key = vendorId || displayName.toLowerCase();
+        if (seen[key]) return null;
+        seen[key] = true;
 
-    var mergedById = {};
+        return {
+          id: vendorId,
+          name: displayName,
+          companyName: v.company_name || '',
+          firstName: v.first_name || '',
+          lastName: v.last_name || '',
+          isCompany: !!v.company_name,
+          compliant: false,
+          compliantStatus: 'Unknown',
+          insurance: v.liability_ins_expires || '',
+          autoInsurance: v.auto_ins_expires || '',
+          workersComp: v.workers_comp_expires || '',
+          licenseExpires: v.license_expires || v.contractor_license_expires || v.business_license_expires || '',
+          phone: v.phone_numbers || '',
+          email: v.email || '',
+          address: ((v.street || '') + ' ' + (v.city || '') + ' ' + (v.state || '') + ' ' + (v.zip || '')).trim(),
+          trades: v.vendor_trades || '',
+          vendorType: v.vendor_type || '',
+          doNotUse: v.do_not_use_for_work_order || false,
+          tags: v.tags || '',
+          link: ''
+        };
+      }).filter(Boolean);
     activeRows.concat(completedRows).forEach(function(r) {
       var id = r.unit_turn_id || r.unit_turn_uuid || r.unitTurnId || r.id || (r.unit || '') + '|' + (r.property || '') + '|' + (r.move_out_date || r.move_out || '');
       mergedById[String(id)] = r;
