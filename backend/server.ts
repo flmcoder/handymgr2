@@ -937,9 +937,12 @@ function ageHoursSince(value: string): number {
 }
 
 function deriveDispatchBranch(propertyGroupId: string, tier1GroupId: string, tier2GroupId: string): string {
-  if (propertyGroupId && tier1GroupId && propertyGroupId === tier1GroupId) return 'phoenix';
-  if (propertyGroupId && tier2GroupId && propertyGroupId === tier2GroupId) return 'tucson';
-  return '';
+  const groupId = String(propertyGroupId || '').trim().toLowerCase();
+  const tier1 = String(tier1GroupId || '').trim().toLowerCase();
+  const tier2 = String(tier2GroupId || '').trim().toLowerCase();
+  if (groupId && tier1 && groupId === tier1) return 'phoenix';
+  if (groupId && tier2 && groupId === tier2) return 'tucson';
+  return 'unknown';
 }
 
 async function ensureDispatchControlTables(): Promise<void> {
@@ -1012,6 +1015,7 @@ async function ensureDispatchControlTables(): Promise<void> {
       tech_name TEXT,
       tech_phone TEXT,
       geo_zone TEXT,
+      property_group_uuid TEXT,
       tier INTEGER DEFAULT 1,
       grade REAL DEFAULT 0,
       performance_score REAL DEFAULT 100,
@@ -1031,6 +1035,7 @@ async function ensureDispatchControlTables(): Promise<void> {
 
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS tech_phone TEXT`);
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS geo_zone TEXT`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS property_group_uuid TEXT`);
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS performance_score REAL DEFAULT 100`);
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS target_share_pct REAL DEFAULT 0`);
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS active_wo_count INTEGER DEFAULT 0`);
@@ -1161,6 +1166,13 @@ async function fetchDispatchWorkOrders(days = 3650): Promise<any[]> {
 async function syncDispatchAssignees(params: Record<string, string>): Promise<any> {
   await ensureDispatchControlTables();
 
+  const config = await readDispatchConfig([
+    'dispatch_tier1_group_uuid',
+    'dispatch_tier2_group_uuid',
+  ]);
+  const tier1GroupUuid = String(params.tier1_group_uuid || config.dispatch_tier1_group_uuid || '').trim();
+  const tier2GroupUuid = String(params.tier2_group_uuid || config.dispatch_tier2_group_uuid || '').trim();
+
   const rowsToUpsert: Array<Record<string, unknown>> = [];
   const bodyTechs = safeParseArray((params.techs || params.technicians || params.records) as unknown);
 
@@ -1171,6 +1183,7 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
         tech_name: String(tech?.tech_name || tech?.techName || tech?.name || '').trim(),
         tech_phone: String(tech?.tech_phone || tech?.phone || '').trim(),
         geo_zone: String(tech?.geo_zone || tech?.branch || tech?.zone || '').trim(),
+        property_group_uuid: String(tech?.property_group_uuid || tech?.propertyGroupUuid || '').trim(),
         tier: asNumericLike(tech?.tier, 1),
         active: asBooleanLike(tech?.active, true),
         performance_score: asNumericLike(tech?.performance_score ?? tech?.grade, 100),
@@ -1186,12 +1199,15 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
       if (!techId && !techName) continue;
       const key = techId || techName;
       if (dedupe.has(key)) continue;
+      const propertyGroupUuid = String(row?.property_group_id || '').trim();
+      const branch = deriveDispatchBranch(propertyGroupUuid, tier1GroupUuid, tier2GroupUuid);
       dedupe.set(key, {
         tech_id: techId || key,
         tech_name: techName || techId || key,
         tech_phone: '',
-        geo_zone: '',
-        tier: 1,
+        geo_zone: branch === 'unknown' ? '' : branch,
+        property_group_uuid: propertyGroupUuid,
+        tier: branch === 'tucson' ? 2 : 1,
         active: true,
         performance_score: 100,
         target_share_pct: 0,
@@ -1206,15 +1222,16 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
     if (!techId) continue;
     await queryClient.unsafe(
       `insert into tech_grades (
-         tech_id, tech_name, tech_phone, geo_zone, tier, grade,
+         tech_id, tech_name, tech_phone, geo_zone, property_group_uuid, tier, grade,
          performance_score, target_share_pct, active,
          jobs_completed, no_contact_count, active_wo_count,
          go_back_pct, reassign_pct, updated_at
-       ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, coalesce($10, 0), coalesce($11, 0), coalesce($12, 0), coalesce($13, 0), coalesce($14, 0), NOW())
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11, 0), coalesce($12, 0), coalesce($13, 0), coalesce($14, 0), coalesce($15, 0), NOW())
        on conflict (tech_id) do update set
          tech_name = excluded.tech_name,
          tech_phone = excluded.tech_phone,
          geo_zone = excluded.geo_zone,
+         property_group_uuid = excluded.property_group_uuid,
          tier = excluded.tier,
          grade = excluded.grade,
          performance_score = excluded.performance_score,
@@ -1226,6 +1243,7 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
         String(tech.tech_name || techId),
         String(tech.tech_phone || ''),
         String(tech.geo_zone || ''),
+        String(tech.property_group_uuid || ''),
         Math.max(1, Math.round(asNumericLike(tech.tier, 1))),
         asNumericLike(tech.performance_score, 100),
         asNumericLike(tech.performance_score, 100),
@@ -1480,6 +1498,7 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
       tech_name: String(row.tech_name || techId),
       tech_phone: String(row.tech_phone || ''),
       geo_zone: String(row.geo_zone || ''),
+      property_group_uuid: String(row.property_group_uuid || ''),
       tier: Number(row.tier || 1),
       active: asBooleanLike(row.active, true) ? 1 : 0,
       grade: Number(row.grade ?? score),

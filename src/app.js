@@ -1157,8 +1157,7 @@ function showItemDetail(title, fields, afLink) {
   if (!modal) return;
   document.getElementById('itemDetailTitle').textContent = title;
   var html = '';
-    html = tabsHtml + html;
-  
+
   fields.forEach(function(f) {
     if (f.section) {
       html += '<div class="detail-section-title" style="margin-top:' + (html ? '14px' : '0') + '"><i class="fas ' + (f.icon || 'fa-info-circle') + '"></i> ' + escapeHtml(f.section) + '</div>';
@@ -6854,6 +6853,27 @@ function getInspectionCompliance(row, nowRef) {
   };
 }
 
+function isCurrentLeaseWithActiveResident(row, nowRef) {
+  var now = nowRef || new Date();
+  var tenant = String((row && row.tenant) || '').trim();
+  if (!tenant) return false;
+
+  var moveInDate = toValidDateOrNull(row && row.moveIn);
+  if (!moveInDate || moveInDate > now) return false;
+
+  var moveOutDate = toValidDateOrNull(row && row.moveOut);
+  if (moveOutDate && moveOutDate < now) return false;
+
+  return true;
+}
+
+function isMissingLeaseInspectionEvidence(row, nowRef) {
+  var state = getInspectionCompliance(row, nowRef || new Date());
+  if (!state.hasPastMoveIn) return true;
+  if (!state.lastDate) return true;
+  return !state.hasMoveInInspection;
+}
+
 function isInspectionWithinWindow(row) {
   var now = new Date();
   var state = getInspectionCompliance(row, now);
@@ -6902,7 +6922,9 @@ async function fetchInspections() {
         tags: r.unit_tags || ''
       };
     }).filter(function(row) {
-      return isActiveInspectionProperty(row) && isInspectionWithinWindow(row);
+      return isActiveInspectionProperty(row)
+        && isCurrentLeaseWithActiveResident(row, now)
+        && isMissingLeaseInspectionEvidence(row, now);
     });
     setDataSourceState('inspections', 'ok', { count: INSPECTIONS.length, error: '' });
     return true;
@@ -19054,8 +19076,8 @@ function renderInspections(search) {
   // Guard against stale IndexedDB cache containing pre-AppFolio artifacts
   var validInspections = INSPECTIONS.filter(function(r) {
     if (!isInPropertyGroup(r.propertyId, r.propertyName, currentPropertyGroup)) return false;
-    var state = getInspectionCompliance(r, today);
-    return !state.anchorDate || state.anchorDate >= INSPECTION_AF_EPOCH;
+    if (!isCurrentLeaseWithActiveResident(r, today)) return false;
+    return isMissingLeaseInspectionEvidence(r, today);
   });
 
   // Classify each inspection
@@ -19151,7 +19173,7 @@ function renderInspections(search) {
   ], filtered, window._inspPageState, {
     getRowClass: function() { return 'insp-row u-row-click'; },
     getRowAttrs: function(c, absIdx) { return 'data-inspidx="' + absIdx + '" style="cursor:pointer;' + (c.overdue ? 'background:var(--danger-dim)' : '') + '"'; },
-    emptyRowHtml: '<tr><td colspan="8">' + emptyHtml('fa-clipboard-check', INSPECTIONS.length === 0 ? 'No inspection data. Try refreshing.' : 'No inspections match filter') + '</td></tr>'
+    emptyRowHtml: '<tr><td colspan="8">' + emptyHtml('fa-clipboard-check', INSPECTIONS.length === 0 ? 'No inspection data. Try refreshing.' : 'No active resident leases are missing inspection records') + '</td></tr>'
   });
   body.innerHTML = inspView.html;
   // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
@@ -24314,8 +24336,42 @@ function getBranchGroupNameByUuid(uuid) {
   var g = (PROPERTY_GROUPS || []).find(function(x) { return String(x.id || '') === id; });
   return g && g.name ? String(g.name) : '';
 }
+
+function getDispatchGroupUuidForBranch(branch) {
+  var b = String(branch || '').toLowerCase();
+  if (b === 'phoenix') return String(DISPATCH.tier1GroupUuid || DISPATCH_BRANCHES.phoenix.uuid || '').trim();
+  if (b === 'tucson') return String(DISPATCH.tier2GroupUuid || DISPATCH_BRANCHES.tucson.uuid || '').trim();
+  return '';
+}
+
+function getDispatchBranchForGroupUuid(groupUuid) {
+  var gid = String(groupUuid || '').trim().toLowerCase();
+  if (!gid) return 'unknown';
+  var phoenixUuid = String(getDispatchGroupUuidForBranch('phoenix') || '').trim().toLowerCase();
+  var tucsonUuid = String(getDispatchGroupUuidForBranch('tucson') || '').trim().toLowerCase();
+  if (phoenixUuid && gid === phoenixUuid) return 'phoenix';
+  if (tucsonUuid && gid === tucsonUuid) return 'tucson';
+  return 'unknown';
+}
+
+function resolveTechGroupUuid(tech) {
+  var explicitGroup = String((tech && (tech.property_group_uuid || tech.propertyGroupUuid)) || '').trim();
+  if (explicitGroup) return explicitGroup;
+  return getDispatchGroupUuidForBranch(normalizeTechBranch(tech));
+}
+
+function shortUuidDisplay(value) {
+  var v = String(value || '').trim();
+  if (!v) return '\u2014';
+  if (v.length <= 18) return v;
+  return v.slice(0, 8) + '…' + v.slice(-6);
+}
+
 function getDispatchWoBranch(wo) {
   if (!wo) return 'unknown';
+  var groupUuid = String(wo.propertyGroupUuid || wo.property_group_uuid || wo.propertyGroupId || wo.property_group_id || '').trim();
+  var branchFromGroup = getDispatchBranchForGroupUuid(groupUuid);
+  if (branchFromGroup !== 'unknown') return branchFromGroup;
   var name = wo.propertyName || wo.property_name || '';
   var pid = wo.propertyId || wo.property_id || '';
   var phx = getBranchGroupNameByUuid(DISPATCH_BRANCHES.phoenix.uuid);
@@ -24342,6 +24398,8 @@ function getDispatchQueueBranch(row) {
   return getDispatchWoBranch(match);
 }
 function normalizeTechBranch(tech) {
+  var branchFromGroup = getDispatchBranchForGroupUuid(tech && (tech.property_group_uuid || tech.propertyGroupUuid));
+  if (branchFromGroup !== 'unknown') return branchFromGroup;
   var z = String((tech && tech.geo_zone) || '').toLowerCase();
   if (z.indexOf('tucson') !== -1) return 'tucson';
   if (z.indexOf('phoenix') !== -1) return 'phoenix';
@@ -24382,7 +24440,8 @@ function extractAssigneeCandidatesFromWorkOrders(rows) {
   (rows || []).forEach(function(r) {
     var branch = getDispatchWoBranch({
       propertyName: r.property_name || r.property || r.PropertyName || '',
-      propertyId: r.property_id || r.PropertyId || ''
+      propertyId: r.property_id || r.PropertyId || '',
+      propertyGroupUuid: r.property_group_id || r.property_group_uuid || r.PropertyGroupId || r.PropertyGroupUuid || ''
     });
     if (branch === 'unknown') return;
     var addCandidate = function(id, name) {
@@ -24646,11 +24705,13 @@ function renderDispatchRoster(techs) {
     var rowOpacity = (!t.active || hidden) ? '.5' : '1';
     var tid=escapeHtml(t.tech_id||'');
     var tname=escapeHtml(t.tech_name||'');
+    var groupUuid = resolveTechGroupUuid(t);
+    var groupUuidTitle = escapeHtml(groupUuid || '');
     html+='<tr style="opacity:'+rowOpacity+'">'+
       '<td><span style="font-size:.7rem;font-family:var(--font-mono);font-weight:700;padding:2px 6px;border-radius:4px;background:'+(t.tier===1?'var(--accent-dim)':'var(--purple-dim)')+';color:'+(t.tier===1?'var(--accent)':'var(--purple)')+'">Tier '+t.tier+'</span></td>'+
       '<td><strong>'+tname+'</strong><div style="font-family:var(--font-mono);font-size:.66rem;color:var(--text-muted)">'+escapeHtml(String(t.tech_id||'').substring(0,20))+'…</div></td>'+
       '<td style="font-family:var(--font-mono);font-size:.78rem">'+(t.tech_phone?escapeHtml(t.tech_phone):'<span style="color:var(--danger)">⚠️ No phone</span>')+'</td>'+
-      '<td style="font-size:.78rem;color:var(--text-muted)">'+escapeHtml(branch==='unknown'?(t.geo_zone||'—'):branch)+'</td>'+
+      '<td style="font-size:.78rem;color:var(--text-muted)">'+escapeHtml(branch==='unknown'?(t.geo_zone||'—'):branch)+'<div style="font-family:var(--font-mono);font-size:.66rem" title="'+groupUuidTitle+'">'+escapeHtml(shortUuidDisplay(groupUuid))+'</div></td>'+
       '<td><span style="background:'+scoreBg+';color:'+scoreColor+';font-family:var(--font-mono);font-weight:800;font-size:.82rem;padding:2px 8px;border-radius:6px">'+sn.toFixed(1)+'</span></td>'+
       '<td style="font-family:var(--font-mono);font-weight:600">'+(t.active_wo_count||0)+'</td>'+
       '<td style="font-family:var(--font-mono);font-size:.78rem">'+Number(t.target_share_pct||0).toFixed(1)+'%</td>'+
@@ -24997,6 +25058,38 @@ var DispatchQueue = {
 
 var DispatchRoster = {
   _editing: false,
+  _groupUuidForBranch: function(branch) {
+    return getDispatchGroupUuidForBranch(branch);
+  },
+  _applyGroupUuidOptions: function(selectedUuid) {
+    var sel = document.getElementById('rosterTechGroupUuid');
+    if (!sel) return;
+    var current = String(selectedUuid || sel.value || '').trim();
+    var phxUuid = this._groupUuidForBranch('phoenix');
+    var tucUuid = this._groupUuidForBranch('tucson');
+    var options = ['<option value="">Auto from branch</option>'];
+    options.push('<option value="' + escapeHtml(phxUuid) + '">Phoenix Group UUID' + (phxUuid ? ' (' + escapeHtml(shortUuidDisplay(phxUuid)) + ')' : ' (not configured)') + '</option>');
+    options.push('<option value="' + escapeHtml(tucUuid) + '">Tucson Group UUID' + (tucUuid ? ' (' + escapeHtml(shortUuidDisplay(tucUuid)) + ')' : ' (not configured)') + '</option>');
+    if (current && current !== phxUuid && current !== tucUuid) {
+      options.push('<option value="' + escapeHtml(current) + '">Custom UUID (' + escapeHtml(shortUuidDisplay(current)) + ')</option>');
+    }
+    sel.innerHTML = options.join('');
+    if (current) sel.value = current;
+  },
+  _syncTierForBranch: function(branch) {
+    var b = String(branch || '').toLowerCase();
+    var tierEl = document.getElementById('rosterTechTier');
+    if (!tierEl) return;
+    if (b === 'phoenix') tierEl.value = '1';
+    if (b === 'tucson') tierEl.value = '2';
+  },
+  _syncFromGroupUuid: function(groupUuid) {
+    var branch = getDispatchBranchForGroupUuid(groupUuid);
+    if (branch === 'unknown') return;
+    var zoneEl = document.getElementById('rosterTechZone');
+    if (zoneEl) zoneEl.value = branch;
+    this._syncTierForBranch(branch);
+  },
   _open: function() { document.getElementById('techRosterModal').classList.add('show'); },
   _close: function() { document.getElementById('techRosterModal').classList.remove('show'); },
   openAdd: function() {
@@ -25007,6 +25100,7 @@ var DispatchRoster = {
     document.getElementById('rosterTechIdHidden').value='';
     document.getElementById('rosterTechTier').value='1';
     document.getElementById('rosterTechZone').value=DISPATCH.activeBranch==='all'?'phoenix':DISPATCH.activeBranch;
+    this._applyGroupUuidOptions(this._groupUuidForBranch(document.getElementById('rosterTechZone').value));
     document.getElementById('rosterTechHidden').value='0';
     document.getElementById('rosterTechActive').value='1';
     this._open();
@@ -25022,6 +25116,7 @@ var DispatchRoster = {
     document.getElementById('rosterTechPhone').value=t.tech_phone||'';
     document.getElementById('rosterTechTier').value=String(t.tier||1);
     document.getElementById('rosterTechZone').value=normalizeTechBranch(t)==='unknown'?'phoenix':normalizeTechBranch(t);
+    this._applyGroupUuidOptions(resolveTechGroupUuid(t));
     document.getElementById('rosterTechHidden').value=isTechHidden(t.tech_id)?'1':'0';
     document.getElementById('rosterTechActive').value=String(t.active!==undefined?t.active:1);
     this._open();
@@ -25032,13 +25127,15 @@ var DispatchRoster = {
     var phone=document.getElementById('rosterTechPhone').value.trim();
     var tier=Number(document.getElementById('rosterTechTier').value);
     var zone=document.getElementById('rosterTechZone').value;
+    var groupUuid = String((document.getElementById('rosterTechGroupUuid') || {}).value || '').trim() || this._groupUuidForBranch(zone);
     var hidden=Number(document.getElementById('rosterTechHidden').value||'0')===1;
     var active=Number(document.getElementById('rosterTechActive').value);
     if(!id||!name){v9Toast('Validation error','UUID and Name are required','warning');return;}
     if(phone&&!phone.startsWith('+')){v9Toast('Invalid phone','Must start with + (E.164): +15205551234','warning');return;}
+    if(!groupUuid){v9Toast('Missing property group UUID','Choose Phoenix or Tucson group UUID before saving','warning');return;}
     if(!this._editing&&id.length<30){if(!await hmConfirm('The UUID "'+id+'" looks short. Is this a valid AppFolio user UUID?\n\nThe user must have the Maintenance Tech role enabled or reassignment PATCHes will return 422.', { title: 'UUID Warning', okLabel: 'Continue Anyway' }))return;}
     try {
-      var r=await dispatchPost('tech_roster',{tech_id:id,tech_name:name,tech_phone:phone,tier:tier,geo_zone:zone,active:active});
+      var r=await dispatchPost('tech_roster',{tech_id:id,tech_name:name,tech_phone:phone,tier:tier,geo_zone:zone,property_group_uuid:groupUuid,active:active});
       if(r.ok){
         if (hidden) {
           DISPATCH.hiddenAssignees[id] = true;
@@ -25056,7 +25153,16 @@ var DispatchRoster = {
   toggleActive: async function(techId,techName,currentlyActive) {
     if(!await hmConfirm((currentlyActive?'Deactivate':'Reactivate')+' '+techName+'?', { title: currentlyActive ? 'Deactivate Tech' : 'Reactivate Tech', okLabel: currentlyActive ? 'Deactivate' : 'Reactivate', danger: currentlyActive }))return;
     try {
-      var r=await dispatchPost('tech_roster',{tech_id:techId,tech_name:techName,active:currentlyActive?0:1});
+      var existing = (DISPATCH.techs || []).find(function(x){ return String(x.tech_id || '') === String(techId || ''); }) || {};
+      var r=await dispatchPost('tech_roster',{
+        tech_id:techId,
+        tech_name:techName,
+        tech_phone:String(existing.tech_phone || ''),
+        tier:Number(existing.tier || 1),
+        geo_zone:String(existing.geo_zone || normalizeTechBranch(existing) || ''),
+        property_group_uuid:String(existing.property_group_uuid || resolveTechGroupUuid(existing) || ''),
+        active:currentlyActive?0:1
+      });
       if(r.ok){v9Toast(techName+(currentlyActive?' deactivated':' reactivated'),'',currentlyActive?'warning':'success');DispatchControl.refresh();}
       else v9Toast('Action failed',r.error,'danger');
     }catch(e){v9Toast('Action failed',e.message,'danger');}
@@ -25300,6 +25406,10 @@ var DispatchConfig = {
     localStorage.setItem('hm_dispatch_tier2_group_uuid',g.tier2);
     saveDispatchConfigKey('dispatch_tier1_group_uuid', g.tier1).catch(function(){});
     saveDispatchConfigKey('dispatch_tier2_group_uuid', g.tier2).catch(function(){});
+    if (window.DispatchRoster && typeof window.DispatchRoster._applyGroupUuidOptions === 'function') {
+      var current = String((document.getElementById('rosterTechGroupUuid') || {}).value || '').trim();
+      window.DispatchRoster._applyGroupUuidOptions(current);
+    }
     v9Toast('Group UUIDs saved','Tier 1/2 UUID targets stored','success');
   },
   persistHiddenAssignees: async function() {
@@ -25361,13 +25471,26 @@ var DispatchConfig = {
       var users = (usersResp && usersResp.results) || [];
       if (Array.isArray(users) && users.length) {
         var countFromUsers = 0;
+        var isUserActive = function(u) {
+          var candidates = [u.active, u.Active, u.is_active, u.IsActive, u.status, u.Status];
+          for (var ii = 0; ii < candidates.length; ii++) {
+            var value = candidates[ii];
+            if (value === undefined || value === null || value === '') continue;
+            if (typeof value === 'boolean') return value;
+            var str = String(value).trim().toLowerCase();
+            if (str === 'active' || str === 'enabled' || str === 'true' || str === '1' || str === 'yes') return true;
+            if (str === 'inactive' || str === 'disabled' || str === 'false' || str === '0' || str === 'no') return false;
+          }
+          return true;
+        };
         for (var ui = 0; ui < users.length; ui++) {
           var u = users[ui] || {};
           var techId = String(u.id || u.Id || '').trim();
           if (!techId || isTechHidden(techId)) continue;
+          if (!isUserActive(u)) continue;
 
           var inferredBranch = branchByTechId[techId] || (DISPATCH.activeBranch === 'all' ? 'phoenix' : DISPATCH.activeBranch);
-          if (DISPATCH.activeBranch !== 'all' && inferredBranch !== DISPATCH.activeBranch) continue;
+          var inferredGroupUuid = getDispatchGroupUuidForBranch(inferredBranch);
 
           var techName = String(
             u.name ||
@@ -25380,6 +25503,7 @@ var DispatchConfig = {
             tech_name: techName,
             tier: inferredBranch === 'phoenix' ? 1 : 2,
             geo_zone: inferredBranch,
+            property_group_uuid: inferredGroupUuid,
             active: 1
           });
           if (upFromUsers && upFromUsers.ok) countFromUsers += 1;
@@ -25417,10 +25541,7 @@ var DispatchConfig = {
       var wo = await fetchLocalWorkOrders('90');
       var candidates = extractAssigneeCandidatesFromWorkOrders((wo && wo.results) || []);
       if (candidates.length) {
-        var selected = candidates.filter(function(c) {
-          if (DISPATCH.activeBranch === 'all') return true;
-          return c.branch === DISPATCH.activeBranch;
-        });
+        var selected = candidates;
         var count = 0;
         for (var ci = 0; ci < selected.length; ci++) {
           var c = selected[ci];
@@ -25430,6 +25551,7 @@ var DispatchConfig = {
             tech_name: c.tech_name,
             tier: c.branch === 'phoenix' ? 1 : 2,
             geo_zone: c.branch,
+            property_group_uuid: getDispatchGroupUuidForBranch(c.branch),
             active: 1
           });
           if (up && up.ok) count += 1;
@@ -25667,9 +25789,22 @@ var DispatchControl = {
     var btnClose=document.getElementById('techRosterModalClose');
     var btnCancel=document.getElementById('techRosterModalCancel');
     var btnSave=document.getElementById('techRosterModalSave');
+    var zoneSel=document.getElementById('rosterTechZone');
+    var groupSel=document.getElementById('rosterTechGroupUuid');
     if(btnClose)btnClose.addEventListener('click',function(){DispatchRoster._close();});
     if(btnCancel)btnCancel.addEventListener('click',function(){DispatchRoster._close();});
     if(btnSave)btnSave.addEventListener('click',function(){DispatchRoster.save();});
+    if(zoneSel)zoneSel.addEventListener('change',function(){
+      var branch = String(this.value || '');
+      DispatchRoster._syncTierForBranch(branch);
+      var groupInput = document.getElementById('rosterTechGroupUuid');
+      if (groupInput && !String(groupInput.value || '').trim()) {
+        groupInput.value = DispatchRoster._groupUuidForBranch(branch);
+      }
+    });
+    if(groupSel)groupSel.addEventListener('change',function(){
+      DispatchRoster._syncFromGroupUuid(String(this.value || '').trim());
+    });
     var modal=document.getElementById('techRosterModal');
     if(modal)modal.addEventListener('click',function(e){if(e.target===modal)DispatchRoster._close();});
     // Cron secret live-save

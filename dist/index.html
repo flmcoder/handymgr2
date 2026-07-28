@@ -1604,7 +1604,7 @@
     </div>
     <div style="margin-bottom:1rem;display:flex;justify-content:flex-start">
       <span class="hover-note" tabindex="0"><i class="fas fa-info-circle"></i> Sync + branch mapping
-        <span class="hover-note-tip">Sync From AppFolio imports assignees into roster. Branch comes from the active branch scope and saved Tier 1 / Tier 2 group UUIDs in Automation Configuration.</span>
+        <span class="hover-note-tip">Sync From AppFolio imports active maintenance technicians into roster. In Edit/Add Tech, assign each assignee to Phoenix or Tucson property-group UUID for FLRAZ routing.</span>
       </span>
     </div>
     <div class="table-wrapper"><div class="table-scroll">
@@ -1989,6 +1989,12 @@
         <select class="form-select" id="rosterTechZone">
           <option value="phoenix">Phoenix</option>
           <option value="tucson">Tucson</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Property Group UUID</label>
+        <select class="form-select" id="rosterTechGroupUuid" style="font-family:var(--font-mono)">
+          <option value="">Auto from branch</option>
         </select>
       </div>
       <div class="form-group">
