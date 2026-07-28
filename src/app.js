@@ -24565,7 +24565,6 @@ function dispatchPost(action, body) {
   var token = getProxyAccessToken();
   if (token) {
     headers['Authorization'] = 'Bearer ' + token;
-    headers['x-proxy-token'] = token;
   }
   return fetch(url, {
     method:'POST', headers: headers, body:JSON.stringify(body)
