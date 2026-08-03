@@ -2031,17 +2031,34 @@ async function resolveWorkOrderUuid(refRaw: string): Promise<string> {
   if (!ref) return '';
   if (isUuidLike(ref)) return ref;
 
-  const rows = await queryClient`
-    select work_order_uuid, id, wo_number, raw_json
-    from appfolio_work_orders
-    where id = ${ref} or wo_number = ${ref}
-    order by updated_at desc nulls last
-    limit 1
-  `;
+  const normalizedRef = ref.replace(/[^0-9]/g, '');
+  const candidates = Array.from(new Set([ref, ref.replace(/^#/, ''), normalizedRef].filter(Boolean)));
+
+  const rows = await queryClient.unsafe(
+    `select work_order_uuid, id, wo_number, raw_json
+       from appfolio_work_orders
+      where id = any($1::text[])
+         or wo_number = any($1::text[])
+         or regexp_replace(coalesce(wo_number, ''), '[^0-9]', '', 'g') = any($2::text[])
+      order by updated_at desc nulls last
+      limit 5`,
+    [candidates, normalizedRef ? [normalizedRef] : ['']],
+  );
   const row = (rows as any[])[0] || {};
+
   const resolved = String(
-    row?.work_order_uuid || row?.id || row?.raw_json?.work_order_uuid || row?.raw_json?.v0_uuid || row?.raw_json?.UUID || row?.raw_json?.uuid || '',
+    row?.work_order_uuid || row?.raw_json?.work_order_uuid || row?.raw_json?.v0_uuid || row?.raw_json?.UUID || row?.raw_json?.uuid || row?.id || '',
   ).trim();
+
+  if (isUuidLike(resolved)) return resolved;
+
+  for (const candidate of rows as any[]) {
+    const candidateUuid = String(
+      candidate?.work_order_uuid || candidate?.raw_json?.work_order_uuid || candidate?.raw_json?.v0_uuid || candidate?.raw_json?.UUID || candidate?.raw_json?.uuid || '',
+    ).trim();
+    if (isUuidLike(candidateUuid)) return candidateUuid;
+  }
+
   return isUuidLike(resolved) ? resolved : '';
 }
 

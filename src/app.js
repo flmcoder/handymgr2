@@ -9054,7 +9054,29 @@ async function resolveWorkOrderApiUuid(woIdOrUuid, woContext) {
 async function fetchWONotes(woIdOrUuid, woContext) {
   if (!woIdOrUuid) return [];
   var woRef = await resolveWorkOrderApiUuid(woIdOrUuid, woContext);
+  var localFallbackRef = String(woIdOrUuid || '').trim().replace(/^#/, '');
   if (!woRef || !isUuidString(woRef)) {
+    // Let backend resolve WO number/id to v0 UUID when client-side mapping is missing.
+    try {
+      var localBaseEarly = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+      var localUrlEarly = localBaseEarly + '/api/local/work_orders/' + encodeURIComponent(localFallbackRef) + '/notes';
+      var localHeadersEarly = { 'Accept': 'application/json' };
+      var localTokenEarly = getProxyAccessToken();
+      if (localTokenEarly) localHeadersEarly['Authorization'] = 'Bearer ' + localTokenEarly;
+      var localResEarly = await fetchWithTimeout(localUrlEarly, { headers: localHeadersEarly }, 30000);
+      var localDataEarly = {};
+      try { localDataEarly = await localResEarly.json(); } catch (e) { localDataEarly = {}; }
+      if (localResEarly.ok && localDataEarly && localDataEarly.ok !== false) {
+        var localNotesEarly = normalizeWONotesPayload(localDataEarly);
+        if (localDataEarly.work_order_uuid && isUuidString(localDataEarly.work_order_uuid)) {
+          woRef = String(localDataEarly.work_order_uuid);
+          detailCacheSet('notes_' + woRef, localNotesEarly);
+        }
+        return localNotesEarly;
+      }
+    } catch (earlyErr) {
+      console.warn('[fetchWONotes] backend WO-ref fallback failed for', woIdOrUuid, earlyErr && earlyErr.message);
+    }
     console.warn('[fetchWONotes] Could not resolve v0 UUID for WO ref:', woIdOrUuid, '- notes unavailable');
     return [];
   }
@@ -9185,6 +9207,24 @@ async function loadWOAttachments(woIdOrUuid, woContext) {
   try {
     var woRef = await resolveWorkOrderApiUuid(woIdOrUuid, woContext);
     if (!woRef || !isUuidString(woRef)) {
+      // Let backend resolve WO number/id to v0 UUID when client-side mapping is missing.
+      try {
+        var localBaseEarly = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+        var localRefEarly = String(woIdOrUuid || '').trim().replace(/^#/, '');
+        var localUrlEarly = localBaseEarly + '/api/local/work_orders/' + encodeURIComponent(localRefEarly) + '/attachments';
+        var localHeadersEarly = { 'Accept': 'application/json' };
+        var localTokenEarly = getProxyAccessToken();
+        if (localTokenEarly) localHeadersEarly['Authorization'] = 'Bearer ' + localTokenEarly;
+        var localResEarly = await fetchWithTimeout(localUrlEarly, { headers: localHeadersEarly }, 30000);
+        var localDataEarly = {};
+        try { localDataEarly = await localResEarly.json(); } catch (e) { localDataEarly = {}; }
+        if (localResEarly.ok && localDataEarly && localDataEarly.ok !== false) {
+          renderWOAttachmentsList(normalizeWOAttachmentList(localDataEarly));
+          return;
+        }
+      } catch (earlyErr) {
+        console.warn('[loadWOAttachments] backend WO-ref fallback failed for', woIdOrUuid, earlyErr && earlyErr.message);
+      }
       renderWOAttachmentsList([], 'Unable to resolve the AppFolio work order UUID for attachments.');
       return;
     }
