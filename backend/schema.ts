@@ -107,6 +107,26 @@ export const appfolioWorkOrders = pgTable(
   }),
 );
 
+// AppFolio v0: Users (Maintenance Tech baseline roster)
+export const appfolioUsers = pgTable(
+  'appfolio_users',
+  {
+    techId: text('tech_id').primaryKey(),
+    techName: text('tech_name').notNull(),
+    email: text('email'),
+    userRole: text('user_role').notNull().default(''),
+    appfolioActive: boolean('appfolio_active').default(true),
+    rawJson: jsonb('raw_json').notNull().default({}),
+    lastUpdatedAt: timestamp('last_updated_at', { withTimezone: true }),
+    cachedAt: timestamp('cached_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    roleIdx: index('appfolio_users_role_idx').on(table.userRole),
+    activeIdx: index('appfolio_users_active_idx').on(table.appfolioActive),
+    nameIdx: index('appfolio_users_name_idx').on(table.techName),
+  }),
+);
+
 // AppFolio v0 derived: Estimates
 export const appfolioEstimates = pgTable(
   'appfolio_estimates',
@@ -334,6 +354,7 @@ export const reassignmentQueue = pgTable('reassignment_queue', {
 export const techGrades = pgTable('tech_grades', {
   techId: text('tech_id').primaryKey(),
   techName: text('tech_name'),
+  techEmail: text('tech_email'),
   tier: integer('tier').default(1),
   grade: real('grade').default(0),
   jobsCompleted: integer('jobs_completed').default(0),

@@ -28,6 +28,7 @@ import {
   upsertPropertyGroups,
   upsertProperties, upsertUnits, upsertWorkOrders,
   upsertEstimates, upsertTurnTracker,
+  upsertMaintenanceTechUsers,
   upsertUnitInspections, upsertTenantDirectory, upsertUnitTurnDetails, upsertUnitVacancies,
 } from './repositories.ts';
 
@@ -101,6 +102,28 @@ const ENDPOINTS: Record<string, EndpointDef> = {
     },
     extractRows: (data) => data?.data ?? data?.results ?? [],
     upsert: upsertPropertyGroups,
+  },
+
+  'v0:users': {
+    apiVersion: 'v0',
+    buildFirstUrl: ({ baseUrl, incrementalFrom, lookbackDays, forceLookback }) => {
+      const clampedLookback = Math.max(1, Math.min(3650, Number(lookbackDays || 180)));
+      const from = incrementalFrom
+        ? (forceLookback
+          ? new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z'
+          : new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z')
+        : new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z';
+      return `${baseUrl}/api/v0/users?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
+    },
+    extractRows: (data) => {
+      const rows = data?.data ?? data?.results ?? [];
+      if (!Array.isArray(rows)) return [];
+      return rows.filter((row: any) => {
+        const role = String(row?.UserRole ?? row?.user_role ?? row?.Role ?? row?.role ?? '').trim().toLowerCase();
+        return role === 'maintenance tech' || role === 'maintenance_tech';
+      });
+    },
+    upsert: upsertMaintenanceTechUsers,
   },
 
   'v0:work_orders': {

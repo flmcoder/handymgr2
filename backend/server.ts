@@ -260,6 +260,7 @@ function parseLimit(value: unknown, fallback: number, max = 5000): number {
 const SYNC_ENDPOINT_ALLOWLIST = new Set<string>([
   'v0:properties',
   'v0:property_groups',
+  'v0:users',
   'v0:units',
   'v0:work_orders',
   'v2:tenant_directory',
@@ -1013,6 +1014,7 @@ async function ensureDispatchControlTables(): Promise<void> {
     CREATE TABLE IF NOT EXISTS tech_grades (
       tech_id TEXT PRIMARY KEY,
       tech_name TEXT,
+      tech_email TEXT,
       tech_phone TEXT,
       geo_zone TEXT,
       property_group_uuid TEXT,
@@ -1033,6 +1035,20 @@ async function ensureDispatchControlTables(): Promise<void> {
     )
   `);
 
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS appfolio_users (
+      tech_id TEXT PRIMARY KEY,
+      tech_name TEXT NOT NULL,
+      email TEXT,
+      user_role TEXT NOT NULL DEFAULT '',
+      appfolio_active BOOLEAN DEFAULT TRUE,
+      raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      last_updated_at TIMESTAMPTZ,
+      cached_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS tech_email TEXT`);
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS tech_phone TEXT`);
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS geo_zone TEXT`);
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS property_group_uuid TEXT`);
@@ -1065,6 +1081,8 @@ async function ensureDispatchControlTables(): Promise<void> {
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS reassignment_queue_branch_idx ON reassignment_queue(branch)`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS tech_grades_active_idx ON tech_grades(active)`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS tech_grades_tier_idx ON tech_grades(tier)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_users_role_idx ON appfolio_users(user_role)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_users_active_idx ON appfolio_users(appfolio_active)`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS reassignment_audit_wo_idx ON reassignment_audit(wo_id)`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS reassignment_audit_created_idx ON reassignment_audit(created_at)`);
 
@@ -1220,33 +1238,67 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
     diagnostics.examined = workOrders.length;
     const dedupe = new Map<string, Record<string, unknown>>();
     for (const row of workOrders) {
-      const techId = String(row?.assigned_user_id || '').trim();
-      const techName = String(row?.assigned_user_name || '').trim();
-      if (!techId && !techName) {
+      const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json as Record<string, any> : {};
+      const assignedUsers = Array.isArray(raw?.AssignedUsers)
+        ? raw.AssignedUsers
+        : (Array.isArray(raw?.assigned_users) ? raw.assigned_users : []);
+
+      const rowCandidates: Array<{ techId: string; techName: string }> = [];
+      const pushCandidate = (idLike: unknown, nameLike: unknown, firstLike?: unknown, lastLike?: unknown) => {
+        const parsedId = String(idLike || '').trim();
+        let parsedName = String(nameLike || '').trim();
+        if (!parsedName) {
+          const first = String(firstLike || '').trim();
+          const last = String(lastLike || '').trim();
+          parsedName = [first, last].filter(Boolean).join(' ').trim();
+        }
+        if (!parsedId && !parsedName) return;
+        rowCandidates.push({ techId: parsedId, techName: parsedName });
+      };
+
+      pushCandidate(row?.assigned_user_id, row?.assigned_user_name);
+      for (const user of assignedUsers as any[]) {
+        if (!user || typeof user !== 'object') continue;
+        pushCandidate(
+          user?.Id ?? user?.id ?? user?.UserId ?? user?.user_id,
+          user?.Name ?? user?.name ?? user?.FullName ?? user?.full_name,
+          user?.FirstName ?? user?.first_name ?? user?.firstName,
+          user?.LastName ?? user?.last_name ?? user?.lastName,
+        );
+      }
+
+      if (!rowCandidates.length) {
         addReason('missing_assignee_id_and_name');
         continue;
       }
-      const key = techId || techName;
-      if (dedupe.has(key)) {
-        addReason('duplicate_assignee_in_work_orders');
-        continue;
-      }
+
       const propertyGroupUuid = String(row?.property_group_id || '').trim();
       if (!propertyGroupUuid) addReason('missing_property_group_uuid_in_work_order');
       const branch = deriveDispatchBranch(propertyGroupUuid, tier1GroupUuid, tier2GroupUuid);
       if (branch === 'unknown') addReason('unmapped_property_group_uuid');
-      if (!techId) addReason('missing_assigned_user_id_using_name_key');
-      dedupe.set(key, {
-        tech_id: techId || key,
-        tech_name: techName || techId || key,
-        tech_phone: '',
-        geo_zone: branch === 'unknown' ? '' : branch,
-        property_group_uuid: propertyGroupUuid,
-        tier: branch === 'tucson' ? 2 : 1,
-        active: true,
-        performance_score: 100,
-        target_share_pct: 0,
-      });
+
+      for (const candidate of rowCandidates) {
+        const techId = String(candidate.techId || '').trim();
+        const techName = String(candidate.techName || '').trim();
+        const key = techId || ('name:' + techName.toLowerCase());
+        if (dedupe.has(key)) {
+          addReason('duplicate_assignee_in_work_orders');
+          continue;
+        }
+        if (!techId) addReason('missing_assigned_user_id_using_name_key');
+
+        dedupe.set(key, {
+          tech_id: techId || techName,
+          tech_name: techName || techId,
+          tech_phone: '',
+          geo_zone: branch === 'unknown' ? '' : branch,
+          property_group_uuid: propertyGroupUuid,
+          tier: branch === 'tucson' ? 2 : 1,
+          active: true,
+          performance_score: 100,
+          target_share_pct: 0,
+        });
+      }
     }
     rowsToUpsert.push(...dedupe.values());
   }
@@ -1262,13 +1314,17 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
     }
     await queryClient.unsafe(
       `insert into tech_grades (
-         tech_id, tech_name, tech_phone, geo_zone, property_group_uuid, tier, grade,
+        tech_id, tech_name, tech_email, tech_phone, geo_zone, property_group_uuid, tier, grade,
          performance_score, target_share_pct, active,
          jobs_completed, no_contact_count, active_wo_count,
          go_back_pct, reassign_pct, updated_at
-      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11, 0), coalesce($12, 0), coalesce($13, 0), coalesce($14, 0), coalesce($15, 0), NOW())
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, coalesce($12, 0), coalesce($13, 0), coalesce($14, 0), coalesce($15, 0), coalesce($16, 0), NOW())
        on conflict (tech_id) do update set
          tech_name = excluded.tech_name,
+        tech_email = case
+          when coalesce(tech_grades.tech_email, '') = '' then excluded.tech_email
+          else tech_grades.tech_email
+        end,
          tech_phone = excluded.tech_phone,
          geo_zone = excluded.geo_zone,
          property_group_uuid = excluded.property_group_uuid,
@@ -1281,6 +1337,7 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
       [
         techId,
         String(tech.tech_name || techId),
+        String(tech.tech_email || tech.email || ''),
         String(tech.tech_phone || ''),
         String(tech.geo_zone || ''),
         String(tech.property_group_uuid || ''),
@@ -1491,7 +1548,40 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
   }
 
   const queueRows = await queryClient.unsafe(`select * from reassignment_queue order by updated_at desc limit 5000`);
-  const techRows = await queryClient.unsafe(`select * from tech_grades order by active desc, tier asc, performance_score desc, tech_name asc limit 5000`);
+  const techRows = await queryClient.unsafe(`
+    with roster_baseline as (
+      select
+        coalesce(u.tech_id, g.tech_id) as tech_id,
+        coalesce(nullif(g.tech_name, ''), nullif(u.tech_name, ''), coalesce(u.tech_id, g.tech_id)) as tech_name,
+        coalesce(nullif(g.tech_email, ''), nullif(u.email, ''), '') as tech_email,
+        coalesce(g.tech_phone, '') as tech_phone,
+        coalesce(g.geo_zone, '') as geo_zone,
+        coalesce(g.property_group_uuid, '') as property_group_uuid,
+        coalesce(g.tier, 1) as tier,
+        coalesce(g.active, true) as active,
+        coalesce(g.grade, 0) as grade,
+        coalesce(g.performance_score, 100) as performance_score,
+        coalesce(g.target_share_pct, 0) as target_share_pct,
+        coalesce(g.active_wo_count, 0) as active_wo_count,
+        coalesce(g.go_back_pct, 0) as go_back_pct,
+        coalesce(g.reassign_pct, 0) as reassign_pct,
+        coalesce(g.jobs_completed, 0) as jobs_completed,
+        coalesce(g.no_contact_count, 0) as no_contact_count,
+        g.last_warning_at,
+        g.last_reassigned_at,
+        coalesce(g.updated_at, u.cached_at, now()) as updated_at,
+        coalesce(u.appfolio_active, true) as appfolio_active
+      from appfolio_users u
+      full outer join tech_grades g on g.tech_id = u.tech_id
+      where u.tech_id is null
+         or lower(coalesce(u.user_role, '')) = 'maintenance tech'
+         or lower(coalesce(u.user_role, '')) = 'maintenance_tech'
+    )
+    select *
+    from roster_baseline
+    order by active desc, tier asc, performance_score desc, tech_name asc
+    limit 5000
+  `);
   const auditRows = await queryClient.unsafe(`select id, wo_id, event_type, event_message, payload_json, created_at from reassignment_audit order by id desc limit 300`);
 
   const queue = (queueRows as any[]).map((row) => ({
@@ -1547,6 +1637,7 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     return {
       tech_id: techId,
       tech_name: String(row.tech_name || techId),
+      tech_email: String(row.tech_email || ''),
       tech_phone: String(row.tech_phone || ''),
       geo_zone: String(row.geo_zone || ''),
       property_group_uuid: String(row.property_group_uuid || ''),
@@ -1560,6 +1651,7 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
       reassign_pct: Number.isFinite(Number(row.reassign_pct)) ? Number(row.reassign_pct) : (activeCount > 0 ? Math.min(100, (reassignCount / activeCount) * 100) : 0),
       jobs_completed: jobsCompleted,
       no_contact_count: noContactCount,
+      appfolio_active: asBooleanLike(row.appfolio_active, true) ? 1 : 0,
       last_warning_at: asIso(row.last_warning_at),
       last_reassigned_at: asIso(row.last_reassigned_at),
       updated_at: asIso(row.updated_at),
@@ -3066,6 +3158,57 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     return;
   }
 
+  if (action === 'users') {
+    try {
+      const session = await requireProxySession(req, res);
+      if (!session) return;
+      await ensureDispatchControlTables();
+
+      const params = toParams(req);
+      const refresh = /^(1|true|yes|on)$/i.test(String(params.refresh || params.force_refresh || '').trim());
+      const maxPages = Math.max(0, Number(params.max_pages || params.maxPages || 0) || 0);
+      let syncSummary: any = null;
+      if (refresh) {
+        const { runSync } = await import('./sync/syncRunner.ts');
+        syncSummary = await runSync({ endpointKey: 'v0:users', triggerType: 'manual_ui', maxPages });
+      }
+
+      const limit = parseLimit(params.limit || params.page_size || params.per_page, 200, 5000);
+      const rows = await queryClient.unsafe(
+        `select tech_id, tech_name, email, user_role, appfolio_active, last_updated_at, cached_at
+           from appfolio_users
+          where lower(coalesce(user_role, '')) in ('maintenance tech', 'maintenance_tech')
+          order by lower(coalesce(tech_name, tech_id)) asc
+          limit $1`,
+        [limit],
+      );
+
+      const results = (rows as any[]).map((row) => ({
+        id: String(row?.tech_id || ''),
+        tech_id: String(row?.tech_id || ''),
+        name: String(row?.tech_name || row?.tech_id || ''),
+        tech_name: String(row?.tech_name || row?.tech_id || ''),
+        email: String(row?.email || ''),
+        user_role: String(row?.user_role || ''),
+        active: asBooleanLike(row?.appfolio_active, true),
+        last_updated_at: asIso(row?.last_updated_at),
+        cached_at: asIso(row?.cached_at),
+      }));
+
+      res.json({
+        ok: true,
+        results,
+        count: results.length,
+        source: 'postgres_local_users',
+        sync: syncSummary,
+      });
+    } catch (error) {
+      logTunnelError(error, '/api?action=users');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Users roster failed') });
+    }
+    return;
+  }
+
   if (action === 'tech_roster') {
     try {
       const params = toActionParams(req);
@@ -4159,6 +4302,7 @@ app.post('/api/local/bootstrap_sync', async (req: Request, res: Response) => {
     const defaultEndpoints = [
       'v0:properties',
       'v0:property_groups',
+      'v0:users',
       'v0:units',
       'v0:work_orders',
       'v2:tenant_directory',
@@ -6487,6 +6631,7 @@ function startRecurringSyncScheduler(): void {
   const defaultEndpoints = [
     'v0:properties',
     'v0:property_groups',
+    'v0:users',
     'v0:units',
     'v0:work_orders',
     'v2:tenant_directory',

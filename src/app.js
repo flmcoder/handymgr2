@@ -25676,7 +25676,8 @@ var DispatchConfig = {
 
       var usersResp = await proxyAction('users', {
         role: 'maintenance_tech',
-        since: '2020-01-01T00:00:00Z'
+        since: '2020-01-01T00:00:00Z',
+        refresh: '1'
       });
       var users = (usersResp && usersResp.results) || [];
       reportBase.stage = 'users_endpoint';

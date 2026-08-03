@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { inArray, sql } from 'drizzle-orm';
 import { db } from '../db.ts';
 import {
+  appfolioUsers,
   appfolioPropertyGroups,
   appfolioProperties,
   appfolioUnits,
@@ -88,6 +89,20 @@ function asDate(v: unknown): Date | null {
   if (!v) return null;
   const d = new Date(String(v));
   return isNaN(d.getTime()) ? null : d;
+}
+
+function asBool(v: unknown, fallback = true): boolean {
+  if (typeof v === 'boolean') return v;
+  if (v === null || v === undefined || v === '') return fallback;
+  const s = String(v).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'active', 'enabled'].includes(s)) return true;
+  if (['0', 'false', 'no', 'inactive', 'disabled'].includes(s)) return false;
+  return fallback;
+}
+
+function isMaintenanceTechRole(value: unknown): boolean {
+  const role = String(value ?? '').trim().toLowerCase();
+  return role === 'maintenance tech' || role === 'maintenance_tech';
 }
 
 function isUuidLike(value: unknown): boolean {
@@ -363,6 +378,77 @@ export async function upsertUnits(rows: any[]): Promise<UpsertResult> {
           cachedAt: sql`EXCLUDED.cached_at`,
         },
       });
+
+    upserted++;
+  }
+
+  return { upserted, skipped };
+}
+
+// ── Users (Maintenance Tech Baseline) ──────────────────────────────────────
+
+export async function upsertMaintenanceTechUsers(rows: any[]): Promise<UpsertResult> {
+  let upserted = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const techId = asStr(row.Id || row.id || row.UserId || row.user_id);
+    if (!techId) {
+      skipped++;
+      continue;
+    }
+
+    const role = asStr(row.UserRole || row.user_role || row.Role || row.role, 120) || '';
+    if (!isMaintenanceTechRole(role)) {
+      skipped++;
+      continue;
+    }
+
+    const firstName = asStr(row.FirstName || row.first_name || row.firstName);
+    const lastName = asStr(row.LastName || row.last_name || row.lastName);
+    const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+    const techName = asStr(row.Name || row.name || fullName || row.Email || row.email || techId) || techId;
+    const email = asStr(row.Email || row.email || row.LoginEmail || row.login_email, 240);
+    const appfolioActive = asBool(row.Active ?? row.active ?? row.IsActive ?? row.is_active ?? row.Status ?? row.status, true);
+    const updatedAt = asDate(row.LastUpdatedAt || row.last_updated_at || row.UpdatedAt || row.updated_at);
+
+    await db
+      .insert(appfolioUsers)
+      .values({
+        techId,
+        techName,
+        email,
+        userRole: role,
+        appfolioActive,
+        rawJson: row,
+        lastUpdatedAt: updatedAt,
+        cachedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: appfolioUsers.techId,
+        set: {
+          techName: sql`EXCLUDED.tech_name`,
+          email: sql`EXCLUDED.email`,
+          userRole: sql`EXCLUDED.user_role`,
+          appfolioActive: sql`EXCLUDED.appfolio_active`,
+          rawJson: sql`EXCLUDED.raw_json`,
+          lastUpdatedAt: sql`EXCLUDED.last_updated_at`,
+          cachedAt: sql`EXCLUDED.cached_at`,
+        },
+      });
+
+    // Hydrate tech_grades baseline without clobbering local rotation config.
+    await db.execute(sql`
+      INSERT INTO tech_grades (tech_id, tech_name, tech_email, active, tier, updated_at)
+      VALUES (${techId}, ${techName}, ${email ?? ''}, TRUE, 1, NOW())
+      ON CONFLICT (tech_id) DO UPDATE SET
+        tech_name = EXCLUDED.tech_name,
+        tech_email = CASE
+          WHEN tech_grades.tech_email IS NULL OR btrim(tech_grades.tech_email) = '' THEN EXCLUDED.tech_email
+          ELSE tech_grades.tech_email
+        END,
+        updated_at = NOW()
+    `);
 
     upserted++;
   }
