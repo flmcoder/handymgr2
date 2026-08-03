@@ -1737,7 +1737,26 @@ html.dark .vault-resume-toggle:hover {
   color: var(--vault-text);
   cursor: help;
 }
-.login-info i { color: var(--vault-accent); font-size: 12px; }
+.login-info i { color: var(--vault-accent-strong); font-size: 12px; }
+.login-info span { color: var(--vault-text); }
+.login-info:hover,
+.login-info:focus-within {
+  background: color-mix(in srgb, var(--vault-accent) 16%, var(--vault-surface) 84%);
+  border-color: color-mix(in srgb, var(--vault-accent-strong) 40%, var(--vault-surface-border) 60%);
+}
+.login-info:hover i,
+.login-info:focus-within i {
+  color: var(--vault-accent-strong);
+}
+.login-info-tip {
+  background: color-mix(in srgb, var(--vault-tooltip-bg) 88%, #ffffff 12%);
+  border-color: color-mix(in srgb, var(--vault-surface-border) 72%, rgba(255,255,255,.28) 28%);
+  color: #f8fbff;
+}
+html.dark .login-info-tip {
+  background: var(--vault-tooltip-bg);
+  color: var(--vault-text);
+}
 .login-info-tip {
   position: absolute;
   left: 50%;
@@ -1747,9 +1766,6 @@ html.dark .vault-resume-toggle:hover {
   max-width: 360px;
   opacity: 0;
   pointer-events: none;
-  background: var(--vault-tooltip-bg);
-  border: 1px solid var(--vault-surface-border);
-  color: var(--vault-text);
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 11px;
