@@ -3,11 +3,17 @@
    AES-256-GCM Credential Vault + Rate-Limited API Client
    ============================================================== */
 import './css/app.css';
+import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-theme-quartz.css';
+import * as echarts from 'echarts';
+import { ModuleRegistry, createGrid, InfiniteRowModelModule } from 'ag-grid-community';
 import { createAuthModule } from './auth.js';
 import { createTabsModule } from './tabs.js';
 import { createManagerReviewModule } from './managerReview.js';
 import { createNavInteractionsModule } from './navInteractions.js';
 import { createGroupFilterModule } from './groupFilter.js';
+
+ModuleRegistry.registerModules([InfiniteRowModelModule]);
 
 // ---- OTP Countdown Timer ----
 var _otpCountdownTimer = null;
@@ -13388,6 +13394,12 @@ var currentWOView = (function() {
 })(); // 'board' | 'list'
 var currentWOSubtab = 'active'; // active | completed | closure | followup
 var currentWOTab = 'active'; // 'active' | 'inactive' - for active vs inactive work orders
+var woGridApi = null;
+var inspectionsGridApi = null;
+var WO_ANALYTICS_FILTERS = { ageBucket: '', owner: '', status: '' };
+var INSP_ANALYTICS_FILTERS = { status: '', ageBucket: '', turnLinked: '' };
+var WO_CHARTS = { aging: null, owner: null, status: null };
+var INSP_CHARTS = { mix: null, age: null, link: null };
 var currentBillingSubtab = 'main'; // main | payables | charge-detail | bill-detail
 var _billingKpisLoading = false;
 var _billingKpisLoadedGroup = null; // group key for which KPIs were last loaded
@@ -14989,13 +15001,22 @@ function renderInspectionInsights(classifiedRows) {
   var ageMeta = $('#inspAgeMeta');
   var linkMeta = $('#inspLinkMeta');
 
+  var mixEl = document.getElementById('inspMixChart');
+  var ageEl = document.getElementById('inspAgeChart');
+  var linkEl = document.getElementById('inspLinkChart');
+  if (!mixEl || !ageEl || !linkEl) return;
+
+  destroyChartInstance(INSP_CHARTS.mix);
+  destroyChartInstance(INSP_CHARTS.age);
+  destroyChartInstance(INSP_CHARTS.link);
+  INSP_CHARTS.mix = null;
+  INSP_CHARTS.age = null;
+  INSP_CHARTS.link = null;
+
   if (!list.length) {
     if (mixMeta) mixMeta.textContent = '0 rows';
     if (ageMeta) ageMeta.textContent = 'No age data';
     if (linkMeta) linkMeta.textContent = 'No link data';
-    renderKpiMiniChart('inspMixChart', []);
-    renderKpiMiniChart('inspAgeChart', []);
-    renderKpiMiniChart('inspLinkChart', []);
     return;
   }
 
@@ -15028,15 +15049,76 @@ function renderInspectionInsights(classifiedRows) {
   if (ageMeta) ageMeta.textContent = ageRows.length ? (ageRows[ageRows.length - 1].value + ' oldest bucket') : 'No age data';
   if (linkMeta) linkMeta.textContent = linkedCount + ' linked';
 
-  renderKpiMiniChart('inspMixChart', mixRows, {
-    valueFormatter: function(v) { return Number(v || 0).toLocaleString(); },
+  INSP_CHARTS.mix = echarts.init(mixEl, null, { renderer: 'canvas' });
+  INSP_CHARTS.mix.setOption({
+    animationDuration: 300,
+    tooltip: { trigger: 'item' },
+    series: [{
+      type: 'pie',
+      radius: ['36%', '72%'],
+      data: mixRows.map(function(r) {
+        var key = r.label.toLowerCase().replace(/\s+/g, '_');
+        return { name: r.label, value: r.value, selected: INSP_ANALYTICS_FILTERS.status === key };
+      }),
+      label: { color: '#7f8ca3', fontSize: 10 }
+    }]
   });
-  renderKpiMiniChart('inspAgeChart', ageRows, {
-    valueFormatter: function(v) { return Number(v || 0).toLocaleString(); },
+  INSP_CHARTS.mix.on('click', function(params) {
+    var key = String((params && params.name) || '').toLowerCase().replace(/\s+/g, '_');
+    INSP_ANALYTICS_FILTERS.status = INSP_ANALYTICS_FILTERS.status === key ? '' : key;
+    renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
   });
-  renderKpiMiniChart('inspLinkChart', linkRows, {
-    valueFormatter: function(v) { return Number(v || 0).toLocaleString(); },
+
+  INSP_CHARTS.age = echarts.init(ageEl, null, { renderer: 'canvas' });
+  INSP_CHARTS.age.setOption({
+    animationDuration: 320,
+    grid: { top: 24, left: 28, right: 8, bottom: 24 },
+    xAxis: { type: 'category', data: ageRows.map(function(r){ return r.label; }), axisLabel: { color: '#7f8ca3' } },
+    yAxis: { type: 'value', axisLabel: { color: '#7f8ca3' }, splitLine: { lineStyle: { color: 'rgba(127,140,163,0.2)' } } },
+    series: [{
+      type: 'bar',
+      data: ageRows.map(function(r){ return r.value; }),
+      itemStyle: {
+        color: function(p) {
+          var label = ageRows[p.dataIndex] && ageRows[p.dataIndex].label;
+          var selected = INSP_ANALYTICS_FILTERS.ageBucket && INSP_ANALYTICS_FILTERS.ageBucket === label;
+          return selected ? '#3772ff' : '#7ea6ff';
+        },
+        borderRadius: [8, 8, 2, 2]
+      }
+    }]
   });
+  INSP_CHARTS.age.on('click', function(params) {
+    var bucket = String((params && params.name) || '');
+    INSP_ANALYTICS_FILTERS.ageBucket = INSP_ANALYTICS_FILTERS.ageBucket === bucket ? '' : bucket;
+    renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+  });
+
+  INSP_CHARTS.link = echarts.init(linkEl, null, { renderer: 'canvas' });
+  INSP_CHARTS.link.setOption({
+    animationDuration: 300,
+    tooltip: { trigger: 'item' },
+    series: [{
+      type: 'pie',
+      radius: ['44%', '74%'],
+      data: linkRows.map(function(r) {
+        var key = r.label === 'Turn Linked' ? 'turn_linked' : 'not_linked';
+        return { name: r.label, value: r.value, selected: INSP_ANALYTICS_FILTERS.turnLinked === key };
+      }),
+      label: { color: '#7f8ca3', fontSize: 10 }
+    }]
+  });
+  INSP_CHARTS.link.on('click', function(params) {
+    var key = String((params && params.name) || '') === 'Turn Linked' ? 'turn_linked' : 'not_linked';
+    INSP_ANALYTICS_FILTERS.turnLinked = INSP_ANALYTICS_FILTERS.turnLinked === key ? '' : key;
+    renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+  });
+
+  setTimeout(function() {
+    if (INSP_CHARTS.mix) INSP_CHARTS.mix.resize();
+    if (INSP_CHARTS.age) INSP_CHARTS.age.resize();
+    if (INSP_CHARTS.link) INSP_CHARTS.link.resize();
+  }, 40);
 }
 
 /* ─── Billing Main: saved report ──────────────────────────────────────────── */
@@ -16268,6 +16350,575 @@ function sortWorkOrders(rows) {
   });
 }
 
+function destroyGridInstance(apiRefName) {
+  if (apiRefName === 'wo' && woGridApi) {
+    try { woGridApi.destroy(); } catch (_) {}
+    woGridApi = null;
+  }
+  if (apiRefName === 'insp' && inspectionsGridApi) {
+    try { inspectionsGridApi.destroy(); } catch (_) {}
+    inspectionsGridApi = null;
+  }
+}
+
+function destroyChartInstance(chart) {
+  if (chart && typeof chart.dispose === 'function') {
+    try { chart.dispose(); } catch (_) {}
+  }
+}
+
+function getWOAnalyticsAgeBucket(days) {
+  var d = Math.max(0, Number(days || 0));
+  if (d <= 7) return '0-7';
+  if (d <= 30) return '8-30';
+  if (d <= 60) return '31-60';
+  return '60+';
+}
+
+function getInspectionAgeBucket(days) {
+  var d = Math.max(0, Number(days || 0));
+  if (d <= 30) return '0-30d';
+  if (d <= 90) return '31-90d';
+  if (d <= 180) return '91-180d';
+  return '181+d';
+}
+
+function mapWOSortModel(sortModel) {
+  if (!Array.isArray(sortModel) || !sortModel.length) {
+    if (currentWOSort === 'newest') return { sortBy: 'updated_at', sortDir: 'desc' };
+    if (currentWOSort === 'oldest') return { sortBy: 'updated_at', sortDir: 'asc' };
+    if (currentWOSort === 'priority') return { sortBy: 'priority', sortDir: 'asc' };
+    return { sortBy: 'updated_at', sortDir: 'desc' };
+  }
+  var first = sortModel[0] || {};
+  var sortMap = {
+    id: 'wo_number',
+    propertyName: 'property_name',
+    unit: 'unit_name',
+    description: 'description',
+    status: 'status',
+    priority: 'priority',
+    owner: 'owner',
+    ageDays: 'age_days'
+  };
+  return {
+    sortBy: sortMap[first.colId] || 'updated_at',
+    sortDir: String(first.sort || 'desc') === 'asc' ? 'asc' : 'desc'
+  };
+}
+
+function mapInspectionSortModel(sortModel) {
+  if (!Array.isArray(sortModel) || !sortModel.length) return { sortBy: 'days_since', sortDir: 'desc' };
+  var first = sortModel[0] || {};
+  var sortMap = {
+    propertyName: 'property_name',
+    unit: 'unit_name',
+    tenant: 'tenant_name',
+    lastInspectionLabel: 'last_inspection_date',
+    daysSince: 'days_since',
+    statusLabel: 'status_bucket',
+    turnLabel: 'turn_linked',
+    moveInLabel: 'move_in_date',
+    moveOutLabel: 'move_out_date'
+  };
+  return {
+    sortBy: sortMap[first.colId] || 'days_since',
+    sortDir: String(first.sort || 'desc') === 'asc' ? 'asc' : 'desc'
+  };
+}
+
+function renderWOChartFilterBadges() {
+  var mount = document.getElementById('woChartFilterBadges');
+  if (!mount) return;
+  var badges = [];
+  if (WO_ANALYTICS_FILTERS.ageBucket) badges.push({ key: 'ageBucket', label: 'Age ' + WO_ANALYTICS_FILTERS.ageBucket });
+  if (WO_ANALYTICS_FILTERS.owner) badges.push({ key: 'owner', label: 'Owner ' + WO_ANALYTICS_FILTERS.owner });
+  if (WO_ANALYTICS_FILTERS.status) badges.push({ key: 'status', label: 'Status ' + WO_ANALYTICS_FILTERS.status });
+
+  if (!badges.length) {
+    mount.innerHTML = '';
+    mount.style.display = 'none';
+    return;
+  }
+
+  mount.style.display = '';
+  mount.innerHTML = badges.map(function(b) {
+    return '<button class="chart-filter-badge" data-wochart-remove="' + escapeHtml(b.key) + '">'
+      + '<i class="fas fa-filter"></i> ' + escapeHtml(b.label)
+      + ' <span class="x">×</span></button>';
+  }).join('');
+
+  mount.querySelectorAll('[data-wochart-remove]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var key = btn.getAttribute('data-wochart-remove');
+      if (!key) return;
+      WO_ANALYTICS_FILTERS[key] = '';
+      renderWorkOrders();
+    });
+  });
+}
+
+function renderInspectionChartFilterBadges() {
+  var mount = document.getElementById('inspChartFilterBadges');
+  if (!mount) return;
+  var badges = [];
+  if (INSP_ANALYTICS_FILTERS.status) badges.push({ key: 'status', label: 'Status ' + INSP_ANALYTICS_FILTERS.status.replace(/_/g, ' ') });
+  if (INSP_ANALYTICS_FILTERS.ageBucket) badges.push({ key: 'ageBucket', label: 'Age ' + INSP_ANALYTICS_FILTERS.ageBucket });
+  if (INSP_ANALYTICS_FILTERS.turnLinked) badges.push({ key: 'turnLinked', label: 'Turn ' + INSP_ANALYTICS_FILTERS.turnLinked.replace(/_/g, ' ') });
+
+  if (!badges.length) {
+    mount.innerHTML = '';
+    mount.style.display = 'none';
+    return;
+  }
+
+  mount.style.display = '';
+  mount.innerHTML = badges.map(function(b) {
+    return '<button class="chart-filter-badge" data-inspchart-remove="' + escapeHtml(b.key) + '">' +
+      '<i class="fas fa-filter"></i> ' + escapeHtml(b.label) + ' <span class="x">×</span></button>';
+  }).join('');
+
+  mount.querySelectorAll('[data-inspchart-remove]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var key = btn.getAttribute('data-inspchart-remove');
+      if (!key) return;
+      INSP_ANALYTICS_FILTERS[key] = '';
+      renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+    });
+  });
+}
+
+function createWorkOrdersServerDatasource() {
+  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  var token = getProxyAccessToken();
+  var scopedGroupUuid = getEffectiveGroupUuid();
+
+  return {
+    rowCount: undefined,
+    getRows: function(params) {
+      (async function() {
+        try {
+          var startRow = Math.max(0, Number(params.startRow || 0));
+          var endRow = Math.max(startRow, Number(params.endRow || 0));
+          var blockSize = Math.max(1, endRow - startRow);
+          var sort = mapWOSortModel(params.sortModel);
+          var search = ($('#woSearch') && $('#woSearch').value) ? String($('#woSearch').value).trim() : '';
+          var flaggedOnly = currentWOFilter === 'flagged';
+          var effectiveStatusFilter = WO_ANALYTICS_FILTERS.status
+            || ((currentWOFilter && currentWOFilter !== 'all' && currentWOFilter !== 'flagged') ? currentWOFilter : '');
+          var flaggedIds = flaggedOnly
+            ? getFilteredWOs().map(function(wo) { return String(wo.id || '').trim(); }).filter(Boolean)
+            : [];
+
+          var url = localBase + '/api/local/grid/work_orders?days=' + encodeURIComponent(String(DATA_WINDOW_DAYS))
+            + '&limit=' + encodeURIComponent(String(blockSize))
+            + '&offset=' + encodeURIComponent(String(startRow))
+            + '&status_scope=' + encodeURIComponent(currentWOTab === 'inactive' ? 'inactive' : 'active')
+            + '&sort_by=' + encodeURIComponent(sort.sortBy)
+            + '&sort_dir=' + encodeURIComponent(sort.sortDir)
+            + '&search=' + encodeURIComponent(search || '')
+            + '&status_filter=' + encodeURIComponent(effectiveStatusFilter || '')
+            + '&priority_filter=' + encodeURIComponent(currentWOPriority || '')
+            + '&type_filter=' + encodeURIComponent(currentWOType || '')
+            + '&vendor_filter=' + encodeURIComponent(currentWOVendor || '')
+            + '&property_filter=' + encodeURIComponent(currentWOProperty || '')
+            + '&age_min=' + encodeURIComponent(currentWOAgeFilter || '')
+            + '&age_bucket=' + encodeURIComponent(WO_ANALYTICS_FILTERS.ageBucket || '')
+            + '&owner_filter=' + encodeURIComponent(WO_ANALYTICS_FILTERS.owner || '')
+            + '&flagged_only=' + (flaggedOnly ? '1' : '0');
+          if (flaggedOnly && flaggedIds.length) url += '&flagged_ids=' + encodeURIComponent(flaggedIds.join(','));
+          if (scopedGroupUuid) url += '&property_group_id=' + encodeURIComponent(scopedGroupUuid);
+
+          var headers = { 'Accept': 'application/json' };
+          if (token) headers.Authorization = 'Bearer ' + token;
+
+          var res = await fetchWithTimeout(url, { headers: headers }, 45000);
+          var data = {};
+          try { data = await res.json(); } catch (_) { data = {}; }
+          if (!res.ok || data.ok === false) {
+            throw new Error(String((data && (data.error || data.message)) || ('Work order grid failed: HTTP ' + res.status)));
+          }
+
+          var rows = (data.results || []).map(function(r) {
+            var ageDays = Number(r.age_days || 0) || 0;
+            return {
+              id: r.work_order_number || r.wo_number || r.id || '',
+              propertyName: r.property_name || r.property || '-',
+              unit: r.unit_name || r.unit || '-',
+              description: r.description || '-',
+              status: r.status || '-',
+              priority: r.priority || '-',
+              owner: r.owner_name || r.assigned_user_name || r.vendor_name || 'Unassigned',
+              ageDays: ageDays,
+              __raw: {
+                id: r.work_order_number || r.wo_number || r.id || '',
+                uuid: r.work_order_uuid || r.uuid || '',
+                dbApiId: r.db_api_id || '',
+                propertyId: r.property_id || '',
+                propertyName: r.property_name || r.property || '',
+                unit: r.unit_name || r.unit || '',
+                priority: r.priority || '',
+                status: r.status || '',
+                description: r.description || '',
+                vendorName: r.vendor_name || '',
+                vendorId: r.vendor_id || '',
+                created: r.created_at || '',
+                updated: r.completed_on || r.updated_at || '',
+                completedOn: r.completed_on || '',
+                workCompletedOn: r.work_completed_on || '',
+                type: r.category || r.type || '',
+                amount: r.total_cost || '',
+                assignedUser: r.owner_name || r.assigned_user_name || '',
+                _source: r._source || 'postgres_local_grid'
+              }
+            };
+          });
+
+          params.successCallback(rows, Number(data.total || 0));
+        } catch (err) {
+          console.error('[wo-grid] datasource error', err);
+          params.failCallback();
+        }
+      })();
+    }
+  };
+}
+
+function createInspectionsServerDatasource() {
+  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  var token = getProxyAccessToken();
+  var scopedGroupUuid = getEffectiveGroupUuid();
+
+  return {
+    rowCount: undefined,
+    getRows: function(params) {
+      (async function() {
+        try {
+          var startRow = Math.max(0, Number(params.startRow || 0));
+          var endRow = Math.max(startRow, Number(params.endRow || 0));
+          var blockSize = Math.max(1, endRow - startRow);
+          var sort = mapInspectionSortModel(params.sortModel);
+          var search = ($('#inspSearch') && $('#inspSearch').value) ? String($('#inspSearch').value).trim() : '';
+          var statusFilter = ($('#inspStatusFilter') && $('#inspStatusFilter').value) ? String($('#inspStatusFilter').value) : 'all';
+
+          var effectiveStatusFilter = statusFilter;
+          if (INSP_ANALYTICS_FILTERS.status && INSP_ANALYTICS_FILTERS.status !== 'all') effectiveStatusFilter = INSP_ANALYTICS_FILTERS.status;
+
+          var url = localBase + '/api/local/grid/inspections?limit=' + encodeURIComponent(String(blockSize))
+            + '&offset=' + encodeURIComponent(String(startRow))
+            + '&active_only=1'
+            + '&sort_by=' + encodeURIComponent(sort.sortBy)
+            + '&sort_dir=' + encodeURIComponent(sort.sortDir)
+            + '&search=' + encodeURIComponent(search || '')
+            + '&status_filter=' + encodeURIComponent(effectiveStatusFilter || 'all')
+            + '&age_bucket=' + encodeURIComponent(INSP_ANALYTICS_FILTERS.ageBucket || '')
+            + '&turn_linked=' + encodeURIComponent(INSP_ANALYTICS_FILTERS.turnLinked || '')
+            + '&overdue_days=' + encodeURIComponent(String(CONFIG.INSPECTION_OVERDUE_DAYS || 365))
+            + '&due_soon_days=' + encodeURIComponent(String(CONFIG.INSPECTION_DUE_SOON_DAYS || 270));
+          if (scopedGroupUuid) url += '&property_group_id=' + encodeURIComponent(scopedGroupUuid);
+
+          var headers = { 'Accept': 'application/json' };
+          if (token) headers.Authorization = 'Bearer ' + token;
+
+          var res = await fetchWithTimeout(url, { headers: headers }, 45000);
+          var data = {};
+          try { data = await res.json(); } catch (_) { data = {}; }
+          if (!res.ok || data.ok === false) {
+            throw new Error(String((data && (data.error || data.message)) || ('Inspection grid failed: HTTP ' + res.status)));
+          }
+
+          var rows = (data.results || []).map(function(r) {
+            var days = Number(r.days_since || 0) || 0;
+            var statusLabel = r.status_bucket === 'overdue'
+              ? 'Overdue'
+              : (r.status_bucket === 'due_soon' ? 'Due soon' : 'Current');
+            if (r.missing_move_in_inspection) statusLabel = 'Missing move-in inspection';
+            return {
+              propertyName: r.property_name || '-',
+              unit: r.unit_name || '-',
+              tenant: r.tenant_name || '-',
+              lastInspectionLabel: r.last_inspection_date ? (formatDate(r.last_inspection_date) + ' (' + days + 'd ago)') : 'Never',
+              daysSince: days,
+              statusLabel: statusLabel,
+              turnLabel: r.turn_linked ? 'Linked' : '-',
+              moveInLabel: r.move_in_date ? formatDate(r.move_in_date) : '-',
+              moveOutLabel: r.move_out_date ? formatDate(r.move_out_date) : '-',
+              __raw: {
+                propertyName: r.property_name || '',
+                propertyId: r.property_id || '',
+                unit: r.unit_name || '',
+                unitId: r.unit_id || '',
+                lastInspection: r.last_inspection_date || '',
+                tenant: r.tenant_name || '',
+                moveIn: r.move_in_date || '',
+                moveOut: r.move_out_date || '',
+                tags: r.unit_tags || '',
+                turnLinked: !!r.turn_linked,
+                statusBucket: r.status_bucket || 'current',
+                missingMoveInInspection: !!r.missing_move_in_inspection,
+                daysSince: days
+              }
+            };
+          });
+
+          params.successCallback(rows, Number(data.total || 0));
+        } catch (err) {
+          console.error('[insp-grid] datasource error', err);
+          params.failCallback();
+        }
+      })();
+    }
+  };
+}
+
+function renderWOAnalyticsCharts(rows) {
+  var agingEl = document.getElementById('woAgingChart');
+  var ownerEl = document.getElementById('woOwnerChart');
+  var statusEl = document.getElementById('woStatusChart');
+  if (!agingEl || !ownerEl || !statusEl) return;
+
+  destroyChartInstance(WO_CHARTS.aging);
+  destroyChartInstance(WO_CHARTS.owner);
+  destroyChartInstance(WO_CHARTS.status);
+
+  var agingCounts = { '0-7': 0, '8-30': 0, '31-60': 0, '60+': 0 };
+  var ownerCounts = {};
+  var statusOwnerCounts = {};
+  rows.forEach(function(r) {
+    agingCounts[r.ageBucket] = (agingCounts[r.ageBucket] || 0) + 1;
+    ownerCounts[r.owner] = (ownerCounts[r.owner] || 0) + 1;
+    var st = String(r.status || 'Unknown');
+    if (!statusOwnerCounts[st]) statusOwnerCounts[st] = {};
+    statusOwnerCounts[st][r.owner] = (statusOwnerCounts[st][r.owner] || 0) + 1;
+  });
+
+  var agingRows = ['0-7', '8-30', '31-60', '60+'].map(function(k) {
+    return { name: k, value: agingCounts[k] || 0 };
+  });
+  var ownerRows = Object.keys(ownerCounts).map(function(k) {
+    return { name: k, value: ownerCounts[k] };
+  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 8);
+
+  WO_CHARTS.aging = echarts.init(agingEl, null, { renderer: 'canvas' });
+  WO_CHARTS.aging.setOption({
+    animationDuration: 420,
+    tooltip: { trigger: 'axis' },
+    toolbox: { right: 8, feature: { saveAsImage: {}, restore: {} } },
+    grid: { top: 32, left: 36, right: 12, bottom: 28 },
+    xAxis: { type: 'category', data: agingRows.map(function(r){ return r.name; }), axisLabel: { color: '#7f8ca3' } },
+    yAxis: { type: 'value', axisLabel: { color: '#7f8ca3' }, splitLine: { lineStyle: { color: 'rgba(127,140,163,0.2)' } } },
+    series: [{
+      type: 'bar',
+      data: agingRows.map(function(r){ return r.value; }),
+      itemStyle: {
+        color: function(p) {
+          var key = agingRows[p.dataIndex] && agingRows[p.dataIndex].name;
+          var active = WO_ANALYTICS_FILTERS.ageBucket && WO_ANALYTICS_FILTERS.ageBucket === key;
+          if (key === '0-7') return active ? '#2eb880' : '#6fcf97';
+          if (key === '8-30') return active ? '#f7a816' : '#f9be4f';
+          if (key === '31-60') return active ? '#ff8c42' : '#ffad7a';
+          return active ? '#f14232' : '#f27469';
+        },
+        borderRadius: [8, 8, 2, 2],
+        shadowBlur: 12,
+        shadowColor: 'rgba(15,141,145,0.18)'
+      }
+    }],
+    graphic: [{
+      type: 'text',
+      left: 'center',
+      top: 0,
+      style: {
+        text: 'Aging Pressure Radar',
+        fill: '#5a6378',
+        font: '600 11px var(--font-mono)'
+      }
+    }]
+  });
+  WO_CHARTS.aging.on('click', function(params) {
+    var bucket = params && params.name ? String(params.name) : '';
+    WO_ANALYTICS_FILTERS.ageBucket = WO_ANALYTICS_FILTERS.ageBucket === bucket ? '' : bucket;
+    renderWorkOrders();
+  });
+
+  WO_CHARTS.owner = echarts.init(ownerEl, null, { renderer: 'canvas' });
+  WO_CHARTS.owner.setOption({
+    animationDuration: 520,
+    tooltip: { trigger: 'item' },
+    toolbox: { right: 8, feature: { saveAsImage: {}, restore: {} } },
+    series: [{
+      name: 'Owner Load',
+      type: 'treemap',
+      roam: false,
+      nodeClick: false,
+      breadcrumb: { show: false },
+      leafDepth: 1,
+      label: { show: true, formatter: '{b}\n{c}', color: '#1f2c3f', fontSize: 10 },
+      data: ownerRows.map(function(r) {
+        var selected = WO_ANALYTICS_FILTERS.owner && WO_ANALYTICS_FILTERS.owner === r.name;
+        return {
+          name: r.name,
+          value: r.value,
+          itemStyle: {
+            borderColor: selected ? '#0f8d91' : 'rgba(90,99,120,0.25)',
+            borderWidth: selected ? 2 : 1
+          }
+        };
+      })
+    }]
+  });
+  WO_CHARTS.owner.on('click', function(params) {
+    var owner = params && params.name ? String(params.name) : '';
+    WO_ANALYTICS_FILTERS.owner = WO_ANALYTICS_FILTERS.owner === owner ? '' : owner;
+    renderWorkOrders();
+  });
+
+  var statusSunburst = Object.keys(statusOwnerCounts).map(function(statusName) {
+    return {
+      name: statusName,
+      value: Object.keys(statusOwnerCounts[statusName]).reduce(function(sum, ownerName) {
+        return sum + Number(statusOwnerCounts[statusName][ownerName] || 0);
+      }, 0),
+      _kind: 'status',
+      children: Object.keys(statusOwnerCounts[statusName]).map(function(ownerName) {
+        return {
+          name: ownerName,
+          value: Number(statusOwnerCounts[statusName][ownerName] || 0),
+          _kind: 'owner'
+        };
+      })
+    };
+  });
+
+  WO_CHARTS.status = echarts.init(statusEl, null, { renderer: 'canvas' });
+  WO_CHARTS.status.setOption({
+    animationDuration: 560,
+    tooltip: { trigger: 'item' },
+    toolbox: { right: 8, feature: { saveAsImage: {}, restore: {} } },
+    series: [{
+      type: 'sunburst',
+      radius: ['18%', '88%'],
+      nodeClick: false,
+      sort: null,
+      emphasis: { focus: 'ancestor' },
+      data: statusSunburst,
+      levels: [
+        {},
+        { r0: '18%', r: '52%', itemStyle: { borderWidth: 2 } },
+        { r0: '52%', r: '88%', itemStyle: { borderWidth: 1 }, label: { rotate: 'radial' } }
+      ]
+    }]
+  });
+  WO_CHARTS.status.on('click', function(params) {
+    var data = params && params.data ? params.data : null;
+    if (!data) return;
+    if (data._kind === 'status') {
+      var statusValue = String(data.name || '');
+      WO_ANALYTICS_FILTERS.status = WO_ANALYTICS_FILTERS.status === statusValue ? '' : statusValue;
+    } else if (data._kind === 'owner') {
+      var ownerValue = String(data.name || '');
+      WO_ANALYTICS_FILTERS.owner = WO_ANALYTICS_FILTERS.owner === ownerValue ? '' : ownerValue;
+    }
+    renderWorkOrders();
+  });
+
+  setTimeout(function() {
+    if (WO_CHARTS.aging) WO_CHARTS.aging.resize();
+    if (WO_CHARTS.owner) WO_CHARTS.owner.resize();
+    if (WO_CHARTS.status) WO_CHARTS.status.resize();
+  }, 40);
+}
+
+function renderWorkOrdersGrid() {
+  var host = document.getElementById('woGridHost');
+  if (!host) return;
+  destroyGridInstance('wo');
+
+  woGridApi = createGrid(host, {
+    theme: 'legacy',
+    rowModelType: 'infinite',
+    cacheBlockSize: 100,
+    maxBlocksInCache: 8,
+    rowSelection: 'single',
+    suppressCellFocus: true,
+    overlayNoRowsTemplate: '<span style="padding:10px;color:var(--text-muted)">No work orders match the current filters.</span>',
+    defaultColDef: {
+      sortable: true,
+      resizable: true,
+      minWidth: 120,
+      flex: 1,
+      cellStyle: { fontFamily: 'var(--font-sans)', fontSize: '12px' }
+    },
+    columnDefs: [
+      { field: 'id', headerName: 'WO #', minWidth: 96, maxWidth: 120, cellRenderer: function(p){ return '<strong>#' + escapeHtml(String(p.value || '')) + '</strong>'; } },
+      { field: 'propertyName', headerName: 'Property', minWidth: 180 },
+      { field: 'unit', headerName: 'Unit', minWidth: 90, maxWidth: 110 },
+      { field: 'description', headerName: 'Description', minWidth: 240, flex: 2 },
+      { field: 'status', headerName: 'Status', minWidth: 130 },
+      { field: 'priority', headerName: 'Priority', minWidth: 110, maxWidth: 120 },
+      { field: 'owner', headerName: 'Owner', minWidth: 150 },
+      { field: 'ageDays', headerName: 'Age (d)', minWidth: 96, maxWidth: 110, sort: currentWOSort === 'oldest' ? 'desc' : undefined }
+    ],
+    datasource: createWorkOrdersServerDatasource(),
+    onRowClicked: function(evt) {
+      var wo = evt && evt.data && evt.data.__raw;
+      if (!wo || !wo.id) return;
+      showWODetail(wo.id);
+    }
+  });
+}
+
+function renderInspectionsGrid() {
+  var host = document.getElementById('inspectionsGridHost');
+  if (!host) return;
+  destroyGridInstance('insp');
+
+  inspectionsGridApi = createGrid(host, {
+    theme: 'legacy',
+    rowModelType: 'infinite',
+    cacheBlockSize: 100,
+    maxBlocksInCache: 8,
+    rowSelection: 'single',
+    suppressCellFocus: true,
+    overlayNoRowsTemplate: '<span style="padding:10px;color:var(--text-muted)">No inspections match the current filters.</span>',
+    defaultColDef: {
+      sortable: true,
+      resizable: true,
+      minWidth: 120,
+      flex: 1,
+      cellStyle: { fontFamily: 'var(--font-sans)', fontSize: '12px' }
+    },
+    columnDefs: [
+      { field: 'propertyName', headerName: 'Property', minWidth: 210 },
+      { field: 'unit', headerName: 'Unit', minWidth: 90, maxWidth: 110 },
+      { field: 'tenant', headerName: 'Tenant', minWidth: 170 },
+      { field: 'lastInspectionLabel', headerName: 'Last Inspection', minWidth: 180 },
+      { field: 'daysSince', headerName: 'Days', minWidth: 90, maxWidth: 100 },
+      { field: 'statusLabel', headerName: 'Status', minWidth: 140 },
+      { field: 'turnLabel', headerName: 'Turn', minWidth: 140 },
+      { field: 'moveInLabel', headerName: 'Move-In', minWidth: 120 },
+      { field: 'moveOutLabel', headerName: 'Move-Out', minWidth: 120 }
+    ],
+    datasource: createInspectionsServerDatasource(),
+    onRowClicked: function(evt) {
+      var r = evt && evt.data && evt.data.__raw;
+      if (!r) return;
+      showItemDetail('Inspection - ' + r.propertyName + ' ' + r.unit, [
+        { section: 'Inspection Details', icon: 'fa-clipboard-check' },
+        { label: 'Property', value: r.propertyName },
+        { label: 'Unit', value: r.unit },
+        { label: 'Last Inspection', value: r.lastInspection ? formatDate(r.lastInspection) + ' (' + (r.daysSince || 0) + ' days ago)' : 'Never' },
+        { label: 'Status', value: r.missingMoveInInspection ? 'Missing move-in inspection' : (r.statusBucket === 'overdue' ? 'OVERDUE' : r.statusBucket === 'due_soon' ? 'Due Soon' : 'Current') },
+        { section: 'Tenant', icon: 'fa-user' },
+        { label: 'Tenant', value: r.tenant || '-' },
+        { label: 'Move-In', value: r.moveIn ? formatDate(r.moveIn) : '-' },
+        { label: 'Move-Out', value: r.moveOut ? formatDate(r.moveOut) : '-' },
+        { label: 'Tags', value: r.tags || '-' }
+      ], appfolioUrl('inspection_property', r.propertyId));
+    }
+  });
+}
+
 function renderWorkOrders() {
   var board = $('#kanbanBoard');
   if (!board) return;
@@ -16284,58 +16935,59 @@ function renderWorkOrders() {
 
   // ── List view ──────────────────────────────────────────────────────────────
   if (currentWOView === 'list') {
-    if (!window._woListPageState) window._woListPageState = { page: 1, pageSize: 50 };
-    var woListResult = buildUniversalTable([
-      { label: 'WO #',        render: function(wo) { return '<strong>#' + escapeHtml(String(wo.id || '')) + '</strong>'; } },
-      { label: 'Property',    render: function(wo) { return escapeHtml(wo.propertyName || '\u2014'); } },
-      { label: 'Unit',        render: function(wo) { return escapeHtml(wo.unit || '\u2014'); } },
-      { label: 'Description', render: function(wo) { return '<span class="wo-desc-cell">' + escapeHtml(wo.description || '\u2014') + '</span>'; } },
-      { label: 'Status',      render: function(wo) { return '<span class="tag">' + escapeHtml(wo.status || '\u2014') + '</span>'; } },
-      { label: 'Priority',    render: function(wo) { var pc = String(wo.priority || 'normal').toLowerCase(); return '<span class="tag ' + pc + '">' + escapeHtml(wo.priority || 'Normal') + '</span>'; } },
-      { label: 'Vendor',      render: function(wo) { return escapeHtml(wo.vendorName || '\u2014'); } },
-      { label: 'Age',         render: function(wo) { var m = getWOAgeMeta(wo); return m.days !== null ? '<span class="wo-age-pill ' + m.cls + '">' + escapeHtml(m.label) + '</span>' : '\u2014'; } },
-    ], filtered, window._woListPageState, {
-      getRowAttrs: function(wo) { return 'data-woid="' + escapeHtml(String(wo.id || '')) + '"'; },
-      getRowClass: function() { return 'u-row-click'; },
-      emptyRowHtml: '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted)">No work orders match the current filters.</td></tr>',
+    var woGridRowsBase = filtered.map(function(wo) {
+      var age = getWOAgeMeta(wo);
+      var owner = String(wo.assignedUser || wo.vendorName || 'Unassigned').trim() || 'Unassigned';
+      return {
+        id: wo.id,
+        propertyName: wo.propertyName || '-',
+        unit: wo.unit || '-',
+        description: wo.description || '-',
+        status: wo.status || '-',
+        priority: wo.priority || '-',
+        owner: owner,
+        ageDays: age.days === null ? -1 : age.days,
+        ageBucket: getWOAnalyticsAgeBucket(age.days === null ? 0 : age.days),
+        __raw: wo
+      };
     });
-    var thHtml = ['WO #', 'Property', 'Unit', 'Description', 'Status', 'Priority', 'Vendor', 'Age']
-      .map(function(h) { return '<th>' + h + '</th>'; }).join('');
-    board.innerHTML = tabsHtml + '<div class="table-wrapper wo-compact-list">' +
-      '<table class="data-table"><thead><tr>' + thHtml + '</tr></thead>' +
-      '<tbody>' + woListResult.html + '</tbody></table>' +
-      '<div class="u-table-footer-split" id="woListFooter"></div>' +
+
+    board.innerHTML = tabsHtml +
+      '<div class="wo-analytics-shell table-wrapper">' +
+      '  <div class="wo-analytics-head">' +
+      '    <div class="wo-analytics-title"><i class="fas fa-chart-line" style="color:var(--accent)"></i> Work Order Visual Analytics</div>' +
+      '    <div class="wo-analytics-filters">' +
+      '      <button class="filter-btn" id="woAnalyticsClearFilters">Clear Chart Filters</button>' +
+      '    </div>' +
+      '  </div>' +
+      '  <div class="wo-analytics-grid">' +
+      '    <article class="wo-chart-card"><header>Aging Buckets (click to filter)</header><div id="woAgingChart" class="wo-chart-host"></div></article>' +
+      '    <article class="wo-chart-card"><header>Owner Territory Map (click to filter)</header><div id="woOwnerChart" class="wo-chart-host"></div></article>' +
+      '    <article class="wo-chart-card"><header>Status x Owner Sunburst (click rings)</header><div id="woStatusChart" class="wo-chart-host"></div></article>' +
+      '  </div>' +
+      '  <div class="wo-grid-meta">Server-backed AG Grid blocks are live. Scroll loads offset/limit windows from backend endpoints.</div>' +
+      '  <div id="woGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--wo"></div>' +
       '</div>';
-    Array.prototype.forEach.call(board.querySelectorAll('tbody .u-row-click[data-woid]'), function(row) {
-      row.addEventListener('click', function(e) {
-        if (e.target.closest('button,a,input,select,textarea')) return;
-        var woId = row.getAttribute('data-woid');
-        if (!woId) return;
-        showWODetail(woId);
-      });
-    });
-    var woListFooter = document.getElementById('woListFooter');
-    if (woListFooter) {
-      if (woListResult.total <= 0) {
-        woListFooter.style.display = 'none';
-      } else {
-        woListFooter.innerHTML = '<span>Showing ' + woListResult.start + '\u2013' + woListResult.end + ' of ' + woListResult.total + ' work orders</span>' +
-          '<span class="u-pagination-row">' +
-          '<button class="action-btn u-action-btn-sm" id="woListPrev"' + (window._woListPageState.page <= 1 ? ' disabled' : '') + '>Prev</button>' +
-          '<span class="u-mono-sm">Page ' + window._woListPageState.page + ' / ' + woListResult.totalPages + '</span>' +
-          '<button class="action-btn u-action-btn-sm" id="woListNext"' + (window._woListPageState.page >= woListResult.totalPages ? ' disabled' : '') + '>Next</button>' +
-          '</span>';
-        var woListPrev = document.getElementById('woListPrev');
-        var woListNext = document.getElementById('woListNext');
-        if (woListPrev) woListPrev.onclick = function() { if (window._woListPageState.page > 1) { window._woListPageState.page -= 1; renderWorkOrders(); } };
-        if (woListNext) woListNext.onclick = function() { if (window._woListPageState.page < woListResult.totalPages) { window._woListPageState.page += 1; renderWorkOrders(); } };
-      }
+
+    renderWOAnalyticsCharts(woGridRowsBase);
+    renderWorkOrdersGrid();
+    renderWOChartFilterBadges();
+
+    var clearFiltersBtn = document.getElementById('woAnalyticsClearFilters');
+    if (clearFiltersBtn) {
+      clearFiltersBtn.onclick = function() {
+        WO_ANALYTICS_FILTERS.ageBucket = '';
+        WO_ANALYTICS_FILTERS.owner = '';
+        WO_ANALYTICS_FILTERS.status = '';
+        renderWorkOrders();
+      };
     }
+
     // Attach tab click handlers
     var woTabActive = document.getElementById('woTabActive');
     var woTabInactive = document.getElementById('woTabInactive');
-    if (woTabActive) woTabActive.onclick = function() { currentWOTab = 'active'; window._woListPageState.page = 1; renderWorkOrders(); };
-    if (woTabInactive) woTabInactive.onclick = function() { currentWOTab = 'inactive'; window._woListPageState.page = 1; renderWorkOrders(); };
+    if (woTabActive) woTabActive.onclick = function() { currentWOTab = 'active'; renderWorkOrders(); };
+    if (woTabInactive) woTabInactive.onclick = function() { currentWOTab = 'inactive'; renderWorkOrders(); };
     
     $('#woBadge').textContent = filtered.length || '0';
     renderWOCloseAssist();
@@ -16344,6 +16996,15 @@ function renderWorkOrders() {
     return;
   }
   // ── End list view ──────────────────────────────────────────────────────────
+
+  destroyGridInstance('wo');
+  destroyChartInstance(WO_CHARTS.aging);
+  destroyChartInstance(WO_CHARTS.owner);
+  destroyChartInstance(WO_CHARTS.status);
+  WO_CHARTS.aging = null;
+  WO_CHARTS.owner = null;
+  WO_CHARTS.status = null;
+  renderWOChartFilterBadges();
 
   // Sync global group filter dropdown
   var grpSel = $('#globalGroupFilter');
@@ -19209,8 +19870,8 @@ function toggleTurnView(mode) {
      INSPECTIONS — Enhanced with KPIs + Turn-linking
    ================================================================= */
 function renderInspections(search) {
-  var body = $('#inspBody');
-  if (!body) return;
+  var gridHost = document.getElementById('inspectionsGridHost');
+  if (!gridHost) return;
 
   var statusFilter = $('#inspStatusFilter') ? $('#inspStatusFilter').value : 'all';
   var today = new Date();
@@ -19265,6 +19926,10 @@ function renderInspections(search) {
     if (statusFilter === 'due_soon' && !c.dueSoon) return false;
     if (statusFilter === 'current' && !c.current) return false;
     if (statusFilter === 'turn_linked' && !c.linkedTurn) return false;
+    if (INSP_ANALYTICS_FILTERS.status && c.status !== INSP_ANALYTICS_FILTERS.status) return false;
+    if (INSP_ANALYTICS_FILTERS.ageBucket && getInspectionAgeBucket(c.daysSince) !== INSP_ANALYTICS_FILTERS.ageBucket) return false;
+    if (INSP_ANALYTICS_FILTERS.turnLinked === 'turn_linked' && !c.linkedTurn) return false;
+    if (INSP_ANALYTICS_FILTERS.turnLinked === 'not_linked' && !!c.linkedTurn) return false;
     // Property group filter
     if (!isInPropertyGroup(c.r.propertyId, c.r.propertyName, currentPropertyGroup)) return false;
     if (search) {
@@ -19276,83 +19941,26 @@ function renderInspections(search) {
     return true;
   });
 
-  // Sort filtered results
-  var sortCol = _inspSortCol;
-  var sortDir = _inspSortDir === 'asc' ? 1 : -1;
-  filtered.sort(function(a, b) {
-    var va, vb;
-    if (sortCol === 'property') { va = (a.r.propertyName || '').toLowerCase(); vb = (b.r.propertyName || '').toLowerCase(); }
-    else if (sortCol === 'unit') { va = (a.r.unit || '').toLowerCase(); vb = (b.r.unit || '').toLowerCase(); }
-    else if (sortCol === 'daysSince') { va = a.daysSince; vb = b.daysSince; }
-    else if (sortCol === 'status') { va = a.overdue ? 0 : a.dueSoon ? 1 : 2; vb = b.overdue ? 0 : b.dueSoon ? 1 : 2; }
-    else { va = 0; vb = 0; }
-    if (va < vb) return -1 * sortDir;
-    if (va > vb) return 1 * sortDir;
-    return 0;
-  });
-
-  // Update sort indicators in table header
-  document.querySelectorAll('[data-inspsort]').forEach(function(th) {
-    th.classList.remove('asc', 'desc');
-    if (th.getAttribute('data-inspsort') === sortCol) th.classList.add(_inspSortDir);
-  });
-
-  window._inspPageState = window._inspPageState || { page: 1, pageSize: 50 };
-  var inspView = buildUniversalTable([
-    { key: 'property', render: function(c) { return escapeHtml(c.r.propertyName) + ' <i class="fas fa-external-link-alt" style="font-size:8px;opacity:0.4"></i>'; } },
-    { key: 'unit', render: function(c) { return escapeHtml(c.r.unit); } },
-    { key: 'lastInspection', cellAttrs: 'style="font-family:var(--font-mono)"', render: function(c) { return c.r.lastInspection ? formatDate(c.r.lastInspection) + ' <span style="color:var(--text-muted);font-size:10px">(' + c.daysSince + 'd ago)</span>' : '<span style="color:var(--danger)">Never</span>'; } },
-    { key: 'tenant', render: function(c) { return escapeHtml(c.r.tenant || '\u2014'); } },
-    { key: 'moveIn', cellAttrs: 'style="font-family:var(--font-mono)"', render: function(c) { return c.r.moveIn ? formatDate(c.r.moveIn) : '\u2014'; } },
-    { key: 'moveOut', cellAttrs: 'style="font-family:var(--font-mono)"', render: function(c) { return c.r.moveOut ? formatDate(c.r.moveOut) : '\u2014'; } },
-    { key: 'status', render: function(c) {
-      if (c.missingMoveInInspection) return '<span class="tag non-compliant" title="Move-in exists but no inspection on/after move-in">Missing move-in inspection</span>';
-      if (c.overdue) return '<span class="tag non-compliant">Overdue</span>';
-      if (c.dueSoon) return '<span class="tag" style="background:var(--warning-dim);color:var(--warning)">Due soon</span>';
-      return '<span class="tag compliant">Current</span>';
-    } },
-    { key: 'turnTag', render: function(c) { return c.linkedTurn ? '<span class="tag assigned" title="Linked to active turn"><i class="fas fa-exchange-alt" style="font-size:8px"></i> ' + escapeHtml(c.linkedTurn.unit) + '</span>' : '<span style="color:var(--text-muted)">\u2014</span>'; } },
-  ], filtered, window._inspPageState, {
-    getRowClass: function() { return 'insp-row u-row-click'; },
-    getRowAttrs: function(c, absIdx) { return 'data-inspidx="' + absIdx + '" style="cursor:pointer;' + (c.overdue ? 'background:var(--danger-dim)' : '') + '"'; },
-    emptyRowHtml: '<tr><td colspan="8">' + emptyHtml('fa-clipboard-check', INSPECTIONS.length === 0 ? 'No inspection data. Try refreshing.' : 'No active resident leases are missing inspection records') + '</td></tr>'
-  });
-  body.innerHTML = inspView.html;
-  // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
-
-  // Store filtered data for delegation handler to access
-  body._filteredData = filtered;
-
-  var tableWrap = body.closest('.table-wrapper') || body.closest('.table-scroll') || body.parentElement;
-  var footer = document.getElementById('inspFooter');
-  if (!footer && tableWrap) {
-    footer = document.createElement('div');
-    footer.id = 'inspFooter';
-    footer.className = 'u-table-footer-split';
-    tableWrap.appendChild(footer);
+  var analyticsMeta = document.getElementById('inspAnalyticsMeta');
+  if (analyticsMeta) {
+    var chips = [];
+    if (statusFilter && statusFilter !== 'all') chips.push('Quick status: ' + statusFilter.replace(/_/g, ' '));
+    if (INSP_ANALYTICS_FILTERS.status) chips.push('Status: ' + INSP_ANALYTICS_FILTERS.status);
+    if (INSP_ANALYTICS_FILTERS.ageBucket) chips.push('Age: ' + INSP_ANALYTICS_FILTERS.ageBucket);
+    if (INSP_ANALYTICS_FILTERS.turnLinked) chips.push('Turn: ' + INSP_ANALYTICS_FILTERS.turnLinked.replace('_', ' '));
+    if (search) chips.push('Search: "' + search + '"');
+    analyticsMeta.textContent = chips.length
+      ? ('Chart filters -> ' + chips.join(' | '))
+      : 'Chart filters inactive (server block mode)';
   }
-  if (footer) {
-    if (inspView.total <= 0) {
-      footer.style.display = 'none';
-    } else {
-      footer.style.display = '';
-      footer.innerHTML = '<span>Showing ' + inspView.start + '–' + inspView.end + ' of ' + inspView.total + ' inspections</span>' +
-        '<span class="u-pagination-row">' +
-        '<button class="action-btn u-action-btn-sm" id="inspPrev"' + (window._inspPageState.page <= 1 ? ' disabled' : '') + '>Prev</button>' +
-        '<span class="u-mono-sm">Page ' + window._inspPageState.page + ' / ' + inspView.totalPages + '</span>' +
-        '<button class="action-btn u-action-btn-sm" id="inspNext"' + (window._inspPageState.page >= inspView.totalPages ? ' disabled' : '') + '>Next</button>' +
-        '</span>';
-      var inspPrev = document.getElementById('inspPrev');
-      var inspNext = document.getElementById('inspNext');
-      if (inspPrev) inspPrev.onclick = function() { if (window._inspPageState.page > 1) { window._inspPageState.page -= 1; renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); } };
-      if (inspNext) inspNext.onclick = function() { if (window._inspPageState.page < inspView.totalPages) { window._inspPageState.page += 1; renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); } };
-    }
-  }
+
+  renderInspectionChartFilterBadges();
+  renderInspectionsGrid();
 
   var ib = $('#inspBadge');
   if (ib) ib.textContent = overdueCount;
 
-  renderInspectionInsights(classified);
+  renderInspectionInsights(filtered);
 }
 
 function vendorCatClass(cat) {
@@ -22305,6 +22913,14 @@ function wireUpUI() {
 
   // Inspections search
   $('#inspSearch').addEventListener('input', debounce(function() { renderInspections(this.value); }, CONFIG.DEBOUNCE_MS));
+  if ($('#btnClearInspChartFilters')) {
+    $('#btnClearInspChartFilters').addEventListener('click', function() {
+      INSP_ANALYTICS_FILTERS.status = '';
+      INSP_ANALYTICS_FILTERS.ageBucket = '';
+      INSP_ANALYTICS_FILTERS.turnLinked = '';
+      renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+    });
+  }
   $('#btnRefreshInsp').addEventListener('click', function() { sectionRefresh('inspections', this); });
 
   // Estimates search

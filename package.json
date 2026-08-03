@@ -24,6 +24,7 @@
   "license": "ISC",
   "dependencies": {
     "@libsql/client": "^0.17.3",
+    "ag-grid-community": "^36.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "drizzle-orm": "^0.44.2",

@@ -402,6 +402,7 @@
       <button class="action-btn primary" id="btnNewWO"><i class="fas fa-plus"></i> New WO</button>
     </div>
   </div>
+  <div class="chart-filter-badge-row" id="woChartFilterBadges" style="display:none"></div>
   <div class="wo-subtabs" id="woSubtabs">
     <button class="wo-subtab active" data-wo-subtab="active"><i class="fas fa-wrench"></i> Open (Active)</button>
     <button class="wo-subtab" data-wo-subtab="completed"><i class="fas fa-history"></i> Completed</button>
@@ -1269,12 +1270,15 @@
         <option value="turn_linked">Turn-Linked</option>
       </select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search inspections…" id="inspSearch"></div>
+      <button class="filter-btn" id="btnClearInspChartFilters" title="Clear chart-driven filters">Clear Chart Filters</button>
       <button class="sec-refresh" id="btnRefreshInsp"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
-  <div class="table-wrap"><table class="wo-table"><thead><tr>
-    <th class="sortable" data-inspsort="property">Property</th><th class="sortable" data-inspsort="unit">Unit</th><th class="sortable desc" data-inspsort="daysSince">Last Inspection</th><th>Tenant</th><th>Move-in</th><th>Move-out</th><th class="sortable" data-inspsort="status">Status</th><th>Turn</th>
-  </tr></thead><tbody id="inspBody"></tbody></table></div>
+  <div class="chart-filter-badge-row" id="inspChartFilterBadges" style="display:none"></div>
+  <div class="inspections-grid-shell table-wrapper">
+    <div class="inspections-grid-meta" id="inspAnalyticsMeta">Chart filters inactive</div>
+    <div id="inspectionsGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--inspections"></div>
+  </div>
 </section>
 
 <!-- ═══════════════════════════════════════════ OCCUPANCY SECTION ══ -->

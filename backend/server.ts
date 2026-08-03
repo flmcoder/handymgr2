@@ -257,6 +257,35 @@ function parseLimit(value: unknown, fallback: number, max = 5000): number {
   return Math.max(1, Math.min(max, parsed));
 }
 
+function parseOffset(value: unknown, fallback = 0, max = 250000): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.max(0, Math.min(max, parsed));
+}
+
+function parseSortDirection(value: unknown, fallback: 'asc' | 'desc' = 'desc'): 'asc' | 'desc' {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'asc') return 'asc';
+  if (normalized === 'desc') return 'desc';
+  return fallback;
+}
+
+function parseSearchTerm(value: unknown, maxLen = 180): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.slice(0, Math.max(8, Math.min(maxLen, 600)));
+}
+
+function parseCsvTextList(value: unknown, maxItems = 400): string[] {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+  const list = raw
+    .split(',')
+    .map((entry) => String(entry || '').trim())
+    .filter(Boolean);
+  return Array.from(new Set(list)).slice(0, Math.max(1, Math.min(maxItems, 4000)));
+}
+
 const SYNC_ENDPOINT_ALLOWLIST = new Set<string>([
   'v0:properties',
   'v0:property_groups',
@@ -3733,6 +3762,452 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
   } catch (error) {
     logTunnelError(error, '/api/local/work_orders/inactive');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local inactive work orders query failed') });
+  }
+});
+
+app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
+  try {
+    const days = parseDays(req.query.days, 3650, 3650);
+    const limit = parseLimit(req.query.limit, 100, 400);
+    const offset = parseOffset(req.query.offset, 0, 500000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const statusScope = String(req.query.status_scope || req.query.tab || 'active').trim().toLowerCase() === 'inactive'
+      ? 'inactive'
+      : 'active';
+
+    const statusFilter = String(req.query.status_filter || '').trim();
+    const priorityFilter = String(req.query.priority_filter || '').trim();
+    const typeFilter = String(req.query.type_filter || '').trim();
+    const vendorFilter = String(req.query.vendor_filter || '').trim();
+    const ownerFilter = String(req.query.owner_filter || '').trim();
+    const propertyFilter = String(req.query.property_filter || '').trim();
+    const search = parseSearchTerm(req.query.search);
+    const ageMin = Number.parseInt(String(req.query.age_min || ''), 10);
+    const ageBucket = String(req.query.age_bucket || '').trim();
+    const flaggedOnly = /^(1|true|yes|on)$/i.test(String(req.query.flagged_only || '').trim());
+    const flaggedIds = parseCsvTextList(req.query.flagged_ids, 2500);
+
+    const sortByRaw = String(req.query.sort_by || 'updated_at').trim();
+    const sortDir = parseSortDirection(req.query.sort_dir, 'desc');
+    const sortMap: Record<string, string> = {
+      id: `coalesce(wo.wo_number::text, '')`,
+      wo_number: `coalesce(wo.wo_number::text, '')`,
+      propertyName: `coalesce(p.name, wo.raw_json->>'property_name', '')`,
+      property_name: `coalesce(p.name, wo.raw_json->>'property_name', '')`,
+      unit: `coalesce(u.name, wo.raw_json->>'unit_name', '')`,
+      unit_name: `coalesce(u.name, wo.raw_json->>'unit_name', '')`,
+      description: `coalesce(wo.description, wo.raw_json->>'description', '')`,
+      status: `coalesce(wo.status, wo.raw_json->>'status', '')`,
+      priority: `coalesce(wo.priority, wo.raw_json->>'priority', '')`,
+      vendor_name: `coalesce(wo.vendor_name, wo.raw_json->>'vendor_name', '')`,
+      owner: `coalesce(wo.assigned_user_name, wo.vendor_name, wo.raw_json->>'assigned_user_name', wo.raw_json->>'vendor_name', '')`,
+      ageDays: `extract(day from (now() - coalesce(wo.created_at, wo.updated_at, now())))`,
+      age_days: `extract(day from (now() - coalesce(wo.created_at, wo.updated_at, now())))`,
+      created_at: `coalesce(wo.created_at, wo.updated_at, now())`,
+      updated_at: `coalesce(wo.updated_at, wo.created_at, now())`,
+    };
+    const sortExpr = sortMap[sortByRaw] || sortMap.updated_at;
+
+    if (flaggedOnly && flaggedIds.length === 0) {
+      res.json({
+        ok: true,
+        results: [],
+        count: 0,
+        total: 0,
+        limit,
+        offset,
+        source: 'postgres_local_grid',
+      });
+      return;
+    }
+
+    const fromSql = `
+      from appfolio_work_orders wo
+      left join appfolio_properties p on p.id = wo.property_id
+      left join appfolio_units u on u.unit_id = wo.unit_id
+    `;
+
+    const whereParts: string[] = [];
+    const baseParams: any[] = [];
+    const bind = (value: any): string => {
+      baseParams.push(value);
+      return `$${baseParams.length}`;
+    };
+
+    whereParts.push(`coalesce(wo.updated_at, wo.created_at, now()) >= now() - (${bind(days)}::int * interval '1 day')`);
+
+    if (propertyGroupId) {
+      whereParts.push(`wo.property_group_id = ${bind(propertyGroupId)}`);
+    }
+
+    if (statusScope === 'inactive') {
+      whereParts.push(`(
+        coalesce(lower(wo.status), '') like '%completed%'
+        or coalesce(lower(wo.status), '') like '%cancel%'
+        or coalesce(lower(wo.status), '') like '%no need to bill%'
+      )`);
+    } else {
+      whereParts.push(`(
+        coalesce(lower(wo.status), '') not like '%completed%'
+        and coalesce(lower(wo.status), '') not like '%cancel%'
+        and coalesce(lower(wo.status), '') not like '%no need to bill%'
+      )`);
+    }
+
+    if (statusFilter && statusFilter !== 'all' && statusFilter !== 'flagged') {
+      whereParts.push(`coalesce(wo.status, '') = ${bind(statusFilter)}`);
+    }
+    if (priorityFilter) {
+      whereParts.push(`coalesce(wo.priority, '') = ${bind(priorityFilter)}`);
+    }
+    if (typeFilter) {
+      whereParts.push(`coalesce(wo.category, wo.raw_json->>'category', wo.raw_json->>'type', '') = ${bind(typeFilter)}`);
+    }
+    if (vendorFilter) {
+      whereParts.push(`coalesce(wo.vendor_name, wo.raw_json->>'vendor_name', '') = ${bind(vendorFilter)}`);
+    }
+    if (ownerFilter) {
+      whereParts.push(`coalesce(wo.assigned_user_name, wo.vendor_name, wo.raw_json->>'assigned_user_name', wo.raw_json->>'vendor_name', '') = ${bind(ownerFilter)}`);
+    }
+    if (propertyFilter) {
+      whereParts.push(`coalesce(p.name, wo.raw_json->>'property_name', '') = ${bind(propertyFilter)}`);
+    }
+    if (Number.isFinite(ageMin) && ageMin > 0) {
+      whereParts.push(`extract(day from (now() - coalesce(wo.created_at, wo.updated_at, now()))) >= ${bind(ageMin)}`);
+    }
+    if (ageBucket) {
+      if (ageBucket === '0-7') {
+        whereParts.push(`extract(day from (now() - coalesce(wo.created_at, wo.updated_at, now()))) between 0 and 7`);
+      } else if (ageBucket === '8-30') {
+        whereParts.push(`extract(day from (now() - coalesce(wo.created_at, wo.updated_at, now()))) between 8 and 30`);
+      } else if (ageBucket === '31-60') {
+        whereParts.push(`extract(day from (now() - coalesce(wo.created_at, wo.updated_at, now()))) between 31 and 60`);
+      } else if (ageBucket === '60+') {
+        whereParts.push(`extract(day from (now() - coalesce(wo.created_at, wo.updated_at, now()))) >= 61`);
+      }
+    }
+    if (flaggedOnly && flaggedIds.length > 0) {
+      whereParts.push(`coalesce(wo.wo_number::text, '') = any(${bind(flaggedIds)}::text[])`);
+    }
+    if (search) {
+      const likeParam = bind(`%${search}%`);
+      whereParts.push(`(
+        coalesce(wo.wo_number::text, '') ilike ${likeParam}
+        or coalesce(wo.description, wo.raw_json->>'description', '') ilike ${likeParam}
+        or coalesce(p.name, wo.raw_json->>'property_name', '') ilike ${likeParam}
+        or coalesce(u.name, wo.raw_json->>'unit_name', '') ilike ${likeParam}
+        or coalesce(wo.vendor_name, wo.raw_json->>'vendor_name', '') ilike ${likeParam}
+        or coalesce(wo.assigned_user_name, wo.raw_json->>'assigned_user_name', '') ilike ${likeParam}
+        or coalesce(wo.status, wo.raw_json->>'status', '') ilike ${likeParam}
+      )`);
+    }
+
+    const whereSql = whereParts.length ? `where ${whereParts.join(' and ')}` : '';
+
+    const countSql = `select count(*)::int as total ${fromSql} ${whereSql}`;
+    const countRows = await queryClient.unsafe(countSql, baseParams);
+    const total = Number((countRows as any[])[0]?.total || 0) || 0;
+
+    const dataParams = baseParams.slice();
+    const limitBind = `$${dataParams.length + 1}`;
+    const offsetBind = `$${dataParams.length + 2}`;
+    dataParams.push(limit, offset);
+
+    const dataSql = `
+      select
+        wo.id,
+        to_jsonb(wo)->>'work_order_uuid' as work_order_uuid,
+        wo.wo_number,
+        wo.property_id,
+        wo.unit_id,
+        wo.property_group_id,
+        wo.description,
+        wo.category,
+        wo.priority,
+        wo.status,
+        wo.assigned_user_id,
+        wo.assigned_user_name,
+        wo.vendor_id,
+        wo.vendor_name,
+        wo.estimated_amount,
+        wo.total_cost,
+        wo.created_at,
+        wo.updated_at,
+        wo.raw_json,
+        coalesce(p.name, wo.raw_json->>'property_name', '') as property_name,
+        coalesce(u.name, wo.raw_json->>'unit_name', '') as unit_name,
+        extract(day from (now() - coalesce(wo.created_at, wo.updated_at, now())))::int as age_days,
+        coalesce(wo.assigned_user_name, wo.vendor_name, wo.raw_json->>'assigned_user_name', wo.raw_json->>'vendor_name', '') as owner_name
+      ${fromSql}
+      ${whereSql}
+      order by ${sortExpr} ${sortDir} nulls last
+      limit ${limitBind}
+      offset ${offsetBind}
+    `;
+
+    const rows = await queryClient.unsafe(dataSql, dataParams);
+    const results = (rows as any[]).map((row) => {
+      const normalized = normalizeWorkOrderRow(row);
+      normalized.property_name = String(row?.property_name || pickRaw(normalized, ['property_name', 'PropertyName', 'property']) || '');
+      normalized.property = normalized.property_name;
+      normalized.unit_name = String(row?.unit_name || pickRaw(normalized, ['unit_name', 'UnitName', 'unit']) || '');
+      normalized.owner_name = String(row?.owner_name || row?.assigned_user_name || normalized.vendor_name || '');
+      normalized.age_days = Number(row?.age_days || 0) || 0;
+      return normalized;
+    });
+
+    res.json({
+      ok: true,
+      results,
+      count: results.length,
+      total,
+      limit,
+      offset,
+      source: 'postgres_local_grid',
+      status_scope: statusScope,
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/grid/work_orders');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Work order grid query failed') });
+  }
+});
+
+app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 120, 500);
+    const offset = parseOffset(req.query.offset, 0, 500000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const activeOnly = /^(1|true|yes|on)$/i.test(String(req.query.active_only || '1').trim());
+    const statusFilter = String(req.query.status_filter || '').trim().toLowerCase();
+    const ageBucket = String(req.query.age_bucket || '').trim();
+    const turnLinked = String(req.query.turn_linked || '').trim().toLowerCase();
+    const search = parseSearchTerm(req.query.search);
+    const overdueDays = parseDays(req.query.overdue_days, 365, 5000);
+    const dueSoonDays = parseDays(req.query.due_soon_days, 270, 5000);
+
+    const sortByRaw = String(req.query.sort_by || 'days_since').trim();
+    const sortDir = parseSortDirection(req.query.sort_dir, 'desc');
+    const sortMap: Record<string, string> = {
+      property_name: 'ins.property_name',
+      propertyName: 'ins.property_name',
+      unit_name: 'ins.unit_name',
+      unit: 'ins.unit_name',
+      tenant_name: 'ins.tenant_name',
+      tenant: 'ins.tenant_name',
+      last_inspection_date: 'ins.last_inspection_date',
+      days_since: 'ins.days_since',
+      status_bucket: 'ins.status_bucket',
+      turn_linked: 'ins.turn_linked',
+      move_in_date: 'ins.move_in_date',
+      move_out_date: 'ins.move_out_date',
+    };
+    const sortExpr = sortMap[sortByRaw] || sortMap.days_since;
+
+    const baseWhereParts: string[] = [];
+    const baseParams: any[] = [];
+    const bind = (value: any): string => {
+      baseParams.push(value);
+      return `$${baseParams.length}`;
+    };
+
+    if (propertyGroupId) {
+      baseWhereParts.push(`p.property_group_id = ${bind(propertyGroupId)}`);
+    }
+
+    const baseWhereSql = baseWhereParts.length ? `where ${baseWhereParts.join(' and ')}` : '';
+
+    const baseSql = `
+      select
+        i.inspection_id,
+        i.property_id,
+        coalesce(i.property_name, p.name) as property_name,
+        i.unit_id,
+        coalesce(i.unit_name, u.name, '') as unit_name,
+        coalesce(i.last_inspection_date::date, null) as last_inspection_date,
+        coalesce(td.tenant_name, i.tenant_name, '') as tenant_name,
+        coalesce(td.phone_numbers, i.tenant_primary_phone_number, '') as tenant_primary_phone_number,
+        coalesce(td.move_in_date::date, i.move_in_date::date, null) as move_in_date,
+        coalesce(td.move_out_date::date, i.move_out_date::date, null) as move_out_date,
+        coalesce(td.status, i.tenant_status, 'Current') as tenant_status,
+        coalesce(td.occupancy_id, i.occupancy_id, '') as occupancy_id,
+        i.rentable,
+        i.unit_tags,
+        coalesce(turn_link.active_turn, false) as turn_linked,
+        case
+          when coalesce(td.move_in_date::date, i.move_in_date::date) is not null
+               and coalesce(td.move_in_date::date, i.move_in_date::date) <= current_date
+               and (
+                 i.last_inspection_date::date is null
+                 or i.last_inspection_date::date < coalesce(td.move_in_date::date, i.move_in_date::date)
+               )
+            then coalesce(td.move_in_date::date, i.move_in_date::date)
+          when coalesce(td.move_in_date::date, i.move_in_date::date) is not null
+               and coalesce(td.move_in_date::date, i.move_in_date::date) <= current_date
+            then i.last_inspection_date::date
+          else i.last_inspection_date::date
+        end as anchor_date,
+        case
+          when (
+            coalesce(td.move_in_date::date, i.move_in_date::date) is not null
+            and coalesce(td.move_in_date::date, i.move_in_date::date) <= current_date
+            and (
+              i.last_inspection_date::date is null
+              or i.last_inspection_date::date < coalesce(td.move_in_date::date, i.move_in_date::date)
+            )
+          ) then true
+          else false
+        end as missing_move_in_inspection
+      from appfolio_unit_inspections i
+      inner join lateral (
+        select t.*
+        from appfolio_tenant_directory t
+        where lower(coalesce(t.status, '')) = 'current'
+          and (
+            (coalesce(i.occupancy_id, '') <> '' and t.occupancy_id = i.occupancy_id)
+            or (coalesce(i.occupancy_id, '') = '' and t.unit_id = i.unit_id)
+          )
+        order by coalesce(t.move_in_date, t.last_updated_at, t.cached_at) desc nulls last
+        limit 1
+      ) td on true
+      left join appfolio_properties p on p.id = i.property_id
+      left join appfolio_units u on u.unit_id = i.unit_id
+      left join lateral (
+        select true as active_turn
+        from unit_turn_tracker t
+        where t.property_id = i.property_id
+          and t.unit_id = i.unit_id
+          and coalesce(lower(t.status), '') not like '%completed%'
+          and coalesce(lower(t.status), '') not like '%closed%'
+        limit 1
+      ) turn_link on true
+      ${baseWhereSql}
+    `;
+
+    const outerWhereParts: string[] = [];
+    const outerParams = baseParams.slice();
+    const bindOuter = (value: any): string => {
+      outerParams.push(value);
+      return `$${outerParams.length}`;
+    };
+
+    if (activeOnly) {
+      outerWhereParts.push(`coalesce(ins.tenant_name, '') <> ''`);
+      outerWhereParts.push(`(ins.move_in_date is not null and ins.move_in_date <= current_date)`);
+      outerWhereParts.push(`(ins.move_out_date is null or ins.move_out_date >= current_date)`);
+    }
+
+    outerWhereParts.push(`ins.missing_move_in_inspection = true`);
+
+    const daysSinceExpr = `coalesce((current_date - ins.anchor_date), 999)`;
+    const statusExpr = `
+      case
+        when ins.missing_move_in_inspection = true or ins.anchor_date is null or ${daysSinceExpr} > ${bindOuter(overdueDays)} then 'overdue'
+        when ${daysSinceExpr} > ${bindOuter(dueSoonDays)} then 'due_soon'
+        else 'current'
+      end
+    `;
+
+    if (statusFilter && statusFilter !== 'all') {
+      if (statusFilter === 'turn_linked') {
+        outerWhereParts.push(`ins.turn_linked = true`);
+      } else {
+        outerWhereParts.push(`${statusExpr} = ${bindOuter(statusFilter)}`);
+      }
+    }
+
+    if (turnLinked === 'turn_linked') outerWhereParts.push(`ins.turn_linked = true`);
+    if (turnLinked === 'not_linked') outerWhereParts.push(`ins.turn_linked = false`);
+
+    if (ageBucket) {
+      if (ageBucket === '0-30d') outerWhereParts.push(`${daysSinceExpr} between 0 and 30`);
+      else if (ageBucket === '31-90d') outerWhereParts.push(`${daysSinceExpr} between 31 and 90`);
+      else if (ageBucket === '91-180d') outerWhereParts.push(`${daysSinceExpr} between 91 and 180`);
+      else if (ageBucket === '181+d') outerWhereParts.push(`${daysSinceExpr} >= 181`);
+    }
+
+    if (search) {
+      const likeParam = bindOuter(`%${search}%`);
+      outerWhereParts.push(`(
+        coalesce(ins.property_name, '') ilike ${likeParam}
+        or coalesce(ins.unit_name, '') ilike ${likeParam}
+        or coalesce(ins.tenant_name, '') ilike ${likeParam}
+      )`);
+    }
+
+    const outerWhereSql = outerWhereParts.length ? `where ${outerWhereParts.join(' and ')}` : '';
+
+    const wrappedFromSql = `from (${baseSql}) ins`;
+
+    const countSql = `select count(*)::int as total ${wrappedFromSql} ${outerWhereSql}`;
+    const countRows = await queryClient.unsafe(countSql, outerParams);
+    const total = Number((countRows as any[])[0]?.total || 0) || 0;
+
+    const dataParams = outerParams.slice();
+    const limitBind = `$${dataParams.length + 1}`;
+    const offsetBind = `$${dataParams.length + 2}`;
+    dataParams.push(limit, offset);
+
+    const dataSql = `
+      select
+        ins.property_name,
+        ins.property_id,
+        ins.unit_name,
+        ins.unit_id,
+        ins.occupancy_id,
+        coalesce(ins.last_inspection_date::text, '') as last_inspection_date,
+        ins.tenant_name,
+        ins.tenant_primary_phone_number,
+        coalesce(ins.move_in_date::text, '') as move_in_date,
+        coalesce(ins.move_out_date::text, '') as move_out_date,
+        ins.tenant_status,
+        ins.rentable,
+        ins.unit_tags,
+        ins.turn_linked,
+        ins.missing_move_in_inspection,
+        ${daysSinceExpr}::int as days_since,
+        ${statusExpr} as status_bucket
+      ${wrappedFromSql}
+      ${outerWhereSql}
+      order by ${sortExpr} ${sortDir} nulls last
+      limit ${limitBind}
+      offset ${offsetBind}
+    `;
+
+    const rows = await queryClient.unsafe(dataSql, dataParams);
+    const results = (rows as any[]).map((row) => ({
+      property_name: String(row.property_name || ''),
+      property_id: String(row.property_id || ''),
+      unit_name: String(row.unit_name || ''),
+      unit_id: String(row.unit_id || ''),
+      occupancy_id: String(row.occupancy_id || ''),
+      last_inspection_date: String(row.last_inspection_date || ''),
+      tenant_name: String(row.tenant_name || ''),
+      tenant_primary_phone_number: String(row.tenant_primary_phone_number || ''),
+      move_in_date: String(row.move_in_date || ''),
+      move_out_date: String(row.move_out_date || ''),
+      tenant_status: String(row.tenant_status || 'Current'),
+      rentable: String(row.rentable || ''),
+      unit_tags: row.unit_tags || '',
+      turn_linked: !!row.turn_linked,
+      missing_move_in_inspection: !!row.missing_move_in_inspection,
+      days_since: Number(row.days_since || 0) || 0,
+      status_bucket: String(row.status_bucket || ''),
+      _source: 'postgres_local_grid',
+    }));
+
+    res.json({
+      ok: true,
+      results,
+      count: results.length,
+      total,
+      limit,
+      offset,
+      source: 'postgres_local_grid',
+      property_group_id: String(propertyGroupId || ''),
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/grid/inspections');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Inspection grid query failed') });
   }
 });
 
