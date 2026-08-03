@@ -63,27 +63,23 @@ export function createAuthModule(deps) {
   function setPmOtpStep(step, identifier) {
     var route = $('#vaultOtpRoute');
     var identifierWrap = $('#vaultOtpIdentifierWrap');
-    var scopeWrap = $('#vaultOtpScopeWrap');
     var requestActions = $('#vaultOtpRequestActions');
     var summary = $('#vaultOtpSentSummary');
     var summaryValue = $('#vaultOtpSentValue');
     var editRow = $('#vaultOtpEditRow');
     var verifyRow = $('#vaultOtpVerifyRow');
     var identifierInput = $('#vaultOtpEmail');
-    var scopeInput = $('#vaultOtpScope');
     var codeInput = $('#vaultOtpCode');
     var verifyBtn = $('#btnVerifyOtp');
     var sent = step === 'verify';
 
     if (route) route.classList.toggle('compact', sent);
     if (identifierWrap) identifierWrap.classList.toggle('hidden', sent);
-    if (scopeWrap) scopeWrap.classList.toggle('hidden', sent);
     if (requestActions) requestActions.classList.toggle('hidden', sent);
     if (summary) summary.classList.toggle('hidden', !sent);
     if (editRow) editRow.classList.toggle('hidden', !sent);
     if (verifyRow) verifyRow.classList.toggle('hidden', !sent);
     if (identifierInput) identifierInput.disabled = sent;
-    if (scopeInput) scopeInput.disabled = sent;
     if (summaryValue && sent) {
       summaryValue.textContent = formatOtpIdentifierSummary(identifier || (identifierInput ? identifierInput.value : ''));
     }
@@ -119,19 +115,17 @@ export function createAuthModule(deps) {
     return data.token;
   }
 
-  async function requestDeviceOtp(identifier, userName, scopeUuid) {
+  async function requestDeviceOtp(identifier, userName) {
     var proxyUrl = getProxyUrl();
     if (!proxyUrl) throw new Error('No proxy configured');
     var sep = proxyUrl.indexOf('?') !== -1 ? '&' : '?';
     var url = proxyUrl + sep + 'action=device_otp_request';
     var email = normalizeOtpEmail(identifier);
     var phone = normalizeOtpPhone(identifier);
-    var scope = normalizeOtpScopeUuid(scopeUuid);
     var payload = {
       identifier: String(identifier || '').trim(),
       email: email || undefined,
       phone: phone || undefined,
-      property_group_uuid: scope || undefined,
       user_name: userName || ('hm-' + getNavigatorPlatform())
     };
     var res = await fetchWithTimeout(url, {
@@ -149,19 +143,17 @@ export function createAuthModule(deps) {
     return data;
   }
 
-  async function verifyDeviceOtp(identifier, code, userName, scopeUuid) {
+  async function verifyDeviceOtp(identifier, code, userName) {
     var proxyUrl = getProxyUrl();
     if (!proxyUrl) throw new Error('No proxy configured');
     var sep = proxyUrl.indexOf('?') !== -1 ? '&' : '?';
     var url = proxyUrl + sep + 'action=device_otp_verify';
     var email = normalizeOtpEmail(identifier);
     var phone = normalizeOtpPhone(identifier);
-    var scope = normalizeOtpScopeUuid(scopeUuid);
     var payload = {
       identifier: String(identifier || '').trim(),
       email: email || undefined,
       phone: phone || undefined,
-      property_group_uuid: scope || undefined,
       code: code,
       user_name: userName || ('hm-' + getNavigatorPlatform())
     };

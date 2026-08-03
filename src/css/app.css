@@ -114,7 +114,7 @@
   --vault-surface: rgba(255, 255, 255, 0.93);
   --vault-surface-border: rgba(58, 131, 197, 0.26);
   --vault-text: #0f2740;
-  --vault-text-muted: #44617f;
+  --vault-text-muted: #2e4f6d;
   --vault-input-bg: rgba(240, 248, 255, 0.95);
   --vault-input-border: rgba(73, 139, 196, 0.36);
   --vault-accent: #0f6fab;
@@ -124,6 +124,7 @@
   --vault-tooltip-bg: rgba(2, 6, 23, 0.95);
   --vault-danger: #991b1b;
   --vault-danger-bg: rgba(239, 68, 68, 0.16);
+  --vault-otp-surface: rgba(243, 248, 255, 0.98);
 
   /* Vault PM toggle */
   --vault-pm-bg: linear-gradient(180deg, #3f86ff, #2563eb);
@@ -186,6 +187,7 @@ html.dark {
   --vault-tooltip-bg: rgba(2, 6, 23, 0.95);
   --vault-danger: #fecaca;
   --vault-danger-bg: rgba(127, 29, 29, 0.5);
+  --vault-otp-surface: rgba(9, 30, 45, 0.58);
 
   /* Vault PM toggle — dark */
   --vault-pm-bg: linear-gradient(180deg, #2563eb, #1d4ed8);
@@ -1375,21 +1377,33 @@ html.dark .bento-pill:hover {
 .vault-error {
   display: none;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--vault-danger);
   text-align: center;
   margin-top: 12px;
-  padding: 8px;
+  padding: 10px 12px;
   background: var(--vault-danger-bg);
+  border: 1px solid color-mix(in srgb, var(--vault-danger) 25%, transparent);
   border-radius: var(--radius);
 }
 .vault-error.show { display: block; animation: fadeIn 0.2s ease; }
 .vault-error.success {
+  color: #166534;
+  background: rgba(34, 197, 94, 0.14);
+  border: 1px solid rgba(22, 163, 74, 0.34);
+}
+.vault-error.info {
+  color: #1e3a8a;
+  background: rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(37, 99, 235, 0.32);
+}
+html.dark .vault-error.success {
   color: #86efac;
   background: rgba(20, 83, 45, 0.52);
   border: 1px solid rgba(74, 222, 128, 0.28);
 }
-.vault-error.info {
+html.dark .vault-error.info {
   color: #bfdbfe;
   background: rgba(30, 64, 175, 0.26);
   border: 1px solid rgba(96, 165, 250, 0.24);
@@ -1433,7 +1447,7 @@ html.dark .bento-pill:hover {
   color: var(--vault-text-muted);
   cursor: pointer;
   transition: var(--transition);
-  z-index: 3;
+  z-index: 8;
 }
 .vault-theme-btn {
   right: auto;
@@ -1462,8 +1476,13 @@ html.dark .bento-pill:hover {
   padding: 6px 10px;
   cursor: pointer;
   margin-bottom: 12px;
+  position: relative;
+  z-index: 4;
 }
 .vault-back-btn:hover { color: var(--vault-accent); border-color: var(--vault-accent-strong); }
+#vaultPmPanel {
+  padding-top: 36px;
+}
 .vault-advanced-toggle {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   font-family: var(--font-sans);
@@ -1559,7 +1578,7 @@ html.dark .vault-resume-toggle:hover {
   padding: 12px;
   border: 1px solid var(--vault-input-border);
   border-radius: var(--radius);
-  background: rgba(15, 23, 42, 0.42);
+  background: var(--vault-otp-surface);
 }
 .vault-otp-route.hidden { display: none; }
 .vault-otp-route.compact {
@@ -1646,6 +1665,7 @@ html.dark .vault-resume-toggle:hover {
 }
 .vault-otp-summary-value {
   font-size: 13px;
+  font-weight: 700;
   color: var(--vault-text);
   word-break: break-word;
 }

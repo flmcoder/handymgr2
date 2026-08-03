@@ -99,7 +99,28 @@ function updateThemeIcon() {
     vaultBtn.title = title;
   }
 }
+
+function bindThemeToggleButtons() {
+  var topbarBtn = $('#themeToggle');
+  var vaultBtn = $('#vaultThemeToggle');
+
+  if (topbarBtn && !topbarBtn.dataset.themeBound) {
+    topbarBtn.addEventListener('click', function() { toggleTheme(); });
+    topbarBtn.dataset.themeBound = '1';
+  }
+  if (vaultBtn && !vaultBtn.dataset.themeBound) {
+    vaultBtn.addEventListener('click', function() { toggleTheme(); });
+    vaultBtn.dataset.themeBound = '1';
+  }
+
+  updateThemeIcon();
+}
 applyInitialTheme();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bindThemeToggleButtons);
+} else {
+  bindThemeToggleButtons();
+}
 
 // ---- Helpers ----
 function $(sel) { return document.querySelector(sel); }
@@ -2459,12 +2480,12 @@ function normalizeOtpScopeUuid(raw) {
   return _authModule.normalizeOtpScopeUuid(raw);
 }
 
-async function requestDeviceOtp(identifier, userName, scopeUuid) {
-  return await _authModule.requestDeviceOtp(identifier, userName, scopeUuid);
+async function requestDeviceOtp(identifier, userName) {
+  return await _authModule.requestDeviceOtp(identifier, userName);
 }
 
-async function verifyDeviceOtp(identifier, code, userName, scopeUuid) {
-  return await _authModule.verifyDeviceOtp(identifier, code, userName, scopeUuid);
+async function verifyDeviceOtp(identifier, code, userName) {
+  return await _authModule.verifyDeviceOtp(identifier, code, userName);
 }
 
 async function stabilizeProxySessionAfterLogin(timeoutMs) {
@@ -5182,11 +5203,6 @@ if ($('#vaultOtpEmail')) {
     if (e.key === 'Enter') { $('#btnSendOtp').click(); }
   });
 }
-if ($('#vaultOtpScope')) {
-  $('#vaultOtpScope').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') { $('#btnSendOtp').click(); }
-  });
-}
 if ($('#vaultOtpCode')) {
   $('#vaultOtpCode').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') { $('#btnVerifyOtp').click(); }
@@ -5216,7 +5232,7 @@ if ($('#pmLoginToggle')) {
     setVaultPanel('pm');
     setPmOtpStep('request');
     if ($('#vaultOtpEmail')) $('#vaultOtpEmail').focus();
-    setVaultFeedback('Enter your PM email or phone, then click Send OTP.', 'info');
+    setVaultFeedback('Enter your PM email or phone number, then click Send OTP.', 'info');
   });
 }
 
@@ -5258,12 +5274,6 @@ if ($('#btnSendOtp')) {
   $('#btnSendOtp').addEventListener('click', async function() {
     var identifierRaw = $('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '';
     var identifier = normalizeOtpIdentifier(identifierRaw);
-    var scopeRaw = $('#vaultOtpScope') ? $('#vaultOtpScope').value : '';
-    var scopeUuid = normalizeOtpScopeUuid(scopeRaw);
-    if (scopeRaw && !scopeUuid) {
-      setVaultFeedback('If provided, property group scope must be a valid UUID.', '');
-      return;
-    }
     if (!identifier) {
       setVaultFeedback('Enter a valid PM email or phone number to start PM login. For phone, just type 10 digits and formatting is automatic.', '');
       return;
@@ -5281,16 +5291,12 @@ if ($('#btnSendOtp')) {
     btn.textContent = 'Sending...';
     setVaultFeedback('');
     try {
-      await requestDeviceOtp(identifier, 'dispatcher', scopeUuid);
+      await requestDeviceOtp(identifier, 'dispatcher');
       showToast('OTP sent', { kind: 'success' });
       setPmOtpStep('verify', identifier);
       setVaultFeedback('OTP code sent successfully. Enter 6-digit verification code.', 'success');
       startOtpCountdown();
     } catch (err) {
-      if (err && err.details && Array.isArray(err.details.scope_options) && err.details.scope_options.length) {
-        var firstScope = String(err.details.scope_options[0].property_group_uuid || '');
-        if ($('#vaultOtpScope') && firstScope) $('#vaultOtpScope').value = firstScope;
-      }
       var msg = (err && (err.message || String(err))) || 'OTP request failed';
       setVaultFeedback(msg, '');
       showToast(msg, { kind: 'danger' });
@@ -5305,7 +5311,6 @@ if ($('#btnSendOtp')) {
 if ($('#btnVerifyOtp')) {
   $('#btnVerifyOtp').addEventListener('click', async function() {
     var identifier = normalizeOtpIdentifier($('#vaultOtpEmail') ? $('#vaultOtpEmail').value : '');
-    var scopeUuid = normalizeOtpScopeUuid($('#vaultOtpScope') ? $('#vaultOtpScope').value : '');
     var code = String(($('#vaultOtpCode') && $('#vaultOtpCode').value) || '').trim();
     if (!identifier) {
       setPmOtpStep('request');
@@ -5327,7 +5332,7 @@ if ($('#btnVerifyOtp')) {
     $('#vhostPreview').textContent = vhost || 'yourco';
     $('#vhostPreviewPm').textContent = vhost || 'yourco';
     if (!vhost) {
-      setVaultFeedback('AppFolio subdomain is required (e.g. "flraz").', '');
+      setVaultFeedback('AppFolio subdomain is required (example: "yourco").', '');
       return;
     }
     var btn = this;
@@ -5336,7 +5341,7 @@ if ($('#btnVerifyOtp')) {
     setVaultFeedback('');
     stopOtpCountdown();
     try {
-      var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher', scopeUuid);
+      var verifyData = await verifyDeviceOtp(identifier, code, 'dispatcher');
       var token = verifyData.token;
       try { localStorage.setItem('hm_auth_token', token); } catch (eA) { /* */ }
       try { localStorage.setItem('hm_device_token', token); } catch (e) { /* */ }
@@ -5559,7 +5564,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
   }
   $('#vaultProxy').value = proxyUrl;
   if (!vhost) {
-    $('#vaultError').textContent = 'AppFolio subdomain is required (e.g. "flraz").';
+    $('#vaultError').textContent = 'AppFolio subdomain is required (example: "yourco").';
     $('#vaultError').classList.add('show');
     return;
   }
@@ -23256,11 +23261,7 @@ function wireUpUI() {
   }
 
   // Theme toggle
-  $('#themeToggle').addEventListener('click', function() { toggleTheme(); });
-  if ($('#vaultThemeToggle')) {
-    $('#vaultThemeToggle').addEventListener('click', function() { toggleTheme(); });
-  }
-  updateThemeIcon(); // sync icon with initial state
+  bindThemeToggleButtons();
 
   // Settings modal
   if ($('#appSettingsBtn')) {
