@@ -5347,7 +5347,9 @@ app.get('/api/local/work_orders_completed_history', async (req: Request, res: Re
 
 app.get('/api/local/inspections', async (req: Request, res: Response) => {
   try {
-    const limit = parseLimit(req.query.limit, 6000, 15000);
+    const limit = parseLimit(req.query.limit, 500, 5000);
+    const offsetRaw = Number.parseInt(String(req.query.offset || '0'), 10);
+    const offset = Number.isFinite(offsetRaw) && offsetRaw > 0 ? Math.min(offsetRaw, 250000) : 0;
     const propertyGroupId = getPropertyGroupFilter(req);
     const activeOnly = /^(1|true|yes|on)$/i.test(String(req.query.active_only || '1').trim());
     const groupKey = String(propertyGroupId || '');
@@ -5377,10 +5379,15 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
           });
         }
 
+        const pagedLiveResults = liveResults.slice(offset, offset + limit);
+
         res.json({
           ok: true,
-          results: liveResults,
-          count: liveResults.length,
+          results: pagedLiveResults,
+          count: pagedLiveResults.length,
+          total: liveResults.length,
+          limit,
+          offset,
           source: 'appfolio_live_fast',
           latency_ms: fastLive.latencyMs,
           property_group_id: groupKey,
@@ -5417,18 +5424,32 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
             i.unit_id,
             coalesce(i.unit_name, u.name, '') as unit_name,
             i.last_inspection_date,
-            i.tenant_name,
-            i.tenant_primary_phone_number,
-            i.move_in_date,
-            i.move_out_date,
+            coalesce(td.tenant_name, i.tenant_name) as tenant_name,
+            coalesce(td.phone_numbers, i.tenant_primary_phone_number) as tenant_primary_phone_number,
+            coalesce(td.move_in_date::text, i.move_in_date::text) as move_in_date,
+            coalesce(td.move_out_date::text, i.move_out_date::text) as move_out_date,
+            td.status as tenant_status,
+            coalesce(td.occupancy_id, i.occupancy_id) as occupancy_id,
             i.rentable,
             i.unit_tags
           from appfolio_unit_inspections i
+          inner join lateral (
+            select t.*
+            from appfolio_tenant_directory t
+            where lower(coalesce(t.status, '')) = 'current'
+              and (
+                (coalesce(i.occupancy_id, '') <> '' and t.occupancy_id = i.occupancy_id)
+                or (coalesce(i.occupancy_id, '') = '' and t.unit_id = i.unit_id)
+              )
+            order by coalesce(t.move_in_date, t.last_updated_at, t.cached_at) desc nulls last
+            limit 1
+          ) td on true
           left join appfolio_properties p on p.id = i.property_id
           left join appfolio_units u on u.unit_id = i.unit_id
           where p.property_group_id = ${propertyGroupId}
           order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
           limit ${limit}
+          offset ${offset}
         `
         : await queryClient`
           select
@@ -5438,67 +5459,39 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
             i.unit_id,
             coalesce(i.unit_name, u.name, '') as unit_name,
             i.last_inspection_date,
-            i.tenant_name,
-            i.tenant_primary_phone_number,
-            i.move_in_date,
-            i.move_out_date,
+            coalesce(td.tenant_name, i.tenant_name) as tenant_name,
+            coalesce(td.phone_numbers, i.tenant_primary_phone_number) as tenant_primary_phone_number,
+            coalesce(td.move_in_date::text, i.move_in_date::text) as move_in_date,
+            coalesce(td.move_out_date::text, i.move_out_date::text) as move_out_date,
+            td.status as tenant_status,
+            coalesce(td.occupancy_id, i.occupancy_id) as occupancy_id,
             i.rentable,
             i.unit_tags
           from appfolio_unit_inspections i
+          inner join lateral (
+            select t.*
+            from appfolio_tenant_directory t
+            where lower(coalesce(t.status, '')) = 'current'
+              and (
+                (coalesce(i.occupancy_id, '') <> '' and t.occupancy_id = i.occupancy_id)
+                or (coalesce(i.occupancy_id, '') = '' and t.unit_id = i.unit_id)
+              )
+            order by coalesce(t.move_in_date, t.last_updated_at, t.cached_at) desc nulls last
+            limit 1
+          ) td on true
           left join appfolio_properties p on p.id = i.property_id
           left join appfolio_units u on u.unit_id = i.unit_id
           order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
           limit ${limit}
+          offset ${offset}
         `;
     } catch (error) {
       const message = String((error as any)?.message || error || '');
       const code = String((error as any)?.code || '');
-      if (!(code === '42P01' && /appfolio_unit_inspections/i.test(message))) {
+      if (!(code === '42P01' && /(appfolio_unit_inspections|appfolio_tenant_directory)/i.test(message))) {
         throw error;
       }
       rows = [];
-    }
-
-    if ((rows as any[]).length === 0) {
-      rows = propertyGroupId
-        ? await queryClient`
-          select
-            u.unit_id,
-            u.property_id,
-            p.name as property_name,
-            coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
-            coalesce(nullif(u.raw_json->>'last_inspection_date',''), nullif(u.raw_json->>'LastInspectionDate','')) as last_inspection_date,
-            coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
-            coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as tenant_primary_phone_number,
-            coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
-            coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
-            coalesce(nullif(u.raw_json->>'rentable',''), nullif(u.raw_json->>'Rentable','')) as rentable,
-            coalesce(u.raw_json->>'unit_tags', u.raw_json->>'UnitTags', '') as unit_tags
-          from appfolio_units u
-          inner join appfolio_properties p on p.id = u.property_id
-          where p.property_group_id = ${propertyGroupId}
-          order by p.name asc, u.name asc
-          limit ${limit}
-        `
-        : await queryClient`
-          select
-            u.unit_id,
-            u.property_id,
-            p.name as property_name,
-            coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
-            coalesce(nullif(u.raw_json->>'last_inspection_date',''), nullif(u.raw_json->>'LastInspectionDate','')) as last_inspection_date,
-            coalesce(nullif(u.raw_json->>'tenant_name',''), nullif(u.raw_json->>'TenantName','')) as tenant_name,
-            coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as tenant_primary_phone_number,
-            coalesce(nullif(u.raw_json->>'move_in_date',''), nullif(u.raw_json->>'MoveInDate','')) as move_in_date,
-            coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as move_out_date,
-            coalesce(nullif(u.raw_json->>'rentable',''), nullif(u.raw_json->>'Rentable','')) as rentable,
-            coalesce(u.raw_json->>'unit_tags', u.raw_json->>'UnitTags', '') as unit_tags
-          from appfolio_units u
-          inner join appfolio_properties p on p.id = u.property_id
-          order by p.name asc, u.name asc
-          limit ${limit}
-        `;
-
     }
 
     let results = (rows as any[]).map((row) => ({
@@ -5506,11 +5499,13 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
       property_id: String(row.property_id || ''),
       unit_name: String(row.unit_name || ''),
       unit_id: String(row.unit_id || ''),
+      occupancy_id: String(row.occupancy_id || ''),
       last_inspection_date: String(row.last_inspection_date || ''),
       tenant_name: String(row.tenant_name || ''),
       tenant_primary_phone_number: String(row.tenant_primary_phone_number || ''),
       move_in_date: String(row.move_in_date || ''),
       move_out_date: String(row.move_out_date || ''),
+      tenant_status: String(row.tenant_status || 'Current'),
       rentable: String(row.rentable || ''),
       unit_tags: row.unit_tags || '',
       _source: 'postgres_local',
@@ -5534,6 +5529,8 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
       ok: true,
       results,
       count: results.length,
+      limit,
+      offset,
       source: 'postgres_local',
       property_group_id: groupKey,
       latency_policy: {
