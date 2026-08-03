@@ -468,6 +468,60 @@ function isLikelyVendorRow(vendorId: string, vendorName: string): boolean {
   return false;
 }
 
+function isDispatchMaintenanceRole(value: unknown): boolean {
+  const role = String(value ?? '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  if (!role) return false;
+  if (role === 'maintenance tech' || role === 'maintenance technician') return true;
+  if (role === 'technician' || role === 'tech') return true;
+  if (role.includes('maintenance') && role.includes('tech')) return true;
+  if (role.includes('maintenance') && role.includes('supervisor')) return true;
+  if (role.includes('service') && role.includes('tech')) return true;
+  if (role.includes('make ready') || role.includes('turnover')) return true;
+  if (role.includes('handyman')) return true;
+  return false;
+}
+
+function normalizeVendorTradeCategory(value: unknown): string {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return 'General';
+  if (raw.includes('hvac') || raw.includes('air condition') || raw.startsWith('ac ')) return 'HVAC';
+  if (raw.includes('plumb') || raw.includes('drain') || raw.includes('sewer')) return 'Plumbing';
+  if (raw.includes('elect') || raw.includes('wiring')) return 'Electrical';
+  if (raw.includes('appliance')) return 'Appliance';
+  if (raw.includes('floor') || raw.includes('tile') || raw.includes('carpet')) return 'Flooring';
+  if (raw.includes('paint')) return 'Painting';
+  if (raw.includes('landscape') || raw.includes('irrig') || raw.includes('tree')) return 'Landscaping';
+  if (raw.includes('clean') || raw.includes('janitor') || raw.includes('maid')) return 'Cleaning';
+  if (raw.includes('roof')) return 'Roofing';
+  if (raw.includes('pest') || raw.includes('termite')) return 'Pest Control';
+  if (raw.includes('pool') || raw.includes('spa')) return 'Pool/Spa';
+  if (raw.includes('lock') || raw.includes('key')) return 'Locksmith';
+  if (raw.includes('security') || raw.includes('alarm') || raw.includes('camera')) return 'Security';
+  if (raw.includes('garage')) return 'Garage';
+  if (raw.includes('fence') || raw.includes('gate')) return 'Fences/Gates';
+  if (raw.includes('drywall') || raw.includes('plaster')) return 'Drywall';
+  if (raw.includes('gutter')) return 'Gutter';
+  if (raw.includes('turnover') || raw.includes('make ready')) return 'Turnover';
+  if (raw.includes('general') || raw.includes('handyman') || raw.includes('maintenance')) return 'General';
+  return 'Other';
+}
+
+function inferVendorTradeCategory(row: any): string {
+  const hints = [
+    row?.trade_category,
+    row?.vendor_trades,
+    row?.category,
+    row?.vendor_type,
+    row?.description_hint,
+    row?.vendor_name,
+  ];
+  for (const hint of hints) {
+    const mapped = normalizeVendorTradeCategory(hint);
+    if (mapped && mapped !== 'Other') return mapped;
+  }
+  return normalizeVendorTradeCategory(hints.filter(Boolean).join(' '));
+}
+
 function resolvePropertyGroupDisplayName(row: any, fallback = ''): string {
   const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
   const direct = String(row?.name || row?.group_name || '').trim();
@@ -1577,7 +1631,7 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
   }
 
   const queueRows = await queryClient.unsafe(`select * from reassignment_queue order by updated_at desc limit 5000`);
-  const techRows = await queryClient.unsafe(`
+  const techRosterSql = `
     with roster_baseline as (
       select
         coalesce(u.tech_id, g.tech_id) as tech_id,
@@ -1603,14 +1657,38 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
       from appfolio_users u
       full outer join tech_grades g on g.tech_id = u.tech_id
       where u.tech_id is null
-         or lower(coalesce(u.user_role, '')) = 'maintenance tech'
-         or lower(coalesce(u.user_role, '')) = 'maintenance_tech'
+        or g.tech_id is not null
+        or lower(replace(coalesce(u.user_role, ''), '_', ' ')) like '%maintenance tech%'
+        or lower(replace(coalesce(u.user_role, ''), '_', ' ')) = 'maintenance technician'
+        or lower(replace(coalesce(u.user_role, ''), '_', ' ')) in ('technician', 'tech')
+        or lower(replace(coalesce(u.user_role, ''), '_', ' ')) like '%service tech%'
+        or lower(replace(coalesce(u.user_role, ''), '_', ' ')) like '%maintenance supervisor%'
+        or lower(replace(coalesce(u.user_role, ''), '_', ' ')) like '%make ready%'
+        or lower(replace(coalesce(u.user_role, ''), '_', ' ')) like '%turnover%'
+        or lower(replace(coalesce(u.user_role, ''), '_', ' ')) like '%handyman%'
     )
     select *
     from roster_baseline
     order by active desc, tier asc, performance_score desc, tech_name asc
     limit 5000
-  `);
+  `;
+
+  let techRows = await queryClient.unsafe(techRosterSql);
+  if ((techRows as any[]).length === 0) {
+    try {
+      const seedSummary = await syncDispatchAssignees({
+        ...params,
+        source: 'auto_roster_seed',
+        tier1_group_uuid: tier1GroupUuid,
+        tier2_group_uuid: tier2GroupUuid,
+      });
+      if (Number(seedSummary?.inserted || 0) > 0) {
+        techRows = await queryClient.unsafe(techRosterSql);
+      }
+    } catch (seedErr) {
+      console.warn('[dispatch:auto_roster_seed] failed', String((seedErr as any)?.message || seedErr));
+    }
+  }
   const auditRows = await queryClient.unsafe(`select id, wo_id, event_type, event_message, payload_json, created_at from reassignment_audit order by id desc limit 300`);
 
   const queue = (queueRows as any[]).map((row) => ({
@@ -3223,23 +3301,34 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
       const rows = await queryClient.unsafe(
         `select tech_id, tech_name, email, user_role, appfolio_active, last_updated_at, cached_at
            from appfolio_users
-          where lower(coalesce(user_role, '')) in ('maintenance tech', 'maintenance_tech')
+          where (
+            lower(replace(coalesce(user_role, ''), '_', ' ')) like '%maintenance tech%'
+            or lower(replace(coalesce(user_role, ''), '_', ' ')) = 'maintenance technician'
+            or lower(replace(coalesce(user_role, ''), '_', ' ')) in ('technician', 'tech')
+            or lower(replace(coalesce(user_role, ''), '_', ' ')) like '%service tech%'
+            or lower(replace(coalesce(user_role, ''), '_', ' ')) like '%maintenance supervisor%'
+            or lower(replace(coalesce(user_role, ''), '_', ' ')) like '%make ready%'
+            or lower(replace(coalesce(user_role, ''), '_', ' ')) like '%turnover%'
+            or lower(replace(coalesce(user_role, ''), '_', ' ')) like '%handyman%'
+          )
           order by lower(coalesce(tech_name, tech_id)) asc
           limit $1`,
         [limit],
       );
 
-      const results = (rows as any[]).map((row) => ({
-        id: String(row?.tech_id || ''),
-        tech_id: String(row?.tech_id || ''),
-        name: String(row?.tech_name || row?.tech_id || ''),
-        tech_name: String(row?.tech_name || row?.tech_id || ''),
-        email: String(row?.email || ''),
-        user_role: String(row?.user_role || ''),
-        active: asBooleanLike(row?.appfolio_active, true),
-        last_updated_at: asIso(row?.last_updated_at),
-        cached_at: asIso(row?.cached_at),
-      }));
+      const results = (rows as any[])
+        .filter((row) => isDispatchMaintenanceRole(row?.user_role))
+        .map((row) => ({
+          id: String(row?.tech_id || ''),
+          tech_id: String(row?.tech_id || ''),
+          name: String(row?.tech_name || row?.tech_id || ''),
+          tech_name: String(row?.tech_name || row?.tech_id || ''),
+          email: String(row?.email || ''),
+          user_role: String(row?.user_role || ''),
+          active: asBooleanLike(row?.appfolio_active, true),
+          last_updated_at: asIso(row?.last_updated_at),
+          cached_at: asIso(row?.cached_at),
+        }));
 
       res.json({
         ok: true,
@@ -3439,6 +3528,7 @@ app.get('/api/local/ping', async (_req: Request, res: Response) => {
 });
 
 let vendorOverrideTableEnsured = false;
+let vendorDirectoryTableEnsured = false;
 
 async function ensureVendorOverrideTable(): Promise<void> {
   if (vendorOverrideTableEnsured) return;
@@ -3452,6 +3542,161 @@ async function ensureVendorOverrideTable(): Promise<void> {
     )
   `);
   vendorOverrideTableEnsured = true;
+}
+
+async function ensureVendorDirectoryTable(): Promise<void> {
+  if (vendorDirectoryTableEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS vendor_directory (
+      vendor_key TEXT PRIMARY KEY,
+      vendor_id TEXT,
+      vendor_name TEXT NOT NULL,
+      trade_category TEXT,
+      category TEXT,
+      description_hint TEXT,
+      property_group_id TEXT,
+      open_work_order_count INTEGER NOT NULL DEFAULT 0,
+      first_seen_at TIMESTAMPTZ,
+      last_seen_at TIMESTAMPTZ,
+      source TEXT NOT NULL DEFAULT 'work_orders',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS vendor_directory_name_idx ON vendor_directory(lower(vendor_name))`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS vendor_directory_group_idx ON vendor_directory(property_group_id)`);
+  vendorDirectoryTableEnsured = true;
+}
+
+async function refreshVendorDirectoryFromWorkOrders(propertyGroupId: string, fullRefresh: boolean): Promise<{ synced: number; source_rows: number }> {
+  await ensureVendorDirectoryTable();
+
+  if (fullRefresh && !propertyGroupId) {
+    await queryClient.unsafe(`TRUNCATE TABLE vendor_directory`);
+  }
+
+  const rows = propertyGroupId
+    ? await queryClient.unsafe(
+      `select
+         coalesce(nullif(wo.vendor_id, ''), nullif(wo.raw_json->>'vendor_id', ''), nullif(wo.raw_json->>'VendorId', '')) as vendor_id,
+         coalesce(
+           nullif(wo.vendor_name, ''),
+           nullif(wo.raw_json->>'vendor_name', ''),
+           nullif(wo.raw_json->>'VendorName', ''),
+           nullif(wo.assigned_user_name, ''),
+           nullif(wo.raw_json->>'assigned_user_name', ''),
+           nullif(wo.raw_json->>'AssignedUserName', '')
+         ) as vendor_name,
+         coalesce(nullif(wo.category, ''), nullif(wo.raw_json->>'category', ''), nullif(wo.raw_json->>'type', '')) as category,
+         max(coalesce(wo.description, wo.raw_json->>'description', '')) as description_hint,
+         max(wo.property_group_id) as property_group_id,
+         count(*)::int as open_work_order_count,
+         min(coalesce(wo.created_at, wo.updated_at, now())) as first_seen_at,
+         max(coalesce(wo.updated_at, wo.created_at, now())) as last_seen_at
+       from appfolio_work_orders wo
+       where wo.property_group_id = $1
+       group by 1, 2, 3
+       having coalesce(
+         nullif(wo.vendor_name, ''),
+         nullif(wo.raw_json->>'vendor_name', ''),
+         nullif(wo.raw_json->>'VendorName', ''),
+         nullif(wo.vendor_id, ''),
+         nullif(wo.raw_json->>'vendor_id', ''),
+         nullif(wo.raw_json->>'VendorId', ''),
+         nullif(wo.assigned_user_name, ''),
+         nullif(wo.raw_json->>'assigned_user_name', ''),
+         nullif(wo.raw_json->>'AssignedUserName', '')
+       ) is not null
+       limit 20000`,
+      [propertyGroupId],
+    )
+    : await queryClient.unsafe(
+      `select
+         coalesce(nullif(wo.vendor_id, ''), nullif(wo.raw_json->>'vendor_id', ''), nullif(wo.raw_json->>'VendorId', '')) as vendor_id,
+         coalesce(
+           nullif(wo.vendor_name, ''),
+           nullif(wo.raw_json->>'vendor_name', ''),
+           nullif(wo.raw_json->>'VendorName', ''),
+           nullif(wo.assigned_user_name, ''),
+           nullif(wo.raw_json->>'assigned_user_name', ''),
+           nullif(wo.raw_json->>'AssignedUserName', '')
+         ) as vendor_name,
+         coalesce(nullif(wo.category, ''), nullif(wo.raw_json->>'category', ''), nullif(wo.raw_json->>'type', '')) as category,
+         max(coalesce(wo.description, wo.raw_json->>'description', '')) as description_hint,
+         max(wo.property_group_id) as property_group_id,
+         count(*)::int as open_work_order_count,
+         min(coalesce(wo.created_at, wo.updated_at, now())) as first_seen_at,
+         max(coalesce(wo.updated_at, wo.created_at, now())) as last_seen_at
+       from appfolio_work_orders wo
+       group by 1, 2, 3
+       having coalesce(
+         nullif(wo.vendor_name, ''),
+         nullif(wo.raw_json->>'vendor_name', ''),
+         nullif(wo.raw_json->>'VendorName', ''),
+         nullif(wo.vendor_id, ''),
+         nullif(wo.raw_json->>'vendor_id', ''),
+         nullif(wo.raw_json->>'VendorId', ''),
+         nullif(wo.assigned_user_name, ''),
+         nullif(wo.raw_json->>'assigned_user_name', ''),
+         nullif(wo.raw_json->>'AssignedUserName', '')
+       ) is not null
+       limit 30000`,
+    );
+
+  let synced = 0;
+  for (const row of rows as any[]) {
+    const vendorId = String(row?.vendor_id || '').trim();
+    const vendorName = normalizeVendorDisplayLabel(row?.vendor_name, row?.company_name, row?.vendor_id);
+    if (!isLikelyVendorRow(vendorId, vendorName)) continue;
+
+    const key = vendorId || `name:${vendorName.toLowerCase()}`;
+    const tradeCategory = inferVendorTradeCategory(row);
+    const category = String(row?.category || '').trim();
+    const descriptionHint = String(row?.description_hint || '').trim();
+    const groupId = String(row?.property_group_id || '').trim();
+
+    await queryClient.unsafe(
+      `insert into vendor_directory (
+         vendor_key, vendor_id, vendor_name, trade_category, category, description_hint,
+         property_group_id, open_work_order_count, first_seen_at, last_seen_at, source, updated_at
+       ) values (
+         $1, $2, $3, $4, $5, $6,
+         $7, $8, $9::timestamptz, $10::timestamptz, 'work_orders', NOW()
+       )
+       on conflict (vendor_key) do update set
+         vendor_id = coalesce(nullif(excluded.vendor_id, ''), vendor_directory.vendor_id),
+         vendor_name = excluded.vendor_name,
+         trade_category = case
+           when coalesce(vendor_directory.trade_category, '') in ('', 'General', 'Other')
+             and coalesce(excluded.trade_category, '') not in ('', 'General', 'Other')
+             then excluded.trade_category
+           else coalesce(excluded.trade_category, vendor_directory.trade_category)
+         end,
+         category = coalesce(nullif(excluded.category, ''), vendor_directory.category),
+         description_hint = coalesce(nullif(excluded.description_hint, ''), vendor_directory.description_hint),
+         property_group_id = coalesce(nullif(excluded.property_group_id, ''), vendor_directory.property_group_id),
+         open_work_order_count = greatest(vendor_directory.open_work_order_count, excluded.open_work_order_count),
+         first_seen_at = coalesce(vendor_directory.first_seen_at, excluded.first_seen_at),
+         last_seen_at = greatest(coalesce(vendor_directory.last_seen_at, excluded.last_seen_at), excluded.last_seen_at),
+         source = 'work_orders',
+         updated_at = NOW()`,
+      [
+        key,
+        vendorId,
+        vendorName,
+        tradeCategory,
+        category,
+        descriptionHint,
+        groupId,
+        Number(row?.open_work_order_count || 0) || 0,
+        asIso(row?.first_seen_at) || new Date().toISOString(),
+        asIso(row?.last_seen_at) || new Date().toISOString(),
+      ],
+    );
+    synced += 1;
+  }
+
+  return { synced, source_rows: (rows as any[]).length };
 }
 
 app.get('/api/local/recent_tasks', async (req: Request, res: Response) => {
@@ -3787,7 +4032,7 @@ app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
     const flaggedOnly = /^(1|true|yes|on)$/i.test(String(req.query.flagged_only || '').trim());
     const flaggedIds = parseCsvTextList(req.query.flagged_ids, 2500);
 
-    const sortByRaw = String(req.query.sort_by || 'updated_at').trim();
+    const sortByRaw = String(req.query.sort_by || 'ops_queue').trim();
     const sortDir = parseSortDirection(req.query.sort_dir, 'desc');
     const sortMap: Record<string, string> = {
       id: `coalesce(wo.wo_number::text, '')`,
@@ -3807,6 +4052,26 @@ app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
       updated_at: `coalesce(wo.updated_at, wo.created_at, now())`,
     };
     const sortExpr = sortMap[sortByRaw] || sortMap.updated_at;
+    const queueAgeExpr = `extract(day from (now() - coalesce(wo.created_at, wo.updated_at, now())))`;
+    const orderBySql = sortByRaw === 'ops_queue'
+      ? `order by
+          case
+            when coalesce(lower(wo.status), '') like 'new%'
+              and coalesce(
+                nullif(wo.assigned_user_id, ''),
+                nullif(wo.assigned_user_name, ''),
+                nullif(wo.vendor_id, ''),
+                nullif(wo.vendor_name, ''),
+                nullif(wo.raw_json->>'AssignedUserName', ''),
+                nullif(wo.raw_json->>'assigned_user_name', ''),
+                nullif(wo.raw_json->>'VendorName', ''),
+                nullif(wo.raw_json->>'vendor_name', '')
+              ) is null
+            then 0 else 1
+          end asc,
+          ${queueAgeExpr} desc,
+          coalesce(wo.created_at, wo.updated_at, now()) asc`
+      : `order by ${sortExpr} ${sortDir} nulls last`;
 
     if (flaggedOnly && flaggedIds.length === 0) {
       res.json({
@@ -3940,7 +4205,7 @@ app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
         coalesce(wo.assigned_user_name, wo.vendor_name, wo.raw_json->>'assigned_user_name', wo.raw_json->>'vendor_name', '') as owner_name
       ${fromSql}
       ${whereSql}
-      order by ${sortExpr} ${sortDir} nulls last
+      ${orderBySql}
       limit ${limitBind}
       offset ${offsetBind}
     `;
@@ -4356,119 +4621,67 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 2500, 10000);
     const propertyGroupId = getPropertyGroupFilter(req);
+    const refresh = /^(1|true|yes|on)$/i.test(String(req.query.refresh || '').trim());
     const vendorPolicy = await readReportPolicy('v0:work_orders:vendors', String(propertyGroupId || ''));
     const vendorPolicyCheckedAt = Date.parse(String(vendorPolicy?.last_checked_at || ''));
     if (!vendorPolicy || !Number.isFinite(vendorPolicyCheckedAt) || (Date.now() - vendorPolicyCheckedAt) > REPORT_POLICY_TTL_MS) {
       void monitorVendorSlowPath(String(propertyGroupId || ''));
     }
 
-    const rows = propertyGroupId
-      ? await queryClient`
-        select
-          coalesce(nullif(vendor_id, ''), nullif(raw_json->>'vendor_id', ''), nullif(raw_json->>'VendorId', '')) as vendor_id,
-          coalesce(
-            nullif(vendor_name, ''),
-            nullif(raw_json->>'vendor_name', ''),
-            nullif(raw_json->>'VendorName', ''),
-            nullif(vendor_id, ''),
-            nullif(raw_json->>'vendor_id', ''),
-            nullif(raw_json->>'VendorId', '')
-          ) as vendor_name,
-          count(*)::int as open_work_order_count,
-          max(coalesce(updated_at, created_at, now())) as last_seen_at
-        from appfolio_work_orders
-        where property_group_id = ${propertyGroupId}
-        group by 1, 2
-        having coalesce(
-          nullif(vendor_name, ''),
-          nullif(raw_json->>'vendor_name', ''),
-          nullif(raw_json->>'VendorName', ''),
-          nullif(vendor_id, ''),
-          nullif(raw_json->>'vendor_id', ''),
-          nullif(raw_json->>'VendorId', '')
-        ) is not null
-        order by vendor_name asc
-        limit ${limit}
-      `
-      : await queryClient`
-        select
-          coalesce(nullif(vendor_id, ''), nullif(raw_json->>'vendor_id', ''), nullif(raw_json->>'VendorId', '')) as vendor_id,
-          coalesce(
-            nullif(vendor_name, ''),
-            nullif(raw_json->>'vendor_name', ''),
-            nullif(raw_json->>'VendorName', ''),
-            nullif(assigned_user_name, ''),
-            nullif(raw_json->>'assigned_user_name', ''),
-            nullif(raw_json->>'AssignedUserName', ''),
-            nullif(vendor_id, ''),
-            nullif(raw_json->>'vendor_id', ''),
-            nullif(raw_json->>'VendorId', '')
-          ) as vendor_name,
-          count(*)::int as open_work_order_count,
-          max(coalesce(updated_at, created_at, now())) as last_seen_at
-        from appfolio_work_orders
-        group by 1, 2
-        having coalesce(
-          nullif(vendor_name, ''),
-          nullif(raw_json->>'vendor_name', ''),
-          nullif(raw_json->>'VendorName', ''),
-          nullif(vendor_id, ''),
-          nullif(raw_json->>'vendor_id', ''),
-          nullif(raw_json->>'VendorId', '')
-        ) is not null
-        order by vendor_name asc
-        limit ${limit}
-      `;
+    const refreshSummary = await refreshVendorDirectoryFromWorkOrders(String(propertyGroupId || ''), refresh);
 
-    const deduped = new Map<string, any>();
-    for (const row of rows as any[]) {
-      const vendorId = String(row?.vendor_id || '').trim();
-      const vendorName = normalizeVendorDisplayLabel(
-        row?.vendor_name,
-        row?.company_name,
-        row?.raw_json?.vendor_name,
-        row?.raw_json?.VendorName,
+    const rows = propertyGroupId
+      ? await queryClient.unsafe(
+        `select vendor_key, vendor_id, vendor_name, trade_category, category, description_hint,
+                property_group_id, open_work_order_count, first_seen_at, last_seen_at, updated_at
+           from vendor_directory
+          where property_group_id = $1
+          order by lower(vendor_name) asc
+          limit $2`,
+        [propertyGroupId, limit],
+      )
+      : await queryClient.unsafe(
+        `select vendor_key, vendor_id, vendor_name, trade_category, category, description_hint,
+                property_group_id, open_work_order_count, first_seen_at, last_seen_at, updated_at
+           from vendor_directory
+          order by lower(vendor_name) asc
+          limit $1`,
+        [limit],
       );
 
-      if (!isLikelyVendorRow(vendorId, vendorName)) continue;
-
-      const key = vendorId || vendorName.toLowerCase();
-      const current = {
-        vendor_id: vendorId,
-        company_name: vendorName,
-        vendor_name: vendorName,
-        open_work_order_count: Number(row?.open_work_order_count || 0),
-        last_seen_at: asIso(row?.last_seen_at),
-        _source: 'postgres_local',
-      };
-      const previous = deduped.get(key);
-      if (!previous) {
-        deduped.set(key, current);
-        continue;
-      }
-
-      const previousHasId = !!String(previous.vendor_id || '').trim();
-      const currentHasId = !!vendorId;
-      if (currentHasId && !previousHasId) {
-        deduped.set(key, current);
-        continue;
-      }
-
-      if (Number(current.open_work_order_count) > Number(previous.open_work_order_count || 0)) {
-        deduped.set(key, current);
-      }
-    }
-
-    const results = Array.from(deduped.values())
-      .filter((row) => !!row.company_name || !!row.vendor_id)
-      .sort((a, b) => String(a.vendor_name || '').localeCompare(String(b.vendor_name || '')))
-      .slice(0, limit);
+    const results = (rows as any[])
+      .map((row) => {
+        const vendorId = String(row?.vendor_id || '').trim();
+        const vendorName = normalizeVendorDisplayLabel(row?.vendor_name, row?.vendor_id);
+        if (!isLikelyVendorRow(vendorId, vendorName)) return null;
+        const tradeCategory = normalizeVendorTradeCategory(row?.trade_category || row?.category || row?.description_hint || row?.vendor_name);
+        return {
+          vendor_id: vendorId,
+          company_name: vendorName,
+          vendor_name: vendorName,
+          vendor_trades: tradeCategory,
+          trade_category: tradeCategory,
+          vendor_type: String(row?.category || '').trim(),
+          open_work_order_count: Number(row?.open_work_order_count || 0) || 0,
+          first_seen_at: asIso(row?.first_seen_at),
+          last_seen_at: asIso(row?.last_seen_at),
+          property_group_id: String(row?.property_group_id || '').trim(),
+          _source: 'postgres_vendor_directory',
+        };
+      })
+      .filter(Boolean)
+      .slice(0, limit) as any[];
 
     res.json({
       ok: true,
       results,
       count: results.length,
-      source: 'postgres_local',
+      source: 'postgres_vendor_directory',
+      refreshed: {
+        requested: refresh,
+        synced: refreshSummary.synced,
+        source_rows: refreshSummary.source_rows,
+      },
       latency_policy: {
         dataset_key: 'v0:work_orders:vendors',
         property_group_id: String(propertyGroupId || ''),

@@ -6730,7 +6730,7 @@ async function fetchVendors() {
     setApiStatus('loading', 'Loading vendors (local)\u2026');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var url = localBase + '/api/local/vendors?limit=2500'
+    var url = localBase + '/api/local/vendors?limit=2500&refresh=1'
       + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
     var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
     var data = {};
@@ -6757,8 +6757,10 @@ async function fetchVendors() {
         phone: v.phone_numbers || '',
         email: v.email || '',
         address: ((v.street || '') + ' ' + (v.city || '') + ' ' + (v.state || '') + ' ' + (v.zip || '')).trim(),
-        trades: v.vendor_trades || '',
-        vendorType: v.vendor_type || '',
+        trades: v.vendor_trades || v.trade_category || '',
+        tradeCategory: v.trade_category || '',
+        category: v.vendor_type || v.category || '',
+        vendorType: v.vendor_type || v.category || '',
         doNotUse: v.do_not_use_for_work_order || false,
         tags: v.tags || '',
         link: ''
@@ -13384,7 +13386,7 @@ var currentWOType = '';
 var currentWOVendor = '';
 var currentWOProperty = '';
 var currentWOAgeFilter = '';
-var currentWOSort = 'oldest';
+var currentWOSort = 'ops_queue';
 var currentWOView = (function() {
   try {
     return localStorage.getItem('hm_wo_view') === 'board' ? 'board' : 'list';
@@ -16333,6 +16335,23 @@ function getWOSortRank(wo) {
 
 function sortWorkOrders(rows) {
   return rows.slice().sort(function(a, b) {
+    if (currentWOSort === 'ops_queue') {
+      var aStatus = String((a && a.status) || '').trim().toLowerCase();
+      var bStatus = String((b && b.status) || '').trim().toLowerCase();
+      var aAssigned = String((a && (a.assignedUser || a.vendorName || a.assignedUserName)) || '').trim();
+      var bAssigned = String((b && (b.assignedUser || b.vendorName || b.assignedUserName)) || '').trim();
+      var aRank = (aStatus.indexOf('new') === 0 && !aAssigned) ? 0 : 1;
+      var bRank = (bStatus.indexOf('new') === 0 && !bAssigned) ? 0 : 1;
+      if (aRank !== bRank) return aRank - bRank;
+
+      var aTimeQ = getWOCreatedDate(a);
+      var bTimeQ = getWOCreatedDate(b);
+      var aMsQ = aTimeQ ? aTimeQ.getTime() : Number.MAX_SAFE_INTEGER;
+      var bMsQ = bTimeQ ? bTimeQ.getTime() : Number.MAX_SAFE_INTEGER;
+      if (aMsQ !== bMsQ) return aMsQ - bMsQ;
+      return String(a && a.id || '').localeCompare(String(b && b.id || ''));
+    }
+
     if (currentWOSort === 'priority') {
       var prDiff = getWOSortRank(a) - getWOSortRank(b);
       if (prDiff !== 0) return prDiff;
@@ -16385,10 +16404,11 @@ function getInspectionAgeBucket(days) {
 
 function mapWOSortModel(sortModel) {
   if (!Array.isArray(sortModel) || !sortModel.length) {
+    if (currentWOSort === 'ops_queue') return { sortBy: 'ops_queue', sortDir: 'asc' };
     if (currentWOSort === 'newest') return { sortBy: 'updated_at', sortDir: 'desc' };
     if (currentWOSort === 'oldest') return { sortBy: 'updated_at', sortDir: 'asc' };
     if (currentWOSort === 'priority') return { sortBy: 'priority', sortDir: 'asc' };
-    return { sortBy: 'updated_at', sortDir: 'desc' };
+    return { sortBy: 'ops_queue', sortDir: 'asc' };
   }
   var first = sortModel[0] || {};
   var sortMap = {
@@ -22212,7 +22232,7 @@ function wireUpUI() {
     $('#woAgeFilter').addEventListener('change', function() { currentWOAgeFilter = this.value; renderWorkOrders(); });
   }
   if ($('#woSort')) {
-    $('#woSort').addEventListener('change', function() { currentWOSort = this.value || 'oldest'; renderWorkOrders(); });
+    $('#woSort').addEventListener('change', function() { currentWOSort = this.value || 'ops_queue'; renderWorkOrders(); });
   }
   var btnWOViewList = $('#btnWOViewList');
   if (btnWOViewList) {
@@ -26677,6 +26697,20 @@ var DispatchControl = {
         DISPATCH.claims=queueData.tier2_claims ||[];
         DISPATCH.monitored=queueData.monitored_work_orders||[];
         DISPATCH.stats =queueData.stats        ||{};
+
+        if (DISPATCH.activeBranch !== 'all' && Array.isArray(DISPATCH.techs) && DISPATCH.techs.length > 0) {
+          var hasBranchRoster = DISPATCH.techs.some(function(t) {
+            if (isTechHidden(t.tech_id)) return false;
+            return normalizeTechBranch(t) === DISPATCH.activeBranch;
+          });
+          if (!hasBranchRoster) {
+            DISPATCH.activeBranch = 'all';
+            localStorage.setItem('hm_dispatch_active_branch', 'all');
+            try { await saveDispatchConfigKey('dispatch_active_branch', 'all'); } catch (_) {}
+            v9Toast('Dispatch branch scope reset', 'Showing all branches because no roster entries matched the previous branch filter', 'info', 5000);
+          }
+        }
+
         updateDispatchStats(queueData);
       }
       if(commsData.ok)DISPATCH.comms=commsData.results||[];

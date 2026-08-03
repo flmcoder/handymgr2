@@ -101,8 +101,16 @@ function asBool(v: unknown, fallback = true): boolean {
 }
 
 function isMaintenanceTechRole(value: unknown): boolean {
-  const role = String(value ?? '').trim().toLowerCase();
-  return role === 'maintenance tech' || role === 'maintenance_tech';
+  const role = String(value ?? '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  if (!role) return false;
+  if (role === 'maintenance tech' || role === 'maintenance technician') return true;
+  if (role === 'technician' || role === 'tech') return true;
+  if (role.includes('maintenance') && role.includes('tech')) return true;
+  if (role.includes('maintenance') && role.includes('supervisor')) return true;
+  if (role.includes('service') && role.includes('tech')) return true;
+  if (role.includes('make ready') || role.includes('turnover')) return true;
+  if (role.includes('handyman')) return true;
+  return false;
 }
 
 function isUuidLike(value: unknown): boolean {

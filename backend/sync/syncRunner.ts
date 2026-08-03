@@ -50,6 +50,19 @@ function toIsoDate(value: Date | string | null | undefined): string {
   return date.toISOString().slice(0, 10);
 }
 
+function isDispatchMaintenanceRole(value: unknown): boolean {
+  const role = String(value ?? '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  if (!role) return false;
+  if (role === 'maintenance tech' || role === 'maintenance technician') return true;
+  if (role === 'technician' || role === 'tech') return true;
+  if (role.includes('maintenance') && role.includes('tech')) return true;
+  if (role.includes('maintenance') && role.includes('supervisor')) return true;
+  if (role.includes('service') && role.includes('tech')) return true;
+  if (role.includes('make ready') || role.includes('turnover')) return true;
+  if (role.includes('handyman')) return true;
+  return false;
+}
+
 function buildV2ReportRequest(report: string, body: Record<string, any>): { url: string; method: 'POST'; body: any } {
   return {
     url: `${afBaseUrl('v2')}/api/v2/reports/${report}.json`,
@@ -119,8 +132,8 @@ const ENDPOINTS: Record<string, EndpointDef> = {
       const rows = data?.data ?? data?.results ?? [];
       if (!Array.isArray(rows)) return [];
       return rows.filter((row: any) => {
-        const role = String(row?.UserRole ?? row?.user_role ?? row?.Role ?? row?.role ?? '').trim().toLowerCase();
-        return role === 'maintenance tech' || role === 'maintenance_tech';
+        const role = row?.UserRole ?? row?.user_role ?? row?.Role ?? row?.role;
+        return isDispatchMaintenanceRole(role);
       });
     },
     upsert: upsertMaintenanceTechUsers,
