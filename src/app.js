@@ -5720,6 +5720,9 @@ var TEMPLATES = [
 var DATA_WINDOW_DAYS = 90;
 var PROPERTY_GROUPS_LAST_UPDATED_FROM = '2024-01-01T00:00:00Z';
 var PROPERTY_GROUPS_PAGE_SIZE = 100;
+var PROPERTY_GROUP_SUMMARY_CACHE_VERSION = 'v2';
+var PROPERTY_GROUP_SUMMARY_CACHE_TTL_MS = 30 * 60 * 1000;
+var _propertyGroupDetailRefreshInFlight = false;
 
 function dateNDaysAgo(n) {
   var d = new Date();
@@ -5744,6 +5747,166 @@ function buildPropertyGroupsProxyCurl(proxyUrl) {
   qp.append('filters[LastUpdatedAtFrom]', PROPERTY_GROUPS_LAST_UPDATED_FROM);
   qp.append('page[size]', String(PROPERTY_GROUPS_PAGE_SIZE));
   return 'curl -X GET "' + proxyUrl + '?' + qp.toString() + '" --compressed';
+}
+
+function getPropertyGroupSummaryCacheKey(scopeUuid) {
+  var scope = String(scopeUuid || '').trim().toLowerCase() || 'all';
+  var role = String(_accessRole || 'unknown').trim().toLowerCase() || 'unknown';
+  return 'hm_property_groups_summary_' + PROPERTY_GROUP_SUMMARY_CACHE_VERSION + '_' + role + '_' + scope;
+}
+
+function loadPropertyGroupSummaryCache(scopeUuid) {
+  try {
+    var key = getPropertyGroupSummaryCacheKey(scopeUuid);
+    var raw = localStorage.getItem(key);
+    if (!raw) return null;
+    var parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.rows)) return null;
+    var savedAt = Number(parsed.saved_at || 0) || 0;
+    if (!savedAt) return null;
+    if (Date.now() - savedAt > PROPERTY_GROUP_SUMMARY_CACHE_TTL_MS) return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
+function savePropertyGroupSummaryCache(scopeUuid, rows, meta) {
+  try {
+    var key = getPropertyGroupSummaryCacheKey(scopeUuid);
+    localStorage.setItem(key, JSON.stringify({
+      saved_at: Date.now(),
+      rows: Array.isArray(rows) ? rows : [],
+      meta: meta || {}
+    }));
+  } catch (e) {
+    // Best-effort cache only.
+  }
+}
+
+function _buildPropertyIdsByGroupFromProperties() {
+  var map = {};
+  (PROPERTIES || []).forEach(function(p) {
+    if (!p) return;
+    var groupId = String(p.propertyGroupId || p.property_group_id || '').trim();
+    var pid = String(p.id || '').trim();
+    if (!groupId || !pid) return;
+    if (!map[groupId]) map[groupId] = [];
+    if (map[groupId].indexOf(pid) === -1) map[groupId].push(pid);
+  });
+  return map;
+}
+
+function applyPropertyGroupsRows(rows, opts) {
+  opts = opts || {};
+  var useRowPropertyIds = opts.useRowPropertyIds !== false;
+  var rowsArray = Array.isArray(rows) ? rows : [];
+  var propIdsByGroup = _buildPropertyIdsByGroupFromProperties();
+
+  _groupUuidNameMap = {};
+  rowsArray.forEach(function(row) {
+    var gid = String((row && (row.property_group_uuid || row.group_uuid || row.id || row.Id)) || '').trim();
+    var gname = String((row && (row.property_group_name || row.group_name || row.name || row.Name)) || '').trim();
+    if (!gid || !gname) return;
+    _groupUuidNameMap[gid.toLowerCase()] = gname;
+  });
+
+  PROPERTY_GROUPS = rowsArray.map(function(g) {
+    var gid = String(g.Id || g.id || g.property_group_uuid || g.group_uuid || '').trim();
+    var rawName = String(g.Name || g.name || g.property_group_name || g.group_name || '').trim();
+    var mappedName = _groupUuidNameMap[gid.toLowerCase()] || '';
+    var plainName = rawName;
+    if ((!plainName || isLikelyGroupUuid(plainName)) && mappedName) plainName = mappedName;
+    if (!plainName) plainName = gid;
+
+    var normalizedProps = [];
+    if (useRowPropertyIds) {
+      var rawProps = g.PropertyIds || g.Properties || g.properties || g.property_ids || [];
+      normalizedProps = (Array.isArray(rawProps) ? rawProps : []).map(function(pid) {
+        if (typeof pid === 'string') return pid.trim();
+        if (pid && typeof pid === 'object') return String(pid.Id || pid.id || pid.PropertyId || pid.property_id || '').trim();
+        return String(pid || '').trim();
+      }).filter(Boolean);
+    }
+    if (!normalizedProps.length) normalizedProps = (propIdsByGroup[gid] || []).slice();
+
+    return {
+      id: gid,
+      name: plainName,
+      properties: normalizedProps,
+      propertyNames: [],
+      resolvedNames: []
+    };
+  });
+
+  _nameToGroups = {};
+  _idToGroups = {};
+  _uuidToGroups = {};
+
+  var propertyNameById = {};
+  (PROPERTIES || []).forEach(function(p) {
+    var pid = String(p.id || '').trim();
+    if (!pid) return;
+    propertyNameById[pid] = String(p.name || '').trim();
+  });
+
+  PROPERTY_GROUPS.forEach(function(g) {
+    if (!g || !g.name) return;
+    (g.properties || []).forEach(function(pid) {
+      var id = String(pid || '').trim();
+      if (!id) return;
+      _addToGroupMap(_idToGroups, id, g.name);
+      _addToGroupMap(_uuidToGroups, id, g.name);
+      if (propertyNameById[id]) _addNameToGroupMap(propertyNameById[id], g.name);
+    });
+  });
+
+  (PROPERTIES || []).forEach(function(p) {
+    if (!p) return;
+    var groupUuid = String(p.propertyGroupId || p.property_group_id || '').trim();
+    var resolvedName = resolveGroupNameFromUuid(groupUuid);
+    if (!resolvedName) return;
+    if (!String(p.propertyGroup || '').trim() || isLikelyGroupUuid(p.propertyGroup)) p.propertyGroup = resolvedName;
+    if (!String(p.groupName || '').trim() || isLikelyGroupUuid(p.groupName)) p.groupName = resolvedName;
+    if (!String(p.group || '').trim() || isLikelyGroupUuid(p.group)) p.group = resolvedName;
+    if (!String(p.portfolio || '').trim() || isLikelyGroupUuid(p.portfolio)) p.portfolio = resolvedName;
+    if (!String(p.portfolioName || '').trim() || isLikelyGroupUuid(p.portfolioName)) p.portfolioName = resolvedName;
+  });
+
+  return PROPERTY_GROUPS.length;
+}
+
+function refreshPropertyGroupsDetailInBackground(localBase, localHeaders, scopedGroupUuid) {
+  if (_propertyGroupDetailRefreshInFlight) return;
+  _propertyGroupDetailRefreshInFlight = true;
+  var detailUrl = localBase + '/api/local/property_groups?limit=1000&include_inactive=true'
+    + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
+
+  fetchWithTimeout(detailUrl, { headers: localHeaders }, 45000)
+    .then(function(res) {
+      return res.json().then(function(data) { return { ok: res.ok, data: data || {} }; }).catch(function() { return { ok: res.ok, data: {} }; });
+    })
+    .then(function(payload) {
+      if (!payload.ok || payload.data.ok === false) return;
+      var fullRows = payload.data.results || payload.data.data || [];
+      if (!Array.isArray(fullRows) || !fullRows.length) return;
+      applyPropertyGroupsRows(fullRows, { useRowPropertyIds: true });
+      savePropertyGroupSummaryCache(scopedGroupUuid, PROPERTY_GROUPS.map(function(g) {
+        return { id: g.id, name: g.name, property_ids: g.properties || [] };
+      }), {
+        source: String(payload.data.source || 'postgres_local_groups_table'),
+        refreshed_at: new Date().toISOString(),
+        detail: true
+      });
+      populateDropdowns();
+      if ($('#sec-workorders') && $('#sec-workorders').classList.contains('active')) renderWorkOrders();
+    })
+    .catch(function(err) {
+      console.log('[PG] detail refresh skipped: ' + ((err && err.message) || err));
+    })
+    .finally(function() {
+      _propertyGroupDetailRefreshInFlight = false;
+    });
 }
 
 /* =================================================================
@@ -6946,110 +7109,49 @@ async function fetchPropertyGroups() {
     var localToken = getProxyAccessToken();
     var localHeaders = { 'Accept': 'application/json' };
     if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
-    var localUrl = localBase + '/api/local/property_groups?limit=1000'
-      + '&include_inactive=true'
+
+    var hadCached = false;
+    var cacheHit = loadPropertyGroupSummaryCache(scopedGroupUuid);
+    if (cacheHit && Array.isArray(cacheHit.rows) && cacheHit.rows.length) {
+      hadCached = applyPropertyGroupsRows(cacheHit.rows, { useRowPropertyIds: false }) > 0;
+      if (hadCached) {
+        console.log('[PG] summary cache hit: ' + cacheHit.rows.length + ' groups');
+      }
+    }
+
+    var localUrl = localBase + '/api/local/property_group_directory?limit=5000'
       + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
-    var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 45000);
+    var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 15000);
     var data = {};
     try { data = await localRes.json(); } catch (e) { data = {}; }
     if (!localRes.ok || data.ok === false) {
-      throw new Error(String((data && (data.error || data.message)) || ('Local property groups failed: HTTP ' + localRes.status)));
+      throw new Error(String((data && (data.error || data.message)) || ('Local property group directory failed: HTTP ' + localRes.status)));
     }
 
-    _groupUuidNameMap = {};
-    try {
-      var dirRes = await fetchWithTimeout(localBase + '/api/local/property_group_directory?limit=5000', { headers: localHeaders }, 30000);
-      var dirData = {};
-      try { dirData = await dirRes.json(); } catch (eDir) { dirData = {}; }
-      var dirRows = dirData.results || dirData.data || [];
-      if (Array.isArray(dirRows)) {
-        dirRows.forEach(function(row) {
-          var gid = String((row && (row.property_group_uuid || row.group_uuid || row.id)) || '').trim();
-          var gname = String((row && (row.property_group_name || row.group_name || row.name)) || '').trim();
-          if (!gid || !gname) return;
-          _groupUuidNameMap[gid.toLowerCase()] = gname;
-        });
-      }
-    } catch (dirErr) {
-      console.log('[PG] property_group_directory lookup skipped: ' + ((dirErr && dirErr.message) || dirErr));
-    }
-
-    console.log('[PG] property_groups response keys: ' + Object.keys(data).join(', '));
-
-    var results = data.results || data.data || [];
-    if (results.length > 0) {
-      var rawPids = results[0].PropertyIds || results[0].Properties || results[0].properties || results[0].property_ids || [];
-      console.log('[PG] Sample group=' + (results[0].Name || results[0].name || 'n/a') +
-        ', PropertyIds type=' + (Array.isArray(rawPids) ? 'array(' + rawPids.length + ')' : typeof rawPids));
-    }
-
-    PROPERTY_GROUPS = results.map(function(g) {
-      // Normalize PropertyIds: may be plain UUID strings OR objects like {Id:"uuid"}
-      var rawProps = g.PropertyIds || g.Properties || g.properties || g.property_ids || [];
-      var normalizedProps = (Array.isArray(rawProps) ? rawProps : []).map(function(pid) {
-        if (typeof pid === 'string') return pid.trim();
-        if (pid && typeof pid === 'object') return String(pid.Id || pid.id || pid.PropertyId || pid.property_id || '').trim();
-        return String(pid || '').trim();
-      }).filter(Boolean);
-
-      var gid = String(g.Id || g.id || '').trim();
-      var rawName = String(g.Name || g.name || '').trim();
-      var mappedName = _groupUuidNameMap[gid.toLowerCase()] || '';
-      var plainName = rawName;
-      if ((!plainName || isLikelyGroupUuid(plainName)) && mappedName) plainName = mappedName;
-      if (!plainName) plainName = gid;
-
-      return {
-        id: gid,
-        name: plainName,
-        properties: normalizedProps,
-        propertyNames: [],
-        resolvedNames: []
-      };
+    var rows = data.results || data.data || [];
+    var applied = applyPropertyGroupsRows(rows, { useRowPropertyIds: false });
+    var refreshedAt = String((data.cache && data.cache.last_refreshed_at) || '').trim() || new Date().toISOString();
+    savePropertyGroupSummaryCache(scopedGroupUuid, rows, {
+      source: String(data.source || 'postgres_local'),
+      refreshed_at: refreshedAt,
+      scoped: !!scopedGroupUuid
     });
 
-    _nameToGroups = {};
-    _idToGroups = {};
-    _uuidToGroups = {};
+    console.log('[PG] summary groups parsed: ' + applied + ' (scoped=' + (scopedGroupUuid ? 'yes' : 'no') + ')');
 
-    var propertyNameById = {};
-    (PROPERTIES || []).forEach(function(p) {
-      var pid = String(p.id || '').trim();
-      if (!pid) return;
-      propertyNameById[pid] = String(p.name || '').trim();
-    });
+    // Non-blocking enrichment for larger property-id arrays.
+    refreshPropertyGroupsDetailInBackground(localBase, localHeaders, scopedGroupUuid);
 
-    PROPERTY_GROUPS.forEach(function(g) {
-      if (!g || !g.name) return;
-      (g.properties || []).forEach(function(pid) {
-        var id = String(pid || '').trim();
-        if (!id) return;
-        _addToGroupMap(_idToGroups, id, g.name);
-        _addToGroupMap(_uuidToGroups, id, g.name);
-        if (propertyNameById[id]) _addNameToGroupMap(propertyNameById[id], g.name);
-      });
-    });
-
-    (PROPERTIES || []).forEach(function(p) {
-      if (!p) return;
-      var groupUuid = String(p.propertyGroupId || p.property_group_id || '').trim();
-      var resolvedName = resolveGroupNameFromUuid(groupUuid);
-      if (!resolvedName) return;
-      if (!String(p.propertyGroup || '').trim() || isLikelyGroupUuid(p.propertyGroup)) p.propertyGroup = resolvedName;
-      if (!String(p.groupName || '').trim() || isLikelyGroupUuid(p.groupName)) p.groupName = resolvedName;
-      if (!String(p.group || '').trim() || isLikelyGroupUuid(p.group)) p.group = resolvedName;
-      if (!String(p.portfolio || '').trim() || isLikelyGroupUuid(p.portfolio)) p.portfolio = resolvedName;
-      if (!String(p.portfolioName || '').trim() || isLikelyGroupUuid(p.portfolioName)) p.portfolioName = resolvedName;
-    });
-
-    console.log('[PG] Parsed groups: ' + PROPERTY_GROUPS.length + ', with PropertyIds: ' +
-      PROPERTY_GROUPS.filter(function(g) { return g.properties.length > 0; }).length);
-
-    // Local property groups already carry names and property ids; skip slow remote resolution.
-
-    return true;
+    return applied > 0 || hadCached;
   } catch (err) {
     console.log('[PG] fetchPropertyGroups FATAL error: ' + (err.message || err));
+    var scopedGroupUuid = String(forcedPropertyGroupUuid || '').trim();
+    var fallbackCache = loadPropertyGroupSummaryCache(scopedGroupUuid);
+    if (fallbackCache && Array.isArray(fallbackCache.rows) && fallbackCache.rows.length) {
+      var restored = applyPropertyGroupsRows(fallbackCache.rows, { useRowPropertyIds: false });
+      console.log('[PG] restored from summary cache after failure: ' + restored + ' groups');
+      return restored > 0;
+    }
     PROPERTY_GROUPS = [];
     return false;
   }

@@ -3852,14 +3852,25 @@ app.get('/api/local/property_group_directory', async (req: Request, res: Respons
   try {
     await ensurePropertyGroupsTable();
     const limit = parseLimit(req.query.limit, 1000, 5000);
+    const propertyGroupId = getPropertyGroupFilter(req);
     let results: Array<{ property_group_uuid: string; property_group_name: string }> = [];
+    let lastRefreshedAt = '';
     try {
-      const rows = await queryClient`
-        select coalesce(uuid, id) as group_uuid, coalesce(name, id) as group_name, raw_json
-        from appfolio_property_groups
-        order by coalesce(name, id) asc
-        limit ${limit}
-      `;
+      const rows = propertyGroupId
+        ? await queryClient`
+          select coalesce(uuid, id) as group_uuid, coalesce(name, id) as group_name, raw_json, last_updated_at, cached_at
+          from appfolio_property_groups
+          where coalesce(uuid, id) = ${propertyGroupId}
+             or id = ${propertyGroupId}
+          order by coalesce(name, id) asc
+          limit ${limit}
+        `
+        : await queryClient`
+          select coalesce(uuid, id) as group_uuid, coalesce(name, id) as group_name, raw_json, last_updated_at, cached_at
+          from appfolio_property_groups
+          order by coalesce(name, id) asc
+          limit ${limit}
+        `;
 
       results = (rows as any[])
         .map((row) => ({
@@ -3867,6 +3878,11 @@ app.get('/api/local/property_group_directory', async (req: Request, res: Respons
           property_group_name: resolvePropertyGroupDisplayName(row),
         }))
         .filter((row) => !!row.property_group_uuid);
+
+      for (const row of rows as any[]) {
+        const candidate = asIso(row?.cached_at) || asIso(row?.last_updated_at);
+        if (candidate && candidate > lastRefreshedAt) lastRefreshedAt = candidate;
+      }
     } catch (tableError) {
       const message = String((tableError as any)?.message || tableError || '');
       const code = String((tableError as any)?.code || '');
@@ -3874,11 +3890,18 @@ app.get('/api/local/property_group_directory', async (req: Request, res: Respons
         throw tableError;
       }
 
-      const propertyRows = await queryClient`
-        select property_group_id, raw_json
-        from appfolio_properties
-        where coalesce(property_group_id, '') <> ''
-      `;
+      const propertyRows = propertyGroupId
+        ? await queryClient`
+          select property_group_id, raw_json
+          from appfolio_properties
+          where coalesce(property_group_id, '') <> ''
+            and property_group_id = ${propertyGroupId}
+        `
+        : await queryClient`
+          select property_group_id, raw_json
+          from appfolio_properties
+          where coalesce(property_group_id, '') <> ''
+        `;
 
       const byGroup = new Map<string, string>();
       for (const row of propertyRows as any[]) {
@@ -3897,7 +3920,17 @@ app.get('/api/local/property_group_directory', async (req: Request, res: Respons
         .slice(0, limit);
     }
 
-    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+    res.json({
+      ok: true,
+      results,
+      count: results.length,
+      source: 'postgres_local',
+      cache: {
+        last_refreshed_at: lastRefreshedAt || null,
+        scoped: !!propertyGroupId,
+        property_group_id: propertyGroupId || null,
+      },
+    });
   } catch (error) {
     logTunnelError(error, '/api/local/property_group_directory');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Property group directory failed') });
