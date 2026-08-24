@@ -4,7 +4,9 @@ import cors from 'cors';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { flattenedVerify } from 'jose';
-import { pingDatabase, queryClient } from './db';
+import { and, asc, eq, gte, or, sql } from 'drizzle-orm';
+import { db, pingDatabase, queryClient } from './db';
+import * as schema from './schema';
 import * as deviceAuthHandlers from './deviceAuth';
 import { AF_DB_BASE, AF_REPORTS_BASE, afHeaders, afReportCredentialMode } from './sync/afCredentials';
 
@@ -33,18 +35,6 @@ function ensureDenoCompat(): void {
 }
 
 ensureDenoCompat();
-
-// @ts-ignore - afproxy uses Deno globals; will be replaced with Postgres reads
-const [unitsHandlers, turnsHandlers, estimatesHandlers, queueHandlers] = await Promise.all([
-  // @ts-ignore
-  import('../afproxy/handlers/units.ts'),
-  // @ts-ignore
-  import('../afproxy/handlers/turns.ts'),
-  // @ts-ignore
-  import('../afproxy/handlers/estimates.ts'),
-  // @ts-ignore
-  import('../afproxy/handlers/queue.ts'),
-]);
 
 type Params = Record<string, string>;
 type Mode = 'params' | 'request' | 'params+request';
@@ -242,6 +232,204 @@ function wrapDenoHandler(handler: any, mode: Mode = 'params') {
         error: String((error as any)?.message || error || 'Internal server error'),
       });
     }
+  };
+}
+
+function normalizeDbRowValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return String(value).trim();
+}
+
+async function readUnitsFromDb(params: Record<string, string>): Promise<any> {
+  const limit = parseLimit(params.limit || params.max || params.per_page, 200, 5000);
+  const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
+  const propertyId = normalizeDbRowValue(params.property_id || params.propertyId);
+  const status = normalizeDbRowValue(params.status);
+  const search = normalizeDbRowValue(params.search || params.q || params.term);
+
+  const query = db.select().from(schema.appfolioUnits);
+  const filters = [] as any[];
+
+  if (unitId) filters.push(eq(schema.appfolioUnits.unitId, unitId));
+  if (propertyId) filters.push(eq(schema.appfolioUnits.propertyId, propertyId));
+  if (status) filters.push(eq(schema.appfolioUnits.status, status));
+  if (search) {
+    const normalized = `%${search.toLowerCase()}%`;
+    filters.push(or(
+      sql`lower(${schema.appfolioUnits.name}) like ${normalized}`,
+      sql`lower(${schema.appfolioUnits.unitNumber}) like ${normalized}`,
+      sql`lower(${schema.appfolioUnits.propertyId}) like ${normalized}`,
+    ));
+  }
+
+  if (filters.length) query.where(and(...filters));
+
+  const rows = await query
+    .orderBy(asc(schema.appfolioUnits.propertyId), asc(schema.appfolioUnits.name))
+    .limit(limit);
+
+  return {
+    ok: true,
+    results: rows.map((row: any) => ({
+      unit_id: normalizeDbRowValue(row.unitId),
+      property_id: normalizeDbRowValue(row.propertyId),
+      name: normalizeDbRowValue(row.name),
+      unit_number: normalizeDbRowValue(row.unitNumber),
+      status: normalizeDbRowValue(row.status),
+      bedrooms: row.bedrooms ?? null,
+      bathrooms: row.bathrooms ?? null,
+      square_feet: row.squareFeet ?? null,
+      market_rent: row.marketRent ?? null,
+      raw_json: row.rawJson || {},
+      last_updated_at: asIso(row.lastUpdatedAt),
+      cached_at: asIso(row.cachedAt),
+    })),
+    count: rows.length,
+    source: 'postgres_local',
+  };
+}
+
+async function readTurnsFromDb(params: Record<string, string>): Promise<any> {
+  const limit = parseLimit(params.limit || params.max || params.per_page, 250, 2000);
+  const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
+  const propertyId = normalizeDbRowValue(params.property_id || params.propertyId);
+  const status = normalizeDbRowValue(params.status);
+  const since = normalizeDbRowValue(params.since || params.updated_since || params.updatedFrom);
+
+  const query = db.select().from(schema.unitTurnTracker);
+  const filters = [] as any[];
+
+  if (unitId) filters.push(eq(schema.unitTurnTracker.unitId, unitId));
+  if (propertyId) filters.push(eq(schema.unitTurnTracker.propertyId, propertyId));
+  if (status) filters.push(eq(schema.unitTurnTracker.status, status));
+  if (since) {
+    const sinceDate = new Date(since);
+    if (!Number.isNaN(sinceDate.getTime())) filters.push(gte(schema.unitTurnTracker.updatedAt, sinceDate));
+  }
+
+  if (filters.length) query.where(and(...filters));
+
+  const rows = await query
+    .orderBy(asc(schema.unitTurnTracker.updatedAt), asc(schema.unitTurnTracker.unitId))
+    .limit(limit);
+
+  return {
+    ok: true,
+    results: rows.map((row: any) => ({
+      tracking_uuid: normalizeDbRowValue(row.trackingUuid),
+      tracking_code: normalizeDbRowValue(row.trackingCode),
+      turn_key: normalizeDbRowValue(row.turnKey),
+      unit_turn_id: normalizeDbRowValue(row.unitTurnId),
+      unit_id: normalizeDbRowValue(row.unitId),
+      property_id: normalizeDbRowValue(row.propertyId),
+      unit_name: normalizeDbRowValue(row.unitName),
+      property_name: normalizeDbRowValue(row.propertyName),
+      status: normalizeDbRowValue(row.status),
+      confidence_score: row.confidenceScore ?? null,
+      confidence_label: normalizeDbRowValue(row.confidenceLabel),
+      source_flags: row.sourceFlags || {},
+      metadata: row.metadata || {},
+      closed_at: asIso(row.closedAt),
+      created_at: asIso(row.createdAt),
+      updated_at: asIso(row.updatedAt),
+      milestones: {},
+      linked_work_orders: [],
+    })),
+    count: rows.length,
+    source: 'postgres_local',
+  };
+}
+
+async function readUnitTurnsHistoryFromDb(params: Record<string, string>): Promise<any> {
+  const limit = Math.min(500, parseLimit(params.limit || params.max || params.per_page, 300, 500));
+  const query = db.select().from(schema.unitTurnTracker);
+  const rows = await query
+    .where(eq(schema.unitTurnTracker.status, 'closed'))
+    .orderBy(asc(schema.unitTurnTracker.closedAt), asc(schema.unitTurnTracker.updatedAt))
+    .limit(limit);
+
+  return {
+    ok: true,
+    results: rows.map((row: any) => ({
+      turn_id: normalizeDbRowValue(row.unitTurnId || row.turnKey),
+      closed_at: asIso(row.closedAt),
+      close_reason: '',
+      close_source: '',
+      closed_by: '',
+      property_id: normalizeDbRowValue(row.propertyId),
+      property_name: normalizeDbRowValue(row.propertyName),
+      unit_id: normalizeDbRowValue(row.unitId),
+      unit_name: normalizeDbRowValue(row.unitName),
+      move_out_date: '',
+      move_in_date: '',
+    })),
+    count: rows.length,
+    source: 'postgres_local',
+  };
+}
+
+async function readEstimatesFromDb(params: Record<string, string>): Promise<any> {
+  const limit = parseLimit(params.limit || params.max || params.per_page, 200, 2000);
+  const propertyGroupId = normalizeDbRowValue(params.property_group_id || params.propertyGroupId || params.group_id || params.groupId);
+  const status = normalizeDbRowValue(params.status || params.current_status);
+
+  const query = db.select().from(schema.appfolioEstimates);
+  const filters = [] as any[];
+  if (propertyGroupId) filters.push(eq(schema.appfolioEstimates.propertyGroupId, propertyGroupId));
+  if (status) filters.push(eq(schema.appfolioEstimates.currentStatus, status));
+  if (filters.length) query.where(and(...filters));
+
+  const rows = await query
+    .orderBy(asc(schema.appfolioEstimates.updatedAt), asc(schema.appfolioEstimates.estimateId))
+    .limit(limit);
+
+  return {
+    ok: true,
+    results: rows.map((row: any) => ({
+      estimate_id: normalizeDbRowValue(row.estimateId),
+      work_order_id: normalizeDbRowValue(row.workOrderId),
+      work_order_number: normalizeDbRowValue(row.workOrderNumber),
+      current_status: normalizeDbRowValue(row.currentStatus),
+      property_group_id: normalizeDbRowValue(row.propertyGroupId),
+      source: normalizeDbRowValue(row.source),
+      status_history: row.statusHistory || [],
+      raw_data: row.rawData || {},
+      created_at: asIso(row.createdAt),
+      updated_at: asIso(row.updatedAt),
+    })),
+    count: rows.length,
+    source: 'postgres_local',
+  };
+}
+
+async function readQueueFromDb(params: Record<string, string>): Promise<any> {
+  const limit = parseLimit(params.limit || params.max || params.per_page, 200, 2000);
+  const query = db.select().from(schema.reassignmentQueue);
+  const filters = [] as any[];
+  const status = normalizeDbRowValue(params.status);
+  if (status) filters.push(eq(schema.reassignmentQueue.status, status));
+  if (filters.length) query.where(and(...filters));
+
+  const rows = await query.orderBy(asc(schema.reassignmentQueue.updatedAt)).limit(limit);
+  return {
+    ok: true,
+    results: rows.map((row: any) => ({
+      wo_id: normalizeDbRowValue(row.woId),
+      wo_number: normalizeDbRowValue(row.woNumber),
+      property_group_uuid: normalizeDbRowValue(row.propertyGroupUuid),
+      property_address: normalizeDbRowValue(row.propertyAddress),
+      category: normalizeDbRowValue(row.category),
+      priority: normalizeDbRowValue(row.priority),
+      status: normalizeDbRowValue(row.status),
+      assigned_user_id: normalizeDbRowValue(row.assignedUserId),
+      assigned_user_name: normalizeDbRowValue(row.assignedUserName),
+      updated_at: asIso(row.updatedAt),
+      created_at: asIso(row.createdAt),
+    })),
+    count: rows.length,
+    source: 'postgres_local',
   };
 }
 
@@ -2689,13 +2877,44 @@ app.use(cors({
 }));
 
 const legacyActionRoutes = {
-  units: wrapDenoHandler(unitsHandlers.handleUnits, 'params'),
-  unit_lookup: wrapDenoHandler(unitsHandlers.handleUnitLookup, 'params'),
-  turns: wrapDenoHandler(turnsHandlers.handleTurns, 'params'),
-  unit_turns: wrapDenoHandler(turnsHandlers.handleUnitTurns, 'params'),
-  turns_incremental: wrapDenoHandler(turnsHandlers.handleTurnsIncremental, 'params'),
-  unit_turns_history: wrapDenoHandler(turnsHandlers.handleUnitTurnsHistory, 'params'),
-  estimates: wrapDenoHandler(estimatesHandlers.handleEstimates, 'params'),
+  units: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    res.json(await readUnitsFromDb(params));
+  },
+  unit_lookup: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
+    if (!unitId) {
+      res.status(400).json({ ok: false, error: 'Missing unit_id parameter' });
+      return;
+    }
+    const rows = await db.select().from(schema.appfolioUnits).where(eq(schema.appfolioUnits.unitId, unitId)).limit(1);
+    res.json(rows[0]
+      ? { ok: true, unit: { unit_id: normalizeDbRowValue(rows[0].unitId), property_id: normalizeDbRowValue(rows[0].propertyId), name: normalizeDbRowValue(rows[0].name), unit_number: normalizeDbRowValue(rows[0].unitNumber), status: normalizeDbRowValue(rows[0].status), bedrooms: rows[0].bedrooms ?? null, bathrooms: rows[0].bathrooms ?? null, square_feet: rows[0].squareFeet ?? null, market_rent: rows[0].marketRent ?? null, raw_json: rows[0].rawJson || {}, last_updated_at: asIso(rows[0].lastUpdatedAt), cached_at: asIso(rows[0].cachedAt) } }
+      : { ok: false, error: 'Unit not found in local database', unit_id: unitId });
+  },
+  turns: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    res.json(await readTurnsFromDb(params));
+  },
+  unit_turns: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    const days = Math.max(1, Number.parseInt(String(params.days || params.days_back || '90'), 10) || 90);
+    res.json(await readTurnsFromDb({ ...params, since: new Date(Date.now() - (days * 24 * 60 * 60 * 1000)).toISOString() }));
+  },
+  turns_incremental: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    const since = normalizeDbRowValue(params.since || params.updated_since || params.updatedFrom);
+    res.json(await readTurnsFromDb(since ? { ...params, since } : params));
+  },
+  unit_turns_history: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    res.json(await readUnitTurnsHistoryFromDb(params));
+  },
+  estimates: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    res.json(await readEstimatesFromDb(params));
+  },
   device_setup: wrapDenoHandler(deviceAuthHandlers.handleDeviceSetup, 'request'),
   device_otp_request: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpRequest, 'request'),
   device_otp_verify: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpVerify, 'request'),
@@ -6590,17 +6809,110 @@ app.use(express.static(DIST_DIR, {
 }));
 
 // Units
-app.post('/api/units', wrapDenoHandler(unitsHandlers.handleUnits, 'params'));
-app.post('/api/unit_lookup', wrapDenoHandler(unitsHandlers.handleUnitLookup, 'params'));
+app.post('/api/units', async (req: Request, res: Response) => {
+  try {
+    const params = toActionParams(req);
+    res.json(await readUnitsFromDb(params));
+  } catch (error) {
+    logTunnelError(error, '/api/units');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Units query failed') });
+  }
+});
+app.post('/api/unit_lookup', async (req: Request, res: Response) => {
+  try {
+    const params = toActionParams(req);
+    const limit = parseLimit(params.limit || params.max || params.per_page, 1, 5);
+    const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
+    if (!unitId) {
+      res.status(400).json({ ok: false, error: 'Missing unit_id parameter' });
+      return;
+    }
+
+    const rows = await db.select().from(schema.appfolioUnits)
+      .where(eq(schema.appfolioUnits.unitId, unitId))
+      .limit(limit);
+
+    const result = rows[0] ? {
+      ok: true,
+      unit: {
+        unit_id: normalizeDbRowValue(rows[0].unitId),
+        property_id: normalizeDbRowValue(rows[0].propertyId),
+        name: normalizeDbRowValue(rows[0].name),
+        unit_number: normalizeDbRowValue(rows[0].unitNumber),
+        status: normalizeDbRowValue(rows[0].status),
+        bedrooms: rows[0].bedrooms ?? null,
+        bathrooms: rows[0].bathrooms ?? null,
+        square_feet: rows[0].squareFeet ?? null,
+        market_rent: rows[0].marketRent ?? null,
+        raw_json: rows[0].rawJson || {},
+        last_updated_at: asIso(rows[0].lastUpdatedAt),
+        cached_at: asIso(rows[0].cachedAt),
+      },
+    } : { ok: false, error: 'Unit not found in local database', unit_id: unitId };
+
+    res.json(result);
+  } catch (error) {
+    logTunnelError(error, '/api/unit_lookup');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Unit lookup failed') });
+  }
+});
 
 // Turns
-app.post('/api/turns', wrapDenoHandler(turnsHandlers.handleTurns, 'params'));
-app.post('/api/unit_turns', wrapDenoHandler(turnsHandlers.handleUnitTurns, 'params'));
-app.post('/api/turns_incremental', wrapDenoHandler(turnsHandlers.handleTurnsIncremental, 'params'));
-app.post('/api/unit_turns_history', wrapDenoHandler(turnsHandlers.handleUnitTurnsHistory, 'params'));
+app.post('/api/turns', async (req: Request, res: Response) => {
+  try {
+    const params = toActionParams(req);
+    res.json(await readTurnsFromDb(params));
+  } catch (error) {
+    logTunnelError(error, '/api/turns');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Turns query failed') });
+  }
+});
+app.post('/api/unit_turns', async (req: Request, res: Response) => {
+  try {
+    const params = toActionParams(req);
+    const days = Math.max(1, Number.parseInt(String(params.days || params.days_back || '90'), 10) || 90);
+    const since = new Date(Date.now() - (days * 24 * 60 * 60 * 1000)).toISOString();
+    const payload = { ...params, since };
+    res.json(await readTurnsFromDb(payload));
+  } catch (error) {
+    logTunnelError(error, '/api/unit_turns');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Unit turns query failed') });
+  }
+});
+app.post('/api/turns_incremental', async (req: Request, res: Response) => {
+  try {
+    const params = toActionParams(req);
+    const since = normalizeDbRowValue(params.since || params.updated_since || params.updatedFrom);
+    if (!since) {
+      res.json(await readTurnsFromDb(params));
+      return;
+    }
+    res.json(await readTurnsFromDb({ ...params, since }));
+  } catch (error) {
+    logTunnelError(error, '/api/turns_incremental');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Incremental turns query failed') });
+  }
+});
+app.post('/api/unit_turns_history', async (req: Request, res: Response) => {
+  try {
+    const params = toActionParams(req);
+    res.json(await readUnitTurnsHistoryFromDb(params));
+  } catch (error) {
+    logTunnelError(error, '/api/unit_turns_history');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Turn history query failed') });
+  }
+});
 
 // Estimates
-app.post('/api/estimates', wrapDenoHandler(estimatesHandlers.handleEstimates, 'params'));
+app.post('/api/estimates', async (req: Request, res: Response) => {
+  try {
+    const params = toActionParams(req);
+    res.json(await readEstimatesFromDb(params));
+  } catch (error) {
+    logTunnelError(error, '/api/estimates');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Estimates query failed') });
+  }
+});
 
 // Queue
 app.post('/api/queue', async (req: Request, res: Response) => {
@@ -6610,7 +6922,7 @@ app.post('/api/queue', async (req: Request, res: Response) => {
       res.json(await syncDispatchAssignees(params));
       return;
     }
-    res.json(await refreshDispatchQueue(params));
+    res.json(await readQueueFromDb(params));
   } catch (error) {
     logTunnelError(error, '/api/queue');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Queue failed') });
@@ -6623,7 +6935,7 @@ app.post('/api/reassignment_queue', async (req: Request, res: Response) => {
       res.json(await syncDispatchAssignees(params));
       return;
     }
-    res.json(await refreshDispatchQueue(params));
+    res.json(await readQueueFromDb(params));
   } catch (error) {
     logTunnelError(error, '/api/reassignment_queue');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Reassignment queue failed') });
