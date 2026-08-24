@@ -265,7 +265,7 @@ This means:
 
 - the app is usable on phones in a limited way
 - most operational flows still feel designed around a laptop or large screen
-- the main risk is that and any dense operations workflow (work orders, board management, dashboard charts, data tables) will feel cramped when squeezed into narrow screens
+- the main risk is that any dense operations workflow (work orders, board management, dashboard charts, data tables) will feel cramped when squeezed into narrow screens
 
 The current repo even contains explicit UX design docs for workflows and states that users are primarily desktop-heavy, which is consistent with the implementation.
 
