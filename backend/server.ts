@@ -4221,10 +4221,11 @@ async function handleLocalWorkOrders(req: Request, res: Response): Promise<void>
 
 app.get('/api/local/work_orders', handleLocalWorkOrders);
 
-app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) => {
+async function handleLocalWorkOrdersInactive(req: Request, res: Response): Promise<void> {
   try {
-    const days = parseDays(req.query.days, 3650, 3650);
-    const limit = parseLimit(req.query.limit, 10000, 25000);
+    const params = toActionParams(req);
+    const days = parseDays(params.days, 3650, 3650);
+    const limit = parseLimit(params.limit, 10000, 25000);
     const propertyGroupId = getPropertyGroupFilter(req);
     let rows: any[] = [];
     try {
@@ -4307,7 +4308,9 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
     logTunnelError(error, '/api/local/work_orders/inactive');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local inactive work orders query failed') });
   }
-});
+}
+
+app.get('/api/local/work_orders/inactive', handleLocalWorkOrdersInactive);
 
 app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
   try {
@@ -6923,6 +6926,7 @@ app.post('/api/estimates', pmScopeMiddleware, postActionRoute('/api/estimates', 
 
 // Work orders / properties / vendors (shared with the GET /api/local/* routes)
 app.post('/api/work_orders', pmScopeMiddleware, postActionRoute('/api/work_orders', handleLocalWorkOrders));
+app.post('/api/work_orders/inactive', pmScopeMiddleware, postActionRoute('/api/work_orders/inactive', handleLocalWorkOrdersInactive));
 app.post('/api/properties', pmScopeMiddleware, postActionRoute('/api/properties', handleLocalProperties));
 app.post('/api/vendors', pmScopeMiddleware, postActionRoute('/api/vendors', handleLocalVendors));
 

@@ -2613,8 +2613,47 @@ function getLocalReadActionPath(action) {
   return LOCAL_READ_ACTIONS[action] || '';
 }
 
+// Actions served by POST routes on the local Express backend. Parameters travel in
+// the JSON body; these take priority over the GET /api/local/* reads above.
+function getPostActionPath(action) {
+  var POST_ACTIONS = {
+    work_orders: '/api/work_orders',
+    work_orders_inactive: '/api/work_orders/inactive',
+    properties: '/api/properties',
+    vendors: '/api/vendors',
+    units: '/api/units',
+    unit_lookup: '/api/unit_lookup'
+  };
+  return POST_ACTIONS[action] || '';
+}
+
+async function postLocalAction(action, path, params) {
+  var url = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '') + path;
+  var token = getProxyAccessToken();
+  var headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+
+  var res = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify(params || {})
+  }, 45000);
+
+  var data = await parseJsonResponseOrThrow(res, 'Local action=' + action);
+  if (!res.ok || (data && data.ok === false)) {
+    throw new Error(String((data && (data.error || data.message)) || ('Local read failed for ' + action + ': HTTP ' + res.status)));
+  }
+
+  return Object.assign({}, data, { _source: 'postgres_local' });
+}
+
 async function proxyAction(action, params, options) {
   var opts = options || {};
+  var postPath = getPostActionPath(action);
+  if (postPath && !opts.skipLocalRead) {
+    return await postLocalAction(action, postPath, params);
+  }
+
   var localPath = getLocalReadActionPath(action);
 
   if (localPath && !opts.skipLocalRead) {
@@ -2637,17 +2676,7 @@ async function proxyAction(action, params, options) {
       throw new Error(String((localData && (localData.error || localData.message)) || ('Local read failed for ' + action + ': HTTP ' + localRes.status)));
     }
 
-    var localResults = Array.isArray(localData.results) ? localData.results : (Array.isArray(localData.data) ? localData.data : []);
-    var EMPTY_LOCAL_FALLBACK_ACTIONS = {
-      turns: true,
-      unit_turns: true,
-      turns_incremental: true,
-    };
-    if (EMPTY_LOCAL_FALLBACK_ACTIONS[action] && localResults.length === 0 && API_PROXY) {
-      console.warn('[Local Read Empty] ' + action + ' returned 0 rows from /api/local; falling back to legacy proxy action');
-    } else {
-      return Object.assign({}, localData, { _source: 'postgres_local' });
-    }
+    return Object.assign({}, localData, { _source: 'postgres_local' });
   }
 
   if (!API_PROXY) throw new Error('No proxy configured');
@@ -5966,46 +5995,31 @@ function hideProgress() {
 // Excludes: 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill
 async function fetchLocalWorkOrders(days) {
   var lookback = Math.max(1, Math.min(3650, parseInt(days || DATA_WINDOW_DAYS, 10) || DATA_WINDOW_DAYS));
-  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
-  var url = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(lookback)) + '&limit=2500';
-  var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
-  var data = {};
-  try { data = await res.json(); } catch (e) { data = {}; }
-  if (!res.ok || data.ok === false) {
-    throw new Error(String((data && (data.error || data.message)) || ('Local work orders failed: HTTP ' + res.status)));
-  }
-  return data;
+  return await postLocalAction('work_orders', '/api/work_orders', {
+    days: String(lookback),
+    limit: '2500'
+  });
 }
 
 async function fetchWorkOrders() {
   setDataSourceState('work_orders', 'loading', { error: '' });
   try {
     setApiStatus('loading', 'Loading work orders (active & inactive)…');
-    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var scopeQuery = scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '';
-    var token = getProxyAccessToken();
-    var localHeaders = { 'Accept': 'application/json' };
-    if (token) localHeaders['Authorization'] = 'Bearer ' + token;
-    
+    var scopeBody = scopedGroupUuid ? { property_group_id: scopedGroupUuid } : {};
+
     // Fetch active work orders
-    var urlActive = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(DATA_WINDOW_DAYS)) + '&limit=2500' + scopeQuery;
-    var resActive = await fetchWithTimeout(urlActive, { headers: localHeaders }, 45000);
-    var dataActive = {};
-    try { dataActive = await resActive.json(); } catch (e) { dataActive = {}; }
-    if (!resActive.ok || dataActive.ok === false) {
-      throw new Error(String((dataActive && (dataActive.error || dataActive.message)) || ('Local active work orders failed: HTTP ' + resActive.status)));
-    }
+    var dataActive = await postLocalAction('work_orders', '/api/work_orders', Object.assign({
+      days: String(DATA_WINDOW_DAYS),
+      limit: '2500'
+    }, scopeBody));
     var activeResults = (dataActive.results || dataActive.data || []);
-    
+
     // Fetch inactive work orders
-    var urlInactive = localBase + '/api/local/work_orders/inactive?days=3650&limit=5000' + scopeQuery;
-    var resInactive = await fetchWithTimeout(urlInactive, { headers: localHeaders }, 45000);
-    var dataInactive = {};
-    try { dataInactive = await resInactive.json(); } catch (e) { dataInactive = {}; }
-    if (!resInactive.ok || dataInactive.ok === false) {
-      throw new Error(String((dataInactive && (dataInactive.error || dataInactive.message)) || ('Local inactive work orders failed: HTTP ' + resInactive.status)));
-    }
+    var dataInactive = await postLocalAction('work_orders_inactive', '/api/work_orders/inactive', Object.assign({
+      days: '3650',
+      limit: '5000'
+    }, scopeBody));
     var inactiveResults = (dataInactive.results || dataInactive.data || []);
     
     // Normalize work order row
@@ -6733,16 +6747,11 @@ async function fetchBills(days, opts) {
 async function fetchVendors() {
   try {
     setApiStatus('loading', 'Loading vendors (local)\u2026');
-    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var url = localBase + '/api/local/vendors?limit=2500&refresh=1'
-      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
-    var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
-    var data = {};
-    try { data = await res.json(); } catch (e) { data = {}; }
-    if (!res.ok || data.ok === false) {
-      throw new Error(String((data && (data.error || data.message)) || ('Local vendors failed: HTTP ' + res.status)));
-    }
+    var data = await postLocalAction('vendors', '/api/vendors', Object.assign({
+      limit: '2500',
+      refresh: '1'
+    }, scopedGroupUuid ? { property_group_id: scopedGroupUuid } : {}));
     var results = data.results || data.data || [];
     VENDORS = results.map(function(v) {
       var displayName = v.company_name || ((v.first_name || '') + ' ' + (v.last_name || '')).trim() || v.name || '';
@@ -6784,16 +6793,10 @@ async function fetchVendors() {
 async function fetchProperties() {
   try {
     setApiStatus('loading', 'Loading properties (local)…');
-    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var url = localBase + '/api/local/properties?limit=5000'
-      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
-    var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
-    var data = {};
-    try { data = await res.json(); } catch (e) { data = {}; }
-    if (!res.ok || data.ok === false) {
-      throw new Error(String((data && (data.error || data.message)) || ('Local properties failed: HTTP ' + res.status)));
-    }
+    var data = await postLocalAction('properties', '/api/properties', Object.assign({
+      limit: '5000'
+    }, scopedGroupUuid ? { property_group_id: scopedGroupUuid } : {}));
     var results = data.results || data.data || [];
     _propertyManagementStateById = {};
     _propertyManagementStateByName = {};
