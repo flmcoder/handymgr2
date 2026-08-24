@@ -19,7 +19,8 @@
   },
   "include": [
     "deno.d.ts",
-    "backend/**/*.ts"
+    "backend/**/*.ts",
+    "scripts/**/*.ts"
   ],
   "exclude": [
     "node_modules",
