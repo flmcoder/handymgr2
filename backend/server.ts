@@ -242,12 +242,13 @@ function normalizeDbRowValue(value: unknown): string {
   return String(value).trim();
 }
 
-async function readUnitsFromDb(params: Record<string, string>): Promise<any> {
+async function readUnitsFromDb(params: Record<string, string>, propertyGroupId = ''): Promise<any> {
   const limit = parseLimit(params.limit || params.max || params.per_page, 200, 5000);
   const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
   const propertyId = normalizeDbRowValue(params.property_id || params.propertyId);
   const status = normalizeDbRowValue(params.status);
   const search = normalizeDbRowValue(params.search || params.q || params.term);
+  const scopedGroupId = normalizeDbRowValue(propertyGroupId);
 
   const query = db.select().from(schema.appfolioUnits);
   const filters = [] as any[];
@@ -255,6 +256,13 @@ async function readUnitsFromDb(params: Record<string, string>): Promise<any> {
   if (unitId) filters.push(eq(schema.appfolioUnits.unitId, unitId));
   if (propertyId) filters.push(eq(schema.appfolioUnits.propertyId, propertyId));
   if (status) filters.push(eq(schema.appfolioUnits.status, status));
+  if (scopedGroupId) {
+    filters.push(sql`exists (
+      select 1 from appfolio_properties p
+      where p.id = ${schema.appfolioUnits.propertyId}
+        and p.property_group_id = ${scopedGroupId}
+    )`);
+  }
   if (search) {
     const normalized = `%${search.toLowerCase()}%`;
     filters.push(or(
@@ -273,15 +281,18 @@ async function readUnitsFromDb(params: Record<string, string>): Promise<any> {
   return {
     ok: true,
     results: rows.map((row: any) => ({
-      unit_id: normalizeDbRowValue(row.unitId),
-      property_id: normalizeDbRowValue(row.propertyId),
-      name: normalizeDbRowValue(row.name),
-      unit_number: normalizeDbRowValue(row.unitNumber),
-      status: normalizeDbRowValue(row.status),
-      bedrooms: row.bedrooms ?? null,
-      bathrooms: row.bathrooms ?? null,
-      square_feet: row.squareFeet ?? null,
-      market_rent: row.marketRent ?? null,
+      ...normalizeUnitRow({
+        unit_id: row.unitId,
+        property_id: row.propertyId,
+        name: row.name,
+        unit_number: row.unitNumber,
+        status: row.status,
+        bedrooms: row.bedrooms,
+        bathrooms: row.bathrooms,
+        square_feet: row.squareFeet,
+        market_rent: row.marketRent,
+        raw_json: row.rawJson,
+      }),
       raw_json: row.rawJson || {},
       last_updated_at: asIso(row.lastUpdatedAt),
       cached_at: asIso(row.cachedAt),
@@ -291,12 +302,13 @@ async function readUnitsFromDb(params: Record<string, string>): Promise<any> {
   };
 }
 
-async function readTurnsFromDb(params: Record<string, string>): Promise<any> {
+async function readTurnsFromDb(params: Record<string, string>, propertyGroupId = ''): Promise<any> {
   const limit = parseLimit(params.limit || params.max || params.per_page, 250, 2000);
   const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
   const propertyId = normalizeDbRowValue(params.property_id || params.propertyId);
   const status = normalizeDbRowValue(params.status);
   const since = normalizeDbRowValue(params.since || params.updated_since || params.updatedFrom);
+  const scopedGroupId = normalizeDbRowValue(propertyGroupId);
 
   const query = db.select().from(schema.unitTurnTracker);
   const filters = [] as any[];
@@ -304,6 +316,13 @@ async function readTurnsFromDb(params: Record<string, string>): Promise<any> {
   if (unitId) filters.push(eq(schema.unitTurnTracker.unitId, unitId));
   if (propertyId) filters.push(eq(schema.unitTurnTracker.propertyId, propertyId));
   if (status) filters.push(eq(schema.unitTurnTracker.status, status));
+  if (scopedGroupId) {
+    filters.push(sql`exists (
+      select 1 from appfolio_properties p
+      where p.id = ${schema.unitTurnTracker.propertyId}
+        and p.property_group_id = ${scopedGroupId}
+    )`);
+  }
   if (since) {
     const sinceDate = new Date(since);
     if (!Number.isNaN(sinceDate.getTime())) filters.push(gte(schema.unitTurnTracker.updatedAt, sinceDate));
@@ -342,11 +361,20 @@ async function readTurnsFromDb(params: Record<string, string>): Promise<any> {
   };
 }
 
-async function readUnitTurnsHistoryFromDb(params: Record<string, string>): Promise<any> {
+async function readUnitTurnsHistoryFromDb(params: Record<string, string>, propertyGroupId = ''): Promise<any> {
   const limit = Math.min(500, parseLimit(params.limit || params.max || params.per_page, 300, 500));
+  const scopedGroupId = normalizeDbRowValue(propertyGroupId);
+  const filters = [eq(schema.unitTurnTracker.status, 'closed')] as any[];
+  if (scopedGroupId) {
+    filters.push(sql`exists (
+      select 1 from appfolio_properties p
+      where p.id = ${schema.unitTurnTracker.propertyId}
+        and p.property_group_id = ${scopedGroupId}
+    )`);
+  }
   const query = db.select().from(schema.unitTurnTracker);
   const rows = await query
-    .where(eq(schema.unitTurnTracker.status, 'closed'))
+    .where(and(...filters))
     .orderBy(asc(schema.unitTurnTracker.closedAt), asc(schema.unitTurnTracker.updatedAt))
     .limit(limit);
 
@@ -370,9 +398,10 @@ async function readUnitTurnsHistoryFromDb(params: Record<string, string>): Promi
   };
 }
 
-async function readEstimatesFromDb(params: Record<string, string>): Promise<any> {
+async function readEstimatesFromDb(params: Record<string, string>, scopedPropertyGroupId = ''): Promise<any> {
   const limit = parseLimit(params.limit || params.max || params.per_page, 200, 2000);
-  const propertyGroupId = normalizeDbRowValue(params.property_group_id || params.propertyGroupId || params.group_id || params.groupId);
+  const propertyGroupId = normalizeDbRowValue(scopedPropertyGroupId)
+    || normalizeDbRowValue(params.property_group_id || params.propertyGroupId || params.group_id || params.groupId);
   const status = normalizeDbRowValue(params.status || params.current_status);
 
   const query = db.select().from(schema.appfolioEstimates);
@@ -404,12 +433,14 @@ async function readEstimatesFromDb(params: Record<string, string>): Promise<any>
   };
 }
 
-async function readQueueFromDb(params: Record<string, string>): Promise<any> {
+async function readQueueFromDb(params: Record<string, string>, propertyGroupUuid = ''): Promise<any> {
   const limit = parseLimit(params.limit || params.max || params.per_page, 200, 2000);
   const query = db.select().from(schema.reassignmentQueue);
   const filters = [] as any[];
   const status = normalizeDbRowValue(params.status);
+  const scopedGroupUuid = normalizeDbRowValue(propertyGroupUuid);
   if (status) filters.push(eq(schema.reassignmentQueue.status, status));
+  if (scopedGroupUuid) filters.push(eq(schema.reassignmentQueue.propertyGroupUuid, scopedGroupUuid));
   if (filters.length) query.where(and(...filters));
 
   const rows = await query.orderBy(asc(schema.reassignmentQueue.updatedAt)).limit(limit);
@@ -533,12 +564,26 @@ function parsePropertyGroupId(value: unknown): string {
 }
 
 function getRequestedPropertyGroupId(req: Request): string {
-  return parsePropertyGroupId(
-    req.query.property_group_id
-      ?? req.query.property_group_uuid
-      ?? req.query.group_id
-      ?? req.query.propertyGroupId,
-  );
+  const body = (req.body && typeof req.body === 'object' && !Array.isArray(req.body))
+    ? req.body as Record<string, unknown>
+    : {};
+  const candidates = [
+    req.query.property_group_id,
+    req.query.property_group_uuid,
+    req.query.group_id,
+    req.query.propertyGroupId,
+    body.property_group_id,
+    body.property_group_uuid,
+    body.group_id,
+    body.propertyGroupId,
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = parsePropertyGroupId(candidate);
+    if (parsed) return parsed;
+  }
+
+  return '';
 }
 
 function getBearerToken(req: Request): string {
@@ -555,7 +600,9 @@ type LocalScopeContext = {
   enforced: boolean;
 };
 
-async function pmScopeMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
+// Resolves the PM property-group scope for a request and attaches it to req.localScope.
+// Returns false when the request was already rejected (a response has been sent).
+async function applyPmScope(req: Request, res: Response): Promise<boolean> {
   try {
     const requestedGroupId = getRequestedPropertyGroupId(req);
     const token = getBearerToken(req);
@@ -570,14 +617,13 @@ async function pmScopeMiddleware(req: Request, res: Response, next: NextFunction
         scopeSource: 'query',
         enforced: false,
       } as LocalScopeContext;
-      next();
-      return;
+      return true;
     }
 
     const session = await deviceAuthHandlers.getTrustedDeviceSession(token);
     if (!session) {
       res.status(401).json({ ok: false, error: 'Invalid session' });
-      return;
+      return false;
     }
 
     const role = String(session.role || '').toLowerCase();
@@ -589,7 +635,7 @@ async function pmScopeMiddleware(req: Request, res: Response, next: NextFunction
     if (role === 'pm_readonly') {
       if (!sessionGroupId) {
         res.status(403).json({ ok: false, error: 'PM session missing scoped property group' });
-        return;
+        return false;
       }
       effectiveGroupId = sessionGroupId;
       scopeSource = 'session';
@@ -605,11 +651,16 @@ async function pmScopeMiddleware(req: Request, res: Response, next: NextFunction
       enforced,
     } as LocalScopeContext;
 
-    next();
+    return true;
   } catch (error) {
     logTunnelError(error, 'pm-scope-middleware');
     res.status(500).json({ ok: false, error: 'Scope middleware failed' });
+    return false;
   }
+}
+
+async function pmScopeMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (await applyPmScope(req, res)) next();
 }
 
 function getPropertyGroupFilter(req: Request): string {
@@ -618,6 +669,15 @@ function getPropertyGroupFilter(req: Request): string {
     return String(localScope.effectiveGroupId || '');
   }
   return getRequestedPropertyGroupId(req);
+}
+
+// Runs the PM property-group scope check before a handler that is invoked outside
+// the normal Express middleware chain (for example legacy ?action= routes).
+function withPmScope(handler: (req: Request, res: Response) => Promise<void> | void) {
+  return async (req: Request, res: Response): Promise<void> => {
+    if (!(await applyPmScope(req, res))) return;
+    await handler(req, res);
+  };
 }
 
 function asIso(value: unknown): string {
@@ -2876,45 +2936,62 @@ app.use(cors({
   credentials: true,
 }));
 
+async function handleUnitsAction(req: Request, res: Response): Promise<void> {
+  const params = toActionParams(req);
+  res.json(await readUnitsFromDb(params, getPropertyGroupFilter(req)));
+}
+
+async function handleUnitLookupAction(req: Request, res: Response): Promise<void> {
+  const params = toActionParams(req);
+  const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
+  if (!unitId) {
+    res.status(400).json({ ok: false, error: 'Missing unit_id parameter' });
+    return;
+  }
+  const propertyGroupId = getPropertyGroupFilter(req);
+  const payload = await readUnitsFromDb({ unit_id: unitId, limit: '1' }, propertyGroupId);
+  const unit = Array.isArray(payload?.results) ? payload.results[0] : undefined;
+  res.json(unit
+    ? { ok: true, unit }
+    : { ok: false, error: 'Unit not found in local database', unit_id: unitId });
+}
+
+async function handleTurnsAction(req: Request, res: Response): Promise<void> {
+  const params = toActionParams(req);
+  res.json(await readTurnsFromDb(params, getPropertyGroupFilter(req)));
+}
+
+async function handleUnitTurnsAction(req: Request, res: Response): Promise<void> {
+  const params = toActionParams(req);
+  const days = Math.max(1, Number.parseInt(String(params.days || params.days_back || '90'), 10) || 90);
+  const since = new Date(Date.now() - (days * 24 * 60 * 60 * 1000)).toISOString();
+  res.json(await readTurnsFromDb({ ...params, since }, getPropertyGroupFilter(req)));
+}
+
+async function handleTurnsIncrementalAction(req: Request, res: Response): Promise<void> {
+  const params = toActionParams(req);
+  const since = normalizeDbRowValue(params.since || params.updated_since || params.updatedFrom);
+  res.json(await readTurnsFromDb(since ? { ...params, since } : params, getPropertyGroupFilter(req)));
+}
+
+async function handleUnitTurnsHistoryAction(req: Request, res: Response): Promise<void> {
+  const params = toActionParams(req);
+  res.json(await readUnitTurnsHistoryFromDb(params, getPropertyGroupFilter(req)));
+}
+
+async function handleEstimatesAction(req: Request, res: Response): Promise<void> {
+  const params = toActionParams(req);
+  res.json(await readEstimatesFromDb(params, getPropertyGroupFilter(req)));
+}
+
 const legacyActionRoutes = {
-  units: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    res.json(await readUnitsFromDb(params));
-  },
-  unit_lookup: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
-    if (!unitId) {
-      res.status(400).json({ ok: false, error: 'Missing unit_id parameter' });
-      return;
-    }
-    const rows = await db.select().from(schema.appfolioUnits).where(eq(schema.appfolioUnits.unitId, unitId)).limit(1);
-    res.json(rows[0]
-      ? { ok: true, unit: { unit_id: normalizeDbRowValue(rows[0].unitId), property_id: normalizeDbRowValue(rows[0].propertyId), name: normalizeDbRowValue(rows[0].name), unit_number: normalizeDbRowValue(rows[0].unitNumber), status: normalizeDbRowValue(rows[0].status), bedrooms: rows[0].bedrooms ?? null, bathrooms: rows[0].bathrooms ?? null, square_feet: rows[0].squareFeet ?? null, market_rent: rows[0].marketRent ?? null, raw_json: rows[0].rawJson || {}, last_updated_at: asIso(rows[0].lastUpdatedAt), cached_at: asIso(rows[0].cachedAt) } }
-      : { ok: false, error: 'Unit not found in local database', unit_id: unitId });
-  },
-  turns: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    res.json(await readTurnsFromDb(params));
-  },
-  unit_turns: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    const days = Math.max(1, Number.parseInt(String(params.days || params.days_back || '90'), 10) || 90);
-    res.json(await readTurnsFromDb({ ...params, since: new Date(Date.now() - (days * 24 * 60 * 60 * 1000)).toISOString() }));
-  },
-  turns_incremental: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    const since = normalizeDbRowValue(params.since || params.updated_since || params.updatedFrom);
-    res.json(await readTurnsFromDb(since ? { ...params, since } : params));
-  },
-  unit_turns_history: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    res.json(await readUnitTurnsHistoryFromDb(params));
-  },
-  estimates: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    res.json(await readEstimatesFromDb(params));
-  },
+  units: withPmScope(handleUnitsAction),
+  unit_lookup: withPmScope(handleUnitLookupAction),
+  turns: withPmScope(handleTurnsAction),
+  unit_turns: withPmScope(handleUnitTurnsAction),
+  turns_incremental: withPmScope(handleTurnsIncrementalAction),
+  unit_turns_history: withPmScope(handleUnitTurnsHistoryAction),
+  estimates: withPmScope(handleEstimatesAction),
   device_setup: wrapDenoHandler(deviceAuthHandlers.handleDeviceSetup, 'request'),
   device_otp_request: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpRequest, 'request'),
   device_otp_verify: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpVerify, 'request'),
@@ -4053,10 +4130,11 @@ app.get('/api/local/system_health', async (_req: Request, res: Response) => {
 // Enforce PM scoped property-group filtering on all local data endpoints.
 app.use('/api/local', pmScopeMiddleware);
 
-app.get('/api/local/work_orders', async (req: Request, res: Response) => {
+async function handleLocalWorkOrders(req: Request, res: Response): Promise<void> {
   try {
-    const days = parseDays(req.query.days, 3650, 3650);
-    const limit = parseLimit(req.query.limit, 10000, 20000);
+    const params = toActionParams(req);
+    const days = parseDays(params.days, 3650, 3650);
+    const limit = parseLimit(params.limit, 10000, 20000);
     const propertyGroupId = getPropertyGroupFilter(req);
     let rows: any[] = [];
     try {
@@ -4139,7 +4217,9 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
     logTunnelError(error, '/api/local/work_orders');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local work orders query failed') });
   }
-});
+}
+
+app.get('/api/local/work_orders', handleLocalWorkOrders);
 
 app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) => {
   try {
@@ -4755,9 +4835,10 @@ app.get('/api/local/work_orders/:workOrderRef/attachments', async (req: Request,
   }
 });
 
-app.get('/api/local/properties', async (req: Request, res: Response) => {
+async function handleLocalProperties(req: Request, res: Response): Promise<void> {
   try {
-    const limit = parseLimit(req.query.limit, 5000);
+    const params = toActionParams(req);
+    const limit = parseLimit(params.limit, 5000);
     const propertyGroupId = getPropertyGroupFilter(req);
     let rows: any[] = [];
 
@@ -4834,13 +4915,16 @@ app.get('/api/local/properties', async (req: Request, res: Response) => {
     logTunnelError(error, '/api/local/properties');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local properties query failed') });
   }
-});
+}
 
-app.get('/api/local/vendors', async (req: Request, res: Response) => {
+app.get('/api/local/properties', handleLocalProperties);
+
+async function handleLocalVendors(req: Request, res: Response): Promise<void> {
   try {
-    const limit = parseLimit(req.query.limit, 2500, 10000);
+    const params = toActionParams(req);
+    const limit = parseLimit(params.limit, 2500, 10000);
     const propertyGroupId = getPropertyGroupFilter(req);
-    const refresh = /^(1|true|yes|on)$/i.test(String(req.query.refresh || '').trim());
+    const refresh = /^(1|true|yes|on)$/i.test(String(params.refresh || '').trim());
     const vendorPolicy = await readReportPolicy('v0:work_orders:vendors', String(propertyGroupId || ''));
     const vendorPolicyCheckedAt = Date.parse(String(vendorPolicy?.last_checked_at || ''));
     if (!vendorPolicy || !Number.isFinite(vendorPolicyCheckedAt) || (Date.now() - vendorPolicyCheckedAt) > REPORT_POLICY_TTL_MS) {
@@ -4913,7 +4997,9 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
     logTunnelError(error, '/api/local/vendors');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local vendors query failed') });
   }
-});
+}
+
+app.get('/api/local/vendors', handleLocalVendors);
 
 app.get('/api/local/property_group_directory', async (req: Request, res: Response) => {
   try {
@@ -6808,139 +6894,49 @@ app.use(express.static(DIST_DIR, {
   index: 'index.html',
 }));
 
-// Units
-app.post('/api/units', async (req: Request, res: Response) => {
-  try {
-    const params = toActionParams(req);
-    res.json(await readUnitsFromDb(params));
-  } catch (error) {
-    logTunnelError(error, '/api/units');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Units query failed') });
-  }
-});
-app.post('/api/unit_lookup', async (req: Request, res: Response) => {
-  try {
-    const params = toActionParams(req);
-    const limit = parseLimit(params.limit || params.max || params.per_page, 1, 5);
-    const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
-    if (!unitId) {
-      res.status(400).json({ ok: false, error: 'Missing unit_id parameter' });
-      return;
+// Wraps a shared action handler with consistent error reporting for POST routes.
+function postActionRoute(routeLabel: string, handler: (req: Request, res: Response) => Promise<void> | void) {
+  return async (req: Request, res: Response): Promise<void> => {
+    try {
+      await handler(req, res);
+    } catch (error) {
+      logTunnelError(error, routeLabel);
+      if (!res.headersSent) {
+        res.status(500).json({ ok: false, error: String((error as any)?.message || error || `${routeLabel} failed`) });
+      }
     }
+  };
+}
 
-    const rows = await db.select().from(schema.appfolioUnits)
-      .where(eq(schema.appfolioUnits.unitId, unitId))
-      .limit(limit);
-
-    const result = rows[0] ? {
-      ok: true,
-      unit: {
-        unit_id: normalizeDbRowValue(rows[0].unitId),
-        property_id: normalizeDbRowValue(rows[0].propertyId),
-        name: normalizeDbRowValue(rows[0].name),
-        unit_number: normalizeDbRowValue(rows[0].unitNumber),
-        status: normalizeDbRowValue(rows[0].status),
-        bedrooms: rows[0].bedrooms ?? null,
-        bathrooms: rows[0].bathrooms ?? null,
-        square_feet: rows[0].squareFeet ?? null,
-        market_rent: rows[0].marketRent ?? null,
-        raw_json: rows[0].rawJson || {},
-        last_updated_at: asIso(rows[0].lastUpdatedAt),
-        cached_at: asIso(rows[0].cachedAt),
-      },
-    } : { ok: false, error: 'Unit not found in local database', unit_id: unitId };
-
-    res.json(result);
-  } catch (error) {
-    logTunnelError(error, '/api/unit_lookup');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Unit lookup failed') });
-  }
-});
+// Units
+app.post('/api/units', pmScopeMiddleware, postActionRoute('/api/units', handleUnitsAction));
+app.post('/api/unit_lookup', pmScopeMiddleware, postActionRoute('/api/unit_lookup', handleUnitLookupAction));
 
 // Turns
-app.post('/api/turns', async (req: Request, res: Response) => {
-  try {
-    const params = toActionParams(req);
-    res.json(await readTurnsFromDb(params));
-  } catch (error) {
-    logTunnelError(error, '/api/turns');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Turns query failed') });
-  }
-});
-app.post('/api/unit_turns', async (req: Request, res: Response) => {
-  try {
-    const params = toActionParams(req);
-    const days = Math.max(1, Number.parseInt(String(params.days || params.days_back || '90'), 10) || 90);
-    const since = new Date(Date.now() - (days * 24 * 60 * 60 * 1000)).toISOString();
-    const payload = { ...params, since };
-    res.json(await readTurnsFromDb(payload));
-  } catch (error) {
-    logTunnelError(error, '/api/unit_turns');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Unit turns query failed') });
-  }
-});
-app.post('/api/turns_incremental', async (req: Request, res: Response) => {
-  try {
-    const params = toActionParams(req);
-    const since = normalizeDbRowValue(params.since || params.updated_since || params.updatedFrom);
-    if (!since) {
-      res.json(await readTurnsFromDb(params));
-      return;
-    }
-    res.json(await readTurnsFromDb({ ...params, since }));
-  } catch (error) {
-    logTunnelError(error, '/api/turns_incremental');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Incremental turns query failed') });
-  }
-});
-app.post('/api/unit_turns_history', async (req: Request, res: Response) => {
-  try {
-    const params = toActionParams(req);
-    res.json(await readUnitTurnsHistoryFromDb(params));
-  } catch (error) {
-    logTunnelError(error, '/api/unit_turns_history');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Turn history query failed') });
-  }
-});
+app.post('/api/turns', pmScopeMiddleware, postActionRoute('/api/turns', handleTurnsAction));
+app.post('/api/unit_turns', pmScopeMiddleware, postActionRoute('/api/unit_turns', handleUnitTurnsAction));
+app.post('/api/turns_incremental', pmScopeMiddleware, postActionRoute('/api/turns_incremental', handleTurnsIncrementalAction));
+app.post('/api/unit_turns_history', pmScopeMiddleware, postActionRoute('/api/unit_turns_history', handleUnitTurnsHistoryAction));
 
 // Estimates
-app.post('/api/estimates', async (req: Request, res: Response) => {
-  try {
-    const params = toActionParams(req);
-    res.json(await readEstimatesFromDb(params));
-  } catch (error) {
-    logTunnelError(error, '/api/estimates');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Estimates query failed') });
-  }
-});
+app.post('/api/estimates', pmScopeMiddleware, postActionRoute('/api/estimates', handleEstimatesAction));
+
+// Work orders / properties / vendors (shared with the GET /api/local/* routes)
+app.post('/api/work_orders', pmScopeMiddleware, postActionRoute('/api/work_orders', handleLocalWorkOrders));
+app.post('/api/properties', pmScopeMiddleware, postActionRoute('/api/properties', handleLocalProperties));
+app.post('/api/vendors', pmScopeMiddleware, postActionRoute('/api/vendors', handleLocalVendors));
 
 // Queue
-app.post('/api/queue', async (req: Request, res: Response) => {
-  try {
-    const params = toActionParams(req);
-    if (String(params.sync_assignees || '').trim() === '1') {
-      res.json(await syncDispatchAssignees(params));
-      return;
-    }
-    res.json(await readQueueFromDb(params));
-  } catch (error) {
-    logTunnelError(error, '/api/queue');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Queue failed') });
+async function handleQueueAction(req: Request, res: Response): Promise<void> {
+  const params = toActionParams(req);
+  if (String(params.sync_assignees || '').trim() === '1') {
+    res.json(await syncDispatchAssignees(params));
+    return;
   }
-});
-app.post('/api/reassignment_queue', async (req: Request, res: Response) => {
-  try {
-    const params = toActionParams(req);
-    if (String(params.sync_assignees || '').trim() === '1') {
-      res.json(await syncDispatchAssignees(params));
-      return;
-    }
-    res.json(await readQueueFromDb(params));
-  } catch (error) {
-    logTunnelError(error, '/api/reassignment_queue');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Reassignment queue failed') });
-  }
-});
+  res.json(await readQueueFromDb(params, getPropertyGroupFilter(req)));
+}
+app.post('/api/queue', pmScopeMiddleware, postActionRoute('/api/queue', handleQueueAction));
+app.post('/api/reassignment_queue', pmScopeMiddleware, postActionRoute('/api/reassignment_queue', handleQueueAction));
 
 // Device Auth
 app.post('/api/device/setup', wrapDenoHandler(deviceAuthHandlers.handleDeviceSetup, 'request'));

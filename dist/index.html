@@ -50,10 +50,6 @@
         <input type="password" class="vault-input" id="vaultPassphrase" placeholder="enter manager or vendor password" autocomplete="off" autofocus>
         <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
       </div>
-      <div class="vault-input-wrap">
-        <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off" value="flraz">
-      </div>
-      <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
       <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
       <button class="vault-unlock-btn vault-resume-toggle" id="vaultResumeBtn" type="button" style="display:none"><i class="fas fa-clock-rotate-left"></i> Resume Previous Session</button>
       <button class="vault-unlock-btn vault-pm-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
@@ -63,14 +59,11 @@
       <button type="button" class="vault-back-btn" id="pmLoginBackBtn"><i class="fas fa-arrow-left"></i> Back to standard login</button>
       <img src="assets/logo.png" alt="HandyManager" class="vault-logo">
       <div class="vault-subtitle">PM Login via OTP</div>
-      <div class="vault-vhost-hint">URL: <code><span id="vhostPreviewPm">flraz</span>.appfolio.com</code></div>
+      <div class="vault-vhost-hint">AppFolio host: <code><span id="vhostPreviewPm">yourco</span>.appfolio.com</code></div>
       <div class="vault-otp-route" id="vaultOtpRoute" aria-hidden="false">
         <div class="vault-otp-title"><i class="fas fa-mobile-alt"></i> Enter PM Email or Phone</div>
         <div class="vault-input-wrap vault-otp-request-row" id="vaultOtpIdentifierWrap">
-          <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="text">
-        </div>
-        <div class="vault-input-wrap vault-otp-request-row" id="vaultOtpScopeWrap">
-          <input type="text" class="vault-input" id="vaultOtpScope" placeholder="Optional property group UUID (required if account has multiple scopes)" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="text">
+          <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@company.com or (520) 555-1234" autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="text">
         </div>
         <div class="vault-inline-actions vault-otp-request-row" id="vaultOtpRequestActions">
           <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
@@ -94,6 +87,12 @@
       </div>
     </div>
     <div class="vault-advanced-panel vault-shared-settings" id="advancedPanel">
+      <label class="vault-proxy-label">AppFolio Subdomain</label>
+      <div class="vault-input-wrap">
+        <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (example: yourco)" autocomplete="off" value="">
+      </div>
+      <div class="vault-vhost-hint">Login host: <code><span id="vhostPreview">yourco</span>.appfolio.com</code></div>
+
       <label class="vault-proxy-label">Proxy Relay URL</label>
       <div class="vault-input-wrap">
         <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-render-backend.onrender.com" autocomplete="off" value="https://handymgr2.onrender.com">
