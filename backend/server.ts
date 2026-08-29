@@ -110,7 +110,6 @@ function logTunnelError(error: unknown, route: string): void {
 }
 
 function getBuildVersion(): string {
-  if (process.env.APP_VERSION) return String(process.env.APP_VERSION).trim();
   try {
     const packagePath = path.resolve(process.cwd(), 'package.json');
     const packageVersion = JSON.parse(readFileSync(packagePath, 'utf8')).version;
@@ -118,7 +117,7 @@ function getBuildVersion(): string {
   } catch (_) {
     // Fall through to deployment metadata when package metadata is unavailable.
   }
-  return String(process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'server-local').trim() || 'server-local';
+  return String(process.env.APP_VERSION || process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'server-local').trim() || 'server-local';
 }
 
 function isAuthDegradationMessage(text: string): boolean {
@@ -2944,6 +2943,14 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
 }));
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    console.log(`[server:request] version=${getBuildVersion()} status=${res.statusCode} method=${req.method} path=${req.originalUrl} duration_ms=${Date.now() - startedAt}`);
+  });
+  next();
+});
 
 async function handleUnitsAction(req: Request, res: Response): Promise<void> {
   const params = toActionParams(req);
@@ -7724,7 +7731,8 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
 
 app.listen(PORT, HOST, () => {
-  console.log(`[server] Express backend listening on ${HOST}:${PORT}`);
+  console.log(`[server] Express backend listening on ${HOST}:${PORT} version=${getBuildVersion()}`);
+  console.log(`[server:version] active=${getBuildVersion()} package=${path.resolve(process.cwd(), 'package.json')} render_commit=${process.env.RENDER_GIT_COMMIT || 'unavailable'}`);
   console.log('[server] Runtime command: npx tsx backend/server.ts');
   void (async () => {
     try {
