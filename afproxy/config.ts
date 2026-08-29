@@ -1,7 +1,7 @@
 const env = (name: string, fallback = ""): string =>
   String(Deno.env.get(name) || fallback || "").trim();
 
-export const PROXY_APP_VERSION = env("PROXY_APP_VERSION", "v9.7.4");
+export const PROXY_APP_VERSION = env("PROXY_APP_VERSION", "v9.8.1");
 
 export const AF_DB = env("AF_DB", env("APPFOLIO_DB_BASE_URL", "https://api.appfolio.com"));
 export const AF_REPORTS = env(

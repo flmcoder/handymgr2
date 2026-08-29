@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { flattenedVerify } from 'jose';
@@ -109,7 +110,15 @@ function logTunnelError(error: unknown, route: string): void {
 }
 
 function getBuildVersion(): string {
-  return String(process.env.APP_VERSION || process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'server-local').trim() || 'server-local';
+  if (process.env.APP_VERSION) return String(process.env.APP_VERSION).trim();
+  try {
+    const packagePath = path.resolve(process.cwd(), 'package.json');
+    const packageVersion = JSON.parse(readFileSync(packagePath, 'utf8')).version;
+    if (packageVersion) return `v${String(packageVersion).replace(/^v/i, '')}`;
+  } catch (_) {
+    // Fall through to deployment metadata when package metadata is unavailable.
+  }
+  return String(process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'server-local').trim() || 'server-local';
 }
 
 function isAuthDegradationMessage(text: string): boolean {

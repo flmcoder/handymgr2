@@ -331,7 +331,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.8.0:R1.1';
+var APP_VERSION = 'v9.8.1';
 var RENDER_API_BASE_URL = 'https://handymgr2.onrender.com';
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
@@ -16833,7 +16833,7 @@ function renderWOAnalyticsCharts(rows) {
       levels: [
         {},
         { r0: '18%', r: '52%', itemStyle: { borderWidth: 2 } },
-        { r0: '52%', r: '88%', itemStyle: { borderWidth: 1 }, label: { rotate: 'radial' } }
+        { r0: '52%', r: '88%', itemStyle: { borderWidth: 1 }, label: { rotate: 'radial', show: false } }
       ]
     }]
   });
@@ -16993,6 +16993,7 @@ function renderWorkOrders() {
       '    <article class="wo-chart-card"><header>Owner Territory Map (click to filter)</header><div id="woOwnerChart" class="wo-chart-host"></div></article>' +
       '    <article class="wo-chart-card"><header>Status x Owner Sunburst (click rings)</header><div id="woStatusChart" class="wo-chart-host"></div></article>' +
       '  </div>' +
+       '  <label class="wo-grid-search"><i class="fas fa-search"></i><span>Search loaded work orders</span><input type="search" id="woGridSearch" placeholder="Property manager, WO number, vendor…" autocomplete="off"></label>' +
       '  <div class="wo-grid-meta">Server-backed AG Grid blocks are live. Scroll loads offset/limit windows from backend endpoints.</div>' +
       '  <div id="woGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--wo"></div>' +
       '</div>';
@@ -17000,6 +17001,15 @@ function renderWorkOrders() {
     renderWOAnalyticsCharts(woGridRowsBase);
     renderWorkOrdersGrid();
     renderWOChartFilterBadges();
+
+    var woGridSearch = document.getElementById('woGridSearch');
+    if (woGridSearch) {
+      woGridSearch.oninput = function() {
+        if (woGridApi && typeof woGridApi.setGridOption === 'function') {
+          woGridApi.setGridOption('quickFilterText', String(woGridSearch.value || ''));
+        }
+      };
+    }
 
     var clearFiltersBtn = document.getElementById('woAnalyticsClearFilters');
     if (clearFiltersBtn) {
@@ -23748,7 +23758,11 @@ async function initApp() {
       localStorage.setItem('hm_server_version', SERVER_VERSION);
       if (shouldForceVersionReload(SERVER_VERSION, APP_VERSION)) {
         localStorage.setItem('hm_version_mismatch', '1');
-        setTimeout(function() { location.reload(); }, 2000);
+        setTimeout(function() {
+          var url = new URL(location.href);
+          url.searchParams.set('hmv', Date.now().toString());
+          location.replace(url.toString());
+        }, 2000);
       } else {
         localStorage.removeItem('hm_version_mismatch');
       }
