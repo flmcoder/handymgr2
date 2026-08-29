@@ -5716,6 +5716,10 @@ body.theme-neo #vaultScreen {
   padding: 14px;
   display: grid;
   gap: 12px;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .wo-analytics-head {
@@ -5747,6 +5751,8 @@ body.theme-neo #vaultScreen {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(3, minmax(220px, 1fr));
+  width: 100%;
+  min-width: 0;
 }
 
 .wo-chart-card {
@@ -5777,6 +5783,29 @@ body.theme-neo #vaultScreen {
   color: var(--text-muted);
 }
 
+.wo-grid-search {
+   display: flex;
+   align-items: center;
+   gap: 8px;
+   width: 100%;
+   box-sizing: border-box;
+   color: var(--text-muted);
+   font-family: var(--font-mono);
+   font-size: 11px;
+}
+
+.wo-grid-search input {
+   flex: 1 1 auto;
+   min-width: 0;
+   min-height: 34px;
+   padding: 7px 10px;
+   border: 1px solid var(--border);
+   border-radius: 7px;
+   background: var(--bg-input);
+   color: var(--text-primary);
+   font: inherit;
+}
+
 .hm-ag-theme {
   width: 100%;
   border: 1px solid var(--border);
@@ -5795,7 +5824,11 @@ body.theme-neo #vaultScreen {
 }
 
 .hm-ag-theme--wo {
-  height: clamp(420px, 67vh, 760px);
+  width: 100%;
+  min-width: 0;
+  min-height: 500px;
+  height: clamp(500px, 67vh, 760px);
+  flex: 1 1 auto;
 }
 
 .inspections-grid-shell {

@@ -360,37 +360,17 @@ window.addEventListener('resize', () => {
   ALL_CHARTS.forEach(c => c.resize());
 });
 
-// Resolved at runtime from localStorage (same key app.js uses).
-function resolveProxyUrl(): string {
-  const defaultProxy = 'https://afproxy.val.run';
+function readScopedGroupUuid(): string {
   try {
-    return (localStorage.getItem('hm_proxy_url') || '').trim() || defaultProxy;
+    return (localStorage.getItem('hm_scope_group_uuid') || '').trim();
   } catch {
-    return defaultProxy;
+    return '';
   }
-}
-
-function resolveV2ProxyUrl(): string {
-  const fallback = 'https://flr-appfolio.val.run';
-  try {
-    const pinned = String(localStorage.getItem('hm_v2_proxy_url') || '').trim();
-    if (pinned) return pinned.replace(/\/+$/, '');
-  } catch { /* */ }
-  const proxy = resolveProxyUrl().replace(/\/+$/, '');
-  const origin = String(window.location.origin || '').replace(/\/+$/, '');
-  if (!proxy || proxy === origin || proxy.includes('handymgr.app')) return fallback;
-  return proxy;
 }
 
 function buildWorkOrdersUrl(): string {
   const base = String(window.location.origin || '').replace(/\/+$/, '');
-  const scopeUuid = (() => {
-    try {
-      return (localStorage.getItem('hm_scope_group_uuid') || '').trim();
-    } catch {
-      return '';
-    }
-  })();
+  const scopeUuid = readScopedGroupUuid();
   let url = `${base}/api/local/work_orders?days=180&limit=5000`;
   if (scopeUuid) url += `&property_group_id=${encodeURIComponent(scopeUuid)}`;
   return url;
@@ -1531,35 +1511,40 @@ async function fetchAndRenderDashboardData(): Promise<void> {
     })
   );
 
-  const baseUrl = resolveProxyUrl();
-  const v2BaseUrl = resolveV2ProxyUrl();
   const headers = { Accept: 'application/json', ...proxyAuthHeaders() };
-  const scopedGroupUuid = (() => {
-    try {
-      return (localStorage.getItem('hm_scope_group_uuid') || '').trim();
-    } catch {
-      return '';
-    }
-  })();
+  const scopedGroupUuid = readScopedGroupUuid();
 
-  function buildV2ReportUrl(report: string, extraParams: Record<string, string> = {}): string {
-    const sep = v2BaseUrl.includes('?') ? '&' : '?';
-    const params = new URLSearchParams({ action: 'v2_report', report, ...extraParams });
+  // v2 reports are proxied by the local Express backend, which reads the report
+  // name and property-group scope from the query string and the report payload
+  // from the JSON body.
+  function postV2Report(report: string, payload: Record<string, unknown> = {}): Promise<Response> {
+    const query = new URLSearchParams({ action: 'v2_report', report });
     if (scopedGroupUuid) {
-      params.set('group_uuid', scopedGroupUuid);
-      params.set('property_group_uuid', scopedGroupUuid);
-      params.set('property_groups_ids', scopedGroupUuid);
+      query.set('group_uuid', scopedGroupUuid);
+      query.set('property_group_uuid', scopedGroupUuid);
+      query.set('property_groups_ids', scopedGroupUuid);
     }
-    return `${v2BaseUrl}${sep}${params.toString()}`;
+    return fetch(`/api?${query.toString()}`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  function postLocalApi(path: string, payload: Record<string, unknown> = {}): Promise<Response> {
+    const body: Record<string, unknown> = { ...payload };
+    if (scopedGroupUuid) body.property_group_id = scopedGroupUuid;
+    return fetch(path, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
   }
 
   // ── 1. Occupancy Doughnut ─────────────────────────────────────────
   if (chartOccupancy) {
     try {
-      const base = String(window.location.origin || '').replace(/\/+$/, '');
-      let unitsUrl = `${base}/api/local/units?limit=8000`;
-      if (scopedGroupUuid) unitsUrl += `&property_group_id=${encodeURIComponent(scopedGroupUuid)}`;
-      const resp = await fetch(unitsUrl, { headers });
+      const resp = await postLocalApi('/api/units', { limit: 8000 });
       if (resp.ok) {
         const payload = await resp.json();
         const rows = Array.isArray(payload?.results) ? payload.results : [];
@@ -1587,10 +1572,10 @@ async function fetchAndRenderDashboardData(): Promise<void> {
   // ── 2. Move-Outs Bar ──────────────────────────────────────────────
   if (chartMoveOuts) {
     try {
-      const resp = await fetch(buildV2ReportUrl('tenant_directory', {
-        tenant_statuses: '4',
-        columns: 'move_out_date,property_id,unit_id',
-      }), { headers });
+      const resp = await postV2Report('tenant_directory', {
+        tenant_statuses: ['4'],
+        columns: ['move_out_date', 'property_id', 'unit_id'],
+      });
       if (resp.ok) {
         const payload = await resp.json();
         const rows = Array.isArray(payload?.results) ? payload.results : [];
@@ -1651,9 +1636,9 @@ async function fetchAndRenderDashboardData(): Promise<void> {
   // ── 4. Leasing Velocity Area Chart ───────────────────────────────
   if (chartVelocity) {
     try {
-      const resp = await fetch(buildV2ReportUrl('tenant_directory', {
-        columns: 'move_in_date,move_out_date,property_id,unit_id',
-      }), { headers });
+      const resp = await postV2Report('tenant_directory', {
+        columns: ['move_in_date', 'move_out_date', 'property_id', 'unit_id'],
+      });
       if (resp.ok) {
         const payload = await resp.json();
         const rows = Array.isArray(payload?.results) ? payload.results : [];

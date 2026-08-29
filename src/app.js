@@ -331,7 +331,8 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.8.0:R1.1';
+var APP_VERSION = 'v9.8.1';
+var DEFAULT_APPFOLIO_VHOST = 'flraz';
 var RENDER_API_BASE_URL = 'https://handymgr2.onrender.com';
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
@@ -2613,8 +2614,47 @@ function getLocalReadActionPath(action) {
   return LOCAL_READ_ACTIONS[action] || '';
 }
 
+// Actions served by POST routes on the local Express backend. Parameters travel in
+// the JSON body; these take priority over the GET /api/local/* reads above.
+function getPostActionPath(action) {
+  var POST_ACTIONS = {
+    work_orders: '/api/work_orders',
+    work_orders_inactive: '/api/work_orders/inactive',
+    properties: '/api/properties',
+    vendors: '/api/vendors',
+    units: '/api/units',
+    unit_lookup: '/api/unit_lookup'
+  };
+  return POST_ACTIONS[action] || '';
+}
+
+async function postLocalAction(action, path, params) {
+  var url = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '') + path;
+  var token = getProxyAccessToken();
+  var headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+
+  var res = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify(params || {})
+  }, 45000);
+
+  var data = await parseJsonResponseOrThrow(res, 'Local action=' + action);
+  if (!res.ok || (data && data.ok === false)) {
+    throw new Error(String((data && (data.error || data.message)) || ('Local read failed for ' + action + ': HTTP ' + res.status)));
+  }
+
+  return Object.assign({}, data, { _source: 'postgres_local' });
+}
+
 async function proxyAction(action, params, options) {
   var opts = options || {};
+  var postPath = getPostActionPath(action);
+  if (postPath && !opts.skipLocalRead) {
+    return await postLocalAction(action, postPath, params);
+  }
+
   var localPath = getLocalReadActionPath(action);
 
   if (localPath && !opts.skipLocalRead) {
@@ -2637,17 +2677,7 @@ async function proxyAction(action, params, options) {
       throw new Error(String((localData && (localData.error || localData.message)) || ('Local read failed for ' + action + ': HTTP ' + localRes.status)));
     }
 
-    var localResults = Array.isArray(localData.results) ? localData.results : (Array.isArray(localData.data) ? localData.data : []);
-    var EMPTY_LOCAL_FALLBACK_ACTIONS = {
-      turns: true,
-      unit_turns: true,
-      turns_incremental: true,
-    };
-    if (EMPTY_LOCAL_FALLBACK_ACTIONS[action] && localResults.length === 0 && API_PROXY) {
-      console.warn('[Local Read Empty] ' + action + ' returned 0 rows from /api/local; falling back to legacy proxy action');
-    } else {
-      return Object.assign({}, localData, { _source: 'postgres_local' });
-    }
+    return Object.assign({}, localData, { _source: 'postgres_local' });
   }
 
   if (!API_PROXY) throw new Error('No proxy configured');
@@ -5017,7 +5047,7 @@ function _decodeConfigPayload(raw) {
 
 function getVaultConfigFromInputs() {
   return {
-    vhost: sanitizeVhost(($('#vaultVhost') && $('#vaultVhost').value) || ''),
+    vhost: sanitizeVhost(($('#vaultVhost') && $('#vaultVhost').value) || DEFAULT_APPFOLIO_VHOST),
     proxy: normalizeConfiguredProxy(($('#vaultProxy') && $('#vaultProxy').value) || ''),
     updatedAt: new Date().toISOString()
   };
@@ -5054,7 +5084,7 @@ function applyVaultConfigToInputs(cfg) {
   if (!cfg) return;
   if ($('#vaultVhost') && cfg.vhost) {
     $('#vaultVhost').value = sanitizeVhost(cfg.vhost);
-    $('#vhostPreview').textContent = $('#vaultVhost').value || 'yourco';
+    $('#vhostPreview').textContent = $('#vaultVhost').value || DEFAULT_APPFOLIO_VHOST;
   }
   if ($('#vaultProxy')) {
     $('#vaultProxy').value = normalizeConfiguredProxy(cfg.proxy);
@@ -5102,6 +5132,8 @@ async function initVaultConfigUI() {
   var proxyEl = $('#vaultProxy');
 
   if (!vhostEl || !proxyEl) return;
+  if (!vhostEl.value) vhostEl.value = DEFAULT_APPFOLIO_VHOST;
+  $('#vhostPreview').textContent = vhostEl.value || DEFAULT_APPFOLIO_VHOST;
 
   var cfgFromUrl = getConfigFromUrl();
   if (cfgFromUrl) {
@@ -5448,8 +5480,8 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
 initVaultConfigUI();
 setPmOtpStep('request');
 if ($('#vhostPreviewPm')) {
-  var vVal = sanitizeVhost((($('#vaultVhost') && $('#vaultVhost').value) || ''));
-  $('#vhostPreviewPm').textContent = vVal || 'yourco';
+  var vVal = sanitizeVhost((($('#vaultVhost') && $('#vaultVhost').value) || DEFAULT_APPFOLIO_VHOST));
+  $('#vhostPreviewPm').textContent = vVal || DEFAULT_APPFOLIO_VHOST;
 }
 setVaultPanel('main');
 
@@ -5966,46 +5998,31 @@ function hideProgress() {
 // Excludes: 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill
 async function fetchLocalWorkOrders(days) {
   var lookback = Math.max(1, Math.min(3650, parseInt(days || DATA_WINDOW_DAYS, 10) || DATA_WINDOW_DAYS));
-  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
-  var url = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(lookback)) + '&limit=2500';
-  var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
-  var data = {};
-  try { data = await res.json(); } catch (e) { data = {}; }
-  if (!res.ok || data.ok === false) {
-    throw new Error(String((data && (data.error || data.message)) || ('Local work orders failed: HTTP ' + res.status)));
-  }
-  return data;
+  return await postLocalAction('work_orders', '/api/work_orders', {
+    days: String(lookback),
+    limit: '2500'
+  });
 }
 
 async function fetchWorkOrders() {
   setDataSourceState('work_orders', 'loading', { error: '' });
   try {
     setApiStatus('loading', 'Loading work orders (active & inactive)…');
-    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var scopeQuery = scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '';
-    var token = getProxyAccessToken();
-    var localHeaders = { 'Accept': 'application/json' };
-    if (token) localHeaders['Authorization'] = 'Bearer ' + token;
-    
+    var scopeBody = scopedGroupUuid ? { property_group_id: scopedGroupUuid } : {};
+
     // Fetch active work orders
-    var urlActive = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(DATA_WINDOW_DAYS)) + '&limit=2500' + scopeQuery;
-    var resActive = await fetchWithTimeout(urlActive, { headers: localHeaders }, 45000);
-    var dataActive = {};
-    try { dataActive = await resActive.json(); } catch (e) { dataActive = {}; }
-    if (!resActive.ok || dataActive.ok === false) {
-      throw new Error(String((dataActive && (dataActive.error || dataActive.message)) || ('Local active work orders failed: HTTP ' + resActive.status)));
-    }
+    var dataActive = await postLocalAction('work_orders', '/api/work_orders', Object.assign({
+      days: String(DATA_WINDOW_DAYS),
+      limit: '2500'
+    }, scopeBody));
     var activeResults = (dataActive.results || dataActive.data || []);
-    
+
     // Fetch inactive work orders
-    var urlInactive = localBase + '/api/local/work_orders/inactive?days=3650&limit=5000' + scopeQuery;
-    var resInactive = await fetchWithTimeout(urlInactive, { headers: localHeaders }, 45000);
-    var dataInactive = {};
-    try { dataInactive = await resInactive.json(); } catch (e) { dataInactive = {}; }
-    if (!resInactive.ok || dataInactive.ok === false) {
-      throw new Error(String((dataInactive && (dataInactive.error || dataInactive.message)) || ('Local inactive work orders failed: HTTP ' + resInactive.status)));
-    }
+    var dataInactive = await postLocalAction('work_orders_inactive', '/api/work_orders/inactive', Object.assign({
+      days: '3650',
+      limit: '5000'
+    }, scopeBody));
     var inactiveResults = (dataInactive.results || dataInactive.data || []);
     
     // Normalize work order row
@@ -6733,16 +6750,11 @@ async function fetchBills(days, opts) {
 async function fetchVendors() {
   try {
     setApiStatus('loading', 'Loading vendors (local)\u2026');
-    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var url = localBase + '/api/local/vendors?limit=2500&refresh=1'
-      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
-    var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
-    var data = {};
-    try { data = await res.json(); } catch (e) { data = {}; }
-    if (!res.ok || data.ok === false) {
-      throw new Error(String((data && (data.error || data.message)) || ('Local vendors failed: HTTP ' + res.status)));
-    }
+    var data = await postLocalAction('vendors', '/api/vendors', Object.assign({
+      limit: '2500',
+      refresh: '1'
+    }, scopedGroupUuid ? { property_group_id: scopedGroupUuid } : {}));
     var results = data.results || data.data || [];
     VENDORS = results.map(function(v) {
       var displayName = v.company_name || ((v.first_name || '') + ' ' + (v.last_name || '')).trim() || v.name || '';
@@ -6784,16 +6796,10 @@ async function fetchVendors() {
 async function fetchProperties() {
   try {
     setApiStatus('loading', 'Loading properties (local)…');
-    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var url = localBase + '/api/local/properties?limit=5000'
-      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
-    var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
-    var data = {};
-    try { data = await res.json(); } catch (e) { data = {}; }
-    if (!res.ok || data.ok === false) {
-      throw new Error(String((data && (data.error || data.message)) || ('Local properties failed: HTTP ' + res.status)));
-    }
+    var data = await postLocalAction('properties', '/api/properties', Object.assign({
+      limit: '5000'
+    }, scopedGroupUuid ? { property_group_id: scopedGroupUuid } : {}));
     var results = data.results || data.data || [];
     _propertyManagementStateById = {};
     _propertyManagementStateByName = {};
@@ -16830,7 +16836,7 @@ function renderWOAnalyticsCharts(rows) {
       levels: [
         {},
         { r0: '18%', r: '52%', itemStyle: { borderWidth: 2 } },
-        { r0: '52%', r: '88%', itemStyle: { borderWidth: 1 }, label: { rotate: 'radial' } }
+        { r0: '52%', r: '88%', itemStyle: { borderWidth: 1 }, label: { rotate: 'radial', show: false } }
       ]
     }]
   });
@@ -16990,6 +16996,7 @@ function renderWorkOrders() {
       '    <article class="wo-chart-card"><header>Owner Territory Map (click to filter)</header><div id="woOwnerChart" class="wo-chart-host"></div></article>' +
       '    <article class="wo-chart-card"><header>Status x Owner Sunburst (click rings)</header><div id="woStatusChart" class="wo-chart-host"></div></article>' +
       '  </div>' +
+       '  <label class="wo-grid-search"><i class="fas fa-search" aria-hidden="true"></i><span>Search loaded work orders</span><input type="search" id="woGridSearch" placeholder="Property manager, WO number, vendor…" autocomplete="off"></label>' +
       '  <div class="wo-grid-meta">Server-backed AG Grid blocks are live. Scroll loads offset/limit windows from backend endpoints.</div>' +
       '  <div id="woGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--wo"></div>' +
       '</div>';
@@ -16997,6 +17004,15 @@ function renderWorkOrders() {
     renderWOAnalyticsCharts(woGridRowsBase);
     renderWorkOrdersGrid();
     renderWOChartFilterBadges();
+
+    var woGridSearch = document.getElementById('woGridSearch');
+    if (woGridSearch) {
+      woGridSearch.oninput = function() {
+        if (woGridApi && typeof woGridApi.setGridOption === 'function') {
+          woGridApi.setGridOption('quickFilterText', String(woGridSearch.value || ''));
+        }
+      };
+    }
 
     var clearFiltersBtn = document.getElementById('woAnalyticsClearFilters');
     if (clearFiltersBtn) {
@@ -23745,7 +23761,11 @@ async function initApp() {
       localStorage.setItem('hm_server_version', SERVER_VERSION);
       if (shouldForceVersionReload(SERVER_VERSION, APP_VERSION)) {
         localStorage.setItem('hm_version_mismatch', '1');
-        setTimeout(function() { location.reload(); }, 2000);
+        setTimeout(function() {
+          var url = new URL(location.href);
+          url.searchParams.set('hmv', Date.now().toString());
+          location.replace(url.toString());
+        }, 2000);
       } else {
         localStorage.removeItem('hm_version_mismatch');
       }

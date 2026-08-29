@@ -1,0 +1,29 @@
+name: Bump application version
+
+on:
+  push:
+    branches: [R1]
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/bump-version.mjs
+      - run: npm run build
+      - name: Commit generated version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json src/app.js index.html afproxy/config.ts dist
+          git diff --cached --quiet || git commit -m "chore: bump application version"
+          git push
