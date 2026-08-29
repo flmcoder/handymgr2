@@ -332,6 +332,7 @@ var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06e
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
 var APP_VERSION = 'v9.8.1';
+var DEFAULT_APPFOLIO_VHOST = 'flraz';
 var RENDER_API_BASE_URL = 'https://handymgr2.onrender.com';
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
@@ -5046,7 +5047,7 @@ function _decodeConfigPayload(raw) {
 
 function getVaultConfigFromInputs() {
   return {
-    vhost: sanitizeVhost(($('#vaultVhost') && $('#vaultVhost').value) || ''),
+    vhost: sanitizeVhost(($('#vaultVhost') && $('#vaultVhost').value) || DEFAULT_APPFOLIO_VHOST),
     proxy: normalizeConfiguredProxy(($('#vaultProxy') && $('#vaultProxy').value) || ''),
     updatedAt: new Date().toISOString()
   };
@@ -5083,7 +5084,7 @@ function applyVaultConfigToInputs(cfg) {
   if (!cfg) return;
   if ($('#vaultVhost') && cfg.vhost) {
     $('#vaultVhost').value = sanitizeVhost(cfg.vhost);
-    $('#vhostPreview').textContent = $('#vaultVhost').value || 'yourco';
+    $('#vhostPreview').textContent = $('#vaultVhost').value || DEFAULT_APPFOLIO_VHOST;
   }
   if ($('#vaultProxy')) {
     $('#vaultProxy').value = normalizeConfiguredProxy(cfg.proxy);
@@ -5131,6 +5132,8 @@ async function initVaultConfigUI() {
   var proxyEl = $('#vaultProxy');
 
   if (!vhostEl || !proxyEl) return;
+  if (!vhostEl.value) vhostEl.value = DEFAULT_APPFOLIO_VHOST;
+  $('#vhostPreview').textContent = vhostEl.value || DEFAULT_APPFOLIO_VHOST;
 
   var cfgFromUrl = getConfigFromUrl();
   if (cfgFromUrl) {
@@ -5477,8 +5480,8 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
 initVaultConfigUI();
 setPmOtpStep('request');
 if ($('#vhostPreviewPm')) {
-  var vVal = sanitizeVhost((($('#vaultVhost') && $('#vaultVhost').value) || ''));
-  $('#vhostPreviewPm').textContent = vVal || 'yourco';
+  var vVal = sanitizeVhost((($('#vaultVhost') && $('#vaultVhost').value) || DEFAULT_APPFOLIO_VHOST));
+  $('#vhostPreviewPm').textContent = vVal || DEFAULT_APPFOLIO_VHOST;
 }
 setVaultPanel('main');
 
