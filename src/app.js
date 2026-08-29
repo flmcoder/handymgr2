@@ -16993,7 +16993,7 @@ function renderWorkOrders() {
       '    <article class="wo-chart-card"><header>Owner Territory Map (click to filter)</header><div id="woOwnerChart" class="wo-chart-host"></div></article>' +
       '    <article class="wo-chart-card"><header>Status x Owner Sunburst (click rings)</header><div id="woStatusChart" class="wo-chart-host"></div></article>' +
       '  </div>' +
-       '  <label class="wo-grid-search"><i class="fas fa-search"></i><span>Search loaded work orders</span><input type="search" id="woGridSearch" placeholder="Property manager, WO number, vendor…" autocomplete="off"></label>' +
+       '  <label class="wo-grid-search"><i class="fas fa-search" aria-hidden="true"></i><span>Search loaded work orders</span><input type="search" id="woGridSearch" placeholder="Property manager, WO number, vendor…" autocomplete="off"></label>' +
       '  <div class="wo-grid-meta">Server-backed AG Grid blocks are live. Scroll loads offset/limit windows from backend endpoints.</div>' +
       '  <div id="woGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--wo"></div>' +
       '</div>';
