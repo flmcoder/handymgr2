@@ -17,7 +17,7 @@ if (lock.packages?.['']) lock.packages[''].version = version;
 writeJson('package-lock.json', lock);
 
 const replacements = [
-  ['src/app.js', /var APP_VERSION = 'v[^']+';/, `var APP_VERSION = 'v${version}';`],
+  ['src/app.js', /var APP_VERSION = '[^']+';/, `var APP_VERSION = 'v${version}';`],
   ['index.html', /(<div class="sidebar-brand-ver" id="sidebarBrandVer">)v[^<]+/, `$1v${version}`],
   ['afproxy/config.ts', /(PROXY_APP_VERSION = env\("PROXY_APP_VERSION", ")[^"]+/, `$1v${version}`],
 ];
