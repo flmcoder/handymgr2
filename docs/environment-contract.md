@@ -29,9 +29,9 @@ This repository uses `render.yaml` as a partial deployment snapshot, but the bac
 ### Build/runtime
 
 - `PORT` - Render runtime port
-- `APP_VERSION` - preferred build/version label
-- `RENDER_GIT_COMMIT` - fallback build/version label
-- `GIT_COMMIT` - fallback build/version label
+- `package.json` version - application release label used by the frontend and backend
+- `RENDER_GIT_COMMIT` - deployed commit shown in backend startup logs
+- `GIT_COMMIT` - local/runtime commit fallback shown in backend startup logs
 - `RENDER_EXTERNAL_URL` - allowed CORS origin
 - `APP_ORIGIN` - allowed CORS origin
 - `FRONTEND_ORIGIN` - allowed CORS origin
@@ -121,7 +121,7 @@ Service audited: `handymgr2` Render dashboard Environment page.
 
 ### Keys not observed in dashboard snapshot (but still read by backend with fallbacks/defaults)
 
-- Build/CORS fallbacks: `PORT`, `APP_VERSION`, `RENDER_GIT_COMMIT`, `GIT_COMMIT`, `RENDER_EXTERNAL_URL`, `APP_ORIGIN`, `FRONTEND_ORIGIN`
+- Build/CORS values: `PORT`, `RENDER_GIT_COMMIT`, `GIT_COMMIT`, `RENDER_EXTERNAL_URL`, `APP_ORIGIN`, `FRONTEND_ORIGIN`
 - DB optional aliases/tuning: `SQL_SE`, `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `DB_POOL_MAX`, `DB_IDLE_TIMEOUT`, `DB_CONNECT_TIMEOUT`
 - AppFolio optional/legacy alternatives: `AF_CLIENT_ID`, `AF_CLIENT_SECRET`, `AF_REPORTS_CLIENT_ID`, `AF_REPORTS_CLIENT_SECRET`, `AF_V0_CLIENT_ID`, `AF_V0_CLIENT_SECRET`, `AF_DB_BASE`, `AF_REPORTS_BASE`, `AF_MAX_PER_SECOND`, `AF_MAX_PER_MINUTE`, `AF_MAX_PER_HOUR`, `APPFOLIO_SUBDOMAIN`, `DEV`, `GUI_MANAGER_ID`, `GUI_MANAGER_PW`
 - RingCentral alternate naming/token mode: `RC_SERVER_URL`, `RC_ACCESS_TOKEN`, `RINGCENTRAL_*`

@@ -3,12 +3,17 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { flattenedVerify } from 'jose';
 import { and, asc, eq, gte, or, sql } from 'drizzle-orm';
 import { db, pingDatabase, queryClient } from './db';
 import * as schema from './schema';
 import * as deviceAuthHandlers from './deviceAuth';
 import { AF_DB_BASE, AF_REPORTS_BASE, afHeaders, afReportCredentialMode } from './sync/afCredentials';
+
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json') as { version?: string };
+const APP_RELEASE_VERSION = `v${String(packageJson.version || '0.0.0').trim()}`;
 
 function ensureDenoCompat(): void {
   const globalAny = globalThis as any;
@@ -109,7 +114,7 @@ function logTunnelError(error: unknown, route: string): void {
 }
 
 function getBuildVersion(): string {
-  return String(process.env.APP_VERSION || process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'server-local').trim() || 'server-local';
+  return APP_RELEASE_VERSION;
 }
 
 function isAuthDegradationMessage(text: string): boolean {
@@ -7715,7 +7720,8 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
 
 app.listen(PORT, HOST, () => {
-  console.log(`[server] Express backend listening on ${HOST}:${PORT}`);
+  console.log(`[server] HandyManager ${getBuildVersion()} listening on ${HOST}:${PORT}`);
+  console.log(`[server] Render commit: ${process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'local'}`);
   console.log('[server] Runtime command: npx tsx backend/server.ts');
   void (async () => {
     try {

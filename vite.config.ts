@@ -1,8 +1,13 @@
 import { defineConfig } from 'vite';
+import packageJson from './package.json';
 
 export default defineConfig({
   // Use relative asset paths so the build works from either / or /handymgr2/.
   base: '/',
+
+  define: {
+    __APP_VERSION__: JSON.stringify(`v${packageJson.version}`),
+  },
   
   build: {
     // This is the folder GitHub Pages will actually serve

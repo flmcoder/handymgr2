@@ -6,10 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node -e \"const fs=require('fs');fs.mkdirSync('dist/css',{recursive:true});fs.copyFileSync('src/css/app.css','dist/css/app.css');console.log('CSS copied to dist/css/app.css');\"",
+    "build": "vite build && node scripts/stamp-build-version.mjs && node -e \"const fs=require('fs');fs.mkdirSync('dist/css',{recursive:true});fs.copyFileSync('src/css/app.css','dist/css/app.css');console.log('CSS copied to dist/css/app.css');\"",
     "start": "npx tsx backend/server.ts",
     "server:dev": "npx tsx backend/server.ts",
-    "build:gh": "vite build --base=/handymgr2/",
+    "build:gh": "vite build --base=/handymgr2/ && node scripts/stamp-build-version.mjs",
     "prepare:preview-subdir": "node scripts/prepare-preview-subdir.mjs",
     "db:health": "node scripts/turso-healthcheck.mjs",
     "db:migrate": "node scripts/apply-pg-sql.mjs",

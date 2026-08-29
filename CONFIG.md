@@ -19,7 +19,6 @@ This file is the single source of truth for HandyManager environment configurati
 | Key | Purpose | Secret | Owner |
 | --- | --- | --- | --- |
 | `PORT` | Render-assigned HTTP listen port | No | Render Dashboard |
-| `APP_VERSION` | Preferred build/version label | No | Render Dashboard |
 | `RENDER_GIT_COMMIT`, `GIT_COMMIT` | Version fallbacks | No | Render Runtime |
 | `RENDER_EXTERNAL_URL`, `APP_ORIGIN`, `FRONTEND_ORIGIN` | CORS/allowed origins | No | Render Dashboard |
 
@@ -27,6 +26,7 @@ This file is the single source of truth for HandyManager environment configurati
 
 Required frontend env vars today: none.
 
+- Application version comes from `package.json` and is injected into the frontend during the Vite build.
 - The frontend does not currently consume `import.meta.env.VITE_*` values.
 - API targeting is runtime-based in `src/app.js` (`window.location` + `RENDER_API_BASE_URL` constant).
 - If a `VITE_*` key is introduced, update `.env.example`, this file, and `docs/environment-contract.md` in the same change.

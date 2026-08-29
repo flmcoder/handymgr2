@@ -331,7 +331,7 @@ var BRAND_LOGO_DEFAULT = 'assets/logo.png';
 var BRAND_LOGO_FALLBACK = 'https://pfst.cf2.poecdn.net/base/image/6ac452e679a06edc3e17d0dae13fac303de2fdbb970c22eb302651f44c558416?w=1996&h=938';
 var PORTAL_BRAND_NAME_DEFAULT = 'Fort Lowell Realty | Pager';
 var PORTAL_BRAND_LOGO_DEFAULT = 'https://pfst.cf2.poecdn.net/base/image/57c851c04753092259d83d0a1aa34e2fd889c7218b50a338e6100dbf21ae922c?w=733&h=982';
-var APP_VERSION = 'v9.8.0:R1.1';
+var APP_VERSION = __APP_VERSION__;
 var RENDER_API_BASE_URL = 'https://handymgr2.onrender.com';
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
@@ -647,7 +647,7 @@ function registerOfflineServiceWorker() {
   if (!window.isSecureContext && location.hostname !== 'localhost') return;
 
   var basePath = String(location.pathname || '/').replace(/[^/]*$/, '');
-  var swUrl = basePath + 'sw.js';
+  var swUrl = basePath + 'sw.js?v=' + encodeURIComponent(APP_VERSION);
 
   navigator.serviceWorker.register(swUrl)
     .then(function(reg) {
