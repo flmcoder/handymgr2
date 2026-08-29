@@ -382,6 +382,46 @@ function shouldForceVersionReload(serverVersion, appVersion) {
   return normalizedServer !== normalizedApp && compareVersions(normalizedServer, normalizedApp) > 0;
 }
 
+async function hardRefreshToCurrentVersion(serverVersion) {
+  try {
+    if ('serviceWorker' in navigator) {
+      var registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map(function(registration) { return registration.unregister(); }));
+    }
+    if ('caches' in window) {
+      var cacheKeys = await caches.keys();
+      await Promise.all(cacheKeys.map(function(cacheKey) { return caches.delete(cacheKey); }));
+    }
+  } catch (error) {
+    console.warn('Could not fully clear cached app files:', error && error.message ? error.message : error);
+  }
+
+  var refreshUrl = new URL(window.location.href);
+  refreshUrl.searchParams.set('hmfr', String(Date.now()));
+  refreshUrl.searchParams.set('hmfr_reason', 'version_update_' + String(serverVersion || 'current').replace(/[^a-z0-9.]/gi, ''));
+  window.location.replace(refreshUrl.toString());
+}
+
+async function checkForRequiredAppUpdate() {
+  try {
+    var healthUrl = API_BASE_URL.replace(/\/$/, '') + '/health?hm_version_check=' + Date.now();
+    var response = await fetch(healthUrl, {
+      method: 'GET',
+      cache: 'no-store'
+    });
+    var health = await response.json();
+    var currentServerVersion = health && health.version ? String(health.version) : '';
+    if (!shouldForceVersionReload(currentServerVersion, APP_VERSION)) return;
+
+    var accepted = window.confirm(
+      'A new version of HandyManager is available (' + currentServerVersion + '). The app needs to update before continuing. Click OK to load the current version.'
+    );
+    if (accepted) await hardRefreshToCurrentVersion(currentServerVersion);
+  } catch (error) {
+    console.warn('App version check failed:', error && error.message ? error.message : error);
+  }
+}
+
 function getConfiguredForceRefreshIntervalMs() {
   var configuredMs = 0;
   var configuredMinutes = 0;
@@ -473,6 +513,7 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', syncDisplayedAppVersion);
 }
 initForcedClientRefreshPolicy();
+void checkForRequiredAppUpdate();
 
 function applyBrandConfig(brand) {
   if (!brand || typeof brand !== 'object') return;

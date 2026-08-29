@@ -3654,6 +3654,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
 
 app.get('/health', async (_req: Request, res: Response) => {
   const dbOk = await pingDatabase();
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.status(dbOk ? 200 : 503).json({
     ok: dbOk,
     service: 'handymgr-backend',
