@@ -120,6 +120,8 @@ function getBuildVersion(): string {
   return String(process.env.APP_VERSION || process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'server-local').trim() || 'server-local';
 }
 
+const BUILD_VERSION = getBuildVersion();
+
 function isAuthDegradationMessage(text: string): boolean {
   return /401|403|unauthoriz|forbidden|invalid client|auth(?:entication)?|token exchange|credentials rejected|expired token|permission/i.test(String(text || ''));
 }
@@ -173,7 +175,7 @@ function buildProviderDiagnostics() {
   const deviceSetupPinConfigured = !!String(process.env.DEVICE_SETUP_PIN || '').trim();
 
   return {
-    version: getBuildVersion(),
+    version: BUILD_VERSION,
     ringcentral: {
       ok: ringCentralConfigured,
       configured: ringCentralConfigured,
@@ -2947,7 +2949,7 @@ app.use(cors({
 app.use((req: Request, res: Response, next: NextFunction) => {
   const startedAt = Date.now();
   res.on('finish', () => {
-    console.log(`[server:request] version=${getBuildVersion()} status=${res.statusCode} method=${req.method} path=${req.originalUrl} duration_ms=${Date.now() - startedAt}`);
+    console.log(`[server:request] version=${BUILD_VERSION} status=${res.statusCode} method=${req.method} path=${req.originalUrl} duration_ms=${Date.now() - startedAt}`);
   });
   next();
 });
@@ -3745,7 +3747,7 @@ app.get('/health', async (_req: Request, res: Response) => {
   res.status(dbOk ? 200 : 503).json({
     ok: dbOk,
     service: 'handymgr-backend',
-    version: getBuildVersion(),
+    version: BUILD_VERSION,
     database: dbOk ? 'up' : 'down',
   });
 });
@@ -3824,7 +3826,7 @@ app.get('/api/local/ping', async (_req: Request, res: Response) => {
       db_api: { ok: dbOk, status },
       reports_api: { ok: true, status: 200 },
       schema: { ok: true, missing_tables: [] },
-      version: getBuildVersion(),
+      version: BUILD_VERSION,
     });
   } catch (error) {
     logTunnelError(error, '/api/local/ping');
@@ -7731,8 +7733,8 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
 
 app.listen(PORT, HOST, () => {
-  console.log(`[server] Express backend listening on ${HOST}:${PORT} version=${getBuildVersion()}`);
-  console.log(`[server:version] active=${getBuildVersion()} package=${path.resolve(process.cwd(), 'package.json')} render_commit=${process.env.RENDER_GIT_COMMIT || 'unavailable'}`);
+  console.log(`[server] Express backend listening on ${HOST}:${PORT} version=${BUILD_VERSION}`);
+  console.log(`[server:version] active=${BUILD_VERSION} package=${path.resolve(process.cwd(), 'package.json')} render_commit=${process.env.RENDER_GIT_COMMIT || 'unavailable'}`);
   console.log('[server] Runtime command: npx tsx backend/server.ts');
   void (async () => {
     try {
