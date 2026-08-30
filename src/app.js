@@ -6,14 +6,14 @@ import './css/app.css';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-quartz.css';
 import * as echarts from 'echarts';
-import { ModuleRegistry, createGrid, InfiniteRowModelModule } from 'ag-grid-community';
+import { ModuleRegistry, createGrid, ClientSideRowModelModule, InfiniteRowModelModule, QuickFilterModule } from 'ag-grid-community';
 import { createAuthModule } from './auth.js';
 import { createTabsModule } from './tabs.js';
 import { createManagerReviewModule } from './managerReview.js';
 import { createNavInteractionsModule } from './navInteractions.js';
 import { createGroupFilterModule } from './groupFilter.js';
 
-ModuleRegistry.registerModules([InfiniteRowModelModule]);
+ModuleRegistry.registerModules([ClientSideRowModelModule, InfiniteRowModelModule, QuickFilterModule]);
 
 // ---- OTP Countdown Timer ----
 var _otpCountdownTimer = null;
@@ -1935,6 +1935,7 @@ function isVendorManuallyCompliant(vendorId) {
 var API_CREDS = null;
 var API_VHOST = null;
 var API_PROXY = '';
+var DEFAULT_API_VHOST = 'flraz';
 var _accessRole = 'full'; // 'full' | 'manager' | 'vendors' | 'pm_readonly'
 var _pmScopeGroupUuid = '';
 var _pmScopeEmail = '';
@@ -5058,7 +5059,7 @@ function _decodeConfigPayload(raw) {
 
 function getVaultConfigFromInputs() {
   return {
-    vhost: sanitizeVhost(($('#vaultVhost') && $('#vaultVhost').value) || ''),
+    vhost: sanitizeVhost(($('#vaultVhost') && $('#vaultVhost').value) || DEFAULT_API_VHOST),
     proxy: normalizeConfiguredProxy(($('#vaultProxy') && $('#vaultProxy').value) || ''),
     updatedAt: new Date().toISOString()
   };
@@ -5092,13 +5093,13 @@ function normalizeConfiguredProxy(raw) {
 }
 
 function applyVaultConfigToInputs(cfg) {
-  if (!cfg) return;
-  if ($('#vaultVhost') && cfg.vhost) {
-    $('#vaultVhost').value = sanitizeVhost(cfg.vhost);
-    $('#vhostPreview').textContent = $('#vaultVhost').value || 'yourco';
+  var vhost = sanitizeVhost((cfg && cfg.vhost) || DEFAULT_API_VHOST);
+  if ($('#vaultVhost')) {
+    $('#vaultVhost').value = vhost;
+    $('#vhostPreview').textContent = vhost;
   }
   if ($('#vaultProxy')) {
-    $('#vaultProxy').value = normalizeConfiguredProxy(cfg.proxy);
+    $('#vaultProxy').value = normalizeConfiguredProxy(cfg && cfg.proxy);
   }
 }
 
@@ -5215,8 +5216,8 @@ function sanitizeVhost(raw) {
 $('#vaultVhost').addEventListener('input', function() {
   var val = sanitizeVhost(this.value);
   this.value = val;
-  $('#vhostPreview').textContent = val || 'yourco';
-  if ($('#vhostPreviewPm')) $('#vhostPreviewPm').textContent = val || 'yourco';
+  $('#vhostPreview').textContent = val || DEFAULT_API_VHOST;
+  if ($('#vhostPreviewPm')) $('#vhostPreviewPm').textContent = val || DEFAULT_API_VHOST;
 });
 
 $('#vaultToggleVis').addEventListener('click', function() {
@@ -9081,27 +9082,6 @@ async function resolveWorkOrderApiUuid(woIdOrUuid, woContext) {
     if (isUuidString(contextUuid)) woRef = String(contextUuid);
   }
 
-  // Final fallback: ask proxy to resolve WO reference to DB API UUID.
-  if ((!woRef || !isUuidString(woRef)) && API_PROXY) {
-    try {
-      var detailData = await proxyAction('wo_detail', { wo_id: String(woIdOrUuid || '') });
-      var resolvedUuid = String(
-        (detailData && detailData.uuid) ||
-        (detailData && detailData.work_order && detailData.work_order.id) ||
-        (detailData && detailData.work_order && detailData.work_order.uuid) ||
-        (detailData && detailData.result && detailData.result.id) ||
-        (detailData && detailData.result && detailData.result.uuid) ||
-        (detailData && detailData.results && detailData.results[0] && detailData.results[0].id) ||
-        (detailData && detailData.results && detailData.results[0] && detailData.results[0].uuid) ||
-        (detailData && detailData.id) ||
-        ''
-      ).trim();
-      if (isUuidString(resolvedUuid)) woRef = resolvedUuid;
-    } catch (e) {
-      console.warn('[resolveWorkOrderApiUuid] wo_detail failed for', woIdOrUuid, ':', e.message || e);
-    }
-  }
-
   return isUuidString(woRef) ? woRef : '';
 }
 
@@ -9348,13 +9328,69 @@ function writeDetailText(id, value) {
   el.textContent = String(value || '—');
 }
 
+function resolveWODisplayContext(wo, detail) {
+  var source = detail && typeof detail === 'object' ? detail : {};
+  var propertyId = String(source.property_id || source.PropertyId || wo.propertyId || '').trim();
+  var unitId = String(source.unit_id || source.UnitId || wo.unitId || (isUuidString(wo.unit || '') ? wo.unit : '') || '').trim();
+  var unit = (UNITS || []).find(function(candidate) {
+    var candidateId = String(candidate.unit_id || candidate.unitId || candidate.id || candidate.Id || '').trim();
+    return candidateId && candidateId.toLowerCase() === unitId.toLowerCase();
+  }) || null;
+  if (!propertyId && unit) propertyId = String(unit.property_id || unit.propertyId || unit.PropertyId || '').trim();
+
+  var property = null;
+  if (propertyId && window.AppDB && window.AppDB.properties) {
+    property = window.AppDB.properties.get(propertyId) || null;
+  }
+  if (!property && propertyId) {
+    property = (PROPERTIES || []).find(function(candidate) {
+      var keys = [candidate.id, candidate.Id, candidate.property_id, candidate.PropertyId, candidate.uuid];
+      return keys.some(function(key) { return String(key || '').trim().toLowerCase() === propertyId.toLowerCase(); });
+    }) || null;
+  }
+
+  var propertyName = String(
+    source.property_name || source.PropertyName ||
+    (property && (property.name || property.Name || property.property_name)) ||
+    wo.propertyName || ''
+  ).trim();
+  var unitName = String(
+    source.unit_name || source.UnitName ||
+    (unit && (unit.name || unit.Name || unit.unit_name || unit.unit_number || unit.UnitNumber)) ||
+    (!isUuidString(wo.unit || '') ? wo.unit : '') || ''
+  ).trim();
+  var street = String(source.property_street || source.street || (property && (property.address || property.street)) || '').trim();
+  var city = String(source.property_city || source.city || (property && property.city) || '').trim();
+  var state = String(source.property_state || source.state || (property && property.state) || '').trim();
+  var zip = String(source.property_zip || source.zip || (property && property.zip) || '').trim();
+  var address = [street, city, state, zip].filter(Boolean).join(', ');
+  if (!address) address = String(wo.propertyAddress || '').trim();
+
+  return {
+    propertyName: propertyName || (!isUuidString(propertyId) ? propertyId : '') || '—',
+    unitName: unitName || '—',
+    address: address || '—',
+    siteManager: String((property && (property.siteManager || property.site_manager)) || '').trim() || '—'
+  };
+}
+
 async function loadWODetailExtras(wo, woDbUuid) {
   var ref = woDbUuid || (wo && (wo.uuid || wo.id));
   if (!ref) return;
   try {
-    var data = await proxyAction('wo_detail', { wo_id: String(ref) });
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var headers = { 'Accept': 'application/json' };
+    var token = getProxyAccessToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    var response = await fetchWithTimeout(localBase + '/api/local/work_orders/' + encodeURIComponent(String(ref)) + '/detail', { headers: headers }, 30000);
+    var data = {};
+    try { data = await response.json(); } catch (parseError) { data = {}; }
+    if (!response.ok || data.ok === false) {
+      throw new Error(String(data.error || data.message || ('HTTP ' + response.status)));
+    }
     var detail = extractWODetailRecord(data);
     if (!detail) return;
+    var display = resolveWODisplayContext(wo, detail);
     var createdAt = detail.CreatedAt || detail.created_at || detail.CreatedOn || detail.created_on || wo.created || wo.createdAt || '';
     var jobDescription = detail.JobDescription || detail.job_description || detail.Description || detail.description || wo.description || '—';
     var permission = detail.PermissionToEnter || detail.permission_to_enter || detail.AccessNotes || detail.access_notes || wo.permissionToEnter || '—';
@@ -9371,8 +9407,12 @@ async function loadWODetailExtras(wo, woDbUuid) {
     writeDetailText('detailTenantPhone', tenantPhone || '—');
     writeDetailText('detailTenantEmail', tenantEmail || '—');
     writeDetailText('detailAssignedTo', Array.isArray(assignedTo) ? assignedTo.join(', ') : assignedTo || '—');
+    writeDetailText('detailPropertyName', display.propertyName);
+    writeDetailText('detailUnitName', display.unitName);
+    writeDetailText('detailPropertyAddress', display.address);
+    writeDetailText('detailSiteMgr', display.siteManager);
   } catch (e) {
-    writeDetailText('detailAttachmentTypes', 'debug: live detail unavailable');
+    console.warn('[loadWODetailExtras] local detail unavailable for', ref, e && e.message ? e.message : e);
   }
 }
 
@@ -13442,6 +13482,7 @@ var currentWOView = (function() {
 })(); // 'board' | 'list'
 var currentWOSubtab = 'active'; // active | completed | closure | followup
 var currentWOTab = 'active'; // 'active' | 'inactive' - for active vs inactive work orders
+var currentWOGridSearch = '';
 var woGridApi = null;
 var inspectionsGridApi = null;
 var WO_ANALYTICS_FILTERS = { ageBucket: '', owner: '', status: '' };
@@ -13899,8 +13940,9 @@ async function fetchReportRows(reportName, payload, statusLabel) {
       if (!data || data.ok === false) {
         throw new Error((data && data.error) || ('Report failed: ' + reportName));
       }
-      if (statusLabel) setApiStatus('loading', statusLabel + ': ' + ((data && data.results && data.results.length) || 0) + ' rows');
-      return Array.isArray(data && data.results) ? data.results : [];
+      var rows = Array.isArray(data) ? data : (Array.isArray(data && data.results) ? data.results : []);
+      if (statusLabel) setApiStatus('loading', statusLabel + ': ' + rows.length + ' rows');
+      return rows;
     }
     throw new Error('429: Rate limited while loading report ' + reportName);
   }
@@ -14767,6 +14809,7 @@ function renderBillingSection(opts) {
 
 function getReportRows(payload, preferredKey) {
   var data = payload || {};
+  if (Array.isArray(data)) return data;
   if (preferredKey && Array.isArray(data[preferredKey])) return data[preferredKey];
   if (Array.isArray(data.results)) return data.results;
   if (Array.isArray(data.data)) return data.data;
@@ -16863,7 +16906,7 @@ function renderWOAnalyticsCharts(rows) {
     toolbox: { right: 8, feature: { saveAsImage: {}, restore: {} } },
     series: [{
       type: 'sunburst',
-      radius: ['18%', '88%'],
+      radius: ['18%', '80%'],
       nodeClick: false,
       sort: null,
       emphasis: { focus: 'ancestor' },
@@ -16871,7 +16914,7 @@ function renderWOAnalyticsCharts(rows) {
       levels: [
         {},
         { r0: '18%', r: '52%', itemStyle: { borderWidth: 2 } },
-        { r0: '52%', r: '88%', itemStyle: { borderWidth: 1 }, label: { rotate: 'radial' } }
+        { r0: '52%', r: '80%', itemStyle: { borderWidth: 1 }, label: { rotate: 'radial', minAngle: 8, fontSize: 9 } }
       ]
     }]
   });
@@ -16895,18 +16938,20 @@ function renderWOAnalyticsCharts(rows) {
   }, 40);
 }
 
-function renderWorkOrdersGrid() {
+function renderWorkOrdersGrid(rows) {
   var host = document.getElementById('woGridHost');
+  var searchInput = document.getElementById('woGridQuickSearch');
   if (!host) return;
   destroyGridInstance('wo');
 
   woGridApi = createGrid(host, {
     theme: 'legacy',
-    rowModelType: 'infinite',
-    cacheBlockSize: 100,
-    maxBlocksInCache: 8,
+    rowModelType: 'clientSide',
+    rowData: Array.isArray(rows) ? rows : [],
     rowSelection: 'single',
     suppressCellFocus: true,
+    includeHiddenColumnsInQuickFilter: true,
+    quickFilterText: currentWOGridSearch,
     overlayNoRowsTemplate: '<span style="padding:10px;color:var(--text-muted)">No work orders match the current filters.</span>',
     defaultColDef: {
       sortable: true,
@@ -16918,6 +16963,7 @@ function renderWorkOrdersGrid() {
     columnDefs: [
       { field: 'id', headerName: 'WO #', minWidth: 96, maxWidth: 120, cellRenderer: function(p){ return '<strong>#' + escapeHtml(String(p.value || '')) + '</strong>'; } },
       { field: 'propertyName', headerName: 'Property', minWidth: 180 },
+      { field: 'propertyManager', headerName: 'Property Manager', hide: true },
       { field: 'unit', headerName: 'Unit', minWidth: 90, maxWidth: 110 },
       { field: 'description', headerName: 'Description', minWidth: 240, flex: 2 },
       { field: 'status', headerName: 'Status', minWidth: 130 },
@@ -16925,13 +16971,20 @@ function renderWorkOrdersGrid() {
       { field: 'owner', headerName: 'Owner', minWidth: 150 },
       { field: 'ageDays', headerName: 'Age (d)', minWidth: 96, maxWidth: 110, sort: currentWOSort === 'oldest' ? 'desc' : undefined }
     ],
-    datasource: createWorkOrdersServerDatasource(),
     onRowClicked: function(evt) {
       var wo = evt && evt.data && evt.data.__raw;
       if (!wo || !wo.id) return;
       showWODetail(wo.id);
     }
   });
+
+  if (searchInput) {
+    searchInput.value = currentWOGridSearch;
+    searchInput.addEventListener('input', function() {
+      currentWOGridSearch = String(this.value || '');
+      if (woGridApi) woGridApi.setGridOption('quickFilterText', currentWOGridSearch);
+    });
+  }
 }
 
 function renderInspectionsGrid() {
@@ -17004,9 +17057,21 @@ function renderWorkOrders() {
     var woGridRowsBase = filtered.map(function(wo) {
       var age = getWOAgeMeta(wo);
       var owner = String(wo.assignedUser || wo.vendorName || 'Unassigned').trim() || 'Unassigned';
+      var property = wo.propertyId && window.AppDB && window.AppDB.properties
+        ? window.AppDB.properties.get(String(wo.propertyId))
+        : null;
+      if (!property && wo.propertyId) {
+        property = (PROPERTIES || []).find(function(candidate) {
+          return String(candidate.id || candidate.property_id || '').trim() === String(wo.propertyId).trim();
+        }) || null;
+      }
       return {
         id: wo.id,
         propertyName: wo.propertyName || '-',
+        propertyManager: String(
+          wo.propertyManager || wo.property_manager || wo.siteManager || wo.site_manager ||
+          (property && (property.siteManager || property.site_manager || property.propertyManager)) || ''
+        ).trim(),
         unit: wo.unit || '-',
         description: wo.description || '-',
         status: wo.status || '-',
@@ -17031,12 +17096,16 @@ function renderWorkOrders() {
       '    <article class="wo-chart-card"><header>Owner Territory Map (click to filter)</header><div id="woOwnerChart" class="wo-chart-host"></div></article>' +
       '    <article class="wo-chart-card"><header>Status x Owner Sunburst (click rings)</header><div id="woStatusChart" class="wo-chart-host"></div></article>' +
       '  </div>' +
-      '  <div class="wo-grid-meta">Server-backed AG Grid blocks are live. Scroll loads offset/limit windows from backend endpoints.</div>' +
+      '  <div class="wo-grid-meta">' + woGridRowsBase.length + ' work orders loaded</div>' +
+      '  <label class="wo-grid-search" for="woGridQuickSearch">' +
+      '    <i class="fas fa-search" aria-hidden="true"></i>' +
+      '    <input id="woGridQuickSearch" type="search" autocomplete="off" placeholder="Search by property manager, WO number, vendor, property, unit, status…" aria-label="Search work orders grid">' +
+      '  </label>' +
       '  <div id="woGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--wo"></div>' +
       '</div>';
 
     renderWOAnalyticsCharts(woGridRowsBase);
-    renderWorkOrdersGrid();
+    renderWorkOrdersGrid(woGridRowsBase);
     renderWOChartFilterBadges();
 
     var clearFiltersBtn = document.getElementById('woAnalyticsClearFilters');
@@ -17747,6 +17816,7 @@ function showWODetail(id) {
   if (!wo) return;
   var woDbUuid = resolveWODbUuid(wo);
   var woRefForApi = woDbUuid || (isUuidString(wo.uuid || '') ? String(wo.uuid) : '') || String(wo.id || '');
+  var displayContext = resolveWODisplayContext(wo, null);
   CURRENT_WO_MODAL = { woId: String(wo.id), woDbUuid: isUuidString(woRefForApi) ? woRefForApi : '' };
 
   // Diagnostic: if v2 data and no UUID resolved, log candidate fields to console
@@ -17807,9 +17877,9 @@ function showWODetail(id) {
   // -- Property & Unit Section --
   html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-building"></i> Property &amp; Unit</div>';
   html += '<div class="detail-grid">';
-  html += '<div class="detail-row"><div class="detail-row-label">Property</div><div class="detail-row-value">' + escapeHtml(wo.propertyName) + '</div></div>';
-  html += '<div class="detail-row"><div class="detail-row-label">Unit</div><div class="detail-row-value">' + escapeHtml(wo.unit || '\u2014') + '</div></div>';
-  html += '<div class="detail-row"><div class="detail-row-label">Address</div><div class="detail-row-value">' + escapeHtml(wo.propertyAddress || '\u2014') + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Property</div><div class="detail-row-value" id="detailPropertyName">' + escapeHtml(displayContext.propertyName) + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Unit</div><div class="detail-row-value" id="detailUnitName">' + escapeHtml(displayContext.unitName) + '</div></div>';
+  html += '<div class="detail-row"><div class="detail-row-label">Address</div><div class="detail-row-value" id="detailPropertyAddress">' + escapeHtml(displayContext.address) + '</div></div>';
   html += '<div class="detail-row"><div class="detail-row-label">Site Manager</div><div class="detail-row-value" id="detailSiteMgr">—</div></div>';
   html += '</div></div>';
 
@@ -17865,15 +17935,7 @@ function showWODetail(id) {
     errEl.style.display = 'block';
   }
 
-  // Cache-only site manager lookup (no live API call)
-  if (wo.propertyId) {
-    var prop = PROPERTIES.find(function(p) { return p.id === wo.propertyId || String(p.id) === String(wo.propertyId); });
-    var smEl = document.getElementById('detailSiteMgr');
-    if (smEl) smEl.textContent = (prop && prop.siteManager) ? prop.siteManager : '\u2014';
-  } else {
-    var smEl = document.getElementById('detailSiteMgr');
-    if (smEl) smEl.textContent = '\u2014';
-  }
+  writeDetailText('detailSiteMgr', displayContext.siteManager);
 
   // Async: fetch notes (use resolved DB API UUID for /api/v0/ endpoint)
   if (isUuidString(woRefForApi)) delete WO_DETAIL_CACHE['notes_' + woRefForApi];

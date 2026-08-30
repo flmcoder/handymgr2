@@ -1593,7 +1593,7 @@ async function fetchAndRenderDashboardData(): Promise<void> {
       }), { headers });
       if (resp.ok) {
         const payload = await resp.json();
-        const rows = Array.isArray(payload?.results) ? payload.results : [];
+        const rows = Array.isArray(payload) ? payload : (Array.isArray(payload?.results) ? payload.results : []);
         const monthMap: Record<string, number> = {};
         const now = Date.now();
         const horizon = now + (90 * 86400000);
@@ -1656,7 +1656,7 @@ async function fetchAndRenderDashboardData(): Promise<void> {
       }), { headers });
       if (resp.ok) {
         const payload = await resp.json();
-        const rows = Array.isArray(payload?.results) ? payload.results : [];
+        const rows = Array.isArray(payload) ? payload : (Array.isArray(payload?.results) ? payload.results : []);
         const inByMonth: Record<string, number> = {};
         const outByMonth: Record<string, number> = {};
         const now = new Date();

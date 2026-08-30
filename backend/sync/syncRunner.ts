@@ -170,7 +170,7 @@ const ENDPOINTS: Record<string, EndpointDef> = {
         'tenant_primary_phone_number', 'move_in_date', 'move_out_date', 'unit_id', 'occupancy_id', 'rentable', 'unit_tags',
       ],
     }),
-    extractRows: (data) => data?.results ?? data?.data ?? [],
+    extractRows: (data) => Array.isArray(data) ? data : (data?.results ?? data?.data ?? []),
     upsert: upsertUnitInspections,
   },
 
@@ -192,7 +192,7 @@ const ENDPOINTS: Record<string, EndpointDef> = {
         'move_out', 'unit_tags', 'occupancy_id',
       ],
     }),
-    extractRows: (data) => data?.results ?? data?.data ?? [],
+    extractRows: (data) => Array.isArray(data) ? data : (data?.results ?? data?.data ?? []),
     upsert: upsertTenantDirectory,
   },
 
@@ -214,7 +214,7 @@ const ENDPOINTS: Record<string, EndpointDef> = {
         'property_id', 'unit_id',
       ],
     }),
-    extractRows: (data) => data?.results ?? data?.data ?? [],
+    extractRows: (data) => Array.isArray(data) ? data : (data?.results ?? data?.data ?? []),
     upsert: upsertUnitTurnDetails,
   },
 
@@ -233,7 +233,7 @@ const ENDPOINTS: Record<string, EndpointDef> = {
         'vacant_from', 'available_on', 'market_rent', 'bedrooms', 'bathrooms', 'days_vacant', 'status',
       ],
     }),
-    extractRows: (data) => data?.results ?? data?.data ?? [],
+    extractRows: (data) => Array.isArray(data) ? data : (data?.results ?? data?.data ?? []),
     upsert: upsertUnitVacancies,
   },
 };

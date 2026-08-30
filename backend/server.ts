@@ -2942,6 +2942,26 @@ async function requireProxySession(req: Request, res: Response): Promise<any | n
   return session;
 }
 
+function applyProxySessionScope(req: Request, res: Response, session: any): boolean {
+  const requestedGroupId = getRequestedPropertyGroupId(req);
+  const role = String(session?.role || '').toLowerCase();
+  const sessionGroupId = normalizeScopeUuid(session?.property_group_uuid || '');
+  if (role === 'pm_readonly' && !sessionGroupId) {
+    res.status(403).json({ ok: false, error: 'PM session missing scoped property group' });
+    return false;
+  }
+
+  (req as any).localScope = {
+    role,
+    requestedGroupId,
+    sessionGroupId,
+    effectiveGroupId: role === 'pm_readonly' ? sessionGroupId : requestedGroupId,
+    scopeSource: role === 'pm_readonly' ? 'session' : 'query',
+    enforced: role === 'pm_readonly',
+  } as LocalScopeContext;
+  return true;
+}
+
 async function proxyAppFolioAction(req: Request, res: Response, apiPath: string): Promise<void> {
   const safePath = String(apiPath || '').trim();
   if (!safePath.startsWith('/api/v0/') && !safePath.startsWith('/api/v2/')) {
@@ -3359,6 +3379,7 @@ async function fetchV2ReportRows(req: Request, reportName: string, payload: Reco
     throw new Error(`v2 ${reportName} failed: ${errText}`);
   }
 
+  if (Array.isArray(parsed)) return parsed;
   return Array.isArray(parsed?.results) ? parsed.results : [];
 }
 
@@ -3396,6 +3417,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     try {
       const session = await requireProxySession(req, res);
       if (!session) return;
+      if (!applyProxySessionScope(req, res, session)) return;
       const reportName = String(req.query.name || '').trim().replace(/[^a-z0-9_]/gi, '');
       if (!reportName) {
         res.status(400).json({ ok: false, error: 'Missing report name' });
@@ -3413,6 +3435,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     try {
       const session = await requireProxySession(req, res);
       if (!session) return;
+      if (!applyProxySessionScope(req, res, session)) return;
       const reportName = String(req.query.report || req.query.name || '').trim().replace(/[^a-z0-9_]/gi, '');
       if (!reportName) {
         res.status(400).json({ ok: false, error: 'Missing report name' });
@@ -4728,6 +4751,57 @@ app.get('/api/local/work_orders/:workOrderRef/notes', async (req: Request, res: 
   } catch (error) {
     logTunnelError(error, '/api/local/work_orders/:workOrderRef/notes');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local notes query failed') });
+  }
+});
+
+app.get('/api/local/work_orders/:workOrderRef/detail', async (req: Request, res: Response) => {
+  try {
+    const workOrderRef = String(req.params.workOrderRef || '').trim().replace(/^#/, '');
+    if (!workOrderRef) {
+      res.status(400).json({ ok: false, error: 'Missing work order reference' });
+      return;
+    }
+
+    const resolvedUuid = await resolveWorkOrderUuid(workOrderRef);
+    const numericRef = workOrderRef.replace(/[^0-9]/g, '');
+    const rows = await queryClient.unsafe(
+      `select
+         wo.*,
+         coalesce(p.name, wo.raw_json->>'property_name', '') as resolved_property_name,
+         coalesce(p.street, wo.raw_json->>'property_street', '') as resolved_property_street,
+         coalesce(p.city, wo.raw_json->>'property_city', '') as resolved_property_city,
+         coalesce(p.state, wo.raw_json->>'property_state', '') as resolved_property_state,
+         coalesce(p.zip, wo.raw_json->>'property_zip', '') as resolved_property_zip,
+         coalesce(u.name, u.unit_number, wo.raw_json->>'unit_name', '') as resolved_unit_name
+       from appfolio_work_orders wo
+       left join appfolio_properties p on p.id = wo.property_id
+       left join appfolio_units u on u.unit_id = wo.unit_id
+       where wo.id = $1
+          or wo.wo_number = $1
+          or ($2 <> '' and regexp_replace(coalesce(wo.wo_number, ''), '[^0-9]', '', 'g') = $2)
+          or ($3 <> '' and (to_jsonb(wo)->>'work_order_uuid' = $3 or wo.id = $3))
+       order by wo.updated_at desc nulls last
+       limit 1`,
+      [workOrderRef, numericRef, resolvedUuid],
+    );
+
+    const row = (rows as any[])[0];
+    if (!row) {
+      res.status(404).json({ ok: false, error: 'Work order not found' });
+      return;
+    }
+
+    const detail = normalizeWorkOrderRow(row);
+    detail.property_name = String(row.resolved_property_name || detail.property_name || '');
+    detail.property_street = String(row.resolved_property_street || '');
+    detail.property_city = String(row.resolved_property_city || '');
+    detail.property_state = String(row.resolved_property_state || '');
+    detail.property_zip = String(row.resolved_property_zip || '');
+    detail.unit_name = String(row.resolved_unit_name || detail.unit_name || '');
+    res.json({ ok: true, result: detail, work_order_uuid: resolvedUuid || detail.work_order_uuid || '' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/work_orders/:workOrderRef/detail');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local work order detail query failed') });
   }
 });
 
