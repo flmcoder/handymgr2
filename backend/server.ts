@@ -7595,8 +7595,15 @@ app.get('/api/local/sync/v2_probe', async (req: Request, res: Response) => {
       {
         report: 'unit_vacancy',
         body: {
-          property_visibility: 'active',
-          columns: ['property', 'property_id', 'unit', 'unit_id', 'vacant_from', 'status'],
+          unit_visibility: 'active',
+          level_of_detail: 'detail_view',
+          bedrooms: 'any',
+          bathrooms: 'any',
+          columns: [
+            'property', 'property_name', 'property_id', 'unit', 'unit_id', 'unit_tags',
+            'bed_and_bath', 'unit_status', 'rent_ready', 'days_vacant', 'last_rent',
+            'last_move_out', 'available_on', 'computed_market_rent',
+          ],
         },
       },
     ];
