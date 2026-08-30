@@ -49,6 +49,8 @@ projects:
         sync: false
       - key: SSH_DB_TUNNEL_READY_TIMEOUT_MS
         sync: false
+      - key: SYNC_SCHEDULER_V2_ENABLED
+        value: "true"
       region: oregon
       buildCommand: npm install && npm run build
       startCommand: npm start

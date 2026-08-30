@@ -4,6 +4,7 @@ import cors from 'cors';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { readFile } from 'node:fs/promises';
 import { flattenedVerify } from 'jose';
 import { and, asc, eq, gte, or, sql } from 'drizzle-orm';
 import { db, pingDatabase, queryClient } from './db';
@@ -495,6 +496,13 @@ const SYNC_ENDPOINT_BLOCKLIST = new Set<string>([
   'v2:work_orders',
 ]);
 
+const REQUIRED_V2_SYNC_ENDPOINTS = [
+  'v2:tenant_directory',
+  'v2:unit_inspection',
+  'v2:unit_turn_detail',
+  'v2:unit_vacancy',
+];
+
 function sanitizeSyncEndpoints(
   requested: string[],
   fallback: string[],
@@ -739,6 +747,28 @@ const REPORT_POLICY_TTL_MS = 5 * 60_000;
 let reportLatencyTableEnsured = false;
 const reportMonitorInFlight = new Set<string>();
 let propertyGroupsTableEnsured = false;
+let syncDriftMigrationApplied = false;
+
+async function applySyncDriftMigration(): Promise<void> {
+  if (syncDriftMigrationApplied) return;
+
+  const migrationUrl = new URL('../db/migrations/2026-08-30_postgres_v2_sync_drift_repair.sql', import.meta.url);
+  const rawSql = await readFile(migrationUrl, 'utf8');
+  const statements = rawSql
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n')
+    .split(/;\s*\n/)
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+
+  for (const statement of statements) {
+    await queryClient.unsafe(statement);
+  }
+
+  syncDriftMigrationApplied = true;
+  console.log(`[server:migration] applied v2 sync drift repair (${statements.length} statements)`);
+}
 
 async function ensureReportLatencyPolicyTable(): Promise<void> {
   if (reportLatencyTableEnsured) return;
@@ -4541,7 +4571,7 @@ app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
         coalesce(td.phone_numbers, i.tenant_primary_phone_number, '') as tenant_primary_phone_number,
         coalesce(td.move_in_date::date, i.move_in_date::date, null) as move_in_date,
         coalesce(td.move_out_date::date, i.move_out_date::date, null) as move_out_date,
-        coalesce(td.status, i.tenant_status, 'Current') as tenant_status,
+        coalesce(td.status, 'Current') as tenant_status,
         coalesce(td.occupancy_id, i.occupancy_id, '') as occupancy_id,
         i.rentable,
         i.unit_tags,
@@ -6340,65 +6370,6 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
     const propertyGroupId = getPropertyGroupFilter(req);
     const activeOnly = /^(1|true|yes|on)$/i.test(String(req.query.active_only || '1').trim());
     const groupKey = String(propertyGroupId || '');
-    const inspectionPolicy = await readReportPolicy('v2:unit_inspection', groupKey);
-    const preferLocalUntilMs = Date.parse(String(inspectionPolicy?.prefer_local_until || ''));
-    const lastCheckedAtMs = Date.parse(String(inspectionPolicy?.last_checked_at || ''));
-    const preferLocal = Number.isFinite(preferLocalUntilMs) && preferLocalUntilMs > Date.now();
-
-    if (!preferLocal) {
-      const fastLive = await fetchLiveInspectionRows(groupKey, REPORT_FAST_MS);
-      if (fastLive.ok && fastLive.latencyMs <= REPORT_FAST_MS) {
-        await upsertReportPolicy('v2:unit_inspection', groupKey, 'fast', fastLive.latencyMs, {
-          mode: 'fast_live',
-          status: fastLive.status,
-          row_count: fastLive.rows.length,
-        }, null);
-
-        let liveResults = mapLiveInspectionRows(fastLive.rows);
-        if (activeOnly) {
-          const todayIso = new Date().toISOString().slice(0, 10);
-          liveResults = liveResults.filter((row) => {
-            const moveIn = String(row.move_in_date || '').slice(0, 10);
-            if (moveIn && moveIn > todayIso) return false;
-            const moveOut = String(row.move_out_date || '').slice(0, 10);
-            if (moveOut && moveOut < todayIso) return false;
-            return true;
-          });
-        }
-
-        const pagedLiveResults = liveResults.slice(offset, offset + limit);
-
-        res.json({
-          ok: true,
-          results: pagedLiveResults,
-          count: pagedLiveResults.length,
-          total: liveResults.length,
-          limit,
-          offset,
-          source: 'appfolio_live_fast',
-          latency_ms: fastLive.latencyMs,
-          property_group_id: groupKey,
-          latency_policy: {
-            dataset_key: 'v2:unit_inspection',
-            status: 'fast',
-            threshold_fast_ms: REPORT_FAST_MS,
-            threshold_slow_ms: REPORT_SLOW_MS,
-          },
-        });
-        return;
-      }
-
-      if (fastLive.ok) {
-        await upsertReportPolicy('v2:unit_inspection', groupKey, 'warm', fastLive.latencyMs, {
-          mode: 'fast_gate',
-          status: fastLive.status,
-        }, null);
-      }
-
-      void monitorInspectionSlowPath(groupKey);
-    } else if (!Number.isFinite(lastCheckedAtMs) || (Date.now() - lastCheckedAtMs) > REPORT_POLICY_TTL_MS) {
-      void monitorInspectionSlowPath(groupKey);
-    }
 
     let rows: any[] = [];
     try {
@@ -7445,13 +7416,15 @@ app.post('/api/admin/sync', async (req: Request, res: Response) => {
       return;
     }
     const triggerType = String(req.body?.triggerType ?? 'manual').trim();
-    const maxPages    = Number(req.body?.maxPages ?? 0);
+    const maxPages = Number(req.body?.maxPages ?? 0);
+    const lookbackDays = Math.max(1, Math.min(3650, Number(req.body?.lookbackDays ?? 180) || 180));
+    const forceLookback = /^(1|true|yes|on)$/i.test(String(req.body?.forceLookback ?? '').trim());
 
     // Respond 202 immediately; sync runs async.
-    res.status(202).json({ ok: true, accepted: true, endpointKey, triggerType });
+    res.status(202).json({ ok: true, accepted: true, endpointKey, triggerType, lookbackDays, forceLookback });
 
     const { runSync } = await import('./sync/syncRunner.ts');
-    runSync({ endpointKey, triggerType, maxPages }).catch((err: unknown) => {
+    runSync({ endpointKey, triggerType, maxPages, lookbackDays, forceLookback }).catch((err: unknown) => {
       console.error('[server:sync] uncaught sync error', String((err as any)?.message ?? err));
     });
   } catch (error) {
@@ -7737,7 +7710,11 @@ function startRecurringSyncScheduler(): void {
     .split(',')
     .map((value) => String(value || '').trim())
     .filter(Boolean);
-  const endpointSelection = sanitizeSyncEndpoints(configuredEndpoints, defaultEndpoints, 'scheduler_env');
+  const v2Enabled = !/^(0|false|no|off)$/i.test(String(process.env.SYNC_SCHEDULER_V2_ENABLED || 'true').trim());
+  const requestedEndpoints = v2Enabled
+    ? configuredEndpoints.concat(REQUIRED_V2_SYNC_ENDPOINTS)
+    : configuredEndpoints.filter((endpoint) => !endpoint.startsWith('v2:'));
+  const endpointSelection = sanitizeSyncEndpoints(requestedEndpoints, defaultEndpoints, 'scheduler_env');
   const endpoints = endpointSelection.accepted;
   const maxPages = Math.max(0, Number(process.env.SYNC_SCHEDULER_MAX_PAGES || '0') || 0);
   const runOnBoot = !/^(0|false|no|off)$/i.test(String(process.env.SYNC_SCHEDULER_RUN_ON_BOOT || 'true').trim());
@@ -7800,10 +7777,11 @@ app.listen(PORT, HOST, () => {
   console.log('[server] Runtime command: npx tsx backend/server.ts');
   void (async () => {
     try {
+      await applySyncDriftMigration();
       await ensurePropertyGroupsTable();
+      startRecurringSyncScheduler();
     } catch (error) {
-      console.error('[server] Failed to ensure property groups table:', String((error as any)?.message || error));
+      console.error('[server] Startup schema repair failed; sync scheduler not started:', String((error as any)?.message || error));
     }
-    startRecurringSyncScheduler();
   })();
 });
