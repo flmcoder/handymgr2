@@ -7781,6 +7781,7 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
 
 app.listen(PORT, HOST, () => {
+  const processStartedAt = new Date();
   console.log(`[server] HandyManager ${getBuildVersion()} listening on ${HOST}:${PORT}`);
   console.log(`[server] Render commit: ${process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'local'}`);
   console.log('[server] Runtime command: npx tsx backend/server.ts');
@@ -7788,6 +7789,8 @@ app.listen(PORT, HOST, () => {
     try {
       await applySyncDriftMigration();
       await ensurePropertyGroupsTable();
+      const { failInterruptedRuns } = await import('./sync/runStore.ts');
+      await failInterruptedRuns(processStartedAt);
       startRecurringSyncScheduler();
     } catch (error) {
       console.error('[server] Startup schema repair failed; sync scheduler not started:', String((error as any)?.message || error));

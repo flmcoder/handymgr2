@@ -13,7 +13,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, lt } from 'drizzle-orm';
 import { db } from '../db.ts';
 import { syncJobRuns, syncJobCursors } from '../schema.ts';
 
@@ -24,6 +24,20 @@ export interface RunContext {
   triggerType: string;
   executionStartCursor: string; // ISO timestamp of job start — used for next incremental filter
   filtersFingerprint: string | null;
+}
+
+export async function failInterruptedRuns(startedBefore: Date): Promise<void> {
+  await db
+    .update(syncJobRuns)
+    .set({
+      status: 'failed',
+      completedAt: new Date(),
+      lastError: 'Interrupted by service restart',
+    })
+    .where(and(
+      eq(syncJobRuns.status, 'running'),
+      lt(syncJobRuns.startedAt, startedBefore),
+    ));
 }
 
 /** Start a new sync run. Returns the run context needed by downstream workers. */
