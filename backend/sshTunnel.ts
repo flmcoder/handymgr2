@@ -234,6 +234,7 @@ async function startTunnel(config: TunnelConfig, isRestart = false): Promise<voi
       })
       .catch((error) => {
         child.kill('SIGTERM');
+        scheduleRestart(config);
         reject(error);
       });
   });
