@@ -220,17 +220,15 @@ const ENDPOINTS: Record<string, EndpointDef> = {
 
   'v2:unit_vacancy': {
     apiVersion: 'v2',
-    buildFirstRequest: ({ incrementalFrom, lookbackDays, forceLookback }) => buildV2ReportRequest('unit_vacancy', {
-      property_visibility: 'active',
-      vacant_from_from: toIsoDate(
-        forceLookback
-          ? new Date(Date.now() - Math.max(1, Math.min(3650, Number(lookbackDays || 180))) * 86400_000)
-          : (incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
-      ),
-      vacant_from_to: toIsoDate(new Date()),
+    buildFirstRequest: () => buildV2ReportRequest('unit_vacancy', {
+      unit_visibility: 'active',
+      level_of_detail: 'detail_view',
+      bedrooms: 'any',
+      bathrooms: 'any',
       columns: [
-        'property', 'property_name', 'property_id', 'unit', 'unit_name', 'unit_id',
-        'vacant_from', 'available_on', 'market_rent', 'bedrooms', 'bathrooms', 'days_vacant', 'status',
+        'property', 'property_name', 'property_id', 'unit', 'unit_id', 'unit_tags',
+        'bed_and_bath', 'unit_status', 'rent_ready', 'days_vacant', 'last_rent',
+        'last_move_out', 'available_on', 'computed_market_rent',
       ],
     }),
     extractRows: (data) => Array.isArray(data) ? data : (data?.results ?? data?.data ?? []),

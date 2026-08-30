@@ -7751,9 +7751,11 @@ function startRecurringSyncScheduler(): void {
     syncSchedulerState.lastTickTriggerType = triggerType;
     syncSchedulerState.lastTickStartedAt = new Date().toISOString();
     await ensurePropertyGroupsTable();
-    for (const endpointKey of endpoints) {
+    const endpointGroups = getSchedulerEndpointGroups(endpoints);
+    for (const endpointKey of endpointGroups.v0.concat(endpointGroups.other)) {
       await runEndpoint(endpointKey, triggerType);
     }
+    await Promise.all(endpointGroups.v2.map((endpointKey) => runEndpoint(endpointKey, triggerType)));
     syncSchedulerState.lastTickFinishedAt = new Date().toISOString();
   }
 
