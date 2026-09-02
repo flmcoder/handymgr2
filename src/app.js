@@ -6100,14 +6100,15 @@ async function fetchWorkOrders() {
         propertyId: r.property_id || r.PropertyId || '',
         propertyGroupId: String(r.property_group_id || r.property_group_uuid || r.PropertyGroupId || r.PropertyGroupUuid || '').trim(),
         propertyName: r.property_name || r.property || r.PropertyName || '',
-        propertyAddress: ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
+        propertyAddress: r.property_address || ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
+        siteManager: r.site_manager || r.property_manager || '',
         unitId: r.unit_id || r.UnitId || '',
         unitTurnId: r.unit_turn_id || r.UnitTurnId || '',
         unit: r.unit_name || r.UnitName || r.unit_id || '',
         priority: r.priority || r.Priority || 'Normal',
         status: r.status || r.Status || 'New',
         description: r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
-        vendorName: r.vendor || r.VendorName || '',
+        vendorName: r.vendor_name || r.vendor || r.VendorName || '',
         vendorId: r.vendor_id || r.VendorId || '',
         vendorTrade: r.vendor_trade || r.VendorTrade || '',
         created: r.created_at || r.CreatedAt || '',
@@ -6122,7 +6123,7 @@ async function fetchWorkOrders() {
         tenantEmail: r.primary_tenant_email || r.PrimaryTenantEmail || '',
         tenantPhone: r.primary_tenant_phone_number || r.PrimaryTenantPhoneNumber || '',
         createdBy: r.created_by || r.CreatedBy || '',
-        assignedUser: r.assigned_user || r.AssignedUser || r.AssignedTo || '',
+        assignedUser: r.assigned_user_name || r.assigned_user || r.AssignedUser || r.AssignedTo || '',
         statusNotes: r.status_notes || r.StatusNotes || '',
         maintenanceLimit: r.maintenance_limit || r.MaintenanceLimit || '',
         link: r.Link || r.link || ''
@@ -17068,12 +17069,7 @@ async function renderWOVendorSpendChart() {
   }
 }
 
-function renderWorkOrdersGrid(rows) {
-  var host = document.getElementById('woGridHost');
-  var searchInput = document.getElementById('woGridQuickSearch');
-  if (!host) return;
-  destroyGridInstance('wo');
-
+function getWorkOrderGridColumnDefs(rows) {
   var rowList = Array.isArray(rows) ? rows : [];
   function columnHasData(field) {
     return rowList.some(function(row) {
@@ -17084,19 +17080,31 @@ function renderWorkOrdersGrid(rows) {
       return !!text && text !== '-' && text !== '\u2014' && text.toLowerCase() !== 'unknown';
     });
   }
-  var columnDefs = [
+  return [
     { field: 'id', headerName: 'WO #', minWidth: 96, maxWidth: 120, cellRenderer: function(p){ return '<strong>#' + escapeHtml(String(p.value || '')) + '</strong>'; } },
     { field: 'propertyName', headerName: 'Property', minWidth: 180 },
-    { field: 'propertyManager', headerName: 'Property Manager', hide: true },
+    { field: 'propertyAddress', headerName: 'Address', minWidth: 210 },
+    { field: 'propertyManager', headerName: 'Property Manager', minWidth: 160 },
     { field: 'unit', headerName: 'Unit', minWidth: 90, maxWidth: 110 },
     { field: 'description', headerName: 'Description', minWidth: 240, flex: 2 },
     { field: 'status', headerName: 'Status', minWidth: 130 },
     { field: 'priority', headerName: 'Priority', minWidth: 110, maxWidth: 120 },
-    { field: 'owner', headerName: 'Owner', minWidth: 150 },
+    { field: 'assignedUser', headerName: 'Assignee', minWidth: 150 },
+    { field: 'vendorName', headerName: 'Vendor', minWidth: 160 },
+    { field: 'openedDate', headerName: 'Opened', minWidth: 125, maxWidth: 145 },
     { field: 'ageDays', headerName: 'Age (d)', minWidth: 96, maxWidth: 110, sort: currentWOSort === 'oldest' ? 'desc' : undefined }
   ].filter(function(column) {
     return column.field === 'id' || columnHasData(column.field);
   });
+}
+
+function renderWorkOrdersGrid(rows) {
+  var host = document.getElementById('woGridHost');
+  var searchInput = document.getElementById('woGridQuickSearch');
+  if (!host) return;
+  destroyGridInstance('wo');
+
+  var rowList = Array.isArray(rows) ? rows : [];
 
   woGridApi = createGrid(host, {
     theme: 'legacy',
@@ -17114,7 +17122,7 @@ function renderWorkOrdersGrid(rows) {
       flex: 1,
       cellStyle: { fontFamily: 'var(--font-sans)', fontSize: '12px' }
     },
-    columnDefs: columnDefs,
+    columnDefs: getWorkOrderGridColumnDefs(rowList),
     onRowClicked: function(evt) {
       var wo = evt && evt.data && evt.data.__raw;
       if (!wo || !wo.id) return;
@@ -17200,7 +17208,6 @@ function renderWorkOrders() {
   if (currentWOView === 'list') {
     var woGridRowsBase = filtered.map(function(wo) {
       var age = getWOAgeMeta(wo);
-      var owner = String(wo.assignedUser || wo.vendorName || 'Unassigned').trim() || 'Unassigned';
       var property = wo.propertyId && window.AppDB && window.AppDB.properties
         ? window.AppDB.properties.get(String(wo.propertyId))
         : null;
@@ -17212,6 +17219,7 @@ function renderWorkOrders() {
       return {
         id: wo.id,
         propertyName: wo.propertyName || wo.propertyAddress || '-',
+        propertyAddress: wo.propertyAddress || '',
         propertyManager: String(
           wo.propertyManager || wo.property_manager || wo.siteManager || wo.site_manager ||
           (property && (property.siteManager || property.site_manager || property.propertyManager)) || ''
@@ -17220,7 +17228,9 @@ function renderWorkOrders() {
         description: wo.description || '-',
         status: wo.status || '-',
         priority: wo.priority || '-',
-        owner: owner,
+        assignedUser: String(wo.assignedUser || '').trim(),
+        vendorName: String(wo.vendorName || '').trim(),
+        openedDate: wo.created ? formatDate(wo.created) : '',
         ageDays: age.days === null ? -1 : age.days,
         ageBucket: getWOAnalyticsAgeBucket(age.days === null ? 0 : age.days),
         __raw: wo
@@ -17233,6 +17243,7 @@ function renderWorkOrders() {
       var inactiveTab = document.getElementById('woTabInactive');
       if (activeTab) activeTab.classList.toggle('active', currentWOTab === 'active');
       if (inactiveTab) inactiveTab.classList.toggle('active', currentWOTab === 'inactive');
+      woGridApi.setGridOption('columnDefs', getWorkOrderGridColumnDefs(woGridRowsBase));
       woGridApi.setGridOption('rowData', woGridRowsBase);
       var existingMeta = document.getElementById('woGridMeta');
       if (existingMeta) existingMeta.textContent = woGridRowsBase.length + ' work orders loaded';

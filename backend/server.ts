@@ -4656,6 +4656,11 @@ app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
         wo.updated_at,
         wo.raw_json,
         coalesce(p.name, wo.raw_json->>'property_name', '') as property_name,
+        p.street as property_street,
+        p.city as property_city,
+        p.state as property_state,
+        p.zip as property_zip,
+        p.raw_json as property_raw_json,
         coalesce(u.name, wo.raw_json->>'unit_name', '') as unit_name,
         extract(day from (now() - coalesce(wo.created_at, wo.updated_at, now())))::int as age_days,
         coalesce(wo.assigned_user_name, wo.vendor_name, wo.raw_json->>'assigned_user_name', wo.raw_json->>'vendor_name', '') as owner_name
@@ -4671,6 +4676,12 @@ app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
       const normalized = normalizeWorkOrderRow(row);
       normalized.property_name = String(row?.property_name || pickRaw(normalized, ['property_name', 'PropertyName', 'property']) || '');
       normalized.property = normalized.property_name;
+      normalized.property_street = String(row?.property_street || '');
+      normalized.property_city = String(row?.property_city || '');
+      normalized.property_state = String(row?.property_state || '');
+      normalized.property_zip = String(row?.property_zip || '');
+      normalized.property_address = [row?.property_street, row?.property_city, row?.property_state, row?.property_zip].filter(Boolean).join(', ');
+      normalized.site_manager = extractSiteManager(row?.property_raw_json || {});
       normalized.unit_name = String(row?.unit_name || pickRaw(normalized, ['unit_name', 'UnitName', 'unit']) || '');
       normalized.owner_name = String(row?.owner_name || row?.assigned_user_name || normalized.vendor_name || '');
       normalized.age_days = Number(row?.age_days || 0) || 0;
@@ -4708,6 +4719,14 @@ app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
 
     const sortByRaw = String(req.query.sort_by || 'days_since').trim();
     const sortDir = parseSortDirection(req.query.sort_dir, 'desc');
+    const daysSinceExpr = `coalesce((current_date - ins.anchor_date), 999)`;
+    const statusExpr = `
+      case
+        when ins.missing_move_in_inspection = true or ins.anchor_date is null or ${daysSinceExpr} > ${overdueDays} then 'overdue'
+        when ${daysSinceExpr} > ${dueSoonDays} then 'due_soon'
+        else 'current'
+      end
+    `;
     const sortMap: Record<string, string> = {
       property_name: 'ins.property_name',
       propertyName: 'ins.property_name',
@@ -4716,8 +4735,8 @@ app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
       tenant_name: 'ins.tenant_name',
       tenant: 'ins.tenant_name',
       last_inspection_date: 'ins.last_inspection_date',
-      days_since: 'ins.days_since',
-      status_bucket: 'ins.status_bucket',
+      days_since: daysSinceExpr,
+      status_bucket: statusExpr,
       turn_linked: 'ins.turn_linked',
       move_in_date: 'ins.move_in_date',
       move_out_date: 'ins.move_out_date',
@@ -4816,17 +4835,6 @@ app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
       outerWhereParts.push(`(ins.move_in_date is not null and ins.move_in_date <= current_date)`);
       outerWhereParts.push(`(ins.move_out_date is null or ins.move_out_date >= current_date)`);
     }
-
-    outerWhereParts.push(`ins.missing_move_in_inspection = true`);
-
-    const daysSinceExpr = `coalesce((current_date - ins.anchor_date), 999)`;
-    const statusExpr = `
-      case
-        when ins.missing_move_in_inspection = true or ins.anchor_date is null or ${daysSinceExpr} > ${bindOuter(overdueDays)} then 'overdue'
-        when ${daysSinceExpr} > ${bindOuter(dueSoonDays)} then 'due_soon'
-        else 'current'
-      end
-    `;
 
     if (statusFilter && statusFilter !== 'all') {
       if (statusFilter === 'turn_linked') {
