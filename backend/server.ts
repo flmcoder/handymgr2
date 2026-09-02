@@ -2427,7 +2427,7 @@ async function getEmbeddedWorkOrderNotes(workOrderRef: string): Promise<{ workOr
   const resolvedUuid = await resolveWorkOrderUuid(workOrderRef);
   const ref = String(workOrderRef || '').trim().replace(/^#/, '');
   const rows = await queryClient.unsafe(
-    `select work_order_uuid, raw_json
+    `select work_order_uuid, wo_number, unit_id, created_at, raw_json
        from appfolio_work_orders
       where ($1 <> '' and (work_order_uuid = $1 or id = $1))
          or id = $2
@@ -2464,7 +2464,69 @@ async function getEmbeddedWorkOrderNotes(workOrderRef: string): Promise<{ workOr
       results.push({ Body: String(candidate).trim(), CreatedBy: 'AppFolio', CreatedAt: raw.LastUpdatedAt || raw.last_updated_at || '' });
     }
   }
-  return { workOrderUuid: resolvedUuid || String(row?.work_order_uuid || ''), results };
+
+  if (!results.length && row?.unit_id) {
+    const createdAt = row.created_at ? new Date(String(row.created_at)) : new Date(Date.now() - (365 * 86400000));
+    const fromDate = Number.isNaN(createdAt.getTime())
+      ? new Date(Date.now() - (365 * 86400000))
+      : new Date(createdAt.getTime() - (7 * 86400000));
+    const toDate = new Date(Date.now() + 86400000);
+    const response = await fetch(`${AF_REPORTS_BASE}/api/v2/reports/work_order.json`, {
+      method: 'POST',
+      headers: afHeaders('v2'),
+      body: JSON.stringify({
+        property_visibility: 'all',
+        unit_ids: [String(row.unit_id)],
+        work_order_statuses: ['0', '1', '2', '9', '3', '6', '8', '12', '4', '5', '7'],
+        work_order_types: ['unit_turn', 'tenant_requested', 'internal'],
+        status_date_range_from: fromDate.toISOString().slice(0, 10),
+        status_date_range_to: toDate.toISOString().slice(0, 10),
+        status_date: 'all',
+        columns: ['work_order_number', 'service_request_number', 'status_notes', 'created_by', 'created_at'],
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`AppFolio work order report failed: HTTP ${response.status} ${text.slice(0, 220)}`);
+    const parsed = text ? JSON.parse(text) : {};
+    const reportRows = normalizeDetailList(parsed);
+    const targetNumber = String(row.wo_number || ref).trim().toLowerCase();
+    const reportRow = reportRows.find((candidate: any) => {
+      const candidateNumber = String(candidate?.work_order_number || candidate?.service_request_number || '').trim().toLowerCase();
+      return candidateNumber === targetNumber;
+    });
+    const reportNotes = String(reportRow?.status_notes || '').trim();
+    if (reportNotes) {
+      results.push({
+        Body: reportNotes,
+        CreatedBy: String(reportRow?.created_by || 'AppFolio'),
+        CreatedAt: String(reportRow?.created_at || row.created_at || ''),
+      });
+    }
+  }
+
+  const workOrderUuid = resolvedUuid || String(row?.work_order_uuid || '');
+  if (workOrderUuid && results.length) {
+    await ensureWorkOrderDetailCacheTable();
+    const payloadHash = detailPayloadHash(results);
+    await queryClient`
+      insert into appfolio_work_order_detail_cache (
+        work_order_uuid, detail_type, payload, payload_hash, record_count,
+        last_fetched_at, last_checked_at, fetch_count
+      ) values (
+        ${workOrderUuid}, 'notes', ${JSON.stringify(results)}::jsonb, ${payloadHash}, ${results.length},
+        now(), now(), 1
+      )
+      on conflict (work_order_uuid, detail_type) do update set
+        payload = excluded.payload,
+        payload_hash = excluded.payload_hash,
+        record_count = excluded.record_count,
+        last_fetched_at = now(),
+        last_checked_at = now(),
+        fetch_count = coalesce(appfolio_work_order_detail_cache.fetch_count, 0) + 1
+    `;
+  }
+  return { workOrderUuid, results };
 }
 
 async function getWorkOrderDetailCached(args: { workOrderRef: string; detailType: 'notes' | 'attachments'; forceRefresh: boolean }): Promise<{ workOrderUuid: string; results: any[]; source: 'live' | 'cached' | 'stale_cache'; stale: boolean; fetched_at: string; delta: { changed: boolean; added: number; removed: number; previous_count: number; current_count: number } }> {
@@ -4873,26 +4935,20 @@ app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
 app.get('/api/local/work_orders/:workOrderRef/notes', async (req: Request, res: Response) => {
   try {
     const workOrderRef = String(req.params.workOrderRef || '').trim();
-    const forceRefresh = /^(1|true|yes|on)$/i.test(String(req.query.force_refresh || '').trim());
     if (!workOrderRef) {
       res.status(400).json({ ok: false, error: 'Missing work order reference' });
       return;
     }
 
-    let payload;
-    try {
-      payload = await getWorkOrderDetailCached({ workOrderRef, detailType: 'notes', forceRefresh });
-    } catch (error) {
-      const embedded = await getEmbeddedWorkOrderNotes(workOrderRef);
-      payload = {
-        workOrderUuid: embedded.workOrderUuid,
-        results: embedded.results,
-        source: 'cached' as const,
-        stale: false,
-        fetched_at: new Date().toISOString(),
-        delta: { changed: false, added: 0, removed: 0, previous_count: embedded.results.length, current_count: embedded.results.length },
-      };
-    }
+    const embedded = await getEmbeddedWorkOrderNotes(workOrderRef);
+    const payload = {
+      workOrderUuid: embedded.workOrderUuid,
+      results: embedded.results,
+      source: 'live' as const,
+      stale: false,
+      fetched_at: new Date().toISOString(),
+      delta: { changed: false, added: 0, removed: 0, previous_count: embedded.results.length, current_count: embedded.results.length },
+    };
 
     res.json({
       ok: true,
