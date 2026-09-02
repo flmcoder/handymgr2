@@ -2975,6 +2975,28 @@ async function proxyPost(action, bodyObj, extraHeaders) {
   }
 }
 
+async function recoverTokenlessRoleLogin(password) {
+  var canonicalBase = String(RENDER_API_BASE_URL || '').replace(/\/+$/, '');
+  var currentBase = String(API_PROXY || '').replace(/\/+$/, '');
+  if (!canonicalBase || currentBase === canonicalBase) return null;
+
+  var response = await fetchWithTimeout(canonicalBase + '/api/verify_role', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ password: password })
+  }, 30000);
+  if (!response.ok) return null;
+
+  var result = await parseJsonResponseOrThrow(response, 'Canonical role verification');
+  var token = String(result && (result.token || result.session_token || result.device_token) || '');
+  if (!result || !result.ok || !token) return null;
+
+  API_PROXY = canonicalBase;
+  if ($('#vaultProxy')) $('#vaultProxy').value = canonicalBase;
+  try { localStorage.setItem('hm_proxy_url', canonicalBase); } catch (e) { /* */ }
+  return Object.assign({}, result, { token: token });
+}
+
 // Resolve a path to a fetchable URL.
 // When a proxy is active, the proxy has the domain + credentials hardcoded
 // server-side, so we only send the API path (e.g. /api/v0/properties).
@@ -5647,9 +5669,17 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         throw new Error((roleResult && roleResult.error) || 'Invalid password');
       }
       _accessRole = normalizeAccessRole(roleResult.role);
-      var sessionToken = String(roleResult.token || '');
+      var sessionToken = String(roleResult.token || roleResult.session_token || roleResult.device_token || '');
       if (!sessionToken) {
-        throw new Error('Login succeeded but server did not mint a session token. Check proxy DB/write access and try again.');
+        var recoveredRoleResult = await recoverTokenlessRoleLogin(pass);
+        if (recoveredRoleResult) {
+          roleResult = recoveredRoleResult;
+          _accessRole = normalizeAccessRole(roleResult.role);
+          sessionToken = String(roleResult.token || '');
+        }
+      }
+      if (!sessionToken) {
+        throw new Error('Login succeeded but the configured relay returned no session token. Reset Proxy Relay URL to ' + RENDER_API_BASE_URL + ' and try again.');
       }
       _sessionExpiryHandled = false;
       beginProxySessionStartupGrace(60000);
@@ -15788,13 +15818,10 @@ async function loadPropertyVacancies() {
   var body = $('#propVacBody');
   if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
-    var vacancyParams = { report: 'unit_vacancy' };
     var vacancyScope = getEffectiveGroupUuid();
-    if (vacancyScope) {
-      vacancyParams.group_uuid = vacancyScope;
-      vacancyParams.property_group_uuid = vacancyScope;
-    }
-    var data = await proxyAction('v2_report', vacancyParams);
+    var vacancyPath = '/api/local/vacancies?limit=15000';
+    if (vacancyScope) vacancyPath += '&property_group_id=' + encodeURIComponent(vacancyScope);
+    var data = await apiFetch(vacancyPath);
     var rows = getReportRows(data, 'results');
     var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
     if (effectiveGroup) {
@@ -15894,7 +15921,7 @@ async function loadOwnerReports() {
         '<td><strong>' + escHtml(rpt.label) + '</strong></td>' +
         '<td>' + escHtml(rpt.description) + '</td>' +
         '<td>' + escHtml(groupLabel) + '</td>' +
-        '<td><button class="action-btn u-action-btn-sm" onclick="runOwnerReport(\'' + escHtml(rpt.type) + '\')"><i class="fas fa-download"></i> Download</button></td>' +
+        '<td><button class="action-btn u-action-btn-sm" onclick="runOwnerReport(\'' + escHtml(rpt.type) + '\')"><i class="fas fa-file-arrow-down"></i> Open &amp; Download</button></td>' +
         '</tr>';
     });
     
@@ -15906,9 +15933,10 @@ async function loadOwnerReports() {
 
 async function runOwnerReport(reportType) {
   try {
-    var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
+    var effectiveGroup = String(getEffectiveGroupUuid() || '').trim();
     var payload = { report: reportType };
     if (effectiveGroup) {
+      payload.group_uuid = effectiveGroup;
       payload.property_group_uuid = effectiveGroup;
     }
     
@@ -16177,13 +16205,20 @@ async function loadOccupancySubtab(subtab) {
   var body = $('#' + cfg.bodyId);
   if (body) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
-    var payload = { report: cfg.report };
     var scopeUuid = getEffectiveGroupUuid();
-    if (scopeUuid) {
-      payload.group_uuid = scopeUuid;
-      payload.property_group_uuid = scopeUuid;
+    var data;
+    if (subtab === 'tenant-directory') {
+      var tenantPath = '/api/local/tenant_directory?limit=15000';
+      if (scopeUuid) tenantPath += '&property_group_id=' + encodeURIComponent(scopeUuid);
+      data = await apiFetch(tenantPath);
+    } else {
+      var payload = { report: cfg.report };
+      if (scopeUuid) {
+        payload.group_uuid = scopeUuid;
+        payload.property_group_uuid = scopeUuid;
+      }
+      data = await proxyAction(cfg.action, payload);
     }
-    var data = await proxyAction(cfg.action, payload);
     var rows = getReportRows(data, 'results');
     _occupancyRowsBySubtab[subtab] = rows;
     if (_occupancyPageState[subtab]) _occupancyPageState[subtab].page = 1;
@@ -23423,8 +23458,11 @@ function wireUpUI() {
       routing: function() { loadRoutingEventsAndStats().catch(function() {}); loadRoutingCapabilities().catch(function() {}); },
       payroll: function() { renderPayroll(); },
       billing: function() { renderBillingSection(); },
-      occupancy: function() { renderOccupancySubtab(currentOccupancySubtab || 'tenant-transactions'); },
-      properties: function() { renderPropertiesSection(); },
+      occupancy: function() {
+        delete _occupancyRowsBySubtab[currentOccupancySubtab || 'tenant-transactions'];
+        loadOccupancySubtab(currentOccupancySubtab || 'tenant-transactions');
+      },
+      properties: function() { setPropertiesSubtab(currentPropertiesSubtab || 'directory'); },
       managerreview: function() { renderManagerReviewSection(); },
       turnboard: function() { renderTurnPipelineUI(); },
       inspections: function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },

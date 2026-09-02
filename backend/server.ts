@@ -6506,6 +6506,72 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/api/local/tenant_directory', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 5000, 15000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        select
+          t.record_id,
+          t.property_id,
+          coalesce(t.property_name, p.name) as property_name,
+          t.unit_id,
+          coalesce(t.unit_name, u.name, '') as unit,
+          t.tenant_name as tenant,
+          t.status,
+          t.tenant_type,
+          t.phone_numbers,
+          t.emails,
+          coalesce(nullif(t.raw_json->>'lease_from', ''), nullif(t.raw_json->>'lease_start', '')) as lease_from,
+          t.lease_to,
+          t.move_in_date as move_in,
+          t.move_out_date as move_out,
+          t.rent,
+          t.tenant_agent,
+          t.occupancy_id,
+          p.property_group_id
+        from appfolio_tenant_directory t
+        left join appfolio_properties p on p.id = t.property_id
+        left join appfolio_units u on u.unit_id = t.unit_id
+        where p.property_group_id = ${propertyGroupId}
+        order by coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc, t.tenant_name asc
+        limit ${limit}
+      `
+      : await queryClient`
+        select
+          t.record_id,
+          t.property_id,
+          coalesce(t.property_name, p.name) as property_name,
+          t.unit_id,
+          coalesce(t.unit_name, u.name, '') as unit,
+          t.tenant_name as tenant,
+          t.status,
+          t.tenant_type,
+          t.phone_numbers,
+          t.emails,
+          coalesce(nullif(t.raw_json->>'lease_from', ''), nullif(t.raw_json->>'lease_start', '')) as lease_from,
+          t.lease_to,
+          t.move_in_date as move_in,
+          t.move_out_date as move_out,
+          t.rent,
+          t.tenant_agent,
+          t.occupancy_id,
+          p.property_group_id
+        from appfolio_tenant_directory t
+        left join appfolio_properties p on p.id = t.property_id
+        left join appfolio_units u on u.unit_id = t.unit_id
+        order by coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc, t.tenant_name asc
+        limit ${limit}
+      `;
+
+    res.json({ ok: true, results: rows, count: (rows as any[]).length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/tenant_directory');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local tenant directory query failed') });
+  }
+});
+
 app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 60, 3650);

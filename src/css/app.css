@@ -3436,6 +3436,16 @@ html.dark .vendor-trade-cat-select option {
   color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-dim) inset;
 }
+.report-subtabs .section-subtab::after {
+  content: '\f054';
+  font-family: "Font Awesome 6 Free";
+  font-size: 8px;
+  font-weight: 900;
+  opacity: 0.45;
+}
+.report-subtabs .section-subtab.active::after {
+  opacity: 0.9;
+}
 .section-subpanel { display: none; }
 .section-subpanel.active { display: block; }
 .wo-subpanel { display: none; }

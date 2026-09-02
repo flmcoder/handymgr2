@@ -686,15 +686,13 @@
     </div>
     <div class="u-toolbar-row">
       <button class="action-btn" id="btnRefreshBilling"><i class="fas fa-sync-alt"></i> Refresh</button>
-      <div class="billing-more-wrap" style="position:relative">
-        <button class="action-btn" id="btnMoreBillReports"><i class="fas fa-ellipsis-h"></i> ...More bill reports</button>
-        <div class="billing-more-dropdown" id="billingMoreDropdown" style="display:none">
-          <button class="billing-more-item" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
-          <button class="billing-more-item" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
-          <button class="billing-more-item" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
-        </div>
-      </div>
     </div>
+  </div>
+  <div class="section-subtabs report-subtabs" id="billingSubtabs" aria-label="Billing reports">
+    <button class="section-subtab active" data-billing-subtab="main"><i class="fas fa-table-list"></i> Bills Home</button>
+    <button class="section-subtab" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
+    <button class="section-subtab" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
+    <button class="section-subtab" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
   </div>
   <div class="kpi-grid stagger billing-kpi-grid" id="billingKpiGrid">
     <div class="kpi-card amber"><div class="kpi-label">Pending Approval</div><div class="kpi-value" id="billKpiPending">—</div><div class="kpi-sub" id="billKpiPendingSub">invoices awaiting approval</div></div>
@@ -993,11 +991,12 @@
         <button id="btnBulkNoteOpen" onclick="openBulkNoteModal()" class="action-btn"><i class="fas fa-pen-to-square"></i> Bulk Update Notes</button>
       </div>
     </div>
-    <div class="section-subtabs" id="propertiesSubtabs">
+    <div class="section-subtabs report-subtabs" id="propertiesSubtabs" aria-label="Property reports">
       <button class="section-subtab active" data-properties-subtab="directory"><i class="fas fa-table"></i> Directory</button>
       <button class="section-subtab" data-properties-subtab="performance"><i class="fas fa-chart-line"></i> Performance</button>
       <button class="section-subtab" data-properties-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
       <button class="section-subtab" data-properties-subtab="renewals"><i class="fas fa-file-signature"></i> Renewals</button>
+      <button class="section-subtab" data-properties-subtab="reports"><i class="fas fa-landmark"></i> Owner Reports</button>
       <button class="section-subtab" data-properties-subtab="bulk"><i class="fas fa-pen-to-square"></i> Bulk Notes</button>
     </div>
     <div class="section-subpanel active" id="properties-subpanel-directory">
@@ -1121,6 +1120,22 @@
             <tbody id="renewalsTableBody">
               <tr><td colspan="11" style="text-align:center;padding:20px;color:var(--text-muted);">Open the Renewals sub-tab to load report data.</td></tr>
             </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="section-subpanel" id="properties-subpanel-reports" style="display:none">
+      <div class="table-wrapper">
+        <div class="table-header">
+          <div>
+            <div class="table-title"><i class="fas fa-landmark" style="color:var(--accent)"></i> Owner Reports</div>
+            <div class="section-subtitle">Owner distributions scoped to the active property-group filter.</div>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="ownerReportsTable">
+            <thead><tr><th>Report</th><th>Description</th><th>Property Group</th><th>Action</th></tr></thead>
+            <tbody id="ownerReportsBody"><tr><td colspan="4" class="u-table-empty-cell">Open Owner Reports to load available reports</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1290,7 +1305,7 @@
       <button class="action-btn" id="btnRefreshOccupancy"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
-  <div class="section-subtabs" id="occupancySubtabs">
+  <div class="section-subtabs report-subtabs" id="occupancySubtabs" aria-label="Occupancy reports">
     <button class="section-subtab active" data-occupancy-subtab="tenant-transactions"><i class="fas fa-receipt"></i> Transactions</button>
     <button class="section-subtab" data-occupancy-subtab="tenant-directory"><i class="fas fa-users"></i> Tenant Directory</button>
     <button class="section-subtab" data-occupancy-subtab="delinquency"><i class="fas fa-exclamation-circle"></i> Delinquency</button>
@@ -1705,7 +1720,7 @@
       <button class="action-btn" id="btnClearErrors"><i class="fas fa-trash"></i> Clear Resolved</button>
     </div>
   </div>
-  <div class="section-subtabs" id="errorsSubtabs">
+  <div class="section-subtabs report-subtabs" id="errorsSubtabs" aria-label="Error reports">
     <button class="section-subtab active" data-errors-subtab="log"><i class="fas fa-triangle-exclamation"></i> API Log</button>
     <button class="section-subtab" data-errors-subtab="email-delivery" id="errorsEmailDeliveryTab"><i class="fas fa-envelope-circle-check"></i> Email Delivery</button>
   </div>
