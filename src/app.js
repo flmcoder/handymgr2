@@ -2983,8 +2983,11 @@ async function proxyPost(action, bodyObj, extraHeaders, queryParams) {
 
 async function recoverTokenlessRoleLogin(password) {
   var canonicalBase = String(RENDER_API_BASE_URL || '').replace(/\/+$/, '');
-  var currentBase = String(API_PROXY || '').replace(/\/+$/, '');
-  if (!canonicalBase || currentBase === canonicalBase) return null;
+  if (!canonicalBase) return null;
+
+  API_PROXY = canonicalBase;
+  if ($('#vaultProxy')) $('#vaultProxy').value = canonicalBase;
+  try { localStorage.setItem('hm_proxy_url', canonicalBase); } catch (e) { /* */ }
 
   var response = await fetchWithTimeout(canonicalBase + '/api/verify_role', {
     method: 'POST',
@@ -2997,9 +3000,6 @@ async function recoverTokenlessRoleLogin(password) {
   var token = String(result && (result.token || result.session_token || result.device_token) || '');
   if (!result || !result.ok || !token) return null;
 
-  API_PROXY = canonicalBase;
-  if ($('#vaultProxy')) $('#vaultProxy').value = canonicalBase;
-  try { localStorage.setItem('hm_proxy_url', canonicalBase); } catch (e) { /* */ }
   return Object.assign({}, result, { token: token });
 }
 
@@ -5685,7 +5685,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
         }
       }
       if (!sessionToken) {
-        throw new Error('Login succeeded but the configured relay returned no session token. Reset Proxy Relay URL to ' + RENDER_API_BASE_URL + ' and try again.');
+        throw new Error('Login succeeded but the canonical relay returned no session token. Please try again.');
       }
       _sessionExpiryHandled = false;
       beginProxySessionStartupGrace(60000);
@@ -13523,7 +13523,9 @@ var woGridApi = null;
 var inspectionsGridApi = null;
 var WO_ANALYTICS_FILTERS = { ageBucket: '', owner: '', status: '' };
 var INSP_ANALYTICS_FILTERS = { status: '', ageBucket: '', turnLinked: '' };
-var WO_CHARTS = { aging: null, owner: null, status: null };
+var WO_CHARTS = { aging: null, owner: null, status: null, vendorSpend: null };
+var WO_CHART_RESIZE_OBSERVER = null;
+var WO_VENDOR_SPEND_CACHE = { key: '', rows: [] };
 var INSP_CHARTS = { mix: null, age: null, link: null };
 var currentBillingSubtab = 'main'; // main | payables | charge-detail | bill-detail
 var _billingKpisLoading = false;
@@ -16516,6 +16518,26 @@ function destroyChartInstance(chart) {
   }
 }
 
+function ensureWOChart(chart, element) {
+  if (chart && typeof chart.getDom === 'function' && chart.getDom() === element) return chart;
+  destroyChartInstance(chart);
+  return echarts.init(element, null, { renderer: 'canvas' });
+}
+
+function observeWOAnalyticsCharts(container) {
+  if (WO_CHART_RESIZE_OBSERVER) WO_CHART_RESIZE_OBSERVER.disconnect();
+  if (!container || typeof ResizeObserver !== 'function') return;
+  WO_CHART_RESIZE_OBSERVER = new ResizeObserver(function() {
+    requestAnimationFrame(function() {
+      Object.keys(WO_CHARTS).forEach(function(key) {
+        var chart = WO_CHARTS[key];
+        if (chart && typeof chart.resize === 'function') chart.resize();
+      });
+    });
+  });
+  WO_CHART_RESIZE_OBSERVER.observe(container);
+}
+
 function getWOAnalyticsAgeBucket(days) {
   var d = Math.max(0, Number(days || 0));
   if (d <= 7) return '0-7';
@@ -16827,10 +16849,6 @@ function renderWOAnalyticsCharts(rows) {
   var statusEl = document.getElementById('woStatusChart');
   if (!agingEl || !ownerEl || !statusEl) return;
 
-  destroyChartInstance(WO_CHARTS.aging);
-  destroyChartInstance(WO_CHARTS.owner);
-  destroyChartInstance(WO_CHARTS.status);
-
   var agingCounts = { '0-7': 0, '8-30': 0, '31-60': 0, '60+': 0 };
   var ownerCounts = {};
   var statusOwnerCounts = {};
@@ -16849,12 +16867,12 @@ function renderWOAnalyticsCharts(rows) {
     return { name: k, value: ownerCounts[k] };
   }).sort(function(a, b) { return b.value - a.value; }).slice(0, 8);
 
-  WO_CHARTS.aging = echarts.init(agingEl, null, { renderer: 'canvas' });
+  WO_CHARTS.aging = ensureWOChart(WO_CHARTS.aging, agingEl);
   WO_CHARTS.aging.setOption({
     animationDuration: 420,
     tooltip: { trigger: 'axis' },
     toolbox: { right: 8, feature: { saveAsImage: {}, restore: {} } },
-    grid: { top: 32, left: 36, right: 12, bottom: 28 },
+    grid: { containLabel: true, top: 40, bottom: 20, left: 20, right: 20 },
     xAxis: { type: 'category', data: agingRows.map(function(r){ return r.name; }), axisLabel: { color: '#7f8ca3' } },
     yAxis: { type: 'value', axisLabel: { color: '#7f8ca3' }, splitLine: { lineStyle: { color: 'rgba(127,140,163,0.2)' } } },
     series: [{
@@ -16884,14 +16902,15 @@ function renderWOAnalyticsCharts(rows) {
         font: '600 11px var(--font-mono)'
       }
     }]
-  });
+  }, { notMerge: true });
+  WO_CHARTS.aging.off('click');
   WO_CHARTS.aging.on('click', function(params) {
     var bucket = params && params.name ? String(params.name) : '';
     WO_ANALYTICS_FILTERS.ageBucket = WO_ANALYTICS_FILTERS.ageBucket === bucket ? '' : bucket;
     renderWorkOrders();
   });
 
-  WO_CHARTS.owner = echarts.init(ownerEl, null, { renderer: 'canvas' });
+  WO_CHARTS.owner = ensureWOChart(WO_CHARTS.owner, ownerEl);
   WO_CHARTS.owner.setOption({
     animationDuration: 520,
     tooltip: { trigger: 'item' },
@@ -16899,11 +16918,15 @@ function renderWOAnalyticsCharts(rows) {
     series: [{
       name: 'Owner Load',
       type: 'treemap',
+      left: 8,
+      right: 8,
+      top: 12,
+      bottom: 8,
       roam: false,
       nodeClick: false,
       breadcrumb: { show: false },
       leafDepth: 1,
-      label: { show: true, formatter: '{b}\n{c}', color: '#1f2c3f', fontSize: 10 },
+      label: { show: true, formatter: '{b}\n{c}', color: '#1f2c3f', fontSize: 10, overflow: 'truncate', ellipsis: '...', width: 110 },
       data: ownerRows.map(function(r) {
         var selected = WO_ANALYTICS_FILTERS.owner && WO_ANALYTICS_FILTERS.owner === r.name;
         return {
@@ -16916,7 +16939,8 @@ function renderWOAnalyticsCharts(rows) {
         };
       })
     }]
-  });
+  }, { notMerge: true });
+  WO_CHARTS.owner.off('click');
   WO_CHARTS.owner.on('click', function(params) {
     var owner = params && params.name ? String(params.name) : '';
     WO_ANALYTICS_FILTERS.owner = WO_ANALYTICS_FILTERS.owner === owner ? '' : owner;
@@ -16940,13 +16964,17 @@ function renderWOAnalyticsCharts(rows) {
     };
   });
 
-  WO_CHARTS.status = echarts.init(statusEl, null, { renderer: 'canvas' });
+  WO_CHARTS.status = ensureWOChart(WO_CHARTS.status, statusEl);
   WO_CHARTS.status.setOption({
     animationDuration: 560,
     tooltip: { trigger: 'item' },
     toolbox: { right: 8, feature: { saveAsImage: {}, restore: {} } },
     series: [{
       type: 'sunburst',
+      left: 8,
+      right: 8,
+      top: 12,
+      bottom: 8,
       radius: ['18%', '80%'],
       nodeClick: false,
       sort: null,
@@ -16955,10 +16983,11 @@ function renderWOAnalyticsCharts(rows) {
       levels: [
         {},
         { r0: '18%', r: '52%', itemStyle: { borderWidth: 2 } },
-        { r0: '52%', r: '80%', itemStyle: { borderWidth: 1 }, label: { rotate: 'radial', minAngle: 8, fontSize: 9 } }
+        { r0: '52%', r: '80%', itemStyle: { borderWidth: 1 }, label: { rotate: 'radial', minAngle: 8, fontSize: 9, overflow: 'truncate', ellipsis: '...', width: 110 } }
       ]
     }]
-  });
+  }, { notMerge: true });
+  WO_CHARTS.status.off('click');
   WO_CHARTS.status.on('click', function(params) {
     var data = params && params.data ? params.data : null;
     if (!data) return;
@@ -16972,11 +17001,71 @@ function renderWOAnalyticsCharts(rows) {
     renderWorkOrders();
   });
 
-  setTimeout(function() {
+  requestAnimationFrame(function() {
     if (WO_CHARTS.aging) WO_CHARTS.aging.resize();
     if (WO_CHARTS.owner) WO_CHARTS.owner.resize();
     if (WO_CHARTS.status) WO_CHARTS.status.resize();
-  }, 40);
+  });
+}
+
+async function renderWOVendorSpendChart() {
+  var element = document.getElementById('woVendorSpendChart');
+  var card = document.getElementById('woVendorSpendCard');
+  var meta = document.getElementById('woVendorSpendMeta');
+  if (!element || !card) return;
+
+  var groupId = getEffectiveGroupUuid() || '';
+  var cacheKey = String(groupId || 'all');
+  card.classList.add('is-loading');
+  try {
+    if (WO_VENDOR_SPEND_CACHE.key !== cacheKey) {
+      var path = '/api/local/analytics/vendor-spend?limit=5';
+      if (groupId) path += '&property_group_id=' + encodeURIComponent(groupId);
+      var payload = await apiFetch(path);
+      WO_VENDOR_SPEND_CACHE = { key: cacheKey, rows: Array.isArray(payload.results) ? payload.results : [] };
+    }
+
+    var rows = WO_VENDOR_SPEND_CACHE.rows;
+    WO_CHARTS.vendorSpend = ensureWOChart(WO_CHARTS.vendorSpend, element);
+    WO_CHARTS.vendorSpend.setOption({
+      animationDuration: 420,
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: function(params) {
+          var point = params && params[0];
+          var row = rows[point ? point.dataIndex : -1] || {};
+          return '<strong>' + escapeHtml(String(row.vendor_name || 'Vendor')) + '</strong><br>' +
+            escapeHtml(String(row.trade_category || 'Uncategorized')) + '<br>' +
+            currency(Number(row.total_spend || 0), 2) + ' across ' + Number(row.bill_count || 0) + ' bills';
+        }
+      },
+      grid: { containLabel: true, top: 20, bottom: 20, left: 20, right: 28 },
+      xAxis: {
+        type: 'value',
+        axisLabel: { color: '#7f8ca3', formatter: function(value) { return '$' + Math.round(Number(value || 0) / 1000) + 'k'; } },
+        splitLine: { lineStyle: { color: 'rgba(127,140,163,0.16)' } }
+      },
+      yAxis: {
+        type: 'category',
+        inverse: true,
+        data: rows.map(function(row) { return row.vendor_name; }),
+        axisLabel: { color: '#5a6378', overflow: 'truncate', ellipsis: '...', width: 110 }
+      },
+      series: [{
+        type: 'bar',
+        barMaxWidth: 24,
+        data: rows.map(function(row) { return Number(row.total_spend || 0); }),
+        itemStyle: { color: '#0f8d91', borderRadius: [0, 4, 4, 0] }
+      }]
+    }, { notMerge: true });
+    if (meta) meta.textContent = rows.length ? rows.length + ' vendors · PostgreSQL' : 'No spend recorded';
+  } catch (error) {
+    if (meta) meta.textContent = 'Spend unavailable';
+    console.warn('[wo-vendor-spend] load failed', error);
+  } finally {
+    card.classList.remove('is-loading');
+  }
 }
 
 function renderWorkOrdersGrid(rows) {
@@ -16985,10 +17074,34 @@ function renderWorkOrdersGrid(rows) {
   if (!host) return;
   destroyGridInstance('wo');
 
+  var rowList = Array.isArray(rows) ? rows : [];
+  function columnHasData(field) {
+    return rowList.some(function(row) {
+      var value = row && row[field];
+      if (value === null || typeof value === 'undefined') return false;
+      if (typeof value === 'number') return isFinite(value) && value >= 0;
+      var text = String(value).trim();
+      return !!text && text !== '-' && text !== '\u2014' && text.toLowerCase() !== 'unknown';
+    });
+  }
+  var columnDefs = [
+    { field: 'id', headerName: 'WO #', minWidth: 96, maxWidth: 120, cellRenderer: function(p){ return '<strong>#' + escapeHtml(String(p.value || '')) + '</strong>'; } },
+    { field: 'propertyName', headerName: 'Property', minWidth: 180 },
+    { field: 'propertyManager', headerName: 'Property Manager', hide: true },
+    { field: 'unit', headerName: 'Unit', minWidth: 90, maxWidth: 110 },
+    { field: 'description', headerName: 'Description', minWidth: 240, flex: 2 },
+    { field: 'status', headerName: 'Status', minWidth: 130 },
+    { field: 'priority', headerName: 'Priority', minWidth: 110, maxWidth: 120 },
+    { field: 'owner', headerName: 'Owner', minWidth: 150 },
+    { field: 'ageDays', headerName: 'Age (d)', minWidth: 96, maxWidth: 110, sort: currentWOSort === 'oldest' ? 'desc' : undefined }
+  ].filter(function(column) {
+    return column.field === 'id' || columnHasData(column.field);
+  });
+
   woGridApi = createGrid(host, {
     theme: 'legacy',
     rowModelType: 'clientSide',
-    rowData: Array.isArray(rows) ? rows : [],
+    rowData: rowList,
     rowSelection: 'single',
     suppressCellFocus: true,
     includeHiddenColumnsInQuickFilter: true,
@@ -17001,17 +17114,7 @@ function renderWorkOrdersGrid(rows) {
       flex: 1,
       cellStyle: { fontFamily: 'var(--font-sans)', fontSize: '12px' }
     },
-    columnDefs: [
-      { field: 'id', headerName: 'WO #', minWidth: 96, maxWidth: 120, cellRenderer: function(p){ return '<strong>#' + escapeHtml(String(p.value || '')) + '</strong>'; } },
-      { field: 'propertyName', headerName: 'Property', minWidth: 180 },
-      { field: 'propertyManager', headerName: 'Property Manager', hide: true },
-      { field: 'unit', headerName: 'Unit', minWidth: 90, maxWidth: 110 },
-      { field: 'description', headerName: 'Description', minWidth: 240, flex: 2 },
-      { field: 'status', headerName: 'Status', minWidth: 130 },
-      { field: 'priority', headerName: 'Priority', minWidth: 110, maxWidth: 120 },
-      { field: 'owner', headerName: 'Owner', minWidth: 150 },
-      { field: 'ageDays', headerName: 'Age (d)', minWidth: 96, maxWidth: 110, sort: currentWOSort === 'oldest' ? 'desc' : undefined }
-    ],
+    columnDefs: columnDefs,
     onRowClicked: function(evt) {
       var wo = evt && evt.data && evt.data.__raw;
       if (!wo || !wo.id) return;
@@ -17108,7 +17211,7 @@ function renderWorkOrders() {
       }
       return {
         id: wo.id,
-        propertyName: wo.propertyName || '-',
+        propertyName: wo.propertyName || wo.propertyAddress || '-',
         propertyManager: String(
           wo.propertyManager || wo.property_manager || wo.siteManager || wo.site_manager ||
           (property && (property.siteManager || property.site_manager || property.propertyManager)) || ''
@@ -17124,30 +17227,54 @@ function renderWorkOrders() {
       };
     });
 
+    var existingAnalytics = document.getElementById('woAnalyticsShell');
+    if (existingAnalytics && woGridApi) {
+      var activeTab = document.getElementById('woTabActive');
+      var inactiveTab = document.getElementById('woTabInactive');
+      if (activeTab) activeTab.classList.toggle('active', currentWOTab === 'active');
+      if (inactiveTab) inactiveTab.classList.toggle('active', currentWOTab === 'inactive');
+      woGridApi.setGridOption('rowData', woGridRowsBase);
+      var existingMeta = document.getElementById('woGridMeta');
+      if (existingMeta) existingMeta.textContent = woGridRowsBase.length + ' work orders loaded';
+      renderWOAnalyticsCharts(woGridRowsBase);
+      renderWOChartFilterBadges();
+      renderWOCloseAssist();
+      renderWOFollowupQueue();
+      renderCompletedWOHistorySection();
+      return;
+    }
+
     board.innerHTML = tabsHtml +
-      '<div class="wo-analytics-shell table-wrapper">' +
+      '<div class="wo-analytics-shell table-wrapper" id="woAnalyticsShell">' +
       '  <div class="wo-analytics-head">' +
       '    <div class="wo-analytics-title"><i class="fas fa-chart-line" style="color:var(--accent)"></i> Work Order Visual Analytics</div>' +
       '    <div class="wo-analytics-filters">' +
       '      <button class="filter-btn" id="woAnalyticsClearFilters">Clear Chart Filters</button>' +
       '    </div>' +
       '  </div>' +
-      '  <div class="wo-analytics-grid">' +
-      '    <article class="wo-chart-card"><header>Aging Buckets (click to filter)</header><div id="woAgingChart" class="wo-chart-host"></div></article>' +
-      '    <article class="wo-chart-card"><header>Owner Territory Map (click to filter)</header><div id="woOwnerChart" class="wo-chart-host"></div></article>' +
-      '    <article class="wo-chart-card"><header>Status x Owner Sunburst (click rings)</header><div id="woStatusChart" class="wo-chart-host"></div></article>' +
-      '  </div>' +
-      '  <div class="wo-grid-meta">' + woGridRowsBase.length + ' work orders loaded</div>' +
-      '  <label class="wo-grid-search" for="woGridQuickSearch">' +
+      '  <div class="wo-operations-layout">' +
+      '    <main class="wo-operations-primary">' +
+      '      <article class="wo-chart-card wo-chart-card--primary"><header>Aging Buckets <span>Click a bar to filter</span></header><div id="woAgingChart" class="wo-chart-host"></div></article>' +
+      '      <div class="wo-grid-meta" id="woGridMeta">' + woGridRowsBase.length + ' work orders loaded</div>' +
+      '      <label class="wo-grid-search" for="woGridQuickSearch">' +
       '    <i class="fas fa-search" aria-hidden="true"></i>' +
       '    <input id="woGridQuickSearch" type="search" autocomplete="off" placeholder="Search by property manager, WO number, vendor, property, unit, status…" aria-label="Search work orders grid">' +
-      '  </label>' +
-      '  <div id="woGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--wo"></div>' +
+      '      </label>' +
+      '      <div id="woGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--wo"></div>' +
+      '    </main>' +
+      '    <aside class="wo-operations-rail">' +
+      '      <article class="wo-chart-card"><header>Owner Territory <span>Click to filter</span></header><div id="woOwnerChart" class="wo-chart-host"></div></article>' +
+      '      <article class="wo-chart-card"><header>Status by Owner <span>Click a ring</span></header><div id="woStatusChart" class="wo-chart-host"></div></article>' +
+      '      <article class="wo-chart-card" id="woVendorSpendCard"><header>Top 5 Vendors by Spend <span id="woVendorSpendMeta">Loading</span></header><div id="woVendorSpendChart" class="wo-chart-host"></div></article>' +
+      '    </aside>' +
+      '  </div>' +
       '</div>';
 
     renderWOAnalyticsCharts(woGridRowsBase);
+    renderWOVendorSpendChart();
     renderWorkOrdersGrid(woGridRowsBase);
     renderWOChartFilterBadges();
+    observeWOAnalyticsCharts(document.getElementById('woAnalyticsShell'));
 
     var clearFiltersBtn = document.getElementById('woAnalyticsClearFilters');
     if (clearFiltersBtn) {
@@ -17174,12 +17301,15 @@ function renderWorkOrders() {
   // ── End list view ──────────────────────────────────────────────────────────
 
   destroyGridInstance('wo');
+  if (WO_CHART_RESIZE_OBSERVER) WO_CHART_RESIZE_OBSERVER.disconnect();
   destroyChartInstance(WO_CHARTS.aging);
   destroyChartInstance(WO_CHARTS.owner);
   destroyChartInstance(WO_CHARTS.status);
+  destroyChartInstance(WO_CHARTS.vendorSpend);
   WO_CHARTS.aging = null;
   WO_CHARTS.owner = null;
   WO_CHARTS.status = null;
+  WO_CHARTS.vendorSpend = null;
   renderWOChartFilterBadges();
 
   // Sync global group filter dropdown
@@ -17978,12 +18108,21 @@ function showWODetail(id) {
 
   writeDetailText('detailSiteMgr', displayContext.siteManager);
 
-  // Async: fetch notes (use resolved DB API UUID for /api/v0/ endpoint)
-  if (isUuidString(woRefForApi)) delete WO_DETAIL_CACHE['notes_' + woRefForApi];
-  fetchWONotes(woRefForApi, wo).then(function(notes) {
-    renderWONotesList(notes);
-  });
-  loadWOAttachments(woRefForApi, wo);
+  // Always refresh modal detail through the local backend. It resolves the visible
+  // work-order number to the AppFolio UUID and updates the PostgreSQL detail cache.
+  var detailRef = String(wo.id || woRefForApi || '').trim();
+  var detailBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  var detailHeaders = { 'Accept': 'application/json' };
+  var detailToken = getProxyAccessToken();
+  if (detailToken) detailHeaders.Authorization = 'Bearer ' + detailToken;
+  fetchWithTimeout(detailBase + '/api/local/work_orders/' + encodeURIComponent(detailRef) + '/notes?force_refresh=1', { headers: detailHeaders }, 30000)
+    .then(function(response) { return response.json().then(function(data) { if (!response.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + response.status)); return data; }); })
+    .then(function(data) { renderWONotesList(Array.isArray(data.results) ? data.results : []); })
+    .catch(function(error) { console.warn('[showWODetail] notes refresh failed', error); return fetchWONotes(woRefForApi, wo).then(renderWONotesList); });
+  fetchWithTimeout(detailBase + '/api/local/work_orders/' + encodeURIComponent(detailRef) + '/attachments?force_refresh=1', { headers: detailHeaders }, 30000)
+    .then(function(response) { return response.json().then(function(data) { if (!response.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + response.status)); return data; }); })
+    .then(function(data) { renderWOAttachmentsList(normalizeWOAttachmentList(data)); })
+    .catch(function(error) { console.warn('[showWODetail] attachments refresh failed', error); loadWOAttachments(woRefForApi, wo); });
   loadWODetailExtras(wo, isUuidString(woRefForApi) ? woRefForApi : woDbUuid);
 
   var vendorWOBtn = document.getElementById('detailOpenVendorWOs');

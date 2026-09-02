@@ -2393,7 +2393,10 @@ async function resolveWorkOrderUuid(refRaw: string): Promise<string> {
 }
 
 async function fetchWorkOrderDetailFromAppFolio(workOrderUuid: string, detailType: 'notes' | 'attachments'): Promise<any[]> {
-  const url = `${AF_DB_BASE}/api/v0/work_orders/${encodeURIComponent(workOrderUuid)}/${detailType}`;
+  if (detailType === 'notes') {
+    throw new Error('AppFolio v0 does not provide a work-order note list endpoint');
+  }
+  const url = `${AF_DB_BASE}/api/v0/work_orders/attachments?filters[WorkOrderId]=${encodeURIComponent(workOrderUuid)}&page[size]=1000`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
@@ -2418,6 +2421,50 @@ async function fetchWorkOrderDetailFromAppFolio(workOrderUuid: string, detailTyp
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function getEmbeddedWorkOrderNotes(workOrderRef: string): Promise<{ workOrderUuid: string; results: any[] }> {
+  const resolvedUuid = await resolveWorkOrderUuid(workOrderRef);
+  const ref = String(workOrderRef || '').trim().replace(/^#/, '');
+  const rows = await queryClient.unsafe(
+    `select work_order_uuid, raw_json
+       from appfolio_work_orders
+      where ($1 <> '' and (work_order_uuid = $1 or id = $1))
+         or id = $2
+         or wo_number = $2
+      order by updated_at desc nulls last
+      limit 1`,
+    [resolvedUuid, ref],
+  );
+  const row = (rows as any[])[0] || {};
+  const raw = row?.raw_json && typeof row.raw_json === 'object' ? row.raw_json : {};
+  const candidates = [
+    raw.notes,
+    raw.Notes,
+    raw.work_order_notes,
+    raw.WorkOrderNotes,
+    raw.status_notes,
+    raw.StatusNotes,
+    raw.note,
+    raw.Note,
+  ];
+  const results: any[] = [];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      results.push(...candidate);
+    } else if (candidate && typeof candidate === 'object') {
+      const nested = normalizeDetailList(candidate);
+      if (nested.length) {
+        results.push(...nested);
+      } else {
+        const body = pickRaw(candidate, ['Body', 'body', 'Content', 'content', 'Note', 'note', 'Message', 'message']);
+        if (String(body || '').trim()) results.push(candidate);
+      }
+    } else if (String(candidate || '').trim()) {
+      results.push({ Body: String(candidate).trim(), CreatedBy: 'AppFolio', CreatedAt: raw.LastUpdatedAt || raw.last_updated_at || '' });
+    }
+  }
+  return { workOrderUuid: resolvedUuid || String(row?.work_order_uuid || ''), results };
 }
 
 async function getWorkOrderDetailCached(args: { workOrderRef: string; detailType: 'notes' | 'attachments'; forceRefresh: boolean }): Promise<{ workOrderUuid: string; results: any[]; source: 'live' | 'cached' | 'stale_cache'; stale: boolean; fetched_at: string; delta: { changed: boolean; added: number; removed: number; previous_count: number; current_count: number } }> {
@@ -2725,6 +2772,11 @@ function normalizeWorkOrderRow(row: any): Record<string, any> {
     uuid: workOrderUuid,
     work_order_number: String(row?.wo_number || pickRaw(raw, ['work_order_number', 'WorkOrderNumber', 'Number']) || ''),
     property_id: String(row?.property_id || pickRaw(raw, ['property_id', 'PropertyId']) || ''),
+    property_name: String(row?.resolved_property_name || pickRaw(raw, ['property_name', 'PropertyName']) || ''),
+    property_street: String(row?.resolved_property_street || pickRaw(raw, ['property_street', 'PropertyStreet', 'address', 'Address']) || ''),
+    property_city: String(row?.resolved_property_city || pickRaw(raw, ['property_city', 'PropertyCity', 'city', 'City']) || ''),
+    property_state: String(row?.resolved_property_state || pickRaw(raw, ['property_state', 'PropertyState', 'state', 'State']) || ''),
+    property_zip: String(row?.resolved_property_zip || pickRaw(raw, ['property_zip', 'PropertyZip', 'zip', 'Zip']) || ''),
     unit_id: String(row?.unit_id || pickRaw(raw, ['unit_id', 'UnitId']) || ''),
     property_group_id: String(row?.property_group_id || pickRaw(raw, ['property_group_id', 'PropertyGroupId']) || ''),
     status,
@@ -2741,6 +2793,30 @@ function normalizeWorkOrderRow(row: any): Record<string, any> {
     _source: 'postgres_local',
   };
   return normalized;
+}
+
+async function hydrateWorkOrderProperties(rows: any[]): Promise<any[]> {
+  const propertyIds = Array.from(new Set(rows.map((row) => String(row?.property_id || '').trim()).filter(Boolean)));
+  if (!propertyIds.length) return rows;
+  const properties = await queryClient.unsafe(
+    `select id, name, street, city, state, zip
+       from appfolio_properties
+      where id = any($1::text[])`,
+    [propertyIds],
+  );
+  const byId = new Map((properties as any[]).map((property) => [String(property.id), property]));
+  return rows.map((row) => {
+    const property = byId.get(String(row?.property_id || '')) as any;
+    if (!property) return row;
+    return {
+      ...row,
+      resolved_property_name: property.name,
+      resolved_property_street: property.street,
+      resolved_property_city: property.city,
+      resolved_property_state: property.state,
+      resolved_property_zip: property.zip,
+    };
+  });
 }
 
 function normalizeUnitRow(row: any): Record<string, any> {
@@ -4230,6 +4306,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
         `;
     }
 
+    rows = await hydrateWorkOrderProperties(rows as any[]);
     const results = (rows as any[]).map(normalizeWorkOrderRow);
     res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
   } catch (error) {
@@ -4318,6 +4395,7 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
         `;
     }
 
+    rows = await hydrateWorkOrderProperties(rows as any[]);
     const results = (rows as any[]).map(normalizeWorkOrderRow);
     res.json({ ok: true, results, count: results.length, source: 'postgres_local', status: 'inactive' });
   } catch (error) {
@@ -4801,11 +4879,20 @@ app.get('/api/local/work_orders/:workOrderRef/notes', async (req: Request, res: 
       return;
     }
 
-    const payload = await getWorkOrderDetailCached({
-      workOrderRef,
-      detailType: 'notes',
-      forceRefresh,
-    });
+    let payload;
+    try {
+      payload = await getWorkOrderDetailCached({ workOrderRef, detailType: 'notes', forceRefresh });
+    } catch (error) {
+      const embedded = await getEmbeddedWorkOrderNotes(workOrderRef);
+      payload = {
+        workOrderUuid: embedded.workOrderUuid,
+        results: embedded.results,
+        source: 'cached' as const,
+        stale: false,
+        fetched_at: new Date().toISOString(),
+        delta: { changed: false, added: 0, removed: 0, previous_count: embedded.results.length, current_count: embedded.results.length },
+      };
+    }
 
     res.json({
       ok: true,
@@ -6143,6 +6230,62 @@ app.get('/api/local/bills', async (req: Request, res: Response) => {
   } catch (error) {
     logTunnelError(error, '/api/local/bills');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local bills query failed') });
+  }
+});
+
+app.get('/api/local/analytics/vendor-spend', async (req: Request, res: Response) => {
+  try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const requestedLimit = Number.parseInt(String(req.query.limit || '5'), 10);
+    const limit = Math.min(20, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 5));
+    const rows = propertyGroupId
+      ? await queryClient`
+          select
+            coalesce(nullif(b.vendor_name, ''), nullif(v.name, ''), 'Unknown vendor') as vendor_name,
+            coalesce(nullif(v.trade_category, ''), 'Uncategorized') as trade_category,
+            sum(coalesce(b.bill_total_amount, 0))::float8 as total_spend,
+            count(*)::int as bill_count
+          from appfolio_bills b
+          join appfolio_properties p on p.id = b.property_id
+          left join appfolio_vendors v on v.id = b.vendor_id
+          where p.property_group_id = ${propertyGroupId}
+            and coalesce(b.bill_total_amount, 0) > 0
+          group by 1, 2
+          order by total_spend desc
+          limit ${limit}
+        `
+      : await queryClient`
+          select
+            coalesce(nullif(b.vendor_name, ''), nullif(v.name, ''), 'Unknown vendor') as vendor_name,
+            coalesce(nullif(v.trade_category, ''), 'Uncategorized') as trade_category,
+            sum(coalesce(b.bill_total_amount, 0))::float8 as total_spend,
+            count(*)::int as bill_count
+          from appfolio_bills b
+          left join appfolio_vendors v on v.id = b.vendor_id
+          where coalesce(b.bill_total_amount, 0) > 0
+          group by 1, 2
+          order by total_spend desc
+          limit ${limit}
+        `;
+
+    res.json({
+      ok: true,
+      results: rows.map((row: any) => ({
+        vendor_name: String(row.vendor_name || 'Unknown vendor'),
+        trade_category: String(row.trade_category || 'Uncategorized'),
+        total_spend: Number(row.total_spend || 0),
+        bill_count: Number(row.bill_count || 0),
+      })),
+      count: rows.length,
+      property_group_id: propertyGroupId || '',
+      source: 'postgres_local',
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/analytics/vendor-spend');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Vendor spend query failed') });
   }
 });
 

@@ -2548,15 +2548,15 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 }
 
 .kpi-card--neo {
-  background: linear-gradient(155deg, color-mix(in srgb, var(--neo-surface) 92%, var(--bg-secondary)) 0%, var(--neo-surface-strong) 100%);
-  border: 1px solid color-mix(in srgb, var(--border) 42%, var(--neo-border-soft) 58%);
-  border-radius: 24px;
-  box-shadow: var(--neo-shadow-raised);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
 }
 
 .kpi-card--neo:hover {
-  box-shadow: 16px 16px 32px rgba(185, 194, 214, 0.5), -12px -12px 24px rgba(255, 255, 255, 0.96);
-  transform: translateY(-3px);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.09);
+  transform: translateY(-1px);
 }
 
 html.dark .kpi-card--neo:hover {
@@ -2602,10 +2602,10 @@ html.dark .kpi-card--neo:hover {
 
 .signal-chip {
   padding: 12px 14px;
-  border-radius: 16px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--neo-surface) 82%, var(--bg-card)) 0%, var(--neo-surface-strong) 100%);
-  box-shadow: var(--neo-shadow-raised);
-  border: 1px solid color-mix(in srgb, var(--border) 48%, var(--neo-border-soft) 52%);
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  border-left: 2px solid var(--border);
 }
 
 .signal-chip__label {
@@ -5869,33 +5869,92 @@ body.theme-neo #vaultScreen {
   flex-wrap: wrap;
 }
 
-.wo-analytics-grid {
+.wo-operations-layout {
   display: grid;
-  gap: 10px;
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  gap: 20px;
+  align-items: start;
   width: 100%;
   min-width: 0;
-  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+}
+
+.wo-operations-primary,
+.wo-operations-rail {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.wo-operations-rail {
+  position: sticky;
+  top: 76px;
 }
 
 .wo-chart-card {
+  position: relative;
+  overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px;
-  background: color-mix(in srgb, var(--bg-card) 85%, var(--bg-secondary) 15%);
-  min-height: 230px;
+  border-radius: 6px;
+  padding: 20px;
+  background: var(--bg-card);
+  min-width: 0;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
 }
 
 .wo-chart-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.wo-chart-card header span {
+  color: var(--text-muted);
   font-family: var(--font-mono);
-  color: var(--text-secondary);
-  font-size: 11px;
-  margin-bottom: 6px;
-  letter-spacing: 0.02em;
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .wo-chart-host {
   width: 100%;
-  height: 210px;
+  min-height: 350px;
+  height: 350px;
+}
+
+.wo-chart-card--primary .wo-chart-host {
+  min-height: 400px;
+  height: 400px;
+}
+
+.wo-chart-card.is-loading::after {
+  content: '';
+  position: absolute;
+  inset: 52px 20px 20px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-card-hover) 50%, var(--bg-secondary) 75%);
+  background-size: 200% 100%;
+  animation: wo-chart-skeleton 1.2s ease-in-out infinite;
+}
+
+@keyframes wo-chart-skeleton {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (max-width: 1050px) {
+  .wo-operations-layout { grid-template-columns: 1fr; }
+  .wo-operations-rail { position: static; }
+}
+
+@media (max-width: 680px) {
+  .wo-chart-card { padding: 14px; }
+  .wo-chart-host,
+  .wo-chart-card--primary .wo-chart-host { min-height: 350px; height: 350px; }
 }
 
 .wo-grid-meta,
