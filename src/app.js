@@ -2914,9 +2914,10 @@ function buildProxyActionUrl(action, params) {
 // URL (preventing exposure in server logs, browser history, CDN traces).
 // Sends { action } in the query string only; all payload (including key/secret)
 // travels as a JSON body. Attaches the same bearer token as proxyAction.
-async function proxyPost(action, bodyObj, extraHeaders) {
+async function proxyPost(action, bodyObj, extraHeaders, queryParams) {
   var readOnlyAllowedWrites = {
-    pm_notifications_ack: true
+    pm_notifications_ack: true,
+    v2_report: true
   };
   if (isReadOnlyAccessMode() && !readOnlyAllowedWrites[action]) {
     throw new Error('Read-only access mode: updates are disabled');
@@ -2927,6 +2928,11 @@ async function proxyPost(action, bodyObj, extraHeaders) {
   }
   var sep = API_PROXY.indexOf('?') !== -1 ? '&' : '?';
   var url = API_PROXY + sep + 'action=' + encodeURIComponent(action);
+  Object.keys(queryParams || {}).forEach(function(key) {
+    var value = queryParams[key];
+    if (value === undefined || value === null || value === '') return;
+    url += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(String(value));
+  });
   var skipAuthActions = {
     verify_role: true,
     device_setup: true,
@@ -15688,11 +15694,14 @@ async function renderRenewalsSection(opts) {
 
   try {
     var payload = buildRenewalsRequestPayload();
-    var data = await apiFetch('/api/v2/reports/renewal_summary.json', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-    RENEWALS_ROWS = Array.isArray(data && data.results) ? data.results.slice() : [];
+    var renewalParams = { report: 'renewal_summary' };
+    var scopeUuid = getEffectiveGroupUuid();
+    if (scopeUuid) {
+      renewalParams.group_uuid = scopeUuid;
+      renewalParams.property_group_uuid = scopeUuid;
+    }
+    var data = await proxyPost('v2_report', payload, null, renewalParams);
+    RENEWALS_ROWS = getReportRows(data, 'results').slice();
     _renewalsLoadedKey = requestKey;
     _renewalsLastError = '';
   } catch (err) {
@@ -15763,13 +15772,10 @@ async function loadPropertyPerformance() {
   var body = $('#propPerfBody');
   if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
-    var perfParams = { report: 'property_performance' };
     var perfScope = getEffectiveGroupUuid();
-    if (perfScope) {
-      perfParams.group_uuid = perfScope;
-      perfParams.property_group_uuid = perfScope;
-    }
-    var data = await proxyAction('v2_report', perfParams);
+    var perfPath = '/api/local/property_performance?limit=15000';
+    if (perfScope) perfPath += '&property_group_id=' + encodeURIComponent(perfScope);
+    var data = await apiFetch(perfPath);
     var rows = getReportRows(data, 'results');
     var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
     if (effectiveGroup) {

@@ -3413,6 +3413,44 @@ async function fetchV2ReportRows(req: Request, reportName: string, payload: Reco
   return Array.isArray(parsed?.results) ? parsed.results : [];
 }
 
+const DIRECT_V2_REPORTS = new Set([
+  'aged_payables_summary',
+  'bill_detail',
+  'charge_detail',
+  'delinquency',
+  'email_delivery_errors',
+  'guest_cards',
+  'owner_withholdings',
+  'property_performance',
+  'renewal_summary',
+  'rental_applications',
+  'showings',
+  'tenant_directory',
+  'tenant_transactions_summary',
+  'unit_status_details',
+  'unit_vacancy',
+]);
+
+app.post('/api/v2/reports/:reportFile', async (req: Request, res: Response) => {
+  try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    if (!applyProxySessionScope(req, res, session)) return;
+
+    const reportFile = String(req.params.reportFile || '').trim();
+    const reportName = reportFile.endsWith('.json') ? reportFile.slice(0, -5) : '';
+    if (!DIRECT_V2_REPORTS.has(reportName)) {
+      res.status(400).json({ ok: false, error: `Report '${reportName || reportFile}' is not allowed` });
+      return;
+    }
+
+    await proxyAppFolioV2Report(req, res, reportName);
+  } catch (error) {
+    logTunnelError(error, '/api/v2/reports/:reportFile');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'V2 report proxy failed') });
+  }
+});
+
 app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFunction) => {
   const action = getLegacyAction(req);
   if (!action) {
@@ -6806,6 +6844,86 @@ app.get('/api/local/vacancies', async (req: Request, res: Response) => {
   } catch (error) {
     logTunnelError(error, '/api/local/vacancies');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local vacancies query failed') });
+  }
+});
+
+app.get('/api/local/property_performance', async (req: Request, res: Response) => {
+  try {
+    const limit = parseLimit(req.query.limit, 5000, 15000);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient`
+        with vacancy_counts as (
+          select property_id, count(*)::integer as vacant_units
+          from appfolio_unit_vacancies
+          group by property_id
+        )
+        select
+          p.id as property_id,
+          p.name as property_name,
+          p.property_group_id,
+          coalesce(pg.name, p.property_group_id, '') as property_group,
+          count(u.unit_id)::integer as total_units,
+          count(u.unit_id) filter (
+            where lower(coalesce(u.status, '')) not like '%vacant%'
+          )::integer as occupied_units,
+          coalesce(vc.vacant_units, 0)::integer as vacant_units,
+          avg(u.market_rent) filter (where u.market_rent is not null) as avg_rent,
+          sum(u.market_rent) filter (where u.market_rent is not null) as total_rent
+        from appfolio_properties p
+        left join appfolio_property_groups pg on pg.id = p.property_group_id or pg.uuid = p.property_group_id
+        left join appfolio_units u on u.property_id = p.id
+        left join vacancy_counts vc on vc.property_id = p.id
+        where p.property_group_id = ${propertyGroupId}
+        group by p.id, p.name, p.property_group_id, pg.name, vc.vacant_units
+        order by p.name asc
+        limit ${limit}
+      `
+      : await queryClient`
+        with vacancy_counts as (
+          select property_id, count(*)::integer as vacant_units
+          from appfolio_unit_vacancies
+          group by property_id
+        )
+        select
+          p.id as property_id,
+          p.name as property_name,
+          p.property_group_id,
+          coalesce(pg.name, p.property_group_id, '') as property_group,
+          count(u.unit_id)::integer as total_units,
+          count(u.unit_id) filter (
+            where lower(coalesce(u.status, '')) not like '%vacant%'
+          )::integer as occupied_units,
+          coalesce(vc.vacant_units, 0)::integer as vacant_units,
+          avg(u.market_rent) filter (where u.market_rent is not null) as avg_rent,
+          sum(u.market_rent) filter (where u.market_rent is not null) as total_rent
+        from appfolio_properties p
+        left join appfolio_property_groups pg on pg.id = p.property_group_id or pg.uuid = p.property_group_id
+        left join appfolio_units u on u.property_id = p.id
+        left join vacancy_counts vc on vc.property_id = p.id
+        group by p.id, p.name, p.property_group_id, pg.name, vc.vacant_units
+        order by p.name asc
+        limit ${limit}
+      `;
+
+    const results = (rows as any[]).map((row) => {
+      const totalUnits = Number(row.total_units || 0);
+      const vacantUnits = Math.min(totalUnits, Number(row.vacant_units || 0));
+      const occupiedUnits = Math.max(0, totalUnits - vacantUnits);
+      return {
+        ...row,
+        total_units: totalUnits,
+        occupied_units: occupiedUnits,
+        vacant_units: vacantUnits,
+        occupancy_rate: totalUnits > 0 ? occupiedUnits / totalUnits : null,
+        _source: 'postgres_local',
+      };
+    });
+
+    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+  } catch (error) {
+    logTunnelError(error, '/api/local/property_performance');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local property performance query failed') });
   }
 });
 
