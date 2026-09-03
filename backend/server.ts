@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import { flattenedVerify } from 'jose';
@@ -11,6 +11,15 @@ import { db, pingDatabase, queryClient } from './db';
 import * as schema from './schema';
 import * as deviceAuthHandlers from './deviceAuth';
 import { AF_DB_BASE, AF_REPORTS_BASE, afHeaders, afReportCredentialMode } from './sync/afCredentials';
+import {
+  buildReportCacheKey,
+  chunkReportRows,
+  DEFAULT_REPORT_CACHE_BATCH_SIZE,
+  DEFAULT_REPORT_CACHE_ROW_THRESHOLD,
+  DEFAULT_REPORT_CACHE_TTL_MS,
+  extractReportRows,
+  shouldHydrateReport,
+} from './reportCachePolicy';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
@@ -743,9 +752,14 @@ const REPORT_FAST_MS = 6_000;
 const REPORT_SLOW_MS = 15_000;
 const REPORT_PREFER_LOCAL_MS = 30 * 60_000;
 const REPORT_POLICY_TTL_MS = 5 * 60_000;
+const REPORT_CACHE_ROW_THRESHOLD = Math.max(1, Number(process.env.V2_REPORT_CACHE_ROW_THRESHOLD || DEFAULT_REPORT_CACHE_ROW_THRESHOLD));
+const REPORT_CACHE_BATCH_SIZE = Math.max(1, Number(process.env.V2_REPORT_CACHE_BATCH_SIZE || DEFAULT_REPORT_CACHE_BATCH_SIZE));
+const REPORT_CACHE_TTL_MS = Math.max(60_000, Number(process.env.V2_REPORT_CACHE_TTL_MS || DEFAULT_REPORT_CACHE_TTL_MS));
 
 let reportLatencyTableEnsured = false;
+let reportCacheTablesEnsured = false;
 const reportMonitorInFlight = new Set<string>();
+const reportHydrationInFlight = new Map<string, Promise<void>>();
 let propertyGroupsTableEnsured = false;
 let syncDriftMigrationApplied = false;
 
@@ -787,6 +801,164 @@ async function ensureReportLatencyPolicyTable(): Promise<void> {
     )
   `);
   reportLatencyTableEnsured = true;
+}
+
+async function ensureReportCacheTables(): Promise<void> {
+  if (reportCacheTablesEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS appfolio_v2_report_cache (
+      cache_key TEXT PRIMARY KEY,
+      report_name TEXT NOT NULL,
+      request_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      active_generation TEXT,
+      status TEXT NOT NULL DEFAULT 'hydrating',
+      row_count INTEGER NOT NULL DEFAULT 0,
+      hydrated_rows INTEGER NOT NULL DEFAULT 0,
+      fetched_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_error TEXT
+    )
+  `);
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS appfolio_v2_report_cache_rows (
+      cache_key TEXT NOT NULL REFERENCES appfolio_v2_report_cache(cache_key) ON DELETE CASCADE,
+      generation TEXT NOT NULL,
+      row_index INTEGER NOT NULL,
+      row_json JSONB NOT NULL,
+      PRIMARY KEY (cache_key, generation, row_index)
+    )
+  `);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_v2_report_cache_report_idx ON appfolio_v2_report_cache(report_name, updated_at DESC)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_v2_report_cache_rows_generation_idx ON appfolio_v2_report_cache_rows(cache_key, generation, row_index)`);
+  reportCacheTablesEnsured = true;
+}
+
+type CachedV2Report = {
+  rows: any[];
+  fresh: boolean;
+  fetchedAt: string;
+};
+
+async function readCachedV2Report(cacheKey: string): Promise<CachedV2Report | null> {
+  await ensureReportCacheTables();
+  const metadataRows = await queryClient.unsafe(
+    `select active_generation, fetched_at, expires_at
+       from appfolio_v2_report_cache
+      where cache_key = $1 and active_generation is not null
+      limit 1`,
+    [cacheKey],
+  );
+  const metadata = (metadataRows as any[])[0];
+  if (!metadata?.active_generation) return null;
+
+  const cachedRows = await queryClient.unsafe(
+    `select row_json
+       from appfolio_v2_report_cache_rows
+      where cache_key = $1 and generation = $2
+      order by row_index`,
+    [cacheKey, String(metadata.active_generation)],
+  );
+  return {
+    rows: (cachedRows as any[]).map((row) => row.row_json),
+    fresh: !!metadata.expires_at && new Date(metadata.expires_at).getTime() > Date.now(),
+    fetchedAt: metadata.fetched_at ? new Date(metadata.fetched_at).toISOString() : '',
+  };
+}
+
+function hydrateV2ReportCache(
+  cacheKey: string,
+  reportName: string,
+  payload: Record<string, unknown>,
+  rows: any[],
+): Promise<void> {
+  const existing = reportHydrationInFlight.get(cacheKey);
+  if (existing) return existing;
+
+  const hydration = (async () => {
+    await ensureReportCacheTables();
+    const generation = randomUUID();
+    await queryClient.unsafe(
+      `insert into appfolio_v2_report_cache (
+         cache_key, report_name, request_json, status, row_count, hydrated_rows, updated_at, last_error
+       ) values ($1, $2, $3::jsonb, 'hydrating', $4, 0, now(), null)
+       on conflict (cache_key) do update set
+         report_name = excluded.report_name,
+         request_json = excluded.request_json,
+         status = 'hydrating',
+         row_count = excluded.row_count,
+         hydrated_rows = 0,
+         updated_at = now(),
+         last_error = null`,
+      [cacheKey, reportName, JSON.stringify(payload), rows.length],
+    );
+
+    let hydratedRows = 0;
+    for (const batch of chunkReportRows(rows, REPORT_CACHE_BATCH_SIZE)) {
+      const indexedRows = batch.map((row, batchIndex) => ({
+        row_index: hydratedRows + batchIndex,
+        row_json: row,
+      }));
+      await queryClient.unsafe(
+        `insert into appfolio_v2_report_cache_rows (cache_key, generation, row_index, row_json)
+         select $1, $2, (entry->>'row_index')::integer, entry->'row_json'
+           from jsonb_array_elements($3::jsonb) entry
+         on conflict (cache_key, generation, row_index) do update set row_json = excluded.row_json`,
+        [cacheKey, generation, JSON.stringify(indexedRows)],
+      );
+      hydratedRows += batch.length;
+      await queryClient.unsafe(
+        `update appfolio_v2_report_cache
+            set hydrated_rows = $2, updated_at = now()
+          where cache_key = $1`,
+        [cacheKey, hydratedRows],
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    const expiresAt = new Date(Date.now() + REPORT_CACHE_TTL_MS).toISOString();
+    await queryClient.begin(async (transaction) => {
+      await transaction.unsafe(
+        `update appfolio_v2_report_cache
+            set active_generation = $2,
+                status = 'ready',
+                row_count = $3,
+                hydrated_rows = $3,
+                fetched_at = now(),
+                expires_at = $4,
+                updated_at = now(),
+                last_error = null
+          where cache_key = $1`,
+        [cacheKey, generation, rows.length, expiresAt],
+      );
+      await transaction.unsafe(
+        `delete from appfolio_v2_report_cache_rows
+          where cache_key = $1 and generation <> $2`,
+        [cacheKey, generation],
+      );
+    });
+    console.log(`[v2-report-cache] hydrated ${reportName} ${rows.length} rows in generation ${generation}`);
+  })().catch(async (error) => {
+    const message = String((error as any)?.message || error || 'Report hydration failed').slice(0, 1000);
+    console.error(`[v2-report-cache] hydration failed for ${reportName}:`, message);
+    try {
+      await queryClient.unsafe(
+        `update appfolio_v2_report_cache
+            set status = case when active_generation is null then 'error' else 'ready' end,
+                last_error = $2,
+                updated_at = now()
+          where cache_key = $1`,
+        [cacheKey, message],
+      );
+    } catch (updateError) {
+      console.error('[v2-report-cache] unable to persist hydration error:', updateError);
+    }
+  }).finally(() => {
+    reportHydrationInFlight.delete(cacheKey);
+  });
+
+  reportHydrationInFlight.set(cacheKey, hydration);
+  return hydration;
 }
 
 async function ensurePropertyGroupsTable(): Promise<void> {
@@ -3502,6 +3674,38 @@ async function proxyAppFolioV2Report(req: Request, res: Response, reportName: st
 
   const targetUrl = `${AF_REPORTS_BASE}/api/v2/reports/${safeReportName}.json`;
   const payload = buildV2ReportPayload(req, safeReportName);
+  const cacheKey = buildReportCacheKey(safeReportName, payload);
+  const forceRefresh = /^(1|true|yes|on)$/i.test(String(req.query.force_refresh || '').trim());
+  const cached = await readCachedV2Report(cacheKey);
+
+  if (cached && !forceRefresh) {
+    res.setHeader('x-handymgr-report-source', cached.fresh ? 'postgres-cache' : 'postgres-stale-cache');
+    res.json({
+      ok: true,
+      results: cached.rows,
+      count: cached.rows.length,
+      source: cached.fresh ? 'postgres_v2_report_cache' : 'postgres_v2_report_cache_stale',
+      fetched_at: cached.fetchedAt,
+    });
+    if (cached.fresh || reportHydrationInFlight.has(cacheKey)) return;
+
+    void (async () => {
+      const refreshResponse = await fetch(targetUrl, {
+        method: 'POST',
+        headers: afHeaders('v2'),
+        body: JSON.stringify(payload),
+      });
+      const refreshText = await refreshResponse.text();
+      if (!refreshResponse.ok) throw new Error(`HTTP ${refreshResponse.status}: ${refreshText.slice(0, 300)}`);
+      const refreshPayload = refreshText ? JSON.parse(refreshText) : {};
+      const refreshRows = extractReportRows(refreshPayload);
+      if (shouldHydrateReport(refreshRows.length, REPORT_CACHE_ROW_THRESHOLD)) {
+        await hydrateV2ReportCache(cacheKey, safeReportName, payload, refreshRows);
+      }
+    })().catch((error) => console.error(`[v2-report-cache] background refresh failed for ${safeReportName}:`, error));
+    return;
+  }
+
   const upstream = await fetch(targetUrl, {
     method: 'POST',
     headers: afHeaders('v2'),
@@ -3519,6 +3723,19 @@ async function proxyAppFolioV2Report(req: Request, res: Response, reportName: st
       report: safeReportName,
     });
     return;
+  }
+
+  if (upstream.ok) {
+    try {
+      const parsed = text ? JSON.parse(text) : {};
+      const rows = extractReportRows(parsed);
+      if (shouldHydrateReport(rows.length, REPORT_CACHE_ROW_THRESHOLD)) {
+        void hydrateV2ReportCache(cacheKey, safeReportName, payload, rows);
+        res.setHeader('x-handymgr-report-hydration', 'started');
+      }
+    } catch (error) {
+      console.warn(`[v2-report-cache] unable to inspect ${safeReportName} response:`, error);
+    }
   }
 
   res.status(upstream.status);

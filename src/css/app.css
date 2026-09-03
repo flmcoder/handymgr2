@@ -5101,6 +5101,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
    ================================================================= */
 #woModal .modal {
   box-sizing: border-box;
+  max-width: 1040px !important;
   max-height: min(92vh, 900px);
   overflow: hidden;
 }
@@ -5123,6 +5124,73 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   width: 100%;
   margin-bottom: 0;
 }
+
+#woModal .wo-modal-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.85fr);
+  gap: 16px;
+  align-items: start;
+}
+
+#woModal .wo-modal-main,
+#woModal .wo-modal-rail {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+#woModal .wo-modal-rail {
+  position: sticky;
+  top: 0;
+}
+
+#woModal .wo-status-visual {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, var(--accent) 30%);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-card) 88%, var(--accent-dim));
+}
+
+#woModal .wo-status-current {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#woModal .wo-status-current span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+#woModal .wo-status-current strong { color: var(--accent); font-size: 13px; }
+#woModal .wo-modal-status-chart { width: 100%; height: 126px; }
+#woModal .wo-modal-rail .note-list { max-height: 260px; }
+#woModal #detailNoteError { white-space: pre-line; }
+
+#sec-workorders .wo-active-context,
+#sec-workorders .wo-inactive-context {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-card);
+}
+
+#sec-workorders .wo-active-context { border-left: 3px solid var(--accent); }
+#sec-workorders .wo-inactive-context { border-left: 3px solid var(--success); }
+#sec-workorders .wo-inactive-context > i { color: var(--success); font-size: 18px; }
+#sec-workorders .wo-active-context strong,
+#sec-workorders .wo-inactive-context strong { display: block; font-size: 13px; color: var(--text-primary); }
+#sec-workorders .wo-active-context span,
+#sec-workorders .wo-inactive-context span { display: block; margin-top: 2px; color: var(--text-muted); font-size: 11px; }
+#sec-workorders .wo-inactive-context b { margin-left: auto; font-family: var(--font-mono); font-size: 18px; color: var(--success); }
+#sec-workorders .wo-history-tools { margin-top: 16px; }
 
 #woModal #detailDesc,
 #woModal #detailJobDescription {
@@ -5295,6 +5363,9 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
   #woModal .detail-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  #woModal .wo-modal-layout { grid-template-columns: minmax(0, 1fr); }
+  #woModal .wo-modal-rail { position: static; }
 
   #sec-workorders .wo-status-tabs {
     width: 100%;

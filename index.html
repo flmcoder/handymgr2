@@ -402,7 +402,7 @@
   <div class="chart-filter-badge-row" id="woChartFilterBadges" style="display:none"></div>
   <div class="wo-subtabs" id="woSubtabs">
     <button class="wo-subtab active" data-wo-subtab="active"><i class="fas fa-wrench"></i> Open (Active)</button>
-    <button class="wo-subtab" data-wo-subtab="completed"><i class="fas fa-history"></i> Completed</button>
+    <button class="wo-subtab" data-wo-subtab="completed"><i class="fas fa-check-circle"></i> Completed / Inactive</button>
     <button class="wo-subtab" data-wo-subtab="closure"><i class="fas fa-clipboard-check"></i> WO Closure Assistant</button>
     <button class="wo-subtab" data-wo-subtab="followup"><i class="fas fa-flag"></i> WO Follow-Up Queue</button>
   </div>
@@ -446,15 +446,14 @@
       <button class="filter-btn" data-filter="Estimated">Estimated</button>
     </div>
     <div class="kanban-board" id="kanbanBoard"></div>
-  </div>
-
-  <div class="wo-subpanel" id="wo-subpanel-completed" style="display:none">
-    <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <label class="wo-history-toggle" style="display:none"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed Work Orders</span></label>
-      <input type="number" id="woCompletedHistoryDays" min="7" step="30" value="30" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
-      <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Completed</button>
+    <div class="wo-history-tools" id="woCompletedHistoryTools" style="display:none">
+      <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label class="wo-history-toggle" style="display:none"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed Work Orders</span></label>
+        <input type="number" id="woCompletedHistoryDays" min="7" step="30" value="30" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
+        <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Older Completed Work</button>
+      </div>
+      <div id="woCompletedHistoryMount"></div>
     </div>
-    <div id="woCompletedHistoryMount"></div>
   </div>
 
   <div class="wo-subpanel" id="wo-subpanel-closure" style="display:none">

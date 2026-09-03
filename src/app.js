@@ -4558,6 +4558,7 @@ function normalizeBillApprovalStatus(value) {
     raw === 'pending_revision'
   ) return 'pending_approval';
   if (raw === 'exempt') return 'approved';
+  if (raw === 'on_hold' || raw === 'hold' || raw === 'payment_hold' || raw === 'held') return 'on_hold';
   if (raw === 'partially_paid' || raw === 'partial_payment' || raw === 'paid_partially') return 'paid';
   if (raw === 'approved_for_payment') return 'approved';
   if (raw === 'canceled' || raw === 'cancelled' || raw === 'voided') return 'void';
@@ -10794,8 +10795,7 @@ function renderBillsSection(preFilteredData) {
     return sum + n;
   }, 0);
 
-  // Billing KPIs are owned by loadBillingKpis() via bills_stats and should not
-  // be overwritten by section-specific table renders.
+  renderBillingKpisFromRows(filtered);
 
   var sourceBadge = $('#billing-source-badge');
   if (sourceBadge) {
@@ -13525,6 +13525,7 @@ var inspectionsGridApi = null;
 var WO_ANALYTICS_FILTERS = { ageBucket: '', owner: '', status: '' };
 var INSP_ANALYTICS_FILTERS = { status: '', ageBucket: '', turnLinked: '' };
 var WO_CHARTS = { aging: null, owner: null, status: null, vendorSpend: null };
+var WO_MODAL_STATUS_CHART = null;
 var WO_CHART_RESIZE_OBSERVER = null;
 var WO_VENDOR_SPEND_CACHE = { key: '', rows: [] };
 var INSP_CHARTS = { mix: null, age: null, link: null };
@@ -13563,7 +13564,7 @@ function aggregateBillingKpisFromRows(rows) {
       if (vendorId) vendors.add(vendorId);
       return;
     }
-    if (st === 'approved') {
+    if (st === 'approved' || st === 'on_hold') {
       outstandingAmount += (dueAmt || totalAmt || 0);
       if (vendorId) vendors.add(vendorId);
       return;
@@ -13585,6 +13586,38 @@ function aggregateBillingKpisFromRows(rows) {
     paid_this_period_amount: paidAmount,
     vendors_with_open_bills: vendors.size,
   };
+}
+
+function renderBillingKpisFromRows(rows) {
+  var stats = aggregateBillingKpisFromRows(rows);
+  var formatCurrency = function(value) {
+    return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  setMetricVisualState('billKpiPending', 'billKpiPendingSub', {
+    state: 'ok',
+    value: String(stats.pending_approval_count || 0),
+    subText: formatCurrency(stats.pending_approval_amount || 0) + ' pending approval'
+  });
+  setMetricVisualState('billKpiTotal', 'billKpiTotalSub', {
+    state: 'ok',
+    value: formatCurrency(stats.total_outstanding || 0),
+    subText: 'approved or on hold, not paid'
+  });
+  setMetricVisualState('billKpiPaid', 'billKpiPaidSub', {
+    state: 'ok',
+    value: formatCurrency(stats.paid_this_period_amount || 0),
+    subText: String(stats.paid_this_period_count || 0) + ' paid in the last 30 days'
+  });
+  setMetricVisualState('billKpiVendors', 'billKpiVendorsSub', {
+    state: 'ok',
+    value: String(stats.vendors_with_open_bills || 0),
+    subText: 'vendors with pending or unpaid bills'
+  });
+  var badge = $('#billingBadge');
+  if (badge) {
+    badge.textContent = String(stats.pending_approval_count || 0);
+    badge.style.display = stats.pending_approval_count > 0 ? '' : 'none';
+  }
 }
 
 async function loadBillingKpis(opts) {
@@ -13844,15 +13877,19 @@ function setWOSubtab(tab) {
     panel.classList.remove('active');
     panel.style.display = 'none';
   });
-  var panel = $('#wo-subpanel-' + target);
+  var panel = target === 'completed' ? $('#wo-subpanel-active') : $('#wo-subpanel-' + target);
   if (panel) {
     panel.classList.add('active');
     panel.style.display = '';
   }
 
-  if (target === 'completed' && !showCompletedWOHistory) {
-    showCompletedWOHistory = true;
-    renderCompletedWOHistorySection();
+  if (target === 'active' || target === 'completed') {
+    currentWOTab = target === 'completed' ? 'inactive' : 'active';
+    var historyTools = $('#woCompletedHistoryTools');
+    if (historyTools) historyTools.style.display = target === 'completed' ? '' : 'none';
+    if (target === 'completed') showCompletedWOHistory = true;
+    renderWorkOrders();
+    if (target === 'completed') renderCompletedWOHistorySection();
   }
   syncSubtabDock();
 }
@@ -16519,6 +16556,41 @@ function destroyChartInstance(chart) {
   }
 }
 
+function renderWOModalStatusChart(wo) {
+  var host = document.getElementById('woModalStatusChart');
+  if (!host || !(echarts && typeof echarts.init === 'function')) return;
+  destroyChartInstance(WO_MODAL_STATUS_CHART);
+  var stages = ['New', 'Assigned', 'Scheduled', 'Work Done', 'Completed'];
+  var normalized = String((wo && wo.status) || '').trim().toLowerCase();
+  var stageIndex = 0;
+  if (normalized.indexOf('assign') !== -1 || normalized.indexOf('estimate') !== -1) stageIndex = 1;
+  if (normalized.indexOf('schedul') !== -1 || normalized.indexOf('waiting') !== -1) stageIndex = 2;
+  if (normalized.indexOf('work done') !== -1 || normalized.indexOf('ready to bill') !== -1) stageIndex = 3;
+  if (isTerminalWOStatus(normalized)) stageIndex = 4;
+  WO_MODAL_STATUS_CHART = echarts.init(host, null, { renderer: 'canvas' });
+  WO_MODAL_STATUS_CHART.setOption({
+    animationDuration: 450,
+    grid: { left: 10, right: 10, top: 12, bottom: 28, containLabel: false },
+    xAxis: {
+      type: 'category',
+      data: stages,
+      axisLine: { lineStyle: { color: '#7b8496' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#7b8496', fontSize: 9, interval: 0 }
+    },
+    yAxis: { type: 'value', min: 0, max: 1, show: false },
+    tooltip: { trigger: 'item', formatter: function(params) { return params.name; } },
+    series: [{
+      type: 'bar',
+      barWidth: 12,
+      data: stages.map(function(_, index) {
+        return { value: 1, itemStyle: { color: index <= stageIndex ? '#0f8d91' : '#d9dee7', borderRadius: [3, 3, 0, 0] } };
+      })
+    }]
+  }, { notMerge: true });
+  requestAnimationFrame(function() { if (WO_MODAL_STATUS_CHART) WO_MODAL_STATUS_CHART.resize(); });
+}
+
 function ensureWOChart(chart, element) {
   if (chart && typeof chart.getDom === 'function' && chart.getDom() === element) return chart;
   destroyChartInstance(chart);
@@ -17197,12 +17269,9 @@ function renderWorkOrders() {
   rebuildWOScopedFilters();
   var filtered = sortWorkOrders(getFilteredWOs());
 
-  // ── Active/Inactive Tabs ───────────────────────────────────────────────────
-  var tabsHtml =
-    '<div class="wo-status-tabs">' +
-    '  <button id="woTabActive" class="wo-status-tab ' + (currentWOTab === 'active' ? 'active' : '') + '">Active <span class="wo-status-count">' + WORK_ORDERS_ACTIVE.length + '</span></button>' +
-    '  <button id="woTabInactive" class="wo-status-tab ' + (currentWOTab === 'inactive' ? 'active' : '') + '">Inactive <span class="wo-status-count">' + WORK_ORDERS_INACTIVE.length + '</span></button>' +
-    '</div>';
+  var statusContextHtml = currentWOTab === 'inactive'
+    ? '<div class="wo-inactive-context"><i class="fas fa-check-circle"></i><div><strong>Completed / Inactive Work Orders</strong><span>Work already completed, canceled, or otherwise no longer active.</span></div><b>' + WORK_ORDERS_INACTIVE.length + '</b></div>'
+    : '<div class="wo-active-context"><strong>Active Work Queue</strong><span>' + WORK_ORDERS_ACTIVE.length + ' open work orders requiring attention.</span></div>';
 
   // ── List view ──────────────────────────────────────────────────────────────
   if (currentWOView === 'list') {
@@ -17239,10 +17308,8 @@ function renderWorkOrders() {
 
     var existingAnalytics = document.getElementById('woAnalyticsShell');
     if (existingAnalytics && woGridApi) {
-      var activeTab = document.getElementById('woTabActive');
-      var inactiveTab = document.getElementById('woTabInactive');
-      if (activeTab) activeTab.classList.toggle('active', currentWOTab === 'active');
-      if (inactiveTab) inactiveTab.classList.toggle('active', currentWOTab === 'inactive');
+      var existingContext = document.getElementById('woDatasetContext');
+      if (existingContext) existingContext.innerHTML = statusContextHtml;
       woGridApi.setGridOption('columnDefs', getWorkOrderGridColumnDefs(woGridRowsBase));
       woGridApi.setGridOption('rowData', woGridRowsBase);
       var existingMeta = document.getElementById('woGridMeta');
@@ -17255,7 +17322,7 @@ function renderWorkOrders() {
       return;
     }
 
-    board.innerHTML = tabsHtml +
+    board.innerHTML = '<div id="woDatasetContext">' + statusContextHtml + '</div>' +
       '<div class="wo-analytics-shell table-wrapper" id="woAnalyticsShell">' +
       '  <div class="wo-analytics-head">' +
       '    <div class="wo-analytics-title"><i class="fas fa-chart-line" style="color:var(--accent)"></i> Work Order Visual Analytics</div>' +
@@ -17297,12 +17364,6 @@ function renderWorkOrders() {
       };
     }
 
-    // Attach tab click handlers
-    var woTabActive = document.getElementById('woTabActive');
-    var woTabInactive = document.getElementById('woTabInactive');
-    if (woTabActive) woTabActive.onclick = function() { currentWOTab = 'active'; renderWorkOrders(); };
-    if (woTabInactive) woTabInactive.onclick = function() { currentWOTab = 'inactive'; renderWorkOrders(); };
-    
     $('#woBadge').textContent = filtered.length || '0';
     renderWOCloseAssist();
     renderWOFollowupQueue();
@@ -17331,11 +17392,7 @@ function renderWorkOrders() {
   // Vendor compliance map for cross-tab warnings
   var vendorCompliance = buildVendorComplianceMap();
 
-  var tabsHtml =
-    '<div class="wo-status-tabs">' +
-    '  <button id="woKanbanTabActive" class="wo-status-tab ' + (currentWOTab === 'active' ? 'active' : '') + '">Active <span class="wo-status-count">' + WORK_ORDERS_ACTIVE.length + '</span></button>' +
-    '  <button id="woKanbanTabInactive" class="wo-status-tab ' + (currentWOTab === 'inactive' ? 'active' : '') + '">Inactive <span class="wo-status-count">' + WORK_ORDERS_INACTIVE.length + '</span></button>' +
-    '</div>';
+  var tabsHtml = '<div id="woDatasetContext">' + statusContextHtml + '</div>';
 
   if ((WORK_ORDERS_ACTIVE.length + WORK_ORDERS_INACTIVE.length) === 0) {
     board.innerHTML = tabsHtml + '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-inbox" style="font-size:36px;display:block;margin-bottom:12px;color:var(--border)"></i>No work orders loaded. Connect to API or import a cache file.</div>';
@@ -17409,13 +17466,7 @@ function renderWorkOrders() {
     html += '</div></div>';
   }
 
-  board.innerHTML = html;
-  
-    // Attach kanban tab click handlers
-    var woKanbanTabActive = document.getElementById('woKanbanTabActive');
-    var woKanbanTabInactive = document.getElementById('woKanbanTabInactive');
-    if (woKanbanTabActive) woKanbanTabActive.onclick = function() { currentWOTab = 'active'; expandedWOColumn = null; renderWorkOrders(); };
-    if (woKanbanTabInactive) woKanbanTabInactive.onclick = function() { currentWOTab = 'inactive'; expandedWOColumn = null; renderWorkOrders(); };
+  board.innerHTML = tabsHtml + html;
   
   board.classList.toggle('has-expanded-column', !!expandedWOColumn);
   if (expandedWOColumn) {
@@ -18027,7 +18078,7 @@ function showWODetail(id) {
   var STATUSES = ['New','Estimate Requested','Estimated','Assigned','Scheduled','Waiting','Work Done','Ready to Bill','Work Completed','Completed','Canceled'];
   var PRIORITIES = ['Urgent','Normal','Low'];
 
-  var html = '';
+  var html = '<div class="wo-modal-layout"><main class="wo-modal-main">';
   // -- WO Info Section --
   html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-info-circle"></i> Work Order Info</div>';
   html += '<div class="detail-grid">';
@@ -18091,6 +18142,11 @@ function showWODetail(id) {
   html += '<button class="action-btn" id="detailOpenWorkOrderBills" style="padding:6px 10px">Bills For This WO</button>';
   html += '</div></div>';
 
+  html += '</main><aside class="wo-modal-rail">';
+  html += '<div class="detail-section wo-status-visual"><div class="detail-section-title"><i class="fas fa-chart-bar"></i> Work Lifecycle</div>';
+  html += '<div class="wo-status-current"><span>Current status</span><strong>' + escapeHtml(wo.status || 'Unknown') + '</strong></div>';
+  html += '<div id="woModalStatusChart" class="wo-modal-status-chart" role="img" aria-label="Work order lifecycle status"></div></div>';
+
   html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-paperclip"></i> Attachments</div>';
   html += '<div id="detailAttachmentList" style="min-height:26px"><div style="color:var(--text-muted);font-size:11px"><i class="fas fa-spinner fa-spin"></i> Loading attachments…</div></div></div>';
 
@@ -18100,10 +18156,14 @@ function showWODetail(id) {
 
   // -- Add Note --
   html += '<div class="detail-section"><div class="detail-section-title"><i class="fas fa-plus-circle"></i> Add Note</div>';
+  html += '<div class="form-group"><label class="form-label" for="detailNoteAuthor">Author <span aria-hidden="true">*</span></label>';
+  html += '<input class="form-input" id="detailNoteAuthor" maxlength="120" autocomplete="name" placeholder="Enter your name"></div>';
   html += '<textarea class="form-textarea" placeholder="Type a note\u2026" id="detailNote"></textarea>';
   html += '<div id="detailNoteError" style="display:none;margin-top:8px;font-size:12px;color:var(--error-text);background:var(--error-bg);border:1px solid var(--error-border);border-radius:8px;padding:8px 10px"></div></div>';
+  html += '</aside></div>';
 
   $('#woModalBody').innerHTML = html;
+  renderWOModalStatusChart(wo);
 
   function setDetailNoteError(message) {
     var errEl = document.getElementById('detailNoteError');
@@ -18168,44 +18228,100 @@ function showWODetail(id) {
     var newPriority = $('#detailPriority').value;
     var noteInput = ($('#detailNote') && typeof $('#detailNote').value === 'string') ? $('#detailNote').value : '';
     var note = noteInput.trim();
+    var noteAuthor = ($('#detailNoteAuthor') && typeof $('#detailNoteAuthor').value === 'string') ? $('#detailNoteAuthor').value.trim() : '';
     var statusChanged = newStatus !== wo.status || newPriority !== wo.priority;
     if (!statusChanged && noteInput.length > 0 && !note) {
       setDetailNoteError('Please enter a non-empty note.');
       return;
     }
+    if (note && !noteAuthor) {
+      setDetailNoteError('Enter your name before submitting a note.');
+      $('#detailNoteAuthor').focus();
+      return;
+    }
+    var attributedNote = note ? note + '\n\nAuthor: ' + noteAuthor : '';
+    if (attributedNote.length > 65535) {
+      setDetailNoteError('The note and author must not exceed 65,535 characters.');
+      return;
+    }
+    if ((statusChanged || note) && !woDbUuid) {
+      setDetailNoteError('Cannot update: no AppFolio v0 UUID for this work order.');
+      return;
+    }
 
+    var saveButton = $('#woModalSave');
+    var previousSaveText = saveButton ? saveButton.textContent : 'Save Changes';
     try {
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = 'Saving…';
+        saveButton.setAttribute('aria-busy', 'true');
+      }
+      var operations = [];
+      var operationNames = [];
       if (statusChanged) {
-        if (!woDbUuid) { showToast('Cannot update: no DB API UUID for this WO'); return; }
-        await apiFetch('/api/v0/work_orders/' + woDbUuid, {
+        var statusPayload = { Status: newStatus, Priority: newPriority };
+        if (newStatus !== wo.status && (newStatus === 'Completed' || newStatus === 'Work Completed')) {
+          var completedNow = new Date();
+          var completedDate = completedNow.getFullYear() + '-' + String(completedNow.getMonth() + 1).padStart(2, '0') + '-' + String(completedNow.getDate()).padStart(2, '0');
+          statusPayload.WorkCompletedOn = completedDate;
+        }
+        operationNames.push('status update');
+        operations.push(apiFetch('/api/v0/work_orders/' + woDbUuid, {
           method: 'PATCH',
-          body: JSON.stringify({ Status: newStatus, Priority: newPriority })
-        });
+          body: JSON.stringify(statusPayload)
+        }));
+      }
+      if (note) {
+        operationNames.push('note');
+        operations.push(postWONoteViaProxy(woDbUuid, attributedNote).then(function(noteResp) {
+          if (!noteResp.ok) throw new Error('HTTP ' + noteResp.status + ': ' + noteResp.message);
+          return noteResp;
+        }));
+      }
+      if (!operations.length) {
+        closeModal('woModal');
+        return;
+      }
+
+      var results = await Promise.allSettled(operations);
+      var failures = [];
+      results.forEach(function(result, index) {
+        if (result.status === 'rejected') {
+          failures.push(operationNames[index] + ' failed: ' + String((result.reason && result.reason.message) || result.reason || 'Request failed'));
+        }
+      });
+
+      var statusSucceeded = statusChanged && results[operationNames.indexOf('status update')] && results[operationNames.indexOf('status update')].status === 'fulfilled';
+      var noteSucceeded = note && results[operationNames.indexOf('note')] && results[operationNames.indexOf('note')].status === 'fulfilled';
+      if (statusSucceeded) {
         wo.status = newStatus;
         wo.priority = newPriority;
       }
-      if (note) {
-        if (!woDbUuid) {
-          setDetailNoteError('Cannot add note: no DB API UUID for this work order.');
-          return;
-        }
-        var noteResp = await postWONoteViaProxy(woDbUuid, note);
-        if (!noteResp.ok) {
-          setDetailNoteError('Add note failed (HTTP ' + noteResp.status + '): ' + noteResp.message);
-          return;
-        }
+      if (noteSucceeded) {
         if ($('#detailNote')) $('#detailNote').value = '';
-        // bypassProxyCache=true so the new note appears immediately (skips 5-min Turso TTL)
+        if ($('#detailNoteAuthor')) $('#detailNoteAuthor').value = '';
         refreshCurrentWONotes(woDbUuid, true);
       }
       renderWorkOrders();
       renderDashboardKPIs();
-      if (!note) closeModal('woModal');
-      showToast(note ? 'Note added to #' + wo.id : 'Updated #' + wo.id + ' successfully');
+      if (failures.length) {
+        setDetailNoteError(failures.join('\n'));
+        if (statusSucceeded || noteSucceeded) showToast('Some changes to #' + wo.id + ' were saved');
+      } else {
+        showToast(note ? 'Work order and note saved for #' + wo.id : 'Updated #' + wo.id + ' successfully');
+        closeModal('woModal');
+      }
       await saveAllToCache();
     } catch (err) {
       var msg = (err && err.message) ? err.message : 'Request failed';
       setDetailNoteError(msg);
+    } finally {
+      if (saveButton && !isReadOnlyAccessMode()) {
+        saveButton.disabled = false;
+        saveButton.textContent = previousSaveText;
+        saveButton.removeAttribute('aria-busy');
+      }
     }
   };
   if (isReadOnlyAccessMode()) {
