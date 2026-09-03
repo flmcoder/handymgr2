@@ -21,6 +21,7 @@ import {
   shouldHydrateReport,
 } from './reportCachePolicy';
 import { filterBillsForPropertyScope, resolveBillScope } from './billScopePolicy';
+import { enforceScopedSession } from './scopedSessionGuard';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
@@ -582,54 +583,11 @@ type LocalScopeContext = {
 
 async function pmScopeMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const requestedGroupId = getRequestedPropertyGroupId(req);
-    const token = getBearerToken(req);
-
-    // Backward-compatible: if no bearer token is present, keep existing query behavior.
-    if (!token) {
-      (req as any).localScope = {
-        role: 'anonymous',
-        requestedGroupId,
-        sessionGroupId: '',
-        effectiveGroupId: requestedGroupId,
-        scopeSource: 'query',
-        enforced: false,
-      } as LocalScopeContext;
-      next();
-      return;
-    }
-
-    const session = await deviceAuthHandlers.getTrustedDeviceSession(token);
-    if (!session) {
-      res.status(401).json({ ok: false, error: 'Invalid session' });
-      return;
-    }
-
-    const role = String(session.role || '').toLowerCase();
-    const sessionGroupId = normalizeScopeUuid(session.property_group_uuid || '');
-    let effectiveGroupId = requestedGroupId;
-    let scopeSource: 'query' | 'session' = 'query';
-    let enforced = false;
-
-    if (role === 'pm_readonly') {
-      if (!sessionGroupId) {
-        res.status(403).json({ ok: false, error: 'PM session missing scoped property group' });
-        return;
-      }
-      effectiveGroupId = sessionGroupId;
-      scopeSource = 'session';
-      enforced = true;
-    }
-
-    (req as any).localScope = {
-      role,
-      requestedGroupId,
-      sessionGroupId,
-      effectiveGroupId,
-      scopeSource,
-      enforced,
-    } as LocalScopeContext;
-
+    const allowed = await enforceScopedSession(req, res, {
+      requireSession: requireProxySession,
+      applyScope: applyProxySessionScope,
+    });
+    if (!allowed) return;
     next();
   } catch (error) {
     logTunnelError(error, 'pm-scope-middleware');
@@ -3290,6 +3248,11 @@ const legacyActionRoutes = {
     res.json(await readUnitTurnsHistoryFromDb(params));
   },
   estimates: async (req: Request, res: Response) => {
+    const allowed = await enforceScopedSession(req, res, {
+      requireSession: requireProxySession,
+      applyScope: applyProxySessionScope,
+    });
+    if (!allowed) return;
     const params = toActionParams(req);
     res.json(await readEstimatesFromDb(params));
   },
@@ -4132,6 +4095,11 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
   }
 
   if (action === 'manager_review') {
+    const allowed = await enforceScopedSession(req, res, {
+      requireSession: requireProxySession,
+      applyScope: applyProxySessionScope,
+    });
+    if (!allowed) return;
     await respondManagerReviewAggregate(req, res);
     return;
   }
@@ -6592,22 +6560,20 @@ app.get('/api/local/bills', async (req: Request, res: Response) => {
 
 app.get('/api/local/analytics/vendor-spend', async (req: Request, res: Response) => {
   try {
-    const session = await requireProxySession(req, res);
-    if (!session) return;
-
+    await ensureVendorOverrideTable();
     const propertyGroupId = getPropertyGroupFilter(req);
     const requestedLimit = Number.parseInt(String(req.query.limit || '5'), 10);
     const limit = Math.min(20, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 5));
     const rows = propertyGroupId
       ? await queryClient`
           select
-            coalesce(nullif(b.vendor_name, ''), nullif(v.name, ''), 'Unknown vendor') as vendor_name,
-            coalesce(nullif(v.trade_category, ''), 'Uncategorized') as trade_category,
+            coalesce(nullif(b.vendor_name, ''), 'Unknown vendor') as vendor_name,
+            coalesce(nullif(vo.trade_category, ''), nullif(vo.category, ''), 'Uncategorized') as trade_category,
             sum(coalesce(b.bill_total_amount, 0))::float8 as total_spend,
             count(*)::int as bill_count
           from appfolio_bills b
           join appfolio_properties p on p.id = b.property_id
-          left join appfolio_vendors v on v.id = b.vendor_id
+          left join vendor_overrides vo on vo.vendor_id = b.vendor_id
           where p.property_group_id = ${propertyGroupId}
             and coalesce(b.bill_total_amount, 0) > 0
           group by 1, 2
@@ -6616,12 +6582,12 @@ app.get('/api/local/analytics/vendor-spend', async (req: Request, res: Response)
         `
       : await queryClient`
           select
-            coalesce(nullif(b.vendor_name, ''), nullif(v.name, ''), 'Unknown vendor') as vendor_name,
-            coalesce(nullif(v.trade_category, ''), 'Uncategorized') as trade_category,
+            coalesce(nullif(b.vendor_name, ''), 'Unknown vendor') as vendor_name,
+            coalesce(nullif(vo.trade_category, ''), nullif(vo.category, ''), 'Uncategorized') as trade_category,
             sum(coalesce(b.bill_total_amount, 0))::float8 as total_spend,
             count(*)::int as bill_count
           from appfolio_bills b
-          left join appfolio_vendors v on v.id = b.vendor_id
+          left join vendor_overrides vo on vo.vendor_id = b.vendor_id
           where coalesce(b.bill_total_amount, 0) > 0
           group by 1, 2
           order by total_spend desc
