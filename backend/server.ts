@@ -20,6 +20,7 @@ import {
   extractReportRows,
   shouldHydrateReport,
 } from './reportCachePolicy';
+import { filterBillsForPropertyScope, resolveBillScope } from './billScopePolicy';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
@@ -495,6 +496,7 @@ const SYNC_ENDPOINT_ALLOWLIST = new Set<string>([
   'v0:users',
   'v0:units',
   'v0:work_orders',
+  'v0:bills',
   'v2:tenant_directory',
   'v2:unit_inspection',
   'v2:unit_turn_detail',
@@ -559,6 +561,7 @@ function getRequestedPropertyGroupId(req: Request): string {
     req.query.property_group_id
       ?? req.query.property_group_uuid
       ?? req.query.group_id
+      ?? req.query.group_uuid
       ?? req.query.propertyGroupId,
   );
 }
@@ -758,6 +761,7 @@ const REPORT_CACHE_TTL_MS = Math.max(60_000, Number(process.env.V2_REPORT_CACHE_
 
 let reportLatencyTableEnsured = false;
 let reportCacheTablesEnsured = false;
+let billsTableEnsured = false;
 const reportMonitorInFlight = new Set<string>();
 const reportHydrationInFlight = new Map<string, Promise<void>>();
 let propertyGroupsTableEnsured = false;
@@ -832,6 +836,35 @@ async function ensureReportCacheTables(): Promise<void> {
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_v2_report_cache_report_idx ON appfolio_v2_report_cache(report_name, updated_at DESC)`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_v2_report_cache_rows_generation_idx ON appfolio_v2_report_cache_rows(cache_key, generation, row_index)`);
   reportCacheTablesEnsured = true;
+}
+
+async function ensureBillsTable(): Promise<void> {
+  if (billsTableEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS appfolio_bills (
+      id TEXT PRIMARY KEY,
+      bill_number TEXT,
+      vendor_id TEXT,
+      vendor_name TEXT,
+      property_id TEXT,
+      property_name TEXT,
+      unit_id TEXT,
+      status TEXT,
+      status_label TEXT,
+      bill_total_amount REAL,
+      invoice_date TIMESTAMPTZ,
+      due_date TIMESTAMPTZ,
+      paid_at TIMESTAMPTZ,
+      raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      cached_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ
+    )
+  `);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_bills_vendor_idx ON appfolio_bills(vendor_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_bills_property_idx ON appfolio_bills(property_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_bills_status_idx ON appfolio_bills(status)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_bills_updated_idx ON appfolio_bills(updated_at DESC)`);
+  billsTableEnsured = true;
 }
 
 type CachedV2Report = {
@@ -3286,7 +3319,8 @@ function applyProxySessionScope(req: Request, res: Response, session: any): bool
   const requestedGroupId = getRequestedPropertyGroupId(req);
   const role = String(session?.role || '').toLowerCase();
   const sessionGroupId = normalizeScopeUuid(session?.property_group_uuid || '');
-  if (role === 'pm_readonly' && !sessionGroupId) {
+  const scope = resolveBillScope(role, sessionGroupId, requestedGroupId);
+  if (!scope.allowed) {
     res.status(403).json({ ok: false, error: 'PM session missing scoped property group' });
     return false;
   }
@@ -3295,7 +3329,7 @@ function applyProxySessionScope(req: Request, res: Response, session: any): bool
     role,
     requestedGroupId,
     sessionGroupId,
-    effectiveGroupId: role === 'pm_readonly' ? sessionGroupId : requestedGroupId,
+    effectiveGroupId: scope.propertyGroupId,
     scopeSource: role === 'pm_readonly' ? 'session' : 'query',
     enforced: role === 'pm_readonly',
   } as LocalScopeContext;
@@ -3631,7 +3665,7 @@ function buildBillsSinceIso(params: Params): string {
   return new Date(Date.now() - (days * 86400000)).toISOString();
 }
 
-async function fetchBillsFromDbApi(params: Params): Promise<{ ok: boolean; results: any[]; total: number; page: number; per_page: number; source: string }> {
+async function fetchBillsFromDbApi(params: Params, propertyGroupId = ''): Promise<{ ok: boolean; results: any[]; total: number; page: number; per_page: number; source: string }> {
   const limit = parseLimit(params.limit || params.max || params.per_page, 200, 1000);
   const offset = Math.max(0, Number.parseInt(String(params.offset || '0'), 10) || 0);
   const page = Math.max(1, Number.parseInt(String(params.page || (Math.floor(offset / Math.max(1, limit)) + 1)), 10) || 1);
@@ -3650,9 +3684,20 @@ async function fetchBillsFromDbApi(params: Params): Promise<{ ok: boolean; resul
     throw new Error(String(parsed?.error || text || `Bills fetch failed: HTTP ${upstream.status}`));
   }
 
-  const results = Array.isArray(parsed?.data)
+  let results = Array.isArray(parsed?.data)
     ? parsed.data
     : (Array.isArray(parsed?.results) ? parsed.results : []);
+
+  if (propertyGroupId) {
+    const propertyRows = await queryClient.unsafe(
+      `select id from appfolio_properties where property_group_id = $1`,
+      [propertyGroupId],
+    );
+    const allowedPropertyIds = new Set(
+      (propertyRows as any[]).map((property) => String(property?.id || '').trim()).filter(Boolean),
+    );
+    results = filterBillsForPropertyScope(results, allowedPropertyIds);
+  }
 
   return {
     ok: true,
@@ -3661,7 +3706,7 @@ async function fetchBillsFromDbApi(params: Params): Promise<{ ok: boolean; resul
     count: results.length,
     page,
     per_page: perPage,
-    source: 'appfolio_db_v0',
+    source: propertyGroupId ? 'appfolio_db_v0_scoped' : 'appfolio_db_v0',
   } as any;
 }
 
@@ -3904,8 +3949,9 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     try {
       const session = await requireProxySession(req, res);
       if (!session) return;
+      if (!applyProxySessionScope(req, res, session)) return;
       const params = toParams(req);
-      res.json(await fetchBillsFromDbApi(params));
+      res.json(await fetchBillsFromDbApi(params, getPropertyGroupFilter(req)));
     } catch (error) {
       logTunnelError(error, '/api?action=bills');
       res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Bills proxy failed') });
@@ -3917,8 +3963,9 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     try {
       const session = await requireProxySession(req, res);
       if (!session) return;
+      if (!applyProxySessionScope(req, res, session)) return;
       const params = toParams(req);
-      const payload = await fetchBillsFromDbApi(params);
+      const payload = await fetchBillsFromDbApi(params, getPropertyGroupFilter(req));
       const offset = Math.max(0, Number.parseInt(String(params.offset || '0'), 10) || 0);
       const limit = parseLimit(params.limit || params.per_page, 50, 1000);
       const sliced = payload.results.slice(offset, offset + limit);
@@ -4401,8 +4448,34 @@ app.get('/api/local/vendor_overrides', async (req: Request, res: Response) => {
   try {
     const session = await requireProxySession(req, res);
     if (!session) return;
+    if (!applyProxySessionScope(req, res, session)) return;
     await ensureVendorOverrideTable();
-    const rows = await queryClient.unsafe(`SELECT vendor_id, category, trade_category, compliant, updated_at FROM vendor_overrides ORDER BY vendor_id`);
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const rows = propertyGroupId
+      ? await queryClient.unsafe(
+          `SELECT vo.vendor_id, vo.category, vo.trade_category, vo.compliant, vo.updated_at
+             FROM vendor_overrides vo
+            WHERE EXISTS (
+                    SELECT 1
+                      FROM appfolio_bills b
+                      JOIN appfolio_properties p ON p.id = b.property_id
+                     WHERE b.vendor_id = vo.vendor_id
+                       AND p.property_group_id = $1
+                  )
+               OR EXISTS (
+                    SELECT 1
+                      FROM appfolio_work_orders wo
+                     WHERE wo.vendor_id = vo.vendor_id
+                       AND wo.property_group_id = $1
+                  )
+            ORDER BY vo.vendor_id`,
+          [propertyGroupId],
+        )
+      : await queryClient.unsafe(
+          `SELECT vendor_id, category, trade_category, compliant, updated_at
+             FROM vendor_overrides
+            ORDER BY vendor_id`,
+        );
     res.json({ ok: true, results: rows, count: (rows as any[]).length, source: 'postgres_local' });
   } catch (error) {
     logTunnelError(error, '/api/local/vendor_overrides');
@@ -6505,8 +6578,11 @@ app.get('/api/local/estimates', async (req: Request, res: Response) => {
 
 app.get('/api/local/bills', async (req: Request, res: Response) => {
   try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    if (!applyProxySessionScope(req, res, session)) return;
     const params = toParams(req);
-    const payload = await fetchBillsFromDbApi(params);
+    const payload = await fetchBillsFromDbApi(params, getPropertyGroupFilter(req));
     res.json(payload);
   } catch (error) {
     logTunnelError(error, '/api/local/bills');
@@ -8316,6 +8392,7 @@ function startRecurringSyncScheduler(): void {
     'v0:users',
     'v0:units',
     'v0:work_orders',
+    'v0:bills',
     'v2:tenant_directory',
     'v2:unit_inspection',
     'v2:unit_turn_detail',
@@ -8397,6 +8474,7 @@ app.listen(PORT, HOST, () => {
     try {
       await applySyncDriftMigration();
       await ensurePropertyGroupsTable();
+      await ensureBillsTable();
       const { failInterruptedRuns } = await import('./sync/runStore.ts');
       await failInterruptedRuns(processStartedAt);
       startRecurringSyncScheduler();

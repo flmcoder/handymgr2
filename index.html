@@ -1307,6 +1307,8 @@
   <div class="section-subtabs report-subtabs" id="occupancySubtabs" aria-label="Occupancy reports">
     <button class="section-subtab active" data-occupancy-subtab="tenant-transactions"><i class="fas fa-receipt"></i> Transactions</button>
     <button class="section-subtab" data-occupancy-subtab="tenant-directory"><i class="fas fa-users"></i> Tenant Directory</button>
+    <button class="section-subtab" data-occupancy-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
+    <button class="section-subtab" data-occupancy-subtab="move-outs"><i class="fas fa-calendar-minus"></i> Move-Outs</button>
     <button class="section-subtab" data-occupancy-subtab="delinquency"><i class="fas fa-exclamation-circle"></i> Delinquency</button>
     <button class="section-subtab" data-occupancy-subtab="applications"><i class="fas fa-file-alt"></i> Applications</button>
     <button class="section-subtab" data-occupancy-subtab="showings"><i class="fas fa-calendar-check"></i> Showings</button>
@@ -1339,6 +1341,36 @@
       <div class="table-scroll"><table class="data-table" id="tenantDirTable">
         <thead><tr><th>Tenant</th><th>Property / Unit</th><th>Email</th><th>Phone</th><th>Lease Start</th><th>Lease End</th><th>Move-In</th></tr></thead>
         <tbody id="tenantDirBody"><tr><td colspan="7" class="u-table-empty-cell">Click Refresh to load tenant directory</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="section-subpanel" id="occupancy-subpanel-vacancies" style="display:none">
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div class="table-title"><i class="fas fa-door-open" style="color:var(--warning)"></i> Vacant Units</div>
+        <div class="u-toolbar-row">
+          <input type="text" id="vacanciesSearch" class="search-box u-minw-200" placeholder="Search property, unit, status…">
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table" id="vacanciesTable">
+        <thead><tr><th>Property / Unit</th><th>Status</th><th>Rent Ready</th><th>Days Vacant</th><th>Available</th><th>Market Rent</th></tr></thead>
+        <tbody id="vacanciesBody"><tr><td colspan="6" class="u-table-empty-cell">Open this report to load vacancies</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="section-subpanel" id="occupancy-subpanel-move-outs" style="display:none">
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div class="table-title"><i class="fas fa-calendar-minus" style="color:var(--info)"></i> Upcoming Move-Outs</div>
+        <div class="u-toolbar-row">
+          <input type="text" id="moveOutsSearch" class="search-box u-minw-200" placeholder="Search tenant, property, unit…">
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table" id="moveOutsTable">
+        <thead><tr><th>Tenant</th><th>Property / Unit</th><th>Move-Out</th><th>Days Left</th><th>Phone</th><th>Email</th></tr></thead>
+        <tbody id="moveOutsBody"><tr><td colspan="6" class="u-table-empty-cell">Open this report to load move-outs</td></tr></tbody>
       </table></div>
     </div>
   </div>

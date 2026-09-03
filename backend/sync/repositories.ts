@@ -19,6 +19,7 @@ import {
   appfolioUsers,
   appfolioPropertyGroups,
   appfolioProperties,
+  appfolioBills,
   appfolioUnits,
   appfolioWorkOrders,
   appfolioEstimates,
@@ -30,6 +31,7 @@ import {
   unitTurnMilestones,
   unitTurnWorkOrders,
 } from '../schema.ts';
+import { normalizeBillSyncRow } from './billSyncPolicy.ts';
 
 type GroupCatalogEntry = { id: string; uuid: string; name: string };
 
@@ -333,6 +335,46 @@ export async function upsertProperties(rows: any[]): Promise<UpsertResult> {
     // We use a simpler pattern: read hash, compare, then decide.
     // Above upsert always runs; track as upserted for simplicity.
     // A future optimization can pre-read hashes in bulk.
+    upserted++;
+  }
+
+  return { upserted, skipped };
+}
+
+export async function upsertBills(rows: any[]): Promise<UpsertResult> {
+  let upserted = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const normalized = normalizeBillSyncRow(row);
+    if (!normalized) {
+      skipped++;
+      continue;
+    }
+
+    await db
+      .insert(appfolioBills)
+      .values({ ...normalized, rawJson: row, cachedAt: new Date() })
+      .onConflictDoUpdate({
+        target: appfolioBills.id,
+        set: {
+          billNumber: sql`EXCLUDED.bill_number`,
+          vendorId: sql`EXCLUDED.vendor_id`,
+          vendorName: sql`EXCLUDED.vendor_name`,
+          propertyId: sql`EXCLUDED.property_id`,
+          propertyName: sql`EXCLUDED.property_name`,
+          unitId: sql`EXCLUDED.unit_id`,
+          status: sql`EXCLUDED.status`,
+          statusLabel: sql`EXCLUDED.status_label`,
+          billTotalAmount: sql`EXCLUDED.bill_total_amount`,
+          invoiceDate: sql`EXCLUDED.invoice_date`,
+          dueDate: sql`EXCLUDED.due_date`,
+          paidAt: sql`EXCLUDED.paid_at`,
+          rawJson: sql`EXCLUDED.raw_json`,
+          cachedAt: sql`EXCLUDED.cached_at`,
+          updatedAt: sql`EXCLUDED.updated_at`,
+        },
+      });
     upserted++;
   }
 

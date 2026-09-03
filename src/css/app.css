@@ -268,20 +268,13 @@ body {
   width: 0%;
   height: 3px;
   z-index: 9999;
-  background: linear-gradient(90deg, var(--accent, #6366f1) 0%, #a78bfa 60%, var(--accent, #6366f1) 100%);
-  background-size: 200% 100%;
-  box-shadow: 0 0 8px var(--accent, #6366f1);
+  background: var(--accent, #6366f1);
   transition: width 0.25s ease, opacity 0.4s ease;
   opacity: 0;
   pointer-events: none;
 }
 #topLoadBar.active {
   opacity: 1;
-  animation: topLoadBarShimmer 1.4s linear infinite;
-}
-@keyframes topLoadBarShimmer {
-  0%   { background-position: 100% 0; }
-  100% { background-position: -100% 0; }
 }
 
 body.theme-neo {
@@ -475,6 +468,21 @@ body.theme-neo {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+.vacancy-age {
+  display: inline-flex;
+  align-items: center;
+  min-width: 64px;
+  justify-content: center;
+  padding: 3px 7px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+.vacancy-age--recent { color: var(--success); background: var(--success-dim); }
+.vacancy-age--warning { color: var(--warning); background: var(--warning-dim); }
+.vacancy-age--critical { color: var(--danger); background: var(--danger-dim); }
 
 .billing-kpi-grid {
   margin-bottom: 16px;
@@ -2485,7 +2493,7 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .kpi-value[data-metric-state="loading"] {
   color: var(--text-muted);
   letter-spacing: 1px;
-  animation: kpiPulse 1.2s ease-in-out infinite;
+  opacity: 0.6;
 }
 
 .kpi-value[data-metric-state="no_response"],
@@ -2497,11 +2505,6 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 .kpi-value[data-metric-state="degraded"],
 .kpi-sub[data-metric-state="degraded"] {
   color: var(--warning);
-}
-
-@keyframes kpiPulse {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
 }
 
 .kpi-trend-wrap {
@@ -3230,8 +3233,7 @@ html.dark .vendor-trade-cat-select option {
 
 /* Loading skeleton */
 .skeleton-row { display: flex; gap: 14px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.skeleton-block { background: linear-gradient(90deg, var(--bg-input) 25%, var(--bg-card-hover) 50%, var(--bg-input) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; height: 16px; }
-@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.skeleton-block { background: var(--bg-input); border-radius: 4px; height: 16px; opacity: 0.7; }
 /* kpi-skeleton: no shimmer bubble — values update silently */
 .kpi-card.kpi-skeleton .kpi-value,
 .kpi-card.kpi-skeleton .kpi-sub {
@@ -3796,6 +3798,16 @@ html.dark .vendor-trade-cat-select option {
 
 @media (prefers-reduced-motion: reduce) {
   .stagger > * { opacity: 1; animation: none; }
+  #topLoadBar,
+  .loading-overlay i,
+  .refresh-btn.spinning i,
+  .sec-refresh.spinning i,
+  .v9-loading i,
+  .wo-chart-card.is-loading::after,
+  .feed-pulse,
+  .topbar-status .dot {
+    animation: none;
+  }
 }
 
 /* Stagger animation */
@@ -3851,9 +3863,8 @@ html.dark .vendor-trade-cat-select option {
   transition: background 0.3s ease;
 }
 .progress-step.done { background: var(--success); }
-.progress-step.active { background: var(--accent); animation: pulse-bar 1s infinite; }
+.progress-step.active { background: var(--accent); }
 .progress-step.error { background: var(--danger); }
-@keyframes pulse-bar { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
 /* Section refresh button */
 .sec-refresh {
@@ -6005,16 +6016,15 @@ body.theme-neo #vaultScreen {
 .wo-chart-card.is-loading::after {
   content: '';
   position: absolute;
-  inset: 52px 20px 20px;
-  border-radius: 4px;
-  background: linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-card-hover) 50%, var(--bg-secondary) 75%);
-  background-size: 200% 100%;
-  animation: wo-chart-skeleton 1.2s ease-in-out infinite;
-}
-
-@keyframes wo-chart-skeleton {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
 }
 
 @media (max-width: 1050px) {

@@ -26,7 +26,7 @@ import {
 } from './runStore.ts';
 import {
   upsertPropertyGroups,
-  upsertProperties, upsertUnits, upsertWorkOrders,
+  upsertProperties, upsertUnits, upsertWorkOrders, upsertBills,
   upsertEstimates, upsertTurnTracker,
   upsertMaintenanceTechUsers,
   upsertUnitInspections, upsertTenantDirectory, upsertUnitTurnDetails, upsertUnitVacancies,
@@ -152,6 +152,21 @@ const ENDPOINTS: Record<string, EndpointDef> = {
     },
     extractRows: (data) => data?.data ?? data?.results ?? [],
     upsert: upsertWorkOrders,
+  },
+
+  'v0:bills': {
+    apiVersion: 'v0',
+    buildFirstUrl: ({ baseUrl, incrementalFrom, lookbackDays, forceLookback }) => {
+      const clampedLookback = Math.max(1, Math.min(3650, Number(lookbackDays || 180)));
+      const from = incrementalFrom
+        ? (forceLookback
+          ? new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z'
+          : new Date(incrementalFrom).toISOString().slice(0, 19) + 'Z')
+        : new Date(Date.now() - clampedLookback * 86400_000).toISOString().slice(0, 19) + 'Z';
+      return `${baseUrl}/api/v0/bills?filters%5BLastUpdatedAtFrom%5D=${encodeURIComponent(from)}&page%5Bsize%5D=100`;
+    },
+    extractRows: (data) => data?.data ?? data?.results ?? [],
+    upsert: upsertBills,
   },
 
   'v2:unit_inspection': {

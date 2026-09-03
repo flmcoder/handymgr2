@@ -6,14 +6,28 @@ import './css/app.css';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-quartz.css';
 import * as echarts from 'echarts';
-import { ModuleRegistry, createGrid, ClientSideRowModelModule, InfiniteRowModelModule, QuickFilterModule } from 'ag-grid-community';
+import {
+  ModuleRegistry,
+  createGrid,
+  ClientSideRowModelModule,
+  InfiniteRowModelModule,
+  QuickFilterModule,
+  RowSelectionModule,
+  CellStyleModule,
+} from 'ag-grid-community';
 import { createAuthModule } from './auth.js';
 import { createTabsModule } from './tabs.js';
 import { createManagerReviewModule } from './managerReview.js';
 import { createNavInteractionsModule } from './navInteractions.js';
 import { createGroupFilterModule } from './groupFilter.js';
 
-ModuleRegistry.registerModules([ClientSideRowModelModule, InfiniteRowModelModule, QuickFilterModule]);
+ModuleRegistry.registerModules([
+  ClientSideRowModelModule,
+  InfiniteRowModelModule,
+  QuickFilterModule,
+  RowSelectionModule,
+  CellStyleModule,
+]);
 
 // ---- OTP Countdown Timer ----
 var _otpCountdownTimer = null;
@@ -6140,9 +6154,6 @@ async function fetchWorkOrders() {
     setDataSourceState('work_orders', 'ok', { count: totalCount, active: WORK_ORDERS_ACTIVE.length, inactive: WORK_ORDERS_INACTIVE.length, error: '' });
     return true;
   } catch (err) {
-    WORK_ORDERS_ACTIVE = [];
-    WORK_ORDERS_INACTIVE = [];
-    WORK_ORDERS = [];
     setDataSourceState('work_orders', 'no_response', { count: null, error: String((err && err.message) || err || 'work orders unavailable') });
     return false;
   }
@@ -6787,20 +6798,19 @@ async function fetchBills(days, opts) {
     }
     _lastBillSource = 'legacy';
     if (assignGlobal) {
-      BILLS = [];
       setDataSourceState('bills', 'no_response', { count: null, error: String((err && err.message) || err || 'bills unavailable') });
     }
     if (opts && opts.returnPayload) {
       return {
         ok: false,
         error: String(err && (err.message || err) || 'fetch bills failed'),
-        rows: [],
-        total: 0,
+        rows: Array.isArray(BILLS) ? BILLS : [],
+        total: Array.isArray(BILLS) ? BILLS.length : 0,
         page: 1,
         perPage: requestedPerPage,
         totalPages: 1,
         fromCache: false,
-        source: 'legacy'
+        source: 'stale'
       };
     }
     return false;
@@ -7014,7 +7024,6 @@ async function fetchTurns() {
     setDataSourceState('turns', 'ok', { count: TURNS.length, error: '' });
     return true;
   } catch (err) {
-    TURNS = [];
     setDataSourceState('turns', 'no_response', { count: null, error: String((err && err.message) || err || 'turns unavailable') });
     return false;
   }
@@ -7185,7 +7194,6 @@ async function fetchInspections() {
     setDataSourceState('inspections', 'ok', { count: INSPECTIONS.length, error: '' });
     return true;
   } catch (err) {
-    INSPECTIONS = [];
     setDataSourceState('inspections', 'no_response', { count: null, error: String((err && err.message) || err || 'inspections unavailable') });
     return false;
   }
@@ -7687,7 +7695,6 @@ async function fetchUpcomingMoveouts() {
     return true;
   } catch (err) {
     console.log('[fetchUpcomingMoveouts] error: ' + (err && err.message || err));
-    UPCOMING_MOVEOUTS = [];
     setDataSourceState('upcoming_moveouts', 'no_response', { count: null, error: String((err && err.message) || err || 'move-outs unavailable') });
     return false;
   }
@@ -13311,6 +13318,21 @@ function renderWoSankey() {
   if (existing) existing.dispose();
   var chart = echartsCore.init(el, null, { renderer: 'canvas' });
   chart.setOption(buildSankey(wos));
+  chart.on('click', function(params) {
+    var query = String(params && params.name || '').trim();
+    if (!query) return;
+    var workordersTab = document.querySelector('.nav-tab[data-tab="workorders"]');
+    if (workordersTab) workordersTab.click();
+    setTimeout(function() {
+      var search = document.getElementById('woSearch');
+      if (!search) return;
+      search.value = query;
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      search.focus();
+    }, 200);
+  });
+  el.style.cursor = 'pointer';
+  el.setAttribute('title', 'Click a flow node to filter Work Orders');
   if (meta) meta.textContent = wos.length + ' work orders';
   _sankeyRendered = true;
 
@@ -13781,7 +13803,7 @@ async function loadBillingKpis(opts) {
   }
 }
 var currentPropertiesSubtab = 'directory'; // directory | performance | vacancies | renewals | bulk
-var currentOccupancySubtab = 'tenant-transactions'; // tenant-transactions | tenant-directory | delinquency | applications | showings | guest-cards
+var currentOccupancySubtab = 'tenant-transactions';
 // Billing main (saved report)
 var _billingMainData = [];
 var _billingMainFiltered = [];
@@ -14314,14 +14336,15 @@ function renderPayablesTable() {
   var tbody = $('#payablesTableBody');
   if (!tbody) return;
   ensurePayablesAsOfDate();
+  var hasPayablesRows = Array.isArray(PAYABLES_ROWS) && PAYABLES_ROWS.length > 0;
 
-  if (_payablesLoading) {
+  if (_payablesLoading && !hasPayablesRows) {
     tbody.innerHTML = '<tr><td colspan="11" class="row-state-cell">' + loadingHtml('Loading payables…') + '</td></tr>';
     renderPayablesPaginationControls(0);
     return;
   }
 
-  if (_payablesLastError) {
+  if (_payablesLastError && !hasPayablesRows) {
     tbody.innerHTML = '<tr><td colspan="11" class="row-state-cell danger">' + escapeHtml(_payablesLastError) + '</td></tr>';
     renderPayablesPaginationControls(0);
     return;
@@ -14407,7 +14430,8 @@ function renderPayablesTable() {
       return sum + amountToNumber(row.amount_payable || 0);
     }, 0);
     var scopeText = effectiveGroup || (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid ? (resolveGroupNameFromUuid(forcedPropertyGroupUuid) || 'Assigned PM Group') : 'All Properties');
-    summaryEl.textContent = rows.length + ' payables • ' + formatPayablesCurrency(totalAmount) + ' total • ' + scopeText;
+    summaryEl.textContent = rows.length + ' payables • ' + formatPayablesCurrency(totalAmount) + ' total • ' + scopeText
+      + (_payablesLoading ? ' • Refreshing' : (_payablesLastError ? ' • Showing saved data' : ''));
   }
 
   if (!rows.length) {
@@ -14487,7 +14511,6 @@ async function renderPayablesSection(opts) {
     _payablesLoadedKey = requestKey;
     _payablesLastError = '';
   } catch (err) {
-    PAYABLES_ROWS = [];
     _payablesLastError = 'Failed to load payables: ' + String(err && (err.message || err) || 'Unknown error');
   } finally {
     _payablesLoading = false;
@@ -14662,12 +14685,13 @@ function renderChargeDetailTable() {
   var tbody = $('#chargeDetailBody');
   if (!tbody) return;
   ensureChargeDetailDateRange();
-  if (_chargeDetailLoading) {
+  var hasChargeDetailRows = Array.isArray(CHARGE_DETAIL_ROWS) && CHARGE_DETAIL_ROWS.length > 0;
+  if (_chargeDetailLoading && !hasChargeDetailRows) {
     tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell">' + loadingHtml('Loading charge detail…') + '</td></tr>';
     renderSimpleReportFooter('#chargeDetailFooter', 0, _chargeDetailPageSize, 0, 'chargeDetailPage', function() {});
     return;
   }
-  if (_chargeDetailLastError) {
+  if (_chargeDetailLastError && !hasChargeDetailRows) {
     tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell danger">' + escapeHtml(_chargeDetailLastError) + '</td></tr>';
     renderSimpleReportFooter('#chargeDetailFooter', 0, _chargeDetailPageSize, 0, 'chargeDetailPage', function() {});
     return;
@@ -14689,7 +14713,8 @@ function renderChargeDetailTable() {
   if (summaryEl) {
     var totalCharge = rows.reduce(function(sum, row) { return sum + amountToNumber(row.charge_amount || 0); }, 0);
     var totalPaid = rows.reduce(function(sum, row) { return sum + amountToNumber(row.paid_amount || 0); }, 0);
-    summaryEl.textContent = rows.length + ' charge rows • ' + formatPayablesCurrency(totalCharge) + ' charged • ' + formatPayablesCurrency(totalPaid) + ' paid';
+    summaryEl.textContent = rows.length + ' charge rows • ' + formatPayablesCurrency(totalCharge) + ' charged • ' + formatPayablesCurrency(totalPaid) + ' paid'
+      + (_chargeDetailLoading ? ' • Refreshing' : (_chargeDetailLastError ? ' • Showing saved data' : ''));
   }
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell muted">No charge detail rows match the current filters.</td></tr>';
@@ -14734,12 +14759,13 @@ function renderBillDetailTable() {
   var tbody = $('#billDetailBody');
   if (!tbody) return;
   ensureBillDetailDateRange();
-  if (_billDetailLoading) {
+  var hasBillDetailRows = Array.isArray(BILL_DETAIL_REPORT_ROWS) && BILL_DETAIL_REPORT_ROWS.length > 0;
+  if (_billDetailLoading && !hasBillDetailRows) {
     tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell">' + loadingHtml('Loading bill detail…') + '</td></tr>';
     renderSimpleReportFooter('#billDetailFooter', 0, _billDetailPageSize, 0, 'billDetailPage', function() {});
     return;
   }
-  if (_billDetailLastError) {
+  if (_billDetailLastError && !hasBillDetailRows) {
     tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell danger">' + escapeHtml(_billDetailLastError) + '</td></tr>';
     renderSimpleReportFooter('#billDetailFooter', 0, _billDetailPageSize, 0, 'billDetailPage', function() {});
     return;
@@ -14765,7 +14791,8 @@ function renderBillDetailTable() {
   if (summaryEl) {
     var totalPaid = rows.reduce(function(sum, row) { return sum + amountToNumber(row.paid || 0); }, 0);
     var totalUnpaid = rows.reduce(function(sum, row) { return sum + amountToNumber(row.unpaid || 0); }, 0);
-    summaryEl.textContent = rows.length + ' bill rows • ' + formatPayablesCurrency(totalPaid) + ' paid • ' + formatPayablesCurrency(totalUnpaid) + ' unpaid';
+    summaryEl.textContent = rows.length + ' bill rows • ' + formatPayablesCurrency(totalPaid) + ' paid • ' + formatPayablesCurrency(totalUnpaid) + ' unpaid'
+      + (_billDetailLoading ? ' • Refreshing' : (_billDetailLastError ? ' • Showing saved data' : ''));
   }
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="9" class="row-state-cell muted">No bill detail rows match the current filters.</td></tr>';
@@ -14824,7 +14851,6 @@ async function renderChargeDetailSection(opts) {
     CHARGE_DETAIL_ROWS = await fetchReportRows('charge_detail', buildChargeDetailRequestPayload(), 'charge_detail');
     _chargeDetailLoadedKey = requestKey;
   } catch (err) {
-    CHARGE_DETAIL_ROWS = [];
     _chargeDetailLastError = 'Failed to load charge detail: ' + String(err && (err.message || err) || 'Unknown error');
   } finally {
     _chargeDetailLoading = false;
@@ -14854,7 +14880,6 @@ async function renderBillDetailSection(opts) {
     BILL_DETAIL_REPORT_ROWS = await fetchReportRows('bill_detail', buildBillDetailRequestPayload(), 'bill_detail');
     _billDetailLoadedKey = requestKey;
   } catch (err) {
-    BILL_DETAIL_REPORT_ROWS = [];
     _billDetailLastError = 'Failed to load bill detail: ' + String(err && (err.message || err) || 'Unknown error');
   } finally {
     _billDetailLoading = false;
@@ -16040,7 +16065,7 @@ function convertToCsv(data) {
 
 /* ─── Occupancy section ──────────────────────────────────────────── */
 function setOccupancySubtab(tab) {
-  var tabs = ['tenant-transactions','tenant-directory','delinquency','applications','showings','guest-cards'];
+  var tabs = ['tenant-transactions','tenant-directory','vacancies','move-outs','delinquency','applications','showings','guest-cards'];
   var target = tabs.indexOf(tab) !== -1 ? tab : 'tenant-transactions';
   currentOccupancySubtab = target;
   $$('[data-occupancy-subtab]').forEach(function(btn) {
@@ -16083,6 +16108,35 @@ var _occupancyReportMap = {
       { key: 'lease_from', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.lease_from || r.lease_start || '\u2014'); } },
       { key: 'lease_to', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.lease_to || r.lease_end || '\u2014'); } },
       { key: 'move_in', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.move_in || '\u2014'); } },
+    ]
+  },
+  'vacancies': { action: 'local', bodyId: 'vacanciesBody', tableId: 'vacanciesTable', cols: 6,
+    columns: [
+      { key: 'property', render: function(r){ return escHtml((r.property || r.propertyName || '\u2014') + (r.unit ? ' / ' + r.unit : '')); } },
+      { key: 'status', render: function(r){ return escHtml(r.status || '\u2014'); } },
+      { key: 'ready', render: function(r){ return escHtml(r.rentReady || '\u2014'); } },
+      { key: 'days', cellAttrs: 'class="u-num-cell"', render: function(r){
+        var days = Number(r.daysVacant);
+        if (!isFinite(days)) return '\u2014';
+        var tone = days >= 60 ? 'critical' : (days >= 30 ? 'warning' : 'recent');
+        return '<span class="vacancy-age vacancy-age--' + tone + '">' + Math.max(0, Math.round(days)) + ' days</span>';
+      } },
+      { key: 'available', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.availableOn ? formatDate(r.availableOn) : '\u2014'); } },
+      { key: 'rent', cellAttrs: 'class="u-num-cell"', render: function(r){ return currency(Number(r.marketRent || 0), 0); } },
+    ]
+  },
+  'move-outs': { action: 'local', bodyId: 'moveOutsBody', tableId: 'moveOutsTable', cols: 6,
+    columns: [
+      { key: 'tenant', render: function(r){ return escHtml(r.tenant || '\u2014'); } },
+      { key: 'property', render: function(r){ return escHtml((r.property || '\u2014') + (r.unit ? ' / ' + r.unit : '')); } },
+      { key: 'moveOut', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.moveOut ? formatDate(r.moveOut) : '\u2014'); } },
+      { key: 'days', cellAttrs: 'class="u-num-cell"', render: function(r){
+        var date = r.moveOut ? new Date(r.moveOut) : null;
+        var days = date && !isNaN(date.getTime()) ? Math.ceil((date.getTime() - Date.now()) / 86400000) : null;
+        return days == null ? '\u2014' : '<span class="vacancy-age vacancy-age--' + (days <= 14 ? 'critical' : (days <= 30 ? 'warning' : 'recent')) + '">' + Math.max(0, days) + ' days</span>';
+      } },
+      { key: 'phone', render: function(r){ return escHtml(r.phone || '\u2014'); } },
+      { key: 'email', render: function(r){ return escHtml(r.email || '\u2014'); } },
     ]
   },
   'delinquency': { action: 'v2_report', report: 'delinquency', bodyId: 'delinquencyBody', tableId: 'delinquencyTable', cols: 6,
@@ -16131,6 +16185,8 @@ function getOccupancySearchTerms(subtab) {
   var ids = {
     'tenant-transactions': 'tenantTxSearch',
     'tenant-directory': 'tenantDirSearch',
+    'vacancies': 'vacanciesSearch',
+    'move-outs': 'moveOutsSearch',
     'delinquency': 'delinquencySearch',
     'applications': 'applicationsSearch',
     'showings': 'showingsSearch',
@@ -16247,11 +16303,18 @@ async function loadOccupancySubtab(subtab) {
   var cfg = _occupancyReportMap[subtab];
   if (!cfg) return;
   var body = $('#' + cfg.bodyId);
-  if (body) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
+  var hasSavedRows = Array.isArray(_occupancyRowsBySubtab[subtab]) && _occupancyRowsBySubtab[subtab].length > 0;
+  if (body && !hasSavedRows) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
     var scopeUuid = getEffectiveGroupUuid();
     var data;
-    if (subtab === 'tenant-directory') {
+    if (subtab === 'vacancies') {
+      await fetchVacancyV2();
+      data = { results: getVacancyV2InScope() };
+    } else if (subtab === 'move-outs') {
+      await fetchUpcomingMoveouts();
+      data = { results: UPCOMING_MOVEOUTS.slice() };
+    } else if (subtab === 'tenant-directory') {
       var tenantPath = '/api/local/tenant_directory?limit=15000';
       if (scopeUuid) tenantPath += '&property_group_id=' + encodeURIComponent(scopeUuid);
       data = await apiFetch(tenantPath);
@@ -16268,7 +16331,8 @@ async function loadOccupancySubtab(subtab) {
     if (_occupancyPageState[subtab]) _occupancyPageState[subtab].page = 1;
     renderOccupancySubtab(subtab);
   } catch(e) {
-    if (body) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell u-text-danger">Error: ' + escHtml(String(e&&e.message||e)) + '</td></tr>';
+    if (hasSavedRows) renderOccupancySubtab(subtab);
+    else if (body) body.innerHTML = '<tr><td colspan="' + cfg.cols + '" class="u-table-empty-cell u-text-danger">Error: ' + escHtml(String(e&&e.message||e)) + '</td></tr>';
   }
 }
 

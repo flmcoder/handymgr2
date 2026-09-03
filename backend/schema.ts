@@ -51,6 +51,34 @@ export const appfolioPropertyGroups = pgTable(
   }),
 );
 
+export const appfolioBills = pgTable(
+  'appfolio_bills',
+  {
+    id: text('id').primaryKey(),
+    billNumber: text('bill_number'),
+    vendorId: text('vendor_id'),
+    vendorName: text('vendor_name'),
+    propertyId: text('property_id'),
+    propertyName: text('property_name'),
+    unitId: text('unit_id'),
+    status: text('status'),
+    statusLabel: text('status_label'),
+    billTotalAmount: real('bill_total_amount'),
+    invoiceDate: timestamp('invoice_date', { withTimezone: true }),
+    dueDate: timestamp('due_date', { withTimezone: true }),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    rawJson: jsonb('raw_json').notNull().default({}),
+    cachedAt: timestamp('cached_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+  },
+  (table) => ({
+    vendorIdx: index('appfolio_bills_vendor_idx').on(table.vendorId),
+    propertyIdx: index('appfolio_bills_property_idx').on(table.propertyId),
+    statusIdx: index('appfolio_bills_status_idx').on(table.status),
+    updatedIdx: index('appfolio_bills_updated_idx').on(table.updatedAt),
+  }),
+);
+
 // AppFolio v0: Units (includes unit status tracking)
 export const appfolioUnits = pgTable(
   'appfolio_units',
