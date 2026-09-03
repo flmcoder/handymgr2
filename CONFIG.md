@@ -92,6 +92,7 @@ Alternate names (`RINGCENTRAL_*`) are also read by backend and should be kept co
 | `SYNC_SCHEDULER_ENABLED` | Toggle scheduler | No | Render Dashboard |
 | `SYNC_SCHEDULER_INTERVAL_MINUTES` | Run interval | No | Render Dashboard |
 | `SYNC_SCHEDULER_ENDPOINTS` | Endpoint allowlist | No | Render Dashboard |
+| `SYNC_SCHEDULER_BILLS_ENABLED` | Require recurring v0 bill cache sync; defaults to true | No | Render Dashboard |
 | `SYNC_SCHEDULER_MAX_PAGES` | Page cap per run | No | Render Dashboard |
 | `SYNC_SCHEDULER_RUN_ON_BOOT` | Startup run toggle | No | Render Dashboard |
 | `WO_DETAIL_CACHE_TTL_MS` | Work order detail cache TTL | No | Render Dashboard |

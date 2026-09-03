@@ -50,10 +50,6 @@
         <input type="password" class="vault-input" id="vaultPassphrase" placeholder="enter manager or vendor password" autocomplete="off" autofocus>
         <button class="vault-toggle-vis" id="vaultToggleVis" type="button"><i class="fas fa-eye"></i></button>
       </div>
-      <div class="vault-input-wrap">
-        <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (e.g. flraz)" autocomplete="off" value="flraz">
-      </div>
-      <div class="vault-vhost-hint">URL: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
       <button class="vault-unlock-btn" id="vaultUnlockBtn"><i class="fas fa-sign-in-alt"></i> Connect</button>
       <button class="vault-unlock-btn vault-resume-toggle" id="vaultResumeBtn" type="button" style="display:none"><i class="fas fa-clock-rotate-left"></i> Resume Previous Session</button>
       <button class="vault-unlock-btn vault-pm-toggle" id="pmLoginToggle" type="button"><i class="fas fa-user-shield"></i> PM Login via OTP</button>
@@ -63,14 +59,11 @@
       <button type="button" class="vault-back-btn" id="pmLoginBackBtn"><i class="fas fa-arrow-left"></i> Back to standard login</button>
       <img src="assets/logo.png" alt="HandyManager" class="vault-logo">
       <div class="vault-subtitle">PM Login via OTP</div>
-      <div class="vault-vhost-hint">URL: <code><span id="vhostPreviewPm">flraz</span>.appfolio.com</code></div>
+      <div class="vault-vhost-hint">AppFolio host: <code><span id="vhostPreviewPm">yourco</span>.appfolio.com</code></div>
       <div class="vault-otp-route" id="vaultOtpRoute" aria-hidden="false">
         <div class="vault-otp-title"><i class="fas fa-mobile-alt"></i> Enter PM Email or Phone</div>
         <div class="vault-input-wrap vault-otp-request-row" id="vaultOtpIdentifierWrap">
-          <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@flraz.com or (520) 555-1234" autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="text">
-        </div>
-        <div class="vault-input-wrap vault-otp-request-row" id="vaultOtpScopeWrap">
-          <input type="text" class="vault-input" id="vaultOtpScope" placeholder="Optional property group UUID (required if account has multiple scopes)" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="text">
+          <input type="text" class="vault-input" id="vaultOtpEmail" placeholder="name@company.com or (520) 555-1234" autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="text">
         </div>
         <div class="vault-inline-actions vault-otp-request-row" id="vaultOtpRequestActions">
           <button type="button" class="vault-proxy-preset" id="btnSendOtp">Send OTP</button>
@@ -94,6 +87,12 @@
       </div>
     </div>
     <div class="vault-advanced-panel vault-shared-settings" id="advancedPanel">
+      <label class="vault-proxy-label">AppFolio Subdomain</label>
+      <div class="vault-input-wrap">
+        <input type="text" class="vault-input vhost-input" id="vaultVhost" placeholder="Subdomain only (example: flraz)" autocomplete="off" value="flraz">
+      </div>
+      <div class="vault-vhost-hint">Login host: <code><span id="vhostPreview">flraz</span>.appfolio.com</code></div>
+
       <label class="vault-proxy-label">Proxy Relay URL</label>
       <div class="vault-input-wrap">
         <input type="text" class="vault-input vhost-input" id="vaultProxy" placeholder="https://your-render-backend.onrender.com" autocomplete="off" value="https://handymgr2.onrender.com">
@@ -101,7 +100,7 @@
       <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.7.4</span></div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.8.21</span></div>
   </div>
 </div>
 
@@ -113,7 +112,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.8.0:R1</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.8.21</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -141,7 +140,7 @@
     <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
     <div>
       <div class="sidebar-brand-text">HandyMgr</div>
-      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.8.0:R1</div>
+      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.8.21</div>
     </div>
   </div>
 
@@ -394,18 +393,17 @@
 </section>
 
 <section class="section" id="sec-workorders">
-  <div class="section-header">
-    <div><div class="section-title"><i class="fas fa-wrench" style="color:var(--accent)"></i> Work Order Operations</div><div class="section-subtitle">Operations queue first, Kanban on demand. Triage, prioritize, and route work without losing board context.</div></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search orders…" id="woSearch"></div>
+  <div class="wo-top-row">
+    <div class="wo-top-actions">
+      <button class="action-btn primary" id="btnNewWO"><i class="fas fa-plus"></i> New Work Order</button>
       <button class="sec-refresh" id="btnRefreshWO"><i class="fas fa-sync-alt"></i> Refresh</button>
-      <button class="action-btn primary" id="btnNewWO"><i class="fas fa-plus"></i> New WO</button>
     </div>
+    <div class="wo-kpi-strip" id="woKpiStrip"></div>
   </div>
   <div class="chart-filter-badge-row" id="woChartFilterBadges" style="display:none"></div>
   <div class="wo-subtabs" id="woSubtabs">
     <button class="wo-subtab active" data-wo-subtab="active"><i class="fas fa-wrench"></i> Open (Active)</button>
-    <button class="wo-subtab" data-wo-subtab="completed"><i class="fas fa-history"></i> Completed</button>
+    <button class="wo-subtab" data-wo-subtab="completed"><i class="fas fa-check-circle"></i> Completed / Inactive</button>
     <button class="wo-subtab" data-wo-subtab="closure"><i class="fas fa-clipboard-check"></i> WO Closure Assistant</button>
     <button class="wo-subtab" data-wo-subtab="followup"><i class="fas fa-flag"></i> WO Follow-Up Queue</button>
   </div>
@@ -417,7 +415,9 @@
         <button id="btnWOViewBoard" class="wo-view-btn"        onclick="setWOView('board')" title="Kanban Board View"><i class="fas fa-table-columns"></i> Kanban</button>
       </div>
     </div>
-    <div class="kanban-filters" id="woFilters">
+    <div id="woToolbarAnchor" aria-hidden="true"></div>
+    <div class="toolbar kanban-filters" id="woFilters">
+      <label class="wo-grid-search" for="woSearch"><i class="fas fa-search" aria-hidden="true"></i><input type="search" placeholder="Search work orders" id="woSearch" autocomplete="off"></label>
       <select id="woPriorityFilter"><option value="">All Priorities</option><option value="Urgent">Urgent</option><option value="Normal">Normal</option><option value="Low">Low</option></select>
       <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
       <select id="woVendorFilter"><option value="">All Vendors</option></select>
@@ -436,12 +436,12 @@
         <option value="newest">Newest First</option>
         <option value="priority">Priority (Urgent First)</option>
       </select>
-      <div style="display:inline-flex;align-items:center;gap:4px;padding:4px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
-        <span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Aging</span>
-        <input id="woAgeYellow" type="number" min="1" step="1" value="14" title="Yellow threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-        <input id="woAgeOrange" type="number" min="1" step="1" value="30" title="Orange threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-        <input id="woAgeRed" type="number" min="1" step="1" value="60" title="Red threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-        <button class="filter-btn" id="btnSaveWOAging" style="padding:6px 8px"><i class="fas fa-save"></i> Save</button>
+      <div class="wo-aging-controls">
+        <span>Aging</span>
+        <input id="woAgeYellow" type="number" min="1" step="1" value="14" title="Yellow threshold days">
+        <input id="woAgeOrange" type="number" min="1" step="1" value="30" title="Orange threshold days">
+        <input id="woAgeRed" type="number" min="1" step="1" value="60" title="Red threshold days">
+        <button class="filter-btn" id="btnSaveWOAging"><i class="fas fa-save"></i> Save</button>
       </div>
       <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
       <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
@@ -449,15 +449,14 @@
       <button class="filter-btn" data-filter="Estimated">Estimated</button>
     </div>
     <div class="kanban-board" id="kanbanBoard"></div>
-  </div>
-
-  <div class="wo-subpanel" id="wo-subpanel-completed" style="display:none">
-    <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <label class="wo-history-toggle" style="display:none"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed Work Orders</span></label>
-      <input type="number" id="woCompletedHistoryDays" min="7" step="30" value="30" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
-      <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Completed</button>
+    <div class="wo-history-tools" id="woCompletedHistoryTools" style="display:none">
+      <div class="wo-history-toggle-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label class="wo-history-toggle" style="display:none"><input type="checkbox" id="woCompletedHistoryToggle"> <span>Show Completed Work Orders</span></label>
+        <input type="number" id="woCompletedHistoryDays" min="7" step="30" value="30" style="width:96px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px" title="History lookback days">
+        <button class="action-btn" id="btnFetchCompletedHistory"><i class="fas fa-search"></i> Search Older Completed Work</button>
+      </div>
+      <div id="woCompletedHistoryMount"></div>
     </div>
-    <div id="woCompletedHistoryMount"></div>
   </div>
 
   <div class="wo-subpanel" id="wo-subpanel-closure" style="display:none">
@@ -689,15 +688,13 @@
     </div>
     <div class="u-toolbar-row">
       <button class="action-btn" id="btnRefreshBilling"><i class="fas fa-sync-alt"></i> Refresh</button>
-      <div class="billing-more-wrap" style="position:relative">
-        <button class="action-btn" id="btnMoreBillReports"><i class="fas fa-ellipsis-h"></i> ...More bill reports</button>
-        <div class="billing-more-dropdown" id="billingMoreDropdown" style="display:none">
-          <button class="billing-more-item" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
-          <button class="billing-more-item" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
-          <button class="billing-more-item" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
-        </div>
-      </div>
     </div>
+  </div>
+  <div class="section-subtabs report-subtabs" id="billingSubtabs" aria-label="Billing reports">
+    <button class="section-subtab active" data-billing-subtab="main"><i class="fas fa-table-list"></i> Bills Home</button>
+    <button class="section-subtab" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
+    <button class="section-subtab" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
+    <button class="section-subtab" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
   </div>
   <div class="kpi-grid stagger billing-kpi-grid" id="billingKpiGrid">
     <div class="kpi-card amber"><div class="kpi-label">Pending Approval</div><div class="kpi-value" id="billKpiPending">—</div><div class="kpi-sub" id="billKpiPendingSub">invoices awaiting approval</div></div>
@@ -996,11 +993,12 @@
         <button id="btnBulkNoteOpen" onclick="openBulkNoteModal()" class="action-btn"><i class="fas fa-pen-to-square"></i> Bulk Update Notes</button>
       </div>
     </div>
-    <div class="section-subtabs" id="propertiesSubtabs">
+    <div class="section-subtabs report-subtabs" id="propertiesSubtabs" aria-label="Property reports">
       <button class="section-subtab active" data-properties-subtab="directory"><i class="fas fa-table"></i> Directory</button>
       <button class="section-subtab" data-properties-subtab="performance"><i class="fas fa-chart-line"></i> Performance</button>
       <button class="section-subtab" data-properties-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
       <button class="section-subtab" data-properties-subtab="renewals"><i class="fas fa-file-signature"></i> Renewals</button>
+      <button class="section-subtab" data-properties-subtab="reports"><i class="fas fa-landmark"></i> Owner Reports</button>
       <button class="section-subtab" data-properties-subtab="bulk"><i class="fas fa-pen-to-square"></i> Bulk Notes</button>
     </div>
     <div class="section-subpanel active" id="properties-subpanel-directory">
@@ -1128,6 +1126,22 @@
         </div>
       </div>
     </div>
+    <div class="section-subpanel" id="properties-subpanel-reports" style="display:none">
+      <div class="table-wrapper">
+        <div class="table-header">
+          <div>
+            <div class="table-title"><i class="fas fa-landmark" style="color:var(--accent)"></i> Owner Reports</div>
+            <div class="section-subtitle">Owner distributions scoped to the active property-group filter.</div>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="ownerReportsTable">
+            <thead><tr><th>Report</th><th>Description</th><th>Property Group</th><th>Action</th></tr></thead>
+            <tbody id="ownerReportsBody"><tr><td colspan="4" class="u-table-empty-cell">Open Owner Reports to load available reports</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
     <div class="section-subpanel" id="properties-subpanel-bulk" style="display:none">
       <div class="table-wrapper properties-bulk-panel">
         <div class="table-header">
@@ -1145,7 +1159,7 @@
   <!-- Turn Pipeline KPIs -->
   <div class="kpi-grid" id="turnKpis">
     <div class="kpi-card amber"><div class="kpi-label">Confirmed Active</div><div class="kpi-value" id="kpiActiveTurns">0</div><div class="kpi-sub" id="kpiActiveTurnsSub">Loading…</div></div>
-    <div class="kpi-card" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;border-top:3px solid var(--accent)"><div class="kpi-label">On Radar</div><div class="kpi-value" id="kpiOnRadar">0</div><div class="kpi-sub" id="kpiOnRadarSub">awaiting confirmation</div></div>
+    <div class="kpi-card"><div class="kpi-label">On Radar</div><div class="kpi-value" id="kpiOnRadar">0</div><div class="kpi-sub" id="kpiOnRadarSub">awaiting confirmation</div></div>
     <div class="kpi-card red"><div class="kpi-label">Avg Days</div><div class="kpi-value" id="kpiAvgTurnDays">—</div><div class="kpi-sub" id="kpiAvgTurnSub">elapsed on active turns</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Awaiting Estimates</div><div class="kpi-value" id="kpiAwaitEst">0</div><div class="kpi-sub" id="kpiAwaitEstSub">turns pending vendor bids</div></div>
     <div class="kpi-card green"><div class="kpi-label">Turns In Scope</div><div class="kpi-value" id="kpiTurnBilled">0</div><div class="kpi-sub" id="kpiTurnBilledSub">all pipeline records</div></div>
@@ -1293,9 +1307,11 @@
       <button class="action-btn" id="btnRefreshOccupancy"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
-  <div class="section-subtabs" id="occupancySubtabs">
+  <div class="section-subtabs report-subtabs" id="occupancySubtabs" aria-label="Occupancy reports">
     <button class="section-subtab active" data-occupancy-subtab="tenant-transactions"><i class="fas fa-receipt"></i> Transactions</button>
     <button class="section-subtab" data-occupancy-subtab="tenant-directory"><i class="fas fa-users"></i> Tenant Directory</button>
+    <button class="section-subtab" data-occupancy-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
+    <button class="section-subtab" data-occupancy-subtab="move-outs"><i class="fas fa-calendar-minus"></i> Move-Outs</button>
     <button class="section-subtab" data-occupancy-subtab="delinquency"><i class="fas fa-exclamation-circle"></i> Delinquency</button>
     <button class="section-subtab" data-occupancy-subtab="applications"><i class="fas fa-file-alt"></i> Applications</button>
     <button class="section-subtab" data-occupancy-subtab="showings"><i class="fas fa-calendar-check"></i> Showings</button>
@@ -1328,6 +1344,36 @@
       <div class="table-scroll"><table class="data-table" id="tenantDirTable">
         <thead><tr><th>Tenant</th><th>Property / Unit</th><th>Email</th><th>Phone</th><th>Lease Start</th><th>Lease End</th><th>Move-In</th></tr></thead>
         <tbody id="tenantDirBody"><tr><td colspan="7" class="u-table-empty-cell">Click Refresh to load tenant directory</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="section-subpanel" id="occupancy-subpanel-vacancies" style="display:none">
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div class="table-title"><i class="fas fa-door-open" style="color:var(--warning)"></i> Vacant Units</div>
+        <div class="u-toolbar-row">
+          <input type="text" id="vacanciesSearch" class="search-box u-minw-200" placeholder="Search property, unit, status…">
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table" id="vacanciesTable">
+        <thead><tr><th>Property / Unit</th><th>Status</th><th>Rent Ready</th><th>Days Vacant</th><th>Available</th><th>Market Rent</th></tr></thead>
+        <tbody id="vacanciesBody"><tr><td colspan="6" class="u-table-empty-cell">Open this report to load vacancies</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="section-subpanel" id="occupancy-subpanel-move-outs" style="display:none">
+    <div class="table-wrapper">
+      <div class="table-header">
+        <div class="table-title"><i class="fas fa-calendar-minus" style="color:var(--info)"></i> Upcoming Move-Outs</div>
+        <div class="u-toolbar-row">
+          <input type="text" id="moveOutsSearch" class="search-box u-minw-200" placeholder="Search tenant, property, unit…">
+        </div>
+      </div>
+      <div class="table-scroll"><table class="data-table" id="moveOutsTable">
+        <thead><tr><th>Tenant</th><th>Property / Unit</th><th>Move-Out</th><th>Days Left</th><th>Phone</th><th>Email</th></tr></thead>
+        <tbody id="moveOutsBody"><tr><td colspan="6" class="u-table-empty-cell">Open this report to load move-outs</td></tr></tbody>
       </table></div>
     </div>
   </div>
@@ -1708,7 +1754,7 @@
       <button class="action-btn" id="btnClearErrors"><i class="fas fa-trash"></i> Clear Resolved</button>
     </div>
   </div>
-  <div class="section-subtabs" id="errorsSubtabs">
+  <div class="section-subtabs report-subtabs" id="errorsSubtabs" aria-label="Error reports">
     <button class="section-subtab active" data-errors-subtab="log"><i class="fas fa-triangle-exclamation"></i> API Log</button>
     <button class="section-subtab" data-errors-subtab="email-delivery" id="errorsEmailDeliveryTab"><i class="fas fa-envelope-circle-check"></i> Email Delivery</button>
   </div>
@@ -2294,6 +2340,29 @@
     <div class="modal-head">
       <div>
         <h3 id="tdmUnit" style="margin:0;color:var(--accent)">Unit</h3>
+
+    <div class="modal-overlay" id="dashboardChartModal">
+      <div class="modal dashboard-chart-modal" role="dialog" aria-modal="true" aria-labelledby="dashboardChartModalTitle">
+        <div class="modal-head">
+          <div>
+            <h3 id="dashboardChartModalTitle">Dashboard insight</h3>
+            <div class="dashboard-chart-modal-subtitle" id="dashboardChartModalSubtitle"></div>
+          </div>
+          <button class="modal-close" id="dashboardChartModalClose" aria-label="Close chart details">&times;</button>
+        </div>
+        <div class="modal-body dashboard-chart-modal-body">
+          <div id="dashboardChartModalCanvas" class="dashboard-chart-modal-canvas" role="img" aria-label="Dashboard insight chart"></div>
+          <div class="dashboard-chart-modal-results">
+            <div class="dashboard-chart-modal-selection" id="dashboardChartModalSelection">Select a segment to filter Work Orders.</div>
+            <div id="dashboardChartModalRows" class="dashboard-chart-modal-rows"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="action-btn" id="dashboardChartModalCancel">Close</button>
+          <button class="action-btn primary" id="dashboardChartOpenWorkOrders" disabled><i class="fas fa-filter"></i> Filter Work Orders</button>
+        </div>
+      </div>
+    </div>
         <div id="tdmProperty" style="font-size:12px;color:var(--text-muted);margin-top:2px"></div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">

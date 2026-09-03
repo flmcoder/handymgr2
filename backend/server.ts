@@ -22,6 +22,9 @@ import {
 } from './reportCachePolicy';
 import { filterBillsForPropertyScope, resolveBillScope } from './billScopePolicy';
 import { enforceScopedSession } from './scopedSessionGuard';
+import { buildRequestedSyncEndpoints } from './syncSchedulerPolicy';
+import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
+import { resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
@@ -1841,6 +1844,7 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
 
 async function refreshDispatchQueue(params: Record<string, string>): Promise<any> {
   await ensureDispatchControlTables();
+  const shouldRefresh = shouldRefreshDispatchSnapshot(params);
 
   const config = await readDispatchConfig([
     'dispatch_tier1_group_uuid',
@@ -1856,6 +1860,7 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
   const warningLeadHours = Math.max(12, thresholdHours - 12);
   const maxReassignsBeforeEscalate = Math.max(1, Math.round(asNumericLike(config.max_reassigns_before_escalate, 2)));
 
+  if (shouldRefresh) {
   const workOrders = await fetchDispatchWorkOrders(Math.max(30, thresholdHours * 4));
   const openIds = workOrders.map((row) => String(row?.id || row?.work_order_uuid || '').trim()).filter(Boolean);
   if (openIds.length > 0) {
@@ -2016,6 +2021,8 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     );
   }
 
+  }
+
   const queueRows = await queryClient.unsafe(`select * from reassignment_queue order by updated_at desc limit 5000`);
   const techRosterSql = `
     with roster_baseline as (
@@ -2060,7 +2067,7 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
   `;
 
   let techRows = await queryClient.unsafe(techRosterSql);
-  if ((techRows as any[]).length === 0) {
+  if (shouldRefresh && (techRows as any[]).length === 0) {
     try {
       const seedSummary = await syncDispatchAssignees({
         ...params,
@@ -4064,7 +4071,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
         res.json(await syncDispatchAssignees(params));
         return;
       }
-      res.json(await refreshDispatchQueue(params));
+      res.json(await refreshDispatchQueue({ ...params, read_only: '1' }));
     } catch (error) {
       logTunnelError(error, '/api?action=reassignment_queue');
       res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Reassignment queue failed') });
@@ -4548,7 +4555,6 @@ app.use('/api/local', pmScopeMiddleware);
 
 app.get('/api/local/work_orders', async (req: Request, res: Response) => {
   try {
-    const days = parseDays(req.query.days, 3650, 3650);
     const limit = parseLimit(req.query.limit, 10000, 20000);
     const propertyGroupId = getPropertyGroupFilter(req);
     let rows: any[] = [];
@@ -4560,8 +4566,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                  vendor_id, vendor_name, estimated_amount, total_cost,
                  created_at, updated_at, raw_json
           from appfolio_work_orders
-          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-            and property_group_id = ${propertyGroupId}
+          where property_group_id = ${propertyGroupId}
             and (
               coalesce(lower(status), '') not like '%completed%'
               and coalesce(lower(status), '') not like '%cancel%'
@@ -4576,8 +4581,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                  vendor_id, vendor_name, estimated_amount, total_cost,
                  created_at, updated_at, raw_json
           from appfolio_work_orders
-          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-            and (
+          where (
               coalesce(lower(status), '') not like '%completed%'
               and coalesce(lower(status), '') not like '%cancel%'
               and coalesce(lower(status), '') not like '%no need to bill%'
@@ -4599,8 +4603,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                  vendor_id, vendor_name, estimated_amount, total_cost,
                  created_at, updated_at, raw_json
           from appfolio_work_orders
-          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-            and property_group_id = ${propertyGroupId}
+          where property_group_id = ${propertyGroupId}
             and (
               coalesce(lower(status), '') not like '%completed%'
               and coalesce(lower(status), '') not like '%cancel%'
@@ -4615,8 +4618,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                  vendor_id, vendor_name, estimated_amount, total_cost,
                  created_at, updated_at, raw_json
           from appfolio_work_orders
-          where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-            and (
+          where (
               coalesce(lower(status), '') not like '%completed%'
               and coalesce(lower(status), '') not like '%cancel%'
               and coalesce(lower(status), '') not like '%no need to bill%'
@@ -4726,7 +4728,7 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
 
 app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
   try {
-    const days = parseDays(req.query.days, 3650, 3650);
+    const days = resolveWorkOrderHistoryDays(req.query.days);
     const limit = parseLimit(req.query.limit, 100, 400);
     const offset = parseOffset(req.query.offset, 0, 500000);
     const propertyGroupId = getPropertyGroupFilter(req);
@@ -4813,7 +4815,9 @@ app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
       return `$${baseParams.length}`;
     };
 
-    whereParts.push(`coalesce(wo.updated_at, wo.created_at, now()) >= now() - (${bind(days)}::int * interval '1 day')`);
+    if (days !== null) {
+      whereParts.push(`coalesce(wo.updated_at, wo.created_at, now()) >= now() - (${bind(days)}::int * interval '1 day')`);
+    }
 
     if (propertyGroupId) {
       whereParts.push(`wo.property_group_id = ${bind(propertyGroupId)}`);
@@ -8368,10 +8372,13 @@ function startRecurringSyncScheduler(): void {
     .split(',')
     .map((value) => String(value || '').trim())
     .filter(Boolean);
+  const billsEnabled = !/^(0|false|no|off)$/i.test(String(process.env.SYNC_SCHEDULER_BILLS_ENABLED || 'true').trim());
   const v2Enabled = !/^(0|false|no|off)$/i.test(String(process.env.SYNC_SCHEDULER_V2_ENABLED || 'true').trim());
-  const requestedEndpoints = v2Enabled
-    ? configuredEndpoints.concat(REQUIRED_V2_SYNC_ENDPOINTS)
-    : configuredEndpoints.filter((endpoint) => !endpoint.startsWith('v2:'));
+  const requestedEndpoints = buildRequestedSyncEndpoints(configuredEndpoints, {
+    billsEnabled,
+    v2Enabled,
+    requiredV2Endpoints: REQUIRED_V2_SYNC_ENDPOINTS,
+  });
   const endpointSelection = sanitizeSyncEndpoints(requestedEndpoints, defaultEndpoints, 'scheduler_env');
   const endpoints = endpointSelection.accepted;
   const maxPages = Math.max(0, Number(process.env.SYNC_SCHEDULER_MAX_PAGES || '0') || 0);

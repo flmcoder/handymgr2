@@ -95,6 +95,7 @@ This repository uses `render.yaml` as a partial deployment snapshot, but the bac
 - `SYNC_SCHEDULER_ENABLED`
 - `SYNC_SCHEDULER_INTERVAL_MINUTES`
 - `SYNC_SCHEDULER_ENDPOINTS`
+- `SYNC_SCHEDULER_BILLS_ENABLED` - defaults to true; appends `v0:bills` even when an older endpoint list is configured
 - `SYNC_SCHEDULER_V2_ENABLED` - defaults to true; appends all supported normalized v2 populations even when an older endpoint list is configured
 - `SYNC_SCHEDULER_MAX_PAGES`
 - `SYNC_SCHEDULER_RUN_ON_BOOT`

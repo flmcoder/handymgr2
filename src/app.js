@@ -1622,7 +1622,7 @@ async function exportCacheToJSON(options) {
       _meta: {
         exported: new Date().toISOString(),
         version: 2,
-        dataWindow: DATA_WINDOW_DAYS + ' days',
+        dataWindow: 'all active work orders',
         counts: counts
       },
       work_orders: WORK_ORDERS,
@@ -4293,6 +4293,9 @@ function maybeAutoRunSystemHealthCheck() {
 var WORK_ORDERS_ACTIVE = [];
 var WORK_ORDERS_INACTIVE = [];
 var WORK_ORDERS = []; // for backward compat, synced with WORK_ORDERS_ACTIVE
+var _inactiveWorkOrdersLoaded = false;
+var _inactiveWorkOrdersLoading = null;
+var _inactiveWorkOrdersScope = '';
 var ESTIMATES = [];
 var VENDORS = [];
 var PROPERTIES = [];
@@ -5819,9 +5822,9 @@ var TEMPLATES = [
 ];
 
 /* =================================================================
-   SMART FILTERS — 180-day window, open-only WOs, small chunks
-   ================================================================= */
-var DATA_WINDOW_DAYS = 90;
+  SMART FILTERS — open-only WOs, small chunks
+  ================================================================= */
+var DEFAULT_LOCAL_WO_LOOKBACK_DAYS = 3650;
 var PROPERTY_GROUPS_LAST_UPDATED_FROM = '2024-01-01T00:00:00Z';
 var PROPERTY_GROUPS_PAGE_SIZE = 100;
 var PROPERTY_GROUP_SUMMARY_CACHE_VERSION = 'v2';
@@ -6058,7 +6061,7 @@ function hideProgress() {
 //   6=Waiting, 8=WorkDone, 12=ReadyToBill
 // Excludes: 4=Completed, 5=Canceled, 7=CompletedNoNeedToBill
 async function fetchLocalWorkOrders(days) {
-  var lookback = Math.max(1, Math.min(3650, parseInt(days || DATA_WINDOW_DAYS, 10) || DATA_WINDOW_DAYS));
+  var lookback = Math.max(1, Math.min(3650, parseInt(days || DEFAULT_LOCAL_WO_LOOKBACK_DAYS, 10) || DEFAULT_LOCAL_WO_LOOKBACK_DAYS));
   var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
   var url = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(lookback)) + '&limit=2500';
   var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
@@ -6070,10 +6073,51 @@ async function fetchLocalWorkOrders(days) {
   return data;
 }
 
+function normalizeLocalWorkOrder(r) {
+  var rawUuid = r.work_order_uuid || r.work_order_id || r.uuid || r.Id || '';
+  var dbApiId = r.db_api_id || r.dbApiId || r.v0_uuid || r.v0_id || r.uuid || r.UUID || '';
+  return {
+    id: r.work_order_number || r.WorkOrderNumber || r.service_request_number || '',
+    uuid: rawUuid,
+    dbApiId: dbApiId,
+    _dataSource: r._source || 'v0_local',
+    propertyId: r.property_id || r.PropertyId || '',
+    propertyGroupId: String(r.property_group_id || r.property_group_uuid || r.PropertyGroupId || r.PropertyGroupUuid || '').trim(),
+    propertyName: r.property_name || r.property || r.PropertyName || '',
+    propertyAddress: r.property_address || ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
+    siteManager: r.site_manager || r.property_manager || '',
+    unitId: r.unit_id || r.UnitId || '',
+    unitTurnId: r.unit_turn_id || r.UnitTurnId || '',
+    unit: r.unit_name || r.UnitName || r.unit_id || '',
+    priority: r.priority || r.Priority || 'Normal',
+    status: r.status || r.Status || 'New',
+    description: r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
+    vendorName: r.vendor_name || r.vendor || r.VendorName || '',
+    vendorId: r.vendor_id || r.VendorId || '',
+    vendorTrade: r.vendor_trade || r.VendorTrade || '',
+    created: r.created_at || r.CreatedAt || '',
+    updated: r.completed_on || r.CompletedOn || r.created_at || r.CreatedAt || '',
+    completedOn: r.completed_on || r.CompletedOn || '',
+    workCompletedOn: r.work_completed_on || r.WorkCompletedOn || '',
+    scheduledStart: r.scheduled_start || r.ScheduledStart || '',
+    scheduledEnd: r.scheduled_end || r.ScheduledEnd || '',
+    type: r.work_order_type || r.Type || '',
+    amount: r.amount || r.Amount || '',
+    tenant: r.primary_tenant || r.PrimaryTenant || '',
+    tenantEmail: r.primary_tenant_email || r.PrimaryTenantEmail || '',
+    tenantPhone: r.primary_tenant_phone_number || r.PrimaryTenantPhoneNumber || '',
+    createdBy: r.created_by || r.CreatedBy || '',
+    assignedUser: r.assigned_user_name || r.assigned_user || r.AssignedUser || r.AssignedTo || '',
+    statusNotes: r.status_notes || r.StatusNotes || '',
+    maintenanceLimit: r.maintenance_limit || r.MaintenanceLimit || '',
+    link: r.Link || r.link || ''
+  };
+}
+
 async function fetchWorkOrders() {
   setDataSourceState('work_orders', 'loading', { error: '' });
   try {
-    setApiStatus('loading', 'Loading work orders (active & inactive)…');
+    setApiStatus('loading', 'Loading work orders from PostgreSQL…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
     var scopeQuery = scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '';
@@ -6081,8 +6125,8 @@ async function fetchWorkOrders() {
     var localHeaders = { 'Accept': 'application/json' };
     if (token) localHeaders['Authorization'] = 'Bearer ' + token;
     
-    // Fetch active work orders
-    var urlActive = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(DATA_WINDOW_DAYS)) + '&limit=2500' + scopeQuery;
+    // Active volume is bounded by status, so do not impose an artificial date window.
+    var urlActive = localBase + '/api/local/work_orders?limit=2500' + scopeQuery;
     var resActive = await fetchWithTimeout(urlActive, { headers: localHeaders }, 45000);
     var dataActive = {};
     try { dataActive = await resActive.json(); } catch (e) { dataActive = {}; }
@@ -6090,73 +6134,57 @@ async function fetchWorkOrders() {
       throw new Error(String((dataActive && (dataActive.error || dataActive.message)) || ('Local active work orders failed: HTTP ' + resActive.status)));
     }
     var activeResults = (dataActive.results || dataActive.data || []);
-    
-    // Fetch inactive work orders
-    var urlInactive = localBase + '/api/local/work_orders/inactive?days=3650&limit=5000' + scopeQuery;
-    var resInactive = await fetchWithTimeout(urlInactive, { headers: localHeaders }, 45000);
-    var dataInactive = {};
-    try { dataInactive = await resInactive.json(); } catch (e) { dataInactive = {}; }
-    if (!resInactive.ok || dataInactive.ok === false) {
-      throw new Error(String((dataInactive && (dataInactive.error || dataInactive.message)) || ('Local inactive work orders failed: HTTP ' + resInactive.status)));
-    }
-    var inactiveResults = (dataInactive.results || dataInactive.data || []);
-    
-    // Normalize work order row
-    var normalizeWo = function(r) {
-      // Work orders are sourced from local Postgres rows hydrated from AppFolio v0.
-      // UUID is required by notes/attachments flows, so prefer explicit UUID fields.
-      var rawUuid = r.work_order_uuid || r.work_order_id || r.uuid || r.Id || '';
-      var dbApiId = r.db_api_id || r.dbApiId || r.v0_uuid || r.v0_id || r.uuid || r.UUID || '';
-      return {
-        id: r.work_order_number || r.WorkOrderNumber || r.service_request_number || '',
-        uuid: rawUuid,
-        dbApiId: dbApiId,
-        _dataSource: r._source || 'v0_local',
-        propertyId: r.property_id || r.PropertyId || '',
-        propertyGroupId: String(r.property_group_id || r.property_group_uuid || r.PropertyGroupId || r.PropertyGroupUuid || '').trim(),
-        propertyName: r.property_name || r.property || r.PropertyName || '',
-        propertyAddress: r.property_address || ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
-        siteManager: r.site_manager || r.property_manager || '',
-        unitId: r.unit_id || r.UnitId || '',
-        unitTurnId: r.unit_turn_id || r.UnitTurnId || '',
-        unit: r.unit_name || r.UnitName || r.unit_id || '',
-        priority: r.priority || r.Priority || 'Normal',
-        status: r.status || r.Status || 'New',
-        description: r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
-        vendorName: r.vendor_name || r.vendor || r.VendorName || '',
-        vendorId: r.vendor_id || r.VendorId || '',
-        vendorTrade: r.vendor_trade || r.VendorTrade || '',
-        created: r.created_at || r.CreatedAt || '',
-        updated: r.completed_on || r.CompletedOn || r.created_at || r.CreatedAt || '',
-        completedOn: r.completed_on || r.CompletedOn || '',
-        workCompletedOn: r.work_completed_on || r.WorkCompletedOn || '',
-        scheduledStart: r.scheduled_start || r.ScheduledStart || '',
-        scheduledEnd: r.scheduled_end || r.ScheduledEnd || '',
-        type: r.work_order_type || r.Type || '',
-        amount: r.amount || r.Amount || '',
-        tenant: r.primary_tenant || r.PrimaryTenant || '',
-        tenantEmail: r.primary_tenant_email || r.PrimaryTenantEmail || '',
-        tenantPhone: r.primary_tenant_phone_number || r.PrimaryTenantPhoneNumber || '',
-        createdBy: r.created_by || r.CreatedBy || '',
-        assignedUser: r.assigned_user_name || r.assigned_user || r.AssignedUser || r.AssignedTo || '',
-        statusNotes: r.status_notes || r.StatusNotes || '',
-        maintenanceLimit: r.maintenance_limit || r.MaintenanceLimit || '',
-        link: r.Link || r.link || ''
-      };
-    };
-    
-    WORK_ORDERS_ACTIVE = activeResults.map(normalizeWo);
-    WORK_ORDERS_INACTIVE = inactiveResults.map(normalizeWo);
+    WORK_ORDERS_ACTIVE = activeResults.map(normalizeLocalWorkOrder);
     WORK_ORDERS = WORK_ORDERS_ACTIVE; // backward compat
+    window.WORK_ORDERS = WORK_ORDERS;
     
-    var totalCount = WORK_ORDERS_ACTIVE.length + WORK_ORDERS_INACTIVE.length;
-    setApiStatus('loading', 'Work orders: ' + WORK_ORDERS_ACTIVE.length + ' active, ' + WORK_ORDERS_INACTIVE.length + ' inactive');
-    setDataSourceState('work_orders', 'ok', { count: totalCount, active: WORK_ORDERS_ACTIVE.length, inactive: WORK_ORDERS_INACTIVE.length, error: '' });
+    setApiStatus('loading', 'Work orders: ' + WORK_ORDERS_ACTIVE.length + ' active');
+    setDataSourceState('work_orders', 'ok', { count: WORK_ORDERS_ACTIVE.length, active: WORK_ORDERS_ACTIVE.length, inactive: _inactiveWorkOrdersLoaded ? WORK_ORDERS_INACTIVE.length : null, error: '' });
     return true;
   } catch (err) {
     setDataSourceState('work_orders', 'no_response', { count: null, error: String((err && err.message) || err || 'work orders unavailable') });
     return false;
   }
+}
+
+async function fetchInactiveWorkOrders() {
+  var scopedGroupUuid = getEffectiveGroupUuid();
+  var requestScope = scopedGroupUuid || '__all__';
+  if (_inactiveWorkOrdersLoaded && _inactiveWorkOrdersScope === requestScope) return true;
+  if (_inactiveWorkOrdersLoading && _inactiveWorkOrdersScope === requestScope) return _inactiveWorkOrdersLoading;
+
+  _inactiveWorkOrdersScope = requestScope;
+  _inactiveWorkOrdersLoaded = false;
+  WORK_ORDERS_INACTIVE = [];
+
+  var request = (async function() {
+    try {
+      var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+      var scopeQuery = scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '';
+      var token = getProxyAccessToken();
+      var headers = { 'Accept': 'application/json' };
+      if (token) headers.Authorization = 'Bearer ' + token;
+      var url = localBase + '/api/local/work_orders/inactive?days=365&limit=5000' + scopeQuery;
+      var response = await fetchWithTimeout(url, { headers: headers }, 45000);
+      var data = {};
+      try { data = await response.json(); } catch (_) { data = {}; }
+      if (!response.ok || data.ok === false) {
+        throw new Error(String((data && (data.error || data.message)) || ('Local inactive work orders failed: HTTP ' + response.status)));
+      }
+      if (_inactiveWorkOrdersScope !== requestScope) return false;
+      WORK_ORDERS_INACTIVE = (data.results || data.data || []).map(normalizeLocalWorkOrder);
+      _inactiveWorkOrdersLoaded = true;
+      return true;
+    } catch (error) {
+      console.error('[work-orders] inactive history unavailable', error);
+      return false;
+    } finally {
+      if (_inactiveWorkOrdersLoading === request) _inactiveWorkOrdersLoading = null;
+    }
+  })();
+
+  _inactiveWorkOrdersLoading = request;
+  return request;
 }
 
 function normalizeEstimateStatus(raw) {
@@ -12599,10 +12627,10 @@ function renderDashboardKPIs() {
     setMetricVisualState('kpiOpen', 'kpiOpenSub', {
       state: 'ok',
       value: String(openWOs.length),
-      subText: WORK_ORDERS.length + ' loaded (' + DATA_WINDOW_DAYS + 'd)'
+      subText: WORK_ORDERS.length + ' active loaded'
     });
     var openSubEl = $('#kpiOpenSub');
-    if (openSubEl) openSubEl.innerHTML = WORK_ORDERS.length + ' loaded (' + DATA_WINDOW_DAYS + 'd)' + agingHtml;
+    if (openSubEl) openSubEl.innerHTML = WORK_ORDERS.length + ' active loaded' + agingHtml;
     var urgSubText = urgentWOs.length > 0 ? urgentWOs.length + ' require attention' : 'No urgent items';
     if (unassignedUrgent.length > 0) urgSubText += ' \u2022 ' + unassignedUrgent.length + ' unassigned';
     setMetricVisualState('kpiUrgent', 'kpiUrgentSub', {
@@ -12812,6 +12840,87 @@ function renderDashboardKPIs() {
 
 var _dashboardInsightCharts = {};
 var _dashboardInsightsResizeWired = false;
+var _dashboardChartModalChart = null;
+var _dashboardChartModalFilter = '';
+
+function filterWorkOrdersFromDashboard(label) {
+  var query = String(label || '').trim();
+  if (!query) return;
+  closeModal('dashboardChartModal');
+  var workordersTab = document.querySelector('.nav-tab[data-tab="workorders"]');
+  if (workordersTab) workordersTab.click();
+  setTimeout(function() {
+    var search = document.getElementById('woSearch');
+    if (!search) return;
+    search.value = query;
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    search.focus();
+  }, 200);
+}
+
+function openDashboardChartModal(title, rows, selectedLabel) {
+  var host = document.getElementById('dashboardChartModalCanvas');
+  var titleEl = document.getElementById('dashboardChartModalTitle');
+  var subtitleEl = document.getElementById('dashboardChartModalSubtitle');
+  var rowsEl = document.getElementById('dashboardChartModalRows');
+  var selectionEl = document.getElementById('dashboardChartModalSelection');
+  var filterBtn = document.getElementById('dashboardChartOpenWorkOrders');
+  if (!host || !rowsEl) return;
+
+  var chartRows = (Array.isArray(rows) ? rows : []).map(function(row) {
+    return { name: String(row.label || ''), value: Number(row.value || 0) };
+  });
+  var total = chartRows.reduce(function(sum, row) { return sum + row.value; }, 0);
+  if (titleEl) titleEl.textContent = String(title || 'Dashboard insight');
+  if (subtitleEl) subtitleEl.textContent = total.toLocaleString() + ' total across ' + chartRows.length + ' categories';
+
+  function selectLabel(label) {
+    _dashboardChartModalFilter = String(label || '').trim();
+    if (selectionEl) selectionEl.textContent = _dashboardChartModalFilter
+      ? 'Selected: ' + _dashboardChartModalFilter
+      : 'Select a segment to filter Work Orders.';
+    if (filterBtn) filterBtn.disabled = !_dashboardChartModalFilter;
+    rowsEl.querySelectorAll('[data-chart-row]').forEach(function(rowEl) {
+      var row = chartRows[Number(rowEl.getAttribute('data-chart-row'))];
+      rowEl.classList.toggle('selected', !!row && row.name === _dashboardChartModalFilter);
+    });
+  }
+
+  rowsEl.innerHTML = chartRows.map(function(row, index) {
+    var pct = total > 0 ? ((row.value / total) * 100).toFixed(1) : '0.0';
+    return '<button class="dashboard-chart-modal-row" data-chart-row="' + index + '">' +
+      '<span>' + escapeHtml(row.name) + '</span><strong>' + row.value.toLocaleString() + '</strong><small>' + pct + '%</small></button>';
+  }).join('');
+  rowsEl.querySelectorAll('[data-chart-row]').forEach(function(rowEl) {
+    rowEl.addEventListener('click', function() {
+      var row = chartRows[Number(rowEl.getAttribute('data-chart-row'))];
+      selectLabel(row && row.name);
+    });
+  });
+
+  if (_dashboardChartModalChart) {
+    try { _dashboardChartModalChart.dispose(); } catch (e) { /* noop */ }
+  }
+  _dashboardChartModalChart = echarts.init(host, null, { renderer: 'canvas' });
+  _dashboardChartModalChart.setOption({
+    tooltip: { trigger: 'item', formatter: '{b}<br><strong>{c}</strong> ({d}%)' },
+    legend: { type: 'scroll', bottom: 0 },
+    series: [{
+      type: 'pie',
+      radius: ['42%', '72%'],
+      center: ['50%', '44%'],
+      padAngle: 2,
+      minAngle: 3,
+      label: { formatter: '{b}\n{c}', overflow: 'truncate', width: 120 },
+      emphasis: { scaleSize: 8 },
+      data: chartRows,
+    }],
+  });
+  _dashboardChartModalChart.on('click', function(params) { selectLabel(params && params.name); });
+  selectLabel(selectedLabel);
+  openModal('dashboardChartModal');
+  requestAnimationFrame(function() { if (_dashboardChartModalChart) _dashboardChartModalChart.resize(); });
+}
 
 function destroyDashboardInsightChart(elId) {
   var chart = _dashboardInsightCharts[elId];
@@ -12824,7 +12933,7 @@ function destroyDashboardInsightChart(elId) {
 function renderDashboardInsightChart(elId, rows, title) {
   var el = document.getElementById(elId);
   if (!el) return false;
-  if (!(window.echarts && typeof window.echarts.init === 'function')) {
+  if (!(echarts && typeof echarts.init === 'function')) {
     destroyDashboardInsightChart(elId);
     return false;
   }
@@ -12842,7 +12951,7 @@ function renderDashboardInsightChart(elId, rows, title) {
 
   var chart = _dashboardInsightCharts[elId];
   if (!chart) {
-    chart = window.echarts.init(el);
+    chart = echarts.getInstanceByDom(el) || echarts.init(el);
     _dashboardInsightCharts[elId] = chart;
   }
 
@@ -12943,6 +13052,21 @@ function renderDashboardInsightChart(elId, rows, title) {
       })
     }]
   });
+  chart.off('click');
+  chart.on('click', function(params) {
+    openDashboardChartModal(title, rows, params && params.name);
+  });
+
+  var card = el.closest('.wo-chart-card, .chart-card, article');
+  if (card) card.classList.add('dashboard-chart-interactive');
+  el.setAttribute('role', 'button');
+  el.setAttribute('tabindex', '0');
+  el.setAttribute('aria-label', 'Open ' + String(title || 'dashboard insight') + ' details');
+  el.onkeydown = function(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    openDashboardChartModal(title, rows, '');
+  };
 
   if (!_dashboardInsightsResizeWired) {
     _dashboardInsightsResizeWired = true;
@@ -12958,6 +13082,15 @@ function renderDashboardInsightChart(elId, rows, title) {
 
   return true;
 }
+
+var dashboardChartModalClose = document.getElementById('dashboardChartModalClose');
+var dashboardChartModalCancel = document.getElementById('dashboardChartModalCancel');
+var dashboardChartOpenWorkOrders = document.getElementById('dashboardChartOpenWorkOrders');
+if (dashboardChartModalClose) dashboardChartModalClose.addEventListener('click', function() { closeModal('dashboardChartModal'); });
+if (dashboardChartModalCancel) dashboardChartModalCancel.addEventListener('click', function() { closeModal('dashboardChartModal'); });
+if (dashboardChartOpenWorkOrders) dashboardChartOpenWorkOrders.addEventListener('click', function() {
+  filterWorkOrdersFromDashboard(_dashboardChartModalFilter);
+});
 
 function setDashboardInsightCardText(title1, title2, title3, subtitle) {
   var card1 = document.getElementById('dashInsightPmLoadCard');
@@ -13540,13 +13673,24 @@ var currentWOView = (function() {
 var currentWOSubtab = 'active'; // active | completed | closure | followup
 var currentWOTab = 'active'; // 'active' | 'inactive' - for active vs inactive work orders
 var currentWOGridSearch = '';
+var currentWOSelection = null;
 var woGridApi = null;
 var inspectionsGridApi = null;
 var WO_ANALYTICS_FILTERS = { ageBucket: '', owner: '', status: '' };
 var INSP_ANALYTICS_FILTERS = { status: '', ageBucket: '', turnLinked: '' };
-var WO_CHARTS = { aging: null, owner: null, status: null, vendorSpend: null };
+var WO_CHARTS = {
+  aging: null,
+  owner: null,
+  status: null,
+  vendorSpend: null,
+  kpiOpen: null,
+  kpiUrgent: null,
+  kpiUnassigned: null,
+  kpiAging: null
+};
 var WO_MODAL_STATUS_CHART = null;
 var WO_CHART_RESIZE_OBSERVER = null;
+var WO_THEME_OBSERVER = null;
 var WO_VENDOR_SPEND_CACHE = { key: '', rows: [] };
 var INSP_CHARTS = { mix: null, age: null, link: null };
 var currentBillingSubtab = 'main'; // main | payables | charge-detail | bill-detail
@@ -13909,7 +14053,12 @@ function setWOSubtab(tab) {
     if (historyTools) historyTools.style.display = target === 'completed' ? '' : 'none';
     if (target === 'completed') showCompletedWOHistory = true;
     renderWorkOrders();
-    if (target === 'completed') renderCompletedWOHistorySection();
+    if (target === 'completed') {
+      renderCompletedWOHistorySection();
+      fetchInactiveWorkOrders().then(function(ok) {
+        if (ok && currentWOSubtab === 'completed') renderWorkOrders();
+      });
+    }
   }
   syncSubtabDock();
 }
@@ -16656,7 +16805,19 @@ function renderWOModalStatusChart(wo) {
 function ensureWOChart(chart, element) {
   if (chart && typeof chart.getDom === 'function' && chart.getDom() === element) return chart;
   destroyChartInstance(chart);
-  return echarts.init(element, null, { renderer: 'canvas' });
+  var theme = document.documentElement.classList.contains('dark') ? 'dark' : null;
+  return echarts.init(element, theme, { renderer: 'canvas' });
+}
+
+function mountWorkOrderToolbar(target) {
+  var toolbar = document.getElementById('woFilters');
+  if (toolbar && target) target.appendChild(toolbar);
+}
+
+function restoreWorkOrderToolbar() {
+  var toolbar = document.getElementById('woFilters');
+  var anchor = document.getElementById('woToolbarAnchor');
+  if (toolbar && anchor && anchor.parentNode) anchor.parentNode.insertBefore(toolbar, anchor.nextSibling);
 }
 
 function observeWOAnalyticsCharts(container) {
@@ -16670,7 +16831,35 @@ function observeWOAnalyticsCharts(container) {
       });
     });
   });
-  WO_CHART_RESIZE_OBSERVER.observe(container);
+  container.querySelectorAll('.wo-chart-host').forEach(function(host) {
+    WO_CHART_RESIZE_OBSERVER.observe(host);
+  });
+}
+
+function getWOChartPalette() {
+  var styles = getComputedStyle(document.documentElement);
+  return {
+    text: styles.getPropertyValue('--text-primary').trim() || '#0f172a',
+    muted: styles.getPropertyValue('--text-muted').trim() || '#64748b',
+    border: styles.getPropertyValue('--border-color').trim() || '#e2e8f0',
+    surface: styles.getPropertyValue('--bg-surface').trim() || '#ffffff',
+    progress: styles.getPropertyValue('--status-progress').trim() || '#0ea5e9',
+    assigned: styles.getPropertyValue('--status-assigned').trim() || '#f59e0b',
+    critical: styles.getPropertyValue('--status-critical').trim() || '#ef4444'
+  };
+}
+
+function bindWOThemeObserver() {
+  if (WO_THEME_OBSERVER || typeof MutationObserver !== 'function') return;
+  WO_THEME_OBSERVER = new MutationObserver(function() {
+    if (!document.getElementById('woAnalyticsShell')) return;
+    Object.keys(WO_CHARTS).forEach(function(key) {
+      destroyChartInstance(WO_CHARTS[key]);
+      WO_CHARTS[key] = null;
+    });
+    renderWorkOrders();
+  });
+  WO_THEME_OBSERVER.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 }
 
 function getWOAnalyticsAgeBucket(days) {
@@ -16817,8 +17006,8 @@ function createWorkOrdersServerDatasource() {
             ? getFilteredWOs().map(function(wo) { return String(wo.id || '').trim(); }).filter(Boolean)
             : [];
 
-          var url = localBase + '/api/local/grid/work_orders?days=' + encodeURIComponent(String(DATA_WINDOW_DAYS))
-            + '&limit=' + encodeURIComponent(String(blockSize))
+          var historyQuery = currentWOTab === 'inactive' ? 'days=365&' : '';
+          var url = localBase + '/api/local/grid/work_orders?' + historyQuery + 'limit=' + encodeURIComponent(String(blockSize))
             + '&offset=' + encodeURIComponent(String(startRow))
             + '&status_scope=' + encodeURIComponent(currentWOTab === 'inactive' ? 'inactive' : 'active')
             + '&sort_by=' + encodeURIComponent(sort.sortBy)
@@ -16983,6 +17172,7 @@ function renderWOAnalyticsCharts(rows) {
   var ownerEl = document.getElementById('woOwnerChart');
   var statusEl = document.getElementById('woStatusChart');
   if (!agingEl || !ownerEl || !statusEl) return;
+  var palette = getWOChartPalette();
 
   var agingCounts = { '0-7': 0, '8-30': 0, '31-60': 0, '60+': 0 };
   var ownerCounts = {};
@@ -17008,8 +17198,8 @@ function renderWOAnalyticsCharts(rows) {
     tooltip: { trigger: 'axis' },
     toolbox: { right: 8, feature: { saveAsImage: {}, restore: {} } },
     grid: { containLabel: true, top: 40, bottom: 20, left: 20, right: 20 },
-    xAxis: { type: 'category', data: agingRows.map(function(r){ return r.name; }), axisLabel: { color: '#7f8ca3' } },
-    yAxis: { type: 'value', axisLabel: { color: '#7f8ca3' }, splitLine: { lineStyle: { color: 'rgba(127,140,163,0.2)' } } },
+    xAxis: { type: 'category', data: agingRows.map(function(r){ return r.name; }), axisLabel: { color: palette.muted } },
+    yAxis: { type: 'value', axisLabel: { color: palette.muted }, splitLine: { lineStyle: { color: palette.border } } },
     series: [{
       type: 'bar',
       data: agingRows.map(function(r){ return r.value; }),
@@ -17033,7 +17223,7 @@ function renderWOAnalyticsCharts(rows) {
       top: 0,
       style: {
         text: 'Aging Pressure Radar',
-        fill: '#5a6378',
+        fill: palette.muted,
         font: '600 11px var(--font-mono)'
       }
     }]
@@ -17061,14 +17251,14 @@ function renderWOAnalyticsCharts(rows) {
       nodeClick: false,
       breadcrumb: { show: false },
       leafDepth: 1,
-      label: { show: true, formatter: '{b}\n{c}', color: '#1f2c3f', fontSize: 10, overflow: 'truncate', ellipsis: '...', width: 110 },
+      label: { show: true, formatter: '{b}\n{c}', color: palette.text, fontSize: 10, overflow: 'truncate', ellipsis: '...', width: 110 },
       data: ownerRows.map(function(r) {
         var selected = WO_ANALYTICS_FILTERS.owner && WO_ANALYTICS_FILTERS.owner === r.name;
         return {
           name: r.name,
           value: r.value,
           itemStyle: {
-            borderColor: selected ? '#0f8d91' : 'rgba(90,99,120,0.25)',
+            borderColor: selected ? palette.progress : palette.border,
             borderWidth: selected ? 2 : 1
           }
         };
@@ -17141,6 +17331,93 @@ function renderWOAnalyticsCharts(rows) {
     if (WO_CHARTS.owner) WO_CHARTS.owner.resize();
     if (WO_CHARTS.status) WO_CHARTS.status.resize();
   });
+}
+
+function renderWOKpiStrip(rows) {
+  var mount = document.getElementById('woKpiStrip');
+  if (!mount) return;
+  var list = Array.isArray(rows) ? rows : [];
+  var metrics = [
+    { key: 'Open', label: 'Open work orders', value: list.length, color: 'progress', values: [list.filter(function(r) { return r.ageDays <= 7; }).length, list.filter(function(r) { return r.ageDays > 7 && r.ageDays <= 30; }).length, list.filter(function(r) { return r.ageDays > 30; }).length] },
+    { key: 'Urgent', label: 'Urgent priority', value: list.filter(function(r) { return String(r.priority).toLowerCase() === 'urgent'; }).length, color: 'critical', values: [list.filter(function(r) { return String(r.priority).toLowerCase() === 'low'; }).length, list.filter(function(r) { return String(r.priority).toLowerCase() === 'normal'; }).length, list.filter(function(r) { return String(r.priority).toLowerCase() === 'urgent'; }).length] },
+    { key: 'Unassigned', label: 'Needs assignment', value: list.filter(function(r) { return !String(r.assignedUser || '').trim() && !String(r.vendorName || '').trim(); }).length, color: 'assigned', values: [list.filter(function(r) { return !!String(r.assignedUser || '').trim(); }).length, list.filter(function(r) { return !!String(r.vendorName || '').trim(); }).length, list.filter(function(r) { return !String(r.assignedUser || '').trim() && !String(r.vendorName || '').trim(); }).length] },
+    { key: 'Aging', label: 'Over 30 days', value: list.filter(function(r) { return r.ageDays > 30; }).length, color: 'critical', values: [list.filter(function(r) { return r.ageDays <= 7; }).length, list.filter(function(r) { return r.ageDays > 7 && r.ageDays <= 30; }).length, list.filter(function(r) { return r.ageDays > 30 && r.ageDays <= 60; }).length, list.filter(function(r) { return r.ageDays > 60; }).length] }
+  ];
+  mount.innerHTML = metrics.map(function(metric) {
+    return '<article class="wo-kpi-card wo-kpi-card--' + metric.color + '">' +
+      '<div><span>' + escapeHtml(metric.label) + '</span><strong>' + metric.value.toLocaleString() + '</strong></div>' +
+      '<div id="woKpi' + metric.key + '" class="wo-chart-host wo-kpi-spark" role="img" aria-label="' + escapeHtml(metric.label + ' distribution') + '"></div>' +
+      '</article>';
+  }).join('');
+
+  var palette = getWOChartPalette();
+  metrics.forEach(function(metric) {
+    var element = document.getElementById('woKpi' + metric.key);
+    if (!element) return;
+    var chartKey = 'kpi' + metric.key;
+    WO_CHARTS[chartKey] = ensureWOChart(WO_CHARTS[chartKey], element);
+    var color = palette[metric.color];
+    WO_CHARTS[chartKey].setOption({
+      animationDuration: 360,
+      grid: { left: 0, right: 0, top: 4, bottom: 0 },
+      xAxis: { type: 'category', show: false, boundaryGap: false, data: metric.values.map(function(_, index) { return index; }) },
+      yAxis: { type: 'value', show: false },
+      series: [{ type: 'line', data: metric.values, smooth: true, symbol: 'none', lineStyle: { width: 2, color: color }, areaStyle: { color: color, opacity: 0.14 } }]
+    }, { notMerge: true });
+  });
+}
+
+function getWOStatusClass(status) {
+  var value = String(status || '').toLowerCase();
+  if (/urgent|cancel|overdue|blocked/.test(value)) return 'critical';
+  if (/assign|schedule|estimate|waiting/.test(value)) return 'assigned';
+  if (/complete|done|closed/.test(value)) return 'complete';
+  return 'progress';
+}
+
+function renderWOContextPanel(wo) {
+  var panel = document.getElementById('woContextPanel');
+  if (!panel) return;
+  if (!wo) {
+    panel.innerHTML = '<div class="wo-context-empty"><i class="fas fa-hand-pointer" aria-hidden="true"></i><strong>Select a work order</strong><span>Review scope, assignment, and service history without leaving the queue.</span></div>';
+    panel.classList.remove('is-open');
+    return;
+  }
+  currentWOSelection = wo;
+  var statusClass = getWOStatusClass(wo.status);
+  var timeline = [];
+  if (wo.created) timeline.push({ date: wo.created, title: 'Work order opened', detail: wo.createdBy || 'Request received' });
+  if (wo.scheduledStart) timeline.push({ date: wo.scheduledStart, title: 'Service scheduled', detail: wo.assignedUser || wo.vendorName || 'Assignment pending' });
+  if (wo.workCompletedOn) timeline.push({ date: wo.workCompletedOn, title: 'Work completed', detail: wo.vendorName || wo.assignedUser || 'Completion recorded' });
+  if (wo.completedOn && wo.completedOn !== wo.workCompletedOn) timeline.push({ date: wo.completedOn, title: 'Order closed', detail: wo.status || 'Completed' });
+  if (!timeline.length && wo.updated) timeline.push({ date: wo.updated, title: 'Last activity', detail: wo.status || 'Updated' });
+
+  panel.innerHTML = '<div class="wo-context-head">' +
+    '<div><span>Work order</span><h3>#' + escapeHtml(String(wo.id || '')) + '</h3></div>' +
+    '<button class="wo-context-close" id="woContextClose" type="button" aria-label="Close work order details"><i class="fas fa-times"></i></button>' +
+    '</div>' +
+    '<span class="wo-status-pill wo-status-pill--' + statusClass + '"><i class="fas fa-circle" aria-hidden="true"></i>' + escapeHtml(wo.status || 'Unknown') + '</span>' +
+    '<h4>' + escapeHtml(wo.propertyName || wo.propertyAddress || 'Property unavailable') + (wo.unit ? ' · ' + escapeHtml(wo.unit) : '') + '</h4>' +
+    '<p class="wo-context-description">' + escapeHtml(wo.description || 'No description provided.') + '</p>' +
+    '<dl class="wo-context-facts">' +
+      '<div><dt>Priority</dt><dd>' + escapeHtml(wo.priority || 'Normal') + '</dd></div>' +
+      '<div><dt>Assigned to</dt><dd>' + escapeHtml(wo.assignedUser || wo.vendorName || 'Unassigned') + '</dd></div>' +
+      '<div><dt>Opened</dt><dd>' + escapeHtml(wo.created ? formatDate(wo.created) : 'Unknown') + '</dd></div>' +
+      '<div><dt>Type</dt><dd>' + escapeHtml(wo.type || 'Uncategorized') + '</dd></div>' +
+    '</dl>' +
+    '<div class="wo-context-section"><h5>Service history</h5><ul class="wo-service-timeline">' + timeline.map(function(event) {
+      return '<li><time>' + escapeHtml(formatNoteDateTime(event.date)) + '</time><strong>' + escapeHtml(event.title) + '</strong><span>' + escapeHtml(event.detail) + '</span></li>';
+    }).join('') + '</ul></div>' +
+    '<button class="action-btn primary wo-context-action" id="woContextOpen" type="button"><i class="fas fa-arrow-up-right-from-square"></i> Open full work order</button>';
+  panel.classList.add('is-open');
+  var openButton = document.getElementById('woContextOpen');
+  if (openButton) openButton.onclick = function() { showWODetail(wo.id); };
+  var closeButton = document.getElementById('woContextClose');
+  if (closeButton) closeButton.onclick = function() {
+    currentWOSelection = null;
+    renderWOContextPanel(null);
+    if (woGridApi) woGridApi.deselectAll();
+  };
 }
 
 async function renderWOVendorSpendChart() {
@@ -17221,7 +17498,7 @@ function getWorkOrderGridColumnDefs(rows) {
     { field: 'propertyManager', headerName: 'Property Manager', minWidth: 160 },
     { field: 'unit', headerName: 'Unit', minWidth: 90, maxWidth: 110 },
     { field: 'description', headerName: 'Description', minWidth: 240, flex: 2 },
-    { field: 'status', headerName: 'Status', minWidth: 130 },
+    { field: 'status', headerName: 'Status', minWidth: 150, cellRenderer: function(p) { var value = String(p.value || 'Unknown'); return '<span class="wo-status-pill wo-status-pill--' + getWOStatusClass(value) + '"><i class="fas fa-circle" aria-hidden="true"></i>' + escapeHtml(value) + '</span>'; } },
     { field: 'priority', headerName: 'Priority', minWidth: 110, maxWidth: 120 },
     { field: 'assignedUser', headerName: 'Assignee', minWidth: 150 },
     { field: 'vendorName', headerName: 'Vendor', minWidth: 160 },
@@ -17239,13 +17516,16 @@ function renderWorkOrdersGrid(rows) {
   destroyGridInstance('wo');
 
   var rowList = Array.isArray(rows) ? rows : [];
+  var selectedId = currentWOSelection && String(currentWOSelection.id || '');
+  var selectedRow = rowList.find(function(row) { return String(row.id || '') === selectedId; }) || rowList[0] || null;
+  currentWOSelection = selectedRow ? selectedRow.__raw : null;
 
   woGridApi = createGrid(host, {
     theme: 'legacy',
     rowModelType: 'clientSide',
     rowData: rowList,
     rowSelection: 'single',
-    suppressCellFocus: true,
+    suppressCellFocus: false,
     includeHiddenColumnsInQuickFilter: true,
     quickFilterText: currentWOGridSearch,
     overlayNoRowsTemplate: '<span style="padding:10px;color:var(--text-muted)">No work orders match the current filters.</span>',
@@ -17257,10 +17537,20 @@ function renderWorkOrdersGrid(rows) {
       cellStyle: { fontFamily: 'var(--font-sans)', fontSize: '12px' }
     },
     columnDefs: getWorkOrderGridColumnDefs(rowList),
-    onRowClicked: function(evt) {
+    getRowId: function(params) { return String(params.data && params.data.id || ''); },
+    onGridReady: function(evt) {
+      if (!selectedRow) return;
+      var node = evt.api.getRowNode(String(selectedRow.id || ''));
+      if (node) node.setSelected(true);
+      renderWOContextPanel(selectedRow.__raw);
+    },
+    onSelectionChanged: function(evt) {
+      var selected = evt.api.getSelectedRows()[0];
+      if (selected && selected.__raw) renderWOContextPanel(selected.__raw);
+    },
+    onRowDoubleClicked: function(evt) {
       var wo = evt && evt.data && evt.data.__raw;
-      if (!wo || !wo.id) return;
-      showWODetail(wo.id);
+      if (wo && wo.id) showWODetail(wo.id);
     }
   });
 
@@ -17361,6 +17651,7 @@ function renderWorkOrders() {
         priority: wo.priority || '-',
         assignedUser: String(wo.assignedUser || '').trim(),
         vendorName: String(wo.vendorName || '').trim(),
+        owner: String(wo.assignedUser || wo.vendorName || 'Unassigned').trim(),
         openedDate: wo.created ? formatDate(wo.created) : '',
         ageDays: age.days === null ? -1 : age.days,
         ageBucket: getWOAnalyticsAgeBucket(age.days === null ? 0 : age.days),
@@ -17376,8 +17667,15 @@ function renderWorkOrders() {
       woGridApi.setGridOption('rowData', woGridRowsBase);
       var existingMeta = document.getElementById('woGridMeta');
       if (existingMeta) existingMeta.textContent = woGridRowsBase.length + ' work orders loaded';
-      renderWOAnalyticsCharts(woGridRowsBase);
+      renderWOKpiStrip(woGridRowsBase);
+      var existingInsightsDrawer = document.querySelector('.wo-insights-drawer');
+      if (existingInsightsDrawer && existingInsightsDrawer.open) {
+        renderWOAnalyticsCharts(woGridRowsBase);
+        renderWOVendorSpendChart();
+      }
+      renderWOContextPanel(currentWOSelection);
       renderWOChartFilterBadges();
+      observeWOAnalyticsCharts(existingAnalytics);
       renderWOCloseAssist();
       renderWOFollowupQueue();
       renderCompletedWOHistorySection();
@@ -17386,35 +17684,31 @@ function renderWorkOrders() {
 
     board.innerHTML = '<div id="woDatasetContext">' + statusContextHtml + '</div>' +
       '<div class="wo-analytics-shell table-wrapper" id="woAnalyticsShell">' +
-      '  <div class="wo-analytics-head">' +
-      '    <div class="wo-analytics-title"><i class="fas fa-chart-line" style="color:var(--accent)"></i> Work Order Visual Analytics</div>' +
-      '    <div class="wo-analytics-filters">' +
-      '      <button class="filter-btn" id="woAnalyticsClearFilters">Clear Chart Filters</button>' +
-      '    </div>' +
-      '  </div>' +
-      '  <div class="wo-operations-layout">' +
-      '    <main class="wo-operations-primary">' +
-      '      <article class="wo-chart-card wo-chart-card--primary"><header>Aging Buckets <span>Click a bar to filter</span></header><div id="woAgingChart" class="wo-chart-host"></div></article>' +
-      '      <div class="wo-grid-meta" id="woGridMeta">' + woGridRowsBase.length + ' work orders loaded</div>' +
-      '      <label class="wo-grid-search" for="woGridQuickSearch">' +
-      '    <i class="fas fa-search" aria-hidden="true"></i>' +
-      '    <input id="woGridQuickSearch" type="search" autocomplete="off" placeholder="Search by property manager, WO number, vendor, property, unit, status…" aria-label="Search work orders grid">' +
-      '      </label>' +
+      '  <div class="wo-command-workspace">' +
+      '    <main class="wo-grid-workspace">' +
+      '      <div class="wo-grid-toolbar"><div id="woGridToolbarMount"></div><div class="wo-grid-meta" id="woGridMeta">' + woGridRowsBase.length + ' work orders loaded</div><button class="filter-btn" id="woAnalyticsClearFilters">Clear Chart Filters</button></div>' +
       '      <div id="woGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--wo"></div>' +
       '    </main>' +
-      '    <aside class="wo-operations-rail">' +
-      '      <article class="wo-chart-card"><header>Owner Territory <span>Click to filter</span></header><div id="woOwnerChart" class="wo-chart-host"></div></article>' +
-      '      <article class="wo-chart-card"><header>Status by Owner <span>Click a ring</span></header><div id="woStatusChart" class="wo-chart-host"></div></article>' +
-      '      <article class="wo-chart-card" id="woVendorSpendCard"><header>Top 5 Vendors by Spend <span id="woVendorSpendMeta">Loading</span></header><div id="woVendorSpendChart" class="wo-chart-host"></div></article>' +
-      '    </aside>' +
+      '    <aside class="wo-context-panel" id="woContextPanel" aria-live="polite"></aside>' +
       '  </div>' +
+      '  <details class="wo-insights-drawer">' +
+      '    <summary><span><i class="fas fa-chart-line" aria-hidden="true"></i> Operational analytics</span><small>Age, ownership, status, and vendor spend</small></summary>' +
+      '    <div class="wo-analytics-grid">' +
+      '      <article class="wo-chart-card"><header>Aging Buckets <span>Click a bar to filter</span></header><div id="woAgingChart" class="wo-chart-host" tabindex="0"></div></article>' +
+      '      <article class="wo-chart-card"><header>Owner Territory <span>Click to filter</span></header><div id="woOwnerChart" class="wo-chart-host" tabindex="0"></div></article>' +
+      '      <article class="wo-chart-card"><header>Status by Owner <span>Click a ring</span></header><div id="woStatusChart" class="wo-chart-host" tabindex="0"></div></article>' +
+      '      <article class="wo-chart-card" id="woVendorSpendCard"><header>Top 5 Vendors by Spend <span id="woVendorSpendMeta">Loading</span></header><div id="woVendorSpendChart" class="wo-chart-host"></div></article>' +
+      '    </div>' +
+      '  </details>' +
       '</div>';
 
-    renderWOAnalyticsCharts(woGridRowsBase);
-    renderWOVendorSpendChart();
+    mountWorkOrderToolbar(document.getElementById('woGridToolbarMount'));
+    renderWOKpiStrip(woGridRowsBase);
     renderWorkOrdersGrid(woGridRowsBase);
+    renderWOContextPanel(currentWOSelection);
     renderWOChartFilterBadges();
     observeWOAnalyticsCharts(document.getElementById('woAnalyticsShell'));
+    bindWOThemeObserver();
 
     var clearFiltersBtn = document.getElementById('woAnalyticsClearFilters');
     if (clearFiltersBtn) {
@@ -17426,6 +17720,18 @@ function renderWorkOrders() {
       };
     }
 
+    var insightsDrawer = document.querySelector('.wo-insights-drawer');
+    if (insightsDrawer) insightsDrawer.addEventListener('toggle', function() {
+      if (!insightsDrawer.open) return;
+      renderWOAnalyticsCharts(woGridRowsBase);
+      renderWOVendorSpendChart();
+      requestAnimationFrame(function() {
+        Object.keys(WO_CHARTS).forEach(function(key) {
+          if (WO_CHARTS[key] && typeof WO_CHARTS[key].resize === 'function') WO_CHARTS[key].resize();
+        });
+      });
+    });
+
     $('#woBadge').textContent = filtered.length || '0';
     renderWOCloseAssist();
     renderWOFollowupQueue();
@@ -17434,6 +17740,7 @@ function renderWorkOrders() {
   }
   // ── End list view ──────────────────────────────────────────────────────────
 
+  restoreWorkOrderToolbar();
   destroyGridInstance('wo');
   if (WO_CHART_RESIZE_OBSERVER) WO_CHART_RESIZE_OBSERVER.disconnect();
   destroyChartInstance(WO_CHARTS.aging);
@@ -19477,7 +19784,7 @@ function renderPropertiesRowsFromCache() {
       '<td style="text-align:center"><span class="tag normal">' + String(stats.bills) + '</span></td>' +
       '<td style="text-align:center"><span class="tag blue">' + String(stats.notes) + '</span></td>' +
       '<td style="text-align:center"><span class="tag completed">' + String(stats.listings) + '</span></td>' +
-      '<td><button class="action-btn" data-property-id="' + escapeHtml(pid) + '" data-property-name="' + escapeHtml(String(p.name || '')) + '" onclick="showPropertyDetailModal(this)">Details</button></td>' +
+      '<td><button class="table-action-link" data-property-id="' + escapeHtml(pid) + '" data-property-name="' + escapeHtml(String(p.name || '')) + '" onclick="showPropertyDetailModal(this)">Details</button></td>' +
     '</tr>';
   }).join('');
 
@@ -24325,25 +24632,22 @@ function withStepTimeout(fn, timeoutMs) {
 async function fetchAllLive() {
   var anySuccess = false;
   updateCacheBadge('loading');
-  var needsBootstrap = (!WORK_ORDERS || WORK_ORDERS.length === 0)
-    && (!TURNS || TURNS.length === 0)
-    && (!INSPECTIONS || INSPECTIONS.length === 0);
-  if (needsBootstrap) {
-    setApiStatus('loading', 'Bootstrapping local tables from AppFolio…');
-    // Do not block local reads on bootstrap: cross-origin/session hiccups can make
-    // bootstrap slow or fail while local tables are still readable.
-    syncCoreDatasetsToLocalDb().catch(function(bootstrapErr) {
-      console.warn('fetchAllLive bootstrap sync failed:', bootstrapErr && (bootstrapErr.message || bootstrapErr));
-    });
-  }
-  // Vendors & Inspections lazy-loaded on tab click — removed from initial sync
-  var steps = ['Work Orders', 'Properties', 'Groups', 'Deferred Hydration'];
-  showProgress('Syncing AppFolio (' + DATA_WINDOW_DAYS + 'd)', steps);
+  var steps = ['Work Orders', 'Properties', 'Groups'];
+  showProgress('Loading workspace from PostgreSQL', steps);
 
   try {
-    // Step 0: Work Orders first for fastest post-login visibility.
-    updateProgress(0, 'active', 'Fetching work orders\u2026');
-    var woOk = await withStepTimeout(fetchWorkOrders, 60000);
+    updateProgress(0, 'active', 'Reading PostgreSQL\u2026');
+    updateProgress(1, 'active');
+    updateProgress(2, 'active');
+    var coreResults = await Promise.all([
+      withStepTimeout(fetchWorkOrders, 60000),
+      withStepTimeout(fetchProperties, 60000),
+      withStepTimeout(fetchPropertyGroups, 45000)
+    ]);
+    var woOk = coreResults[0];
+    var propOk = coreResults[1];
+    var grpOk = coreResults[2];
+
     updateProgress(0, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
     if (woOk) {
       anySuccess = true;
@@ -24352,9 +24656,6 @@ async function fetchAllLive() {
       renderActivityFeed();
     }
 
-    // Step 1: Properties (local)
-    updateProgress(1, 'active', 'Fetching properties\u2026');
-    var propOk = await withStepTimeout(fetchProperties, 60000);
     updateProgress(1, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
     if (propOk) {
       anySuccess = true;
@@ -24362,9 +24663,6 @@ async function fetchAllLive() {
       renderWorkOrders();
     }
 
-    // Step 2: Property Groups (local)
-    updateProgress(2, 'active', 'Fetching property groups\u2026');
-    var grpOk = await withStepTimeout(fetchPropertyGroups, 45000);
     var grpMsg = grpOk
       ? PROPERTY_GROUPS.length + ' groups, ' + Object.keys(_idToGroups).length + ' ID maps'
       : 'Groups skipped';
@@ -24381,7 +24679,6 @@ async function fetchAllLive() {
       setApiStatus('', 'Connected' + quickVersionTag + ' — ' + quickSummary);
       $('#apiStatus').className = 'topbar-status';
       await saveAllToCache();
-      updateProgress(3, 'done', 'Core data ready — deferred sync running…');
       hideProgress();
       void startDeferredLiveHydration();
       return;

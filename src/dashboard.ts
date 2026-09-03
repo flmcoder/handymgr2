@@ -27,6 +27,7 @@ import type {
   SunburstSeriesOption,
   SankeySeriesOption,
 } from 'echarts/charts';
+import { buildActiveWorkOrdersUrl } from '../backend/workOrderQueryPolicy.ts';
 import type {
   GridComponentOption,
   TooltipComponentOption,
@@ -391,9 +392,7 @@ function buildWorkOrdersUrl(): string {
       return '';
     }
   })();
-  let url = `${base}/api/local/work_orders?days=180&limit=5000`;
-  if (scopeUuid) url += `&property_group_id=${encodeURIComponent(scopeUuid)}`;
-  return url;
+  return buildActiveWorkOrdersUrl(base, scopeUuid, 5_000);
 }
 
 // =============================================================================

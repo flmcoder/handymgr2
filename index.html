@@ -391,13 +391,12 @@
 </section>
 
 <section class="section" id="sec-workorders">
-  <div class="section-header">
-    <div><div class="section-title"><i class="fas fa-wrench" style="color:var(--accent)"></i> Work Order Operations</div><div class="section-subtitle">Operations queue first, Kanban on demand. Triage, prioritize, and route work without losing board context.</div></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search orders…" id="woSearch"></div>
+  <div class="wo-top-row">
+    <div class="wo-top-actions">
+      <button class="action-btn primary" id="btnNewWO"><i class="fas fa-plus"></i> New Work Order</button>
       <button class="sec-refresh" id="btnRefreshWO"><i class="fas fa-sync-alt"></i> Refresh</button>
-      <button class="action-btn primary" id="btnNewWO"><i class="fas fa-plus"></i> New WO</button>
     </div>
+    <div class="wo-kpi-strip" id="woKpiStrip"></div>
   </div>
   <div class="chart-filter-badge-row" id="woChartFilterBadges" style="display:none"></div>
   <div class="wo-subtabs" id="woSubtabs">
@@ -414,7 +413,9 @@
         <button id="btnWOViewBoard" class="wo-view-btn"        onclick="setWOView('board')" title="Kanban Board View"><i class="fas fa-table-columns"></i> Kanban</button>
       </div>
     </div>
-    <div class="kanban-filters" id="woFilters">
+    <div id="woToolbarAnchor" aria-hidden="true"></div>
+    <div class="toolbar kanban-filters" id="woFilters">
+      <label class="wo-grid-search" for="woSearch"><i class="fas fa-search" aria-hidden="true"></i><input type="search" placeholder="Search work orders" id="woSearch" autocomplete="off"></label>
       <select id="woPriorityFilter"><option value="">All Priorities</option><option value="Urgent">Urgent</option><option value="Normal">Normal</option><option value="Low">Low</option></select>
       <select id="woTypeFilter"><option value="">All Types</option><option value="internal">Internal</option><option value="tenant_requested">Tenant Requested</option><option value="unit_turn">Unit Turn</option></select>
       <select id="woVendorFilter"><option value="">All Vendors</option></select>
@@ -433,12 +434,12 @@
         <option value="newest">Newest First</option>
         <option value="priority">Priority (Urgent First)</option>
       </select>
-      <div style="display:inline-flex;align-items:center;gap:4px;padding:4px 6px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
-        <span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Aging</span>
-        <input id="woAgeYellow" type="number" min="1" step="1" value="14" title="Yellow threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-        <input id="woAgeOrange" type="number" min="1" step="1" value="30" title="Orange threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-        <input id="woAgeRed" type="number" min="1" step="1" value="60" title="Red threshold days" style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-family:var(--font-mono);font-size:11px">
-        <button class="filter-btn" id="btnSaveWOAging" style="padding:6px 8px"><i class="fas fa-save"></i> Save</button>
+      <div class="wo-aging-controls">
+        <span>Aging</span>
+        <input id="woAgeYellow" type="number" min="1" step="1" value="14" title="Yellow threshold days">
+        <input id="woAgeOrange" type="number" min="1" step="1" value="30" title="Orange threshold days">
+        <input id="woAgeRed" type="number" min="1" step="1" value="60" title="Red threshold days">
+        <button class="filter-btn" id="btnSaveWOAging"><i class="fas fa-save"></i> Save</button>
       </div>
       <button class="filter-btn" data-filter="flagged" style="color:var(--warning)"><i class="fas fa-flag"></i> Flagged</button>
       <button class="filter-btn active" data-filter="all" style="margin-left:auto">All Open</button>
@@ -1156,7 +1157,7 @@
   <!-- Turn Pipeline KPIs -->
   <div class="kpi-grid" id="turnKpis">
     <div class="kpi-card amber"><div class="kpi-label">Confirmed Active</div><div class="kpi-value" id="kpiActiveTurns">0</div><div class="kpi-sub" id="kpiActiveTurnsSub">Loading…</div></div>
-    <div class="kpi-card" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;border-top:3px solid var(--accent)"><div class="kpi-label">On Radar</div><div class="kpi-value" id="kpiOnRadar">0</div><div class="kpi-sub" id="kpiOnRadarSub">awaiting confirmation</div></div>
+    <div class="kpi-card"><div class="kpi-label">On Radar</div><div class="kpi-value" id="kpiOnRadar">0</div><div class="kpi-sub" id="kpiOnRadarSub">awaiting confirmation</div></div>
     <div class="kpi-card red"><div class="kpi-label">Avg Days</div><div class="kpi-value" id="kpiAvgTurnDays">—</div><div class="kpi-sub" id="kpiAvgTurnSub">elapsed on active turns</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Awaiting Estimates</div><div class="kpi-value" id="kpiAwaitEst">0</div><div class="kpi-sub" id="kpiAwaitEstSub">turns pending vendor bids</div></div>
     <div class="kpi-card green"><div class="kpi-label">Turns In Scope</div><div class="kpi-value" id="kpiTurnBilled">0</div><div class="kpi-sub" id="kpiTurnBilledSub">all pipeline records</div></div>
@@ -2337,6 +2338,29 @@
     <div class="modal-head">
       <div>
         <h3 id="tdmUnit" style="margin:0;color:var(--accent)">Unit</h3>
+
+    <div class="modal-overlay" id="dashboardChartModal">
+      <div class="modal dashboard-chart-modal" role="dialog" aria-modal="true" aria-labelledby="dashboardChartModalTitle">
+        <div class="modal-head">
+          <div>
+            <h3 id="dashboardChartModalTitle">Dashboard insight</h3>
+            <div class="dashboard-chart-modal-subtitle" id="dashboardChartModalSubtitle"></div>
+          </div>
+          <button class="modal-close" id="dashboardChartModalClose" aria-label="Close chart details">&times;</button>
+        </div>
+        <div class="modal-body dashboard-chart-modal-body">
+          <div id="dashboardChartModalCanvas" class="dashboard-chart-modal-canvas" role="img" aria-label="Dashboard insight chart"></div>
+          <div class="dashboard-chart-modal-results">
+            <div class="dashboard-chart-modal-selection" id="dashboardChartModalSelection">Select a segment to filter Work Orders.</div>
+            <div id="dashboardChartModalRows" class="dashboard-chart-modal-rows"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="action-btn" id="dashboardChartModalCancel">Close</button>
+          <button class="action-btn primary" id="dashboardChartOpenWorkOrders" disabled><i class="fas fa-filter"></i> Filter Work Orders</button>
+        </div>
+      </div>
+    </div>
         <div id="tdmProperty" style="font-size:12px;color:var(--text-muted);margin-top:2px"></div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
