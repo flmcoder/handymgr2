@@ -17482,6 +17482,7 @@ async function renderWOVendorSpendChart() {
 
 function getWorkOrderGridColumnDefs(rows) {
   var rowList = Array.isArray(rows) ? rows : [];
+  var isMobileQueue = typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 680px)').matches;
   function columnHasData(field) {
     return rowList.some(function(row) {
       var value = row && row[field];
@@ -17490,6 +17491,27 @@ function getWorkOrderGridColumnDefs(rows) {
       var text = String(value).trim();
       return !!text && text !== '-' && text !== '\u2014' && text.toLowerCase() !== 'unknown';
     });
+  }
+  if (isMobileQueue) {
+    return [{
+      field: 'id',
+      headerName: 'Work queue',
+      minWidth: 280,
+      flex: 1,
+      sortable: true,
+      cellRenderer: function(params) {
+        var row = params.data || {};
+        var owner = row.owner || 'Unassigned';
+        var location = [row.propertyName, row.unit && row.unit !== '-' ? row.unit : ''].filter(Boolean).join(' · ');
+        return '<div class="wo-mobile-row">' +
+          '<div class="wo-mobile-row__top"><strong>#' + escapeHtml(String(row.id || '')) + '</strong>' +
+          '<span class="wo-status-pill wo-status-pill--' + getWOStatusClass(row.status) + '">' + escapeHtml(row.status || 'Unknown') + '</span></div>' +
+          '<div class="wo-mobile-row__location">' + escapeHtml(location || 'Property unavailable') + '</div>' +
+          '<div class="wo-mobile-row__description">' + escapeHtml(row.description || 'No description') + '</div>' +
+          '<div class="wo-mobile-row__meta"><span>' + escapeHtml(owner) + '</span><span>' + (Number(row.ageDays) >= 0 ? escapeHtml(String(row.ageDays)) + 'd open' : '') + '</span></div>' +
+        '</div>';
+      }
+    }];
   }
   return [
     { field: 'id', headerName: 'WO #', minWidth: 96, maxWidth: 120, cellRenderer: function(p){ return '<strong>#' + escapeHtml(String(p.value || '')) + '</strong>'; } },
@@ -17528,6 +17550,9 @@ function renderWorkOrdersGrid(rows) {
     suppressCellFocus: false,
     includeHiddenColumnsInQuickFilter: true,
     quickFilterText: currentWOGridSearch,
+    getRowHeight: function() {
+      return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 680px)').matches ? 112 : undefined;
+    },
     overlayNoRowsTemplate: '<span style="padding:10px;color:var(--text-muted)">No work orders match the current filters.</span>',
     defaultColDef: {
       sortable: true,
