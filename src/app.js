@@ -9496,20 +9496,18 @@ async function postWONoteViaProxy(woDbUuid, noteText) {
   if (!woDbUuid) return { ok: false, status: 0, message: 'Missing work order UUID' };
   if (API_PROXY) {
     try {
-      var postResp = await proxyPost('wo_note_create', {
-        uuid: String(woDbUuid),
-        body_text: String(noteText || '')
+      await apiFetch('/api/v0/work_orders/' + encodeURIComponent(String(woDbUuid)) + '/notes', {
+        method: 'POST',
+        body: JSON.stringify({ Body: String(noteText || '') })
       });
-      if (!postResp || postResp.ok === false) {
-        return {
-          ok: false,
-          status: Number((postResp && postResp.status) || 500),
-          message: String((postResp && (postResp.message || postResp.error)) || 'Request failed')
-        };
-      }
       return { ok: true };
     } catch (e) {
-      return { ok: false, status: 500, message: String((e && e.message) || e || 'Request failed') };
+      var statusMatch = String((e && e.message) || '').match(/\b(4\d\d|5\d\d)\b/);
+      return {
+        ok: false,
+        status: statusMatch ? Number(statusMatch[1]) : 500,
+        message: String((e && e.message) || e || 'Request failed')
+      };
     }
   }
 
