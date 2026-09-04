@@ -713,7 +713,8 @@
         <h4>Top Vendors by Spend</h4>
         <span id="billingVendorMeta">—</span>
       </header>
-      <div class="billing-mini-chart" id="billingVendorChart"></div>
+      <div class="billing-mini-chart billing-vendor-spend-chart" id="billingVendorSpendChart"></div>
+      <ol class="billing-vendor-top5" id="billingVendorTop5List"></ol>
     </article>
     <article class="billing-insight-card" id="billingAgingCard">
       <header>
@@ -1290,6 +1291,13 @@
   <div class="chart-filter-badge-row" id="inspChartFilterBadges" style="display:none"></div>
   <div class="inspections-grid-shell table-wrapper">
     <div class="inspections-grid-meta" id="inspAnalyticsMeta">Chart filters inactive</div>
+    <div class="inspection-evidence-toolbar">
+      <span class="inspection-severe-badge" id="inspSevereBadge" aria-live="polite">0 missing move-in inspections</span>
+      <span class="inspection-disclaimer" tabindex="0" title="Move-in and move-out photos are required. Turnover photos do not qualify as formal inspection evidence. This is to have defensible burden of proof after move-out for deductions and damages.">
+        <i class="fas fa-circle-info"></i> Inspection evidence policy
+        <span class="inspection-disclaimer-tooltip" role="tooltip">Move-in and move-out photos are required. Turnover photos do not qualify as formal inspection evidence. This is to have defensible burden of proof after move-out for deductions and damages.</span>
+      </span>
+    </div>
     <div id="inspectionsGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--inspections"></div>
   </div>
 </section>
@@ -1546,15 +1554,32 @@
       <select id="vendorTradeFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:140px">
         <option value="">All Trade Categories</option>
       </select>
+      <select id="vendorPropertyFilter" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:180px">
+        <option value="">Worked at Any Property</option>
+      </select>
       <select id="vendorSortMode" style="font-family:var(--font-mono);font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);cursor:pointer;min-width:160px">
+        <option value="trade" selected>Group: Trade Category</option>
         <option value="name">Sort: Name (A-Z)</option>
-        <option value="trade">Sort: Trade Category</option>
+        <option value="recent">Sort: Most Recent Work</option>
       </select>
       <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Search vendors by name, email, trade…" id="vendorSearch" style="min-width:220px"></div>
       <button class="sec-refresh" id="btnRefreshVendors"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
-  <div class="vendor-grid stagger" id="vendorGrid"></div>
+  <div class="vendor-grid-status" id="vendorGrid"></div>
+  <div id="vendorsGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--vendors"></div>
+  <div class="table-footer u-table-footer-split" id="vendorPagination">
+    <div id="vendorPageMeta">Page 1 of 1</div>
+    <div class="u-pagination-row">
+      <label for="vendorPageSize" class="u-toolbar-label">Rows</label>
+      <select id="vendorPageSize" class="filter-select u-toolbar-select-sm">
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+      </select>
+      <button class="action-btn" id="vendorPrevPage" type="button" title="Previous vendor page"><i class="fas fa-chevron-left"></i></button>
+      <button class="action-btn" id="vendorNextPage" type="button" title="Next vendor page"><i class="fas fa-chevron-right"></i></button>
+    </div>
+  </div>
 </section>
 
 <section class="section" id="sec-templates">
@@ -1935,17 +1960,17 @@
           <input type="text" id="pmUserPhone" class="dbadmin-key-input" style="max-width:none;width:100%" placeholder="+15551234567">
         </div>
         <div>
-          <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px">Primary Scope</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px">Add Property Group</div>
           <select id="pm-user-group-select" class="dbadmin-key-input" style="max-width:none;width:100%">
             <option value="">— Select a Property Group —</option>
           </select>
           <input type="hidden" id="pmUserGroupUuid">
-          <div style="font-size:10px;color:var(--text-muted);margin-top:3px">Used as default PM login scope</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:3px">First selected group is the default PM login scope</div>
         </div>
         <div>
-          <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px">All Scope UUIDs</div>
-          <input type="text" id="pmUserScopes" class="dbadmin-key-input" style="max-width:none;width:100%" placeholder="uuid1, uuid2, uuid3">
-          <div style="font-size:10px;color:var(--text-muted);margin-top:3px">Comma-separated list. Primary scope is auto-included.</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px">Selected Property Group UUIDs</div>
+          <input type="text" id="pmUserScopes" class="dbadmin-key-input" style="max-width:none;width:100%;font-family:var(--font-mono);font-size:10px" placeholder="Select one or more groups" aria-label="Selected property group UUIDs">
+          <div style="font-size:10px;color:var(--text-muted);margin-top:3px">Choose another group to append it. You can edit this list to remove one.</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;height:30px;margin-top:16px">
           <input type="checkbox" id="pmUserActive" checked style="width:14px;height:14px;accent-color:var(--accent)">

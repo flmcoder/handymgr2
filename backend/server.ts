@@ -26,6 +26,10 @@ import { isClientAbortError } from './requestErrorPolicy';
 import { buildRequestedSyncEndpoints, runSequentially } from './syncSchedulerPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
+import { parseVendorDirectoryQuery, evaluateVendorCompliance } from './vendorDirectoryPolicy';
+import { parseTenantCommsQuery } from './tenantCommsPolicy';
+import { parseInspectionPage } from './inspectionPolicy';
+import { classifyBillingVendorBucket, parseBillingSpendTimeframe } from './billingVendorSpendPolicy';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
@@ -1349,6 +1353,32 @@ async function ensureWebhookEventsTable(): Promise<void> {
 }
 
 let dispatchControlTablesEnsured = false;
+let tenantCommsTableEnsured = false;
+
+async function ensureTenantCommsTable(): Promise<void> {
+  if (tenantCommsTableEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS tenant_communications_log (
+      id BIGSERIAL PRIMARY KEY,
+      property_group_id TEXT,
+      property_id TEXT,
+      wo_id TEXT,
+      tenant_name TEXT,
+      tenant_phone TEXT,
+      tech_name TEXT,
+      template_used TEXT,
+      message_body TEXT,
+      rc_message_id TEXT,
+      magic_link TEXT,
+      status TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      raw_json JSONB NOT NULL DEFAULT '{}'::jsonb
+    )
+  `);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS tenant_communications_group_idx ON tenant_communications_log(property_group_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS tenant_communications_created_idx ON tenant_communications_log(created_at DESC)`);
+  tenantCommsTableEnsured = true;
+}
 
 function asBooleanLike(value: unknown, fallback = false): boolean {
   const raw = String(value ?? '').trim().toLowerCase();
@@ -3643,6 +3673,71 @@ async function fetchBillsFromDbApi(params: Params, propertyGroupId = ''): Promis
   const perPage = limit;
   const sinceIso = buildBillsSinceIso(params);
 
+  if (propertyGroupId) {
+    await ensureBillsTable();
+    const countRows = await queryClient`
+      select count(*)::int as total
+      from appfolio_bills b
+      inner join appfolio_properties p on p.id = b.property_id
+      where p.property_group_id = ${propertyGroupId}
+        and coalesce(b.updated_at, b.cached_at) >= ${sinceIso}::timestamptz
+    `;
+    const total = Number((countRows as any[])[0]?.total || 0) || 0;
+    const rows = await queryClient`
+      select
+        b.id,
+        b.bill_number,
+        b.vendor_id,
+        b.vendor_name,
+        b.property_id,
+        coalesce(nullif(b.property_name, ''), p.name) as property_name,
+        p.property_group_id,
+        b.unit_id,
+        b.status,
+        b.status_label,
+        b.bill_total_amount,
+        b.invoice_date,
+        b.due_date,
+        b.paid_at,
+        b.raw_json,
+        b.updated_at,
+        b.cached_at
+      from appfolio_bills b
+      inner join appfolio_properties p on p.id = b.property_id
+      where p.property_group_id = ${propertyGroupId}
+        and coalesce(b.updated_at, b.cached_at) >= ${sinceIso}::timestamptz
+      order by coalesce(b.updated_at, b.invoice_date, b.cached_at) desc, b.id desc
+      limit ${limit} offset ${offset}
+    `;
+
+    return {
+      ok: true,
+      results: (rows as any[]).map((row) => ({
+        ...row.raw_json,
+        id: row.id,
+        bill_number: row.bill_number,
+        vendor_id: row.vendor_id,
+        vendor_name: row.vendor_name,
+        property_id: row.property_id,
+        property_name: row.property_name,
+        property_group_id: row.property_group_id,
+        unit_id: row.unit_id,
+        status: row.status,
+        status_label: row.status_label,
+        bill_total_amount: row.bill_total_amount,
+        invoice_date: asIso(row.invoice_date),
+        due_date: asIso(row.due_date),
+        paid_at: asIso(row.paid_at),
+        updated_at: asIso(row.updated_at),
+        raw: row.raw_json,
+      })),
+      total,
+      page,
+      per_page: perPage,
+      source: 'postgres_local_scoped',
+    };
+  }
+
   const upstream = await fetch(
     `${AF_DB_BASE}/api/v0/bills?filters[LastUpdatedAtFrom]=${encodeURIComponent(sinceIso)}&page[number]=${page}&page[size]=${perPage}`,
     { headers: afHeaders('v0') },
@@ -4032,6 +4127,74 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     return;
   }
 
+  if (action === 'tenant_comms_log') {
+    try {
+      const session = await requireProxySession(req, res);
+      if (!session) return;
+      if (!applyProxySessionScope(req, res, session)) return;
+      await ensureTenantCommsTable();
+
+      const query = parseTenantCommsQuery(req.query as Record<string, unknown>);
+      const propertyGroupId = getPropertyGroupFilter(req);
+      const filters = propertyGroupId ? 'where property_group_id = $1' : '';
+      const baseParams = propertyGroupId ? [propertyGroupId] : [];
+      const countRows = await queryClient.unsafe(
+        `select count(*)::int as total from tenant_communications_log ${filters}`,
+        baseParams,
+      );
+      const total = Number((countRows as any[])[0]?.total || 0) || 0;
+      const limitBind = `$${baseParams.length + 1}`;
+      const offsetBind = `$${baseParams.length + 2}`;
+      const rows = await queryClient.unsafe(
+        `select
+           id, property_group_id, property_id, wo_id, tenant_name, tenant_phone,
+           tech_name, template_used, message_body, rc_message_id, magic_link,
+           status, created_at, raw_json
+         from tenant_communications_log
+         ${filters}
+         order by created_at desc, id desc
+         limit ${limitBind} offset ${offsetBind}`,
+        [...baseParams, query.limit, query.offset],
+      );
+      const data = (rows as any[]).map((row) => ({
+        ...(row.raw_json && typeof row.raw_json === 'object' ? row.raw_json : {}),
+        id: String(row.id || ''),
+        property_group_id: String(row.property_group_id || ''),
+        property_id: String(row.property_id || ''),
+        wo_id: String(row.wo_id || ''),
+        tenant_name: String(row.tenant_name || ''),
+        tenant_phone: String(row.tenant_phone || ''),
+        tech_name: String(row.tech_name || ''),
+        template_used: String(row.template_used || ''),
+        message_body: String(row.message_body || ''),
+        rc_message_id: String(row.rc_message_id || ''),
+        magic_link: String(row.magic_link || ''),
+        status: String(row.status || ''),
+        created_at: asIso(row.created_at),
+      }));
+
+      res.status(200).json({
+        ok: true,
+        data,
+        results: data,
+        count: data.length,
+        pagination: {
+          total,
+          page: query.page,
+          limit: query.limit,
+          offset: query.offset,
+          totalPages: Math.max(1, Math.ceil(total / query.limit)),
+        },
+        property_group_id: propertyGroupId,
+        source: 'postgres_local',
+      });
+    } catch (error) {
+      logTunnelError(error, '/api?action=tenant_comms_log');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Tenant communications query failed') });
+    }
+    return;
+  }
+
   if (action === 'tech_roster') {
     try {
       const params = toActionParams(req);
@@ -4257,9 +4420,60 @@ async function ensureVendorDirectoryTable(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await queryClient.unsafe(`ALTER TABLE vendor_directory ADD COLUMN IF NOT EXISTS vendor_trades TEXT`);
+  await queryClient.unsafe(`ALTER TABLE vendor_directory ADD COLUMN IF NOT EXISTS phone_numbers TEXT`);
+  await queryClient.unsafe(`ALTER TABLE vendor_directory ADD COLUMN IF NOT EXISTS email TEXT`);
+  await queryClient.unsafe(`ALTER TABLE vendor_directory ADD COLUMN IF NOT EXISTS liability_ins_expires TEXT`);
+  await queryClient.unsafe(`ALTER TABLE vendor_directory ADD COLUMN IF NOT EXISTS workers_comp_expires TEXT`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS vendor_directory_name_idx ON vendor_directory(lower(vendor_name))`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS vendor_directory_group_idx ON vendor_directory(property_group_id)`);
   vendorDirectoryTableEnsured = true;
+}
+
+// Compliance columns are only populated by the AppFolio Vendor Directory report; work orders never carry them.
+async function hydrateVendorDirectoryCompliance(): Promise<{ synced: number }> {
+  await ensureVendorDirectoryTable();
+
+  const upstream = await fetch(`${AF_REPORTS_BASE}/api/v2/reports/vendor_directory.json`, {
+    method: 'POST',
+    headers: afHeaders('v2'),
+    body: JSON.stringify({ vendor_visibility: 'active' }),
+  });
+  const text = await upstream.text();
+  if (!upstream.ok) {
+    throw new Error(`vendor_directory report failed: HTTP ${upstream.status} ${text.slice(0, 200)}`);
+  }
+
+  const parsed = text ? JSON.parse(text) : {};
+  const rows = extractReportRows(parsed);
+  let synced = 0;
+
+  for (const row of rows as any[]) {
+    const displayName = String(row?.company_name || row?.name || '').trim();
+    if (!displayName) continue;
+    const updated = await queryClient.unsafe(
+      `update vendor_directory
+          set vendor_trades = coalesce(nullif($2, ''), vendor_trades),
+              phone_numbers = coalesce(nullif($3, ''), phone_numbers),
+              email = coalesce(nullif($4, ''), email),
+              liability_ins_expires = coalesce(nullif($5, ''), liability_ins_expires),
+              workers_comp_expires = coalesce(nullif($6, ''), workers_comp_expires),
+              updated_at = NOW()
+        where lower(vendor_name) = lower($1)
+        returning vendor_key`,
+      [
+        displayName,
+        String(row?.vendor_trades || '').trim(),
+        String(row?.phone_numbers || '').trim(),
+        String(row?.email || '').trim(),
+        String(row?.liability_ins_expires || '').trim(),
+        String(row?.workers_comp_expires || '').trim(),
+      ],
+    );
+    synced += (updated as any[]).length;
+  }
+
+  return { synced };
 }
 
 async function refreshVendorDirectoryFromWorkOrders(propertyGroupId: string, fullRefresh: boolean): Promise<{ synced: number; source_rows: number }> {
@@ -4967,10 +5181,11 @@ app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
+app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req: Request, res: Response) => {
   try {
-    const limit = parseLimit(req.query.limit, 120, 500);
-    const offset = parseOffset(req.query.offset, 0, 500000);
+    const inspectionPage = parseInspectionPage(req.query as Record<string, unknown>);
+    const limit = inspectionPage.limit;
+    const offset = inspectionPage.offset;
     const propertyGroupId = getPropertyGroupFilter(req);
     const activeOnly = /^(1|true|yes|on)$/i.test(String(req.query.active_only || '1').trim());
     const statusFilter = String(req.query.status_filter || '').trim().toLowerCase();
@@ -5021,69 +5236,58 @@ app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
 
     const baseSql = `
       select
-        i.inspection_id,
-        i.property_id,
-        coalesce(i.property_name, p.name) as property_name,
-        i.unit_id,
-        coalesce(i.unit_name, u.name, '') as unit_name,
-        coalesce(i.last_inspection_date::date, null) as last_inspection_date,
-        coalesce(td.tenant_name, i.tenant_name, '') as tenant_name,
-        coalesce(td.phone_numbers, i.tenant_primary_phone_number, '') as tenant_primary_phone_number,
-        coalesce(td.move_in_date::date, i.move_in_date::date, null) as move_in_date,
-        coalesce(td.move_out_date::date, i.move_out_date::date, null) as move_out_date,
-        coalesce(td.status, 'Current') as tenant_status,
-        coalesce(td.occupancy_id, i.occupancy_id, '') as occupancy_id,
-        i.rentable,
-        i.unit_tags,
+        coalesce(i.inspection_id, 'missing:' || coalesce(occ.occupancy_id, occ.unit_id, occ.record_id)) as inspection_id,
+        occ.property_id,
+        coalesce(occ.property_name, p.name) as property_name,
+        occ.unit_id,
+        coalesce(occ.unit_name, u.name, '') as unit_name,
+        i.last_inspection_date::date as last_inspection_date,
+        coalesce(occ.tenant_name, '') as tenant_name,
+        coalesce(occ.phone_numbers, '') as tenant_primary_phone_number,
+        occ.move_in_date::date as move_in_date,
+        occ.move_out_date::date as move_out_date,
+        coalesce(occ.status, 'Current') as tenant_status,
+        coalesce(occ.occupancy_id, '') as occupancy_id,
+        coalesce(i.rentable, '') as rentable,
+        coalesce(i.unit_tags, occ.unit_tags, '') as unit_tags,
+        i.move_out_date::date as move_out_inspection_date,
         coalesce(turn_link.active_turn, false) as turn_linked,
         case
-          when coalesce(td.move_in_date::date, i.move_in_date::date) is not null
-               and coalesce(td.move_in_date::date, i.move_in_date::date) <= current_date
-               and (
-                 i.last_inspection_date::date is null
-                 or i.last_inspection_date::date < coalesce(td.move_in_date::date, i.move_in_date::date)
-               )
-            then coalesce(td.move_in_date::date, i.move_in_date::date)
-          when coalesce(td.move_in_date::date, i.move_in_date::date) is not null
-               and coalesce(td.move_in_date::date, i.move_in_date::date) <= current_date
+          when occ.move_in_date is not null
+               and occ.move_in_date <= current_date
+               and (i.last_inspection_date is null or i.last_inspection_date < occ.move_in_date)
+            then occ.move_in_date::date
+          when occ.move_in_date is not null and occ.move_in_date <= current_date
             then i.last_inspection_date::date
           else i.last_inspection_date::date
         end as anchor_date,
-        case
-          when (
-            coalesce(td.move_in_date::date, i.move_in_date::date) is not null
-            and coalesce(td.move_in_date::date, i.move_in_date::date) <= current_date
-            and (
-              i.last_inspection_date::date is null
-              or i.last_inspection_date::date < coalesce(td.move_in_date::date, i.move_in_date::date)
-            )
-          ) then true
-          else false
-        end as missing_move_in_inspection
-      from appfolio_unit_inspections i
-      inner join lateral (
-        select t.*
-        from appfolio_tenant_directory t
-        where lower(coalesce(t.status, '')) = 'current'
-          and (
-            (coalesce(i.occupancy_id, '') <> '' and t.occupancy_id = i.occupancy_id)
-            or (coalesce(i.occupancy_id, '') = '' and t.unit_id = i.unit_id)
-          )
-        order by coalesce(t.move_in_date, t.last_updated_at, t.cached_at) desc nulls last
+        (occ.move_in_date is not null
+          and occ.move_in_date <= current_date
+          and (i.last_inspection_date is null or i.last_inspection_date < occ.move_in_date)) as missing_move_in_inspection
+      from appfolio_tenant_directory occ
+      left join lateral (
+        select i0.*
+        from appfolio_unit_inspections i0
+        where (
+          (coalesce(occ.occupancy_id, '') <> '' and i0.occupancy_id = occ.occupancy_id)
+          or (coalesce(occ.occupancy_id, '') = '' and i0.unit_id = occ.unit_id)
+        )
+        order by coalesce(i0.last_inspection_date, i0.last_updated_at, i0.cached_at) desc nulls last
         limit 1
-      ) td on true
-      left join appfolio_properties p on p.id = i.property_id
-      left join appfolio_units u on u.unit_id = i.unit_id
+      ) i on true
+      left join appfolio_properties p on p.id = occ.property_id
+      left join appfolio_units u on u.unit_id = occ.unit_id
       left join lateral (
         select true as active_turn
         from unit_turn_tracker t
-        where t.property_id = i.property_id
-          and t.unit_id = i.unit_id
+        where t.property_id = occ.property_id
+          and t.unit_id = occ.unit_id
           and coalesce(lower(t.status), '') not like '%completed%'
           and coalesce(lower(t.status), '') not like '%closed%'
         limit 1
       ) turn_link on true
       ${baseWhereSql}
+        ${baseWhereSql ? 'and' : 'where'} lower(coalesce(occ.status, '')) in ('current', 'past')
     `;
 
     const outerWhereParts: string[] = [];
@@ -5130,9 +5334,13 @@ app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
 
     const wrappedFromSql = `from (${baseSql}) ins`;
 
-    const countSql = `select count(*)::int as total ${wrappedFromSql} ${outerWhereSql}`;
+    const countSql = `select
+        count(*)::int as total,
+        count(*) filter (where ins.missing_move_in_inspection = true)::int as missing_move_in_total
+      ${wrappedFromSql} ${outerWhereSql}`;
     const countRows = await queryClient.unsafe(countSql, outerParams);
     const total = Number((countRows as any[])[0]?.total || 0) || 0;
+    const missingMoveInTotal = Number((countRows as any[])[0]?.missing_move_in_total || 0) || 0;
 
     const dataParams = outerParams.slice();
     const limitBind = `$${dataParams.length + 1}`;
@@ -5156,6 +5364,8 @@ app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
         ins.unit_tags,
         ins.turn_linked,
         ins.missing_move_in_inspection,
+        coalesce(ins.move_out_inspection_date::text, '') as move_out_inspection_date,
+        (ins.move_out_date is not null and ins.move_out_inspection_date is null) as missing_move_out_inspection,
         ${daysSinceExpr}::int as days_since,
         ${statusExpr} as status_bucket
       ${wrappedFromSql}
@@ -5182,6 +5392,8 @@ app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
       unit_tags: row.unit_tags || '',
       turn_linked: !!row.turn_linked,
       missing_move_in_inspection: !!row.missing_move_in_inspection,
+      move_out_inspection_date: String(row.move_out_inspection_date || ''),
+      missing_move_out_inspection: !!row.missing_move_out_inspection,
       days_since: Number(row.days_since || 0) || 0,
       status_bucket: String(row.status_bucket || ''),
       _source: 'postgres_local_grid',
@@ -5192,8 +5404,11 @@ app.get('/api/local/grid/inspections', async (req: Request, res: Response) => {
       results,
       count: results.length,
       total,
+      missing_move_in_total: missingMoveInTotal,
       limit,
       offset,
+      page: inspectionPage.page,
+      total_pages: Math.max(1, Math.ceil(total / limit)),
       source: 'postgres_local_grid',
       property_group_id: String(propertyGroupId || ''),
     });
@@ -5398,37 +5613,88 @@ app.get('/api/local/properties', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/local/vendors', async (req: Request, res: Response) => {
+app.get(['/api/local/vendors', '/api/local/v2/vendors'], async (req: Request, res: Response) => {
   try {
-    const limit = parseLimit(req.query.limit, 2500, 10000);
     const propertyGroupId = getPropertyGroupFilter(req);
-    const refresh = /^(1|true|yes|on)$/i.test(String(req.query.refresh || '').trim());
+    if (!propertyGroupId) {
+      res.status(400).json({ ok: false, error: 'property_group_id is required' });
+      return;
+    }
+
+    await ensureVendorDirectoryTable();
+    const pageQuery = parseVendorDirectoryQuery(req.query as Record<string, unknown>);
+    let complianceSync: { synced: number } | null = null;
+    let complianceSyncError = '';
+    if (/^(1|true|yes|on)$/i.test(String(req.query.refresh_compliance || '').trim())) {
+      try {
+        complianceSync = await hydrateVendorDirectoryCompliance();
+      } catch (error) {
+        complianceSyncError = String((error as any)?.message || error || 'compliance refresh failed');
+      }
+    }
     const vendorPolicy = await readReportPolicy('v0:work_orders:vendors', String(propertyGroupId || ''));
     const vendorPolicyCheckedAt = Date.parse(String(vendorPolicy?.last_checked_at || ''));
     if (!vendorPolicy || !Number.isFinite(vendorPolicyCheckedAt) || (Date.now() - vendorPolicyCheckedAt) > REPORT_POLICY_TTL_MS) {
       void monitorVendorSlowPath(String(propertyGroupId || ''));
     }
 
-    const refreshSummary = await refreshVendorDirectoryFromWorkOrders(String(propertyGroupId || ''), refresh);
-
-    const rows = propertyGroupId
-      ? await queryClient.unsafe(
-        `select vendor_key, vendor_id, vendor_name, trade_category, category, description_hint,
-                property_group_id, open_work_order_count, first_seen_at, last_seen_at, updated_at
-           from vendor_directory
-          where property_group_id = $1
-          order by lower(vendor_name) asc
-          limit $2`,
-        [propertyGroupId, limit],
-      )
-      : await queryClient.unsafe(
-        `select vendor_key, vendor_id, vendor_name, trade_category, category, description_hint,
-                property_group_id, open_work_order_count, first_seen_at, last_seen_at, updated_at
-           from vendor_directory
-          order by lower(vendor_name) asc
-          limit $1`,
-        [limit],
-      );
+    const params: any[] = [propertyGroupId];
+    const bind = (value: unknown): string => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+    const whereParts = ['wo.property_group_id = $1'];
+    if (pageQuery.propertyId) whereParts.push(`wo.property_id = ${bind(pageQuery.propertyId)}`);
+    if (pageQuery.search) {
+      const searchParam = bind(`%${pageQuery.search}%`);
+      whereParts.push(`(
+        coalesce(wo.vendor_name, wo.raw_json->>'vendor_name', wo.raw_json->>'VendorName', '') ilike ${searchParam}
+        or coalesce(wo.vendor_id, wo.raw_json->>'vendor_id', wo.raw_json->>'VendorId', '') ilike ${searchParam}
+        or coalesce(wo.category, wo.description, '') ilike ${searchParam}
+      )`);
+    }
+    if (pageQuery.tradeCategory) {
+      const tradeParam = bind(pageQuery.tradeCategory);
+      whereParts.push(`coalesce(vd.trade_category, vd.category, wo.category, 'Uncategorized') = ${tradeParam}`);
+    }
+    const orderBy = pageQuery.sort === 'trade'
+      ? `lower(coalesce(trade_category, '')) asc, lower(vendor_name) asc`
+      : pageQuery.sort === 'recent'
+        ? `last_seen_at desc, lower(vendor_name) asc`
+        : `lower(vendor_name) asc`;
+    const limitParam = bind(pageQuery.limit);
+    const offsetParam = bind(pageQuery.offset);
+    const rows = await queryClient.unsafe(
+      `with scoped_vendors as (
+         select
+           coalesce(nullif(wo.vendor_id, ''), nullif(wo.raw_json->>'vendor_id', ''), nullif(wo.raw_json->>'VendorId', '')) as vendor_id,
+           coalesce(nullif(wo.vendor_name, ''), nullif(wo.raw_json->>'vendor_name', ''), nullif(wo.raw_json->>'VendorName', ''), nullif(wo.assigned_user_name, '')) as vendor_name,
+           coalesce(nullif(vd.trade_category, ''), nullif(vd.category, ''), nullif(wo.category, ''), 'Uncategorized') as trade_category,
+           coalesce(nullif(vd.category, ''), nullif(wo.category, ''), '') as category,
+           max(coalesce(wo.description, '')) as description_hint,
+           max(coalesce(vd.vendor_trades, '')) as vendor_trades,
+           max(coalesce(vd.phone_numbers, '')) as phone_numbers,
+           max(coalesce(vd.email, '')) as email,
+           max(coalesce(vd.liability_ins_expires, '')) as liability_ins_expires,
+           max(coalesce(vd.workers_comp_expires, '')) as workers_comp_expires,
+           wo.property_group_id,
+           count(*)::int as open_work_order_count,
+           min(coalesce(wo.created_at, wo.updated_at, now())) as first_seen_at,
+           max(coalesce(wo.updated_at, wo.created_at, now())) as last_seen_at,
+           array_remove(array_agg(distinct wo.property_id), null) as property_ids
+         from appfolio_work_orders wo
+         left join vendor_directory vd
+           on vd.vendor_key = coalesce(nullif(wo.vendor_id, ''), nullif(wo.raw_json->>'vendor_id', ''), 'name:' || lower(coalesce(wo.vendor_name, wo.raw_json->>'vendor_name', '')))
+         where ${whereParts.join('\n           and ')}
+         group by 1, 2, 3, 4, wo.property_group_id
+       )
+       select scoped_vendors.*, count(*) over()::int as total_count
+       from scoped_vendors
+       where coalesce(vendor_name, vendor_id, '') <> ''
+       order by ${orderBy}
+       limit ${limitParam} offset ${offsetParam}`,
+      params,
+    );
 
     const results = (rows as any[])
       .map((row) => {
@@ -5436,33 +5702,47 @@ app.get('/api/local/vendors', async (req: Request, res: Response) => {
         const vendorName = normalizeVendorDisplayLabel(row?.vendor_name, row?.vendor_id);
         if (!isLikelyVendorRow(vendorId, vendorName)) return null;
         const tradeCategory = normalizeVendorTradeCategory(row?.trade_category || row?.category || row?.description_hint || row?.vendor_name);
+        const liabilityInsExpires = String(row?.liability_ins_expires || '').trim();
+        const workersCompExpires = String(row?.workers_comp_expires || '').trim();
+        const compliance = evaluateVendorCompliance({
+          liability_ins_expires: liabilityInsExpires,
+          workers_comp_expires: workersCompExpires,
+        });
         return {
           vendor_id: vendorId,
+          name: vendorName,
           company_name: vendorName,
           vendor_name: vendorName,
-          vendor_trades: tradeCategory,
+          vendor_trades: String(row?.vendor_trades || '').trim() || tradeCategory,
           trade_category: tradeCategory,
           vendor_type: String(row?.category || '').trim(),
+          phone_numbers: String(row?.phone_numbers || '').trim(),
+          email: String(row?.email || '').trim(),
+          liability_ins_expires: liabilityInsExpires,
+          workers_comp_expires: workersCompExpires,
+          compliant: compliance.compliant,
+          compliance,
           open_work_order_count: Number(row?.open_work_order_count || 0) || 0,
           first_seen_at: asIso(row?.first_seen_at),
           last_seen_at: asIso(row?.last_seen_at),
           property_group_id: String(row?.property_group_id || '').trim(),
-          _source: 'postgres_vendor_directory',
+          property_ids: Array.isArray(row?.property_ids) ? row.property_ids.map((value: unknown) => String(value || '')).filter(Boolean) : [],
+          _source: 'postgres_scoped_work_orders',
         };
       })
-      .filter(Boolean)
-      .slice(0, limit) as any[];
+      .filter(Boolean) as any[];
+    const total = Number((rows as any[])[0]?.total_count || 0) || 0;
 
     res.json({
       ok: true,
       results,
       count: results.length,
-      source: 'postgres_vendor_directory',
-      refreshed: {
-        requested: refresh,
-        synced: refreshSummary.synced,
-        source_rows: refreshSummary.source_rows,
-      },
+      total,
+      page: pageQuery.page,
+      per_page: pageQuery.limit,
+      total_pages: Math.max(1, Math.ceil(total / pageQuery.limit)),
+      source: 'postgres_scoped_work_orders',
+      compliance_sync: complianceSync ? { ...complianceSync, error: complianceSyncError } : null,
       latency_policy: {
         dataset_key: 'v0:work_orders:vendors',
         property_group_id: String(propertyGroupId || ''),
@@ -5890,6 +6170,7 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
   const days = parseDays(req.query.days, 90);
   const limit = parseLimit(req.query.limit, 3000);
   const statusFilter = String(req.query.status || '').trim().toLowerCase();
+  const propertyGroupId = getPropertyGroupFilter(req);
 
   try {
     const rows = await queryClient`
@@ -5950,6 +6231,10 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
       left join appfolio_unit_inspections ui
         on ui.unit_id = t.unit_id and ui.property_id = t.property_id
       where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
+        and (${propertyGroupId || null}::text is null or exists (
+          select 1 from appfolio_properties p_scope
+          where p_scope.id = t.property_id and p_scope.property_group_id = ${propertyGroupId || ''}
+        ))
       order by coalesce(t.updated_at, t.created_at) desc
       limit ${limit}
     `;
@@ -5985,6 +6270,10 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
           d.last_updated_at
         from appfolio_unit_turn_details d
         where coalesce(d.last_updated_at, d.cached_at, now()) >= now() - (${days}::int * interval '1 day')
+          and (${propertyGroupId || null}::text is null or exists (
+            select 1 from appfolio_properties p_scope
+            where p_scope.id = d.property_id and p_scope.property_group_id = ${propertyGroupId || ''}
+          ))
         order by coalesce(d.move_out_date, d.cached_at, d.last_updated_at) desc
         limit ${limit}
       `;
@@ -6089,6 +6378,10 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
             t.updated_at
           from unit_turn_tracker t
           where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
+            and (${propertyGroupId || null}::text is null or exists (
+              select 1 from appfolio_properties p_scope
+              where p_scope.id = t.property_id and p_scope.property_group_id = ${propertyGroupId || ''}
+            ))
           order by coalesce(t.updated_at, t.created_at) desc
           limit ${limit}
         `;
@@ -6151,6 +6444,7 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 90);
     const limit = parseLimit(req.query.limit, 3000);
+    const propertyGroupId = getPropertyGroupFilter(req);
     const rows = await queryClient`
       select
         tw.wo_id,
@@ -6181,6 +6475,10 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
            or wo.wo_number = tw.wo_id
       where coalesce(tw.removed, false) = false
         and coalesce(tw.created_at, now()) >= now() - (${days}::int * interval '1 day')
+        and (${propertyGroupId || null}::text is null or exists (
+          select 1 from appfolio_properties p_scope
+          where p_scope.id = wo.property_id and p_scope.property_group_id = ${propertyGroupId || ''}
+        ))
       order by coalesce(wo.updated_at, tw.created_at) desc
       limit ${limit}
     `;
@@ -6567,53 +6865,154 @@ app.get('/api/local/analytics/vendor-spend', async (req: Request, res: Response)
   try {
     await ensureVendorOverrideTable();
     const propertyGroupId = getPropertyGroupFilter(req);
-    const requestedLimit = Number.parseInt(String(req.query.limit || '5'), 10);
-    const limit = Math.min(20, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 5));
-    const rows = propertyGroupId
-      ? await queryClient`
-          select
-            coalesce(nullif(b.vendor_name, ''), 'Unknown vendor') as vendor_name,
-            coalesce(nullif(vo.trade_category, ''), nullif(vo.category, ''), 'Uncategorized') as trade_category,
-            sum(coalesce(b.bill_total_amount, 0))::float8 as total_spend,
-            count(*)::int as bill_count
-          from appfolio_bills b
-          join appfolio_properties p on p.id = b.property_id
-          left join vendor_overrides vo on vo.vendor_id = b.vendor_id
-          where p.property_group_id = ${propertyGroupId}
-            and coalesce(b.bill_total_amount, 0) > 0
-          group by 1, 2
-          order by total_spend desc
-          limit ${limit}
-        `
-      : await queryClient`
-          select
-            coalesce(nullif(b.vendor_name, ''), 'Unknown vendor') as vendor_name,
-            coalesce(nullif(vo.trade_category, ''), nullif(vo.category, ''), 'Uncategorized') as trade_category,
-            sum(coalesce(b.bill_total_amount, 0))::float8 as total_spend,
-            count(*)::int as bill_count
-          from appfolio_bills b
-          left join vendor_overrides vo on vo.vendor_id = b.vendor_id
-          where coalesce(b.bill_total_amount, 0) > 0
-          group by 1, 2
-          order by total_spend desc
-          limit ${limit}
-        `;
+    if (!propertyGroupId) {
+      res.status(400).json({ ok: false, error: 'property_group_id is required' });
+      return;
+    }
+    const limit = parseLimit(req.query.limit, 50, 100);
+    const offset = parseOffset(req.query.offset);
+    const rows = await queryClient`
+      with vendor_spend as (
+        select
+          coalesce(nullif(b.vendor_id, ''), 'unknown') as vendor_id,
+          max(coalesce(nullif(b.vendor_name, ''), 'Unknown vendor')) as vendor_name,
+          max(coalesce(nullif(vo.trade_category, ''), nullif(vo.category, ''), 'Uncategorized')) as trade_category,
+          case
+            when bool_or(lower(trim(coalesce(b.vendor_name, ''))) = 'fort lowell maintenance') then 'in_house_maintenance'
+            when bool_or(lower(trim(coalesce(b.vendor_name, ''))) = 'fort lowell realty') then 'in_house_realty'
+            else 'third_party'
+          end as spend_classification,
+          sum(coalesce(b.bill_total_amount, 0))::float8 as total_spend,
+          count(*)::int as bill_count
+        from appfolio_bills b
+        join appfolio_properties p on p.id = b.property_id
+        left join vendor_overrides vo on vo.vendor_id = b.vendor_id
+        where p.property_group_id = ${propertyGroupId}
+          and coalesce(b.bill_total_amount, 0) > 0
+        group by coalesce(nullif(b.vendor_id, ''), 'unknown')
+      )
+      select
+        vendor_spend.*,
+        count(*) over()::int as total_count,
+        coalesce(sum(total_spend) filter (where spend_classification = 'in_house_maintenance') over(), 0)::float8 as in_house_maintenance_total,
+        coalesce(sum(total_spend) filter (where spend_classification = 'in_house_realty') over(), 0)::float8 as in_house_realty_total,
+        coalesce(sum(total_spend) filter (where spend_classification = 'third_party') over(), 0)::float8 as third_party_total
+      from vendor_spend
+      order by total_spend desc
+      limit ${limit} offset ${offset}
+    `;
+
+    const baselineRow = (rows as any[])[0] || {};
+    const baseline = {
+      in_house_maintenance: Number(baselineRow.in_house_maintenance_total || 0),
+      in_house_realty: Number(baselineRow.in_house_realty_total || 0),
+      third_party: Number(baselineRow.third_party_total || 0),
+    };
 
     res.json({
       ok: true,
       results: rows.map((row: any) => ({
+        vendor_id: String(row.vendor_id || 'unknown'),
         vendor_name: String(row.vendor_name || 'Unknown vendor'),
         trade_category: String(row.trade_category || 'Uncategorized'),
+        spend_classification: String(row.spend_classification || 'third_party'),
         total_spend: Number(row.total_spend || 0),
         bill_count: Number(row.bill_count || 0),
       })),
       count: rows.length,
-      property_group_id: propertyGroupId || '',
+      total: Number((rows as any[])[0]?.total_count || 0) || 0,
+      limit,
+      offset,
+      baseline,
+      property_group_id: propertyGroupId,
       source: 'postgres_local',
     });
   } catch (error) {
     logTunnelError(error, '/api/local/analytics/vendor-spend');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Vendor spend query failed') });
+  }
+});
+
+app.get(['/api/local/v2/billing/vendor-spend', '/api/local/v2/billing/vendor-spend-insights'], async (req: Request, res: Response) => {
+  try {
+    await ensureBillsTable();
+    await ensureVendorDirectoryTable();
+    const propertyGroupId = getPropertyGroupFilter(req);
+    if (!propertyGroupId) {
+      res.status(400).json({ ok: false, error: 'property_group_id is required' });
+      return;
+    }
+
+    const timeframe = parseBillingSpendTimeframe(req.query as Record<string, unknown>);
+
+    // Bills only carry a work order via raw_json.WorkOrderId — normalized rows never persisted this reference.
+    const rows = await queryClient`
+      with scoped_bills as (
+        select
+          coalesce(nullif(b.vendor_id, ''), 'unknown') as vendor_id,
+          coalesce(nullif(b.vendor_name, ''), 'Unknown vendor') as vendor_name,
+          coalesce(nullif(vd.trade_category, ''), nullif(vd.category, ''), '') as trade_category,
+          b.bill_total_amount
+        from appfolio_bills b
+        join appfolio_properties p on p.id = b.property_id
+        left join vendor_directory vd
+          on vd.vendor_key = coalesce(nullif(b.vendor_id, ''), 'name:' || lower(coalesce(b.vendor_name, '')))
+        where p.property_group_id = ${propertyGroupId}
+          and coalesce(b.bill_total_amount, 0) > 0
+          and coalesce(b.invoice_date, b.updated_at, b.cached_at) >= ${timeframe.sinceIso}::timestamptz
+          and coalesce(nullif(b.raw_json->>'WorkOrderId', ''), nullif(b.raw_json->>'work_order_id', '')) is not null
+      )
+      select
+        vendor_id,
+        max(vendor_name) as vendor_name,
+        max(trade_category) as trade_category,
+        sum(bill_total_amount)::float8 as total_spend,
+        count(*)::int as bill_count
+      from scoped_bills
+      group by vendor_id
+      order by total_spend desc
+    `;
+
+    let inHouseTotal = 0;
+    let inHouseCount = 0;
+    let thirdPartyTotal = 0;
+    let thirdPartyCount = 0;
+    const thirdPartyVendors: Array<{ vendor_id: string; vendor_name: string; trade_category: string; total_spend: number; bill_count: number }> = [];
+
+    for (const row of rows as any[]) {
+      const totalSpend = Number(row.total_spend || 0);
+      const billCount = Number(row.bill_count || 0) || 0;
+      const bucket = classifyBillingVendorBucket(row.vendor_name);
+      if (bucket === 'in_house') {
+        inHouseTotal += totalSpend;
+        inHouseCount += billCount;
+      } else {
+        thirdPartyTotal += totalSpend;
+        thirdPartyCount += billCount;
+        thirdPartyVendors.push({
+          vendor_id: String(row.vendor_id || 'unknown'),
+          vendor_name: String(row.vendor_name || 'Unknown vendor'),
+          trade_category: String(row.trade_category || ''),
+          total_spend: totalSpend,
+          bill_count: billCount,
+        });
+      }
+    }
+
+    res.json({
+      ok: true,
+      timeframe: { days: timeframe.days, since: timeframe.sinceIso },
+      buckets: {
+        in_house: { total_spend: inHouseTotal, bill_count: inHouseCount },
+        third_party: { total_spend: thirdPartyTotal, bill_count: thirdPartyCount },
+      },
+      top_third_party_vendors: thirdPartyVendors.slice(0, 5),
+      property_group_id: propertyGroupId,
+      source: 'postgres_local',
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/v2/billing/vendor-spend');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Vendor spend insights query failed') });
   }
 });
 

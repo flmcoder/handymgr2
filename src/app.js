@@ -14,6 +14,8 @@ import {
   QuickFilterModule,
   RowSelectionModule,
   CellStyleModule,
+  RowStyleModule,
+  SelectEditorModule,
 } from 'ag-grid-community';
 import { createAuthModule } from './auth.js';
 import { createTabsModule } from './tabs.js';
@@ -27,6 +29,8 @@ ModuleRegistry.registerModules([
   QuickFilterModule,
   RowSelectionModule,
   CellStyleModule,
+  RowStyleModule,
+  SelectEditorModule,
 ]);
 
 // ---- OTP Countdown Timer ----
@@ -4392,6 +4396,7 @@ var _propertiesRefreshInFlight = false;
 var _propertiesPage = 0;
 var _propertiesPageSize = 50;
 var _propertiesVacancyOnly = false;
+var _propertiesVendorFilterIds = [];
 var _propertyStatsById = {};
 window.filteredPropertyId = '';
 window.filteredPropertyName = '';
@@ -4405,10 +4410,11 @@ var currentTurnFilter = 'open';
 var currentWOCloseAssistAge = 14;
 var _billsLoading = false;
 var _billsLoadedAt = 0;
-var _vendorRenderLimit = 0;
-var currentVendorInitial = '';
-var _vendorRenderKey = '';
 var _vendorsNeedRender = false;
+var _vendorDirectoryPage = 1;
+var _vendorDirectoryPageSize = 50;
+var _vendorDirectoryTotal = 0;
+var _vendorDirectoryTotalPages = 1;
 var ROUTING_EVENTS = [];
 var ROUTING_PM_STATS = [];
 var ROUTING_CAPABILITIES = [];
@@ -6075,7 +6081,7 @@ function hideProgress() {
 async function fetchLocalWorkOrders(days) {
   var lookback = Math.max(1, Math.min(3650, parseInt(days || DEFAULT_LOCAL_WO_LOOKBACK_DAYS, 10) || DEFAULT_LOCAL_WO_LOOKBACK_DAYS));
   var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
-  var url = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(lookback)) + '&limit=2500';
+  var url = localBase + '/api/local/work_orders?days=' + encodeURIComponent(String(lookback)) + '&limit=100';
   var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
   var data = {};
   try { data = await res.json(); } catch (e) { data = {}; }
@@ -6138,7 +6144,7 @@ async function fetchWorkOrders() {
     if (token) localHeaders['Authorization'] = 'Bearer ' + token;
     
     // Active volume is bounded by status, so do not impose an artificial date window.
-    var urlActive = localBase + '/api/local/work_orders?limit=2500' + scopeQuery;
+    var urlActive = localBase + '/api/local/work_orders?limit=100' + scopeQuery;
     var resActive = await fetchWithTimeout(urlActive, { headers: localHeaders }, 45000);
     var dataActive = {};
     try { dataActive = await resActive.json(); } catch (e) { dataActive = {}; }
@@ -6176,7 +6182,7 @@ async function fetchInactiveWorkOrders() {
       var token = getProxyAccessToken();
       var headers = { 'Accept': 'application/json' };
       if (token) headers.Authorization = 'Bearer ' + token;
-      var url = localBase + '/api/local/work_orders/inactive?days=365&limit=5000' + scopeQuery;
+      var url = localBase + '/api/local/work_orders/inactive?days=365&limit=100' + scopeQuery;
       var response = await fetchWithTimeout(url, { headers: headers }, 45000);
       var data = {};
       try { data = await response.json(); } catch (_) { data = {}; }
@@ -6860,13 +6866,31 @@ async function fetchBills(days, opts) {
 }
 
 // Vendors: Proxy ?action=vendors — server-side pagination, one request
-async function fetchVendors() {
+async function fetchVendors(options) {
   try {
     setApiStatus('loading', 'Loading vendors (local)\u2026');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var url = localBase + '/api/local/vendors?limit=2500&refresh=1'
-      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
+    if (!scopedGroupUuid) {
+      VENDORS = [];
+      _vendorDirectoryTotal = 0;
+      _vendorDirectoryTotalPages = 1;
+      var emptyGrid = $('#vendorGrid');
+      if (emptyGrid) emptyGrid.innerHTML = emptyHtml('fa-layer-group', 'Select a property group to load vendors');
+      return false;
+    }
+    if (options && options.resetPage) _vendorDirectoryPage = 1;
+    var params = new URLSearchParams({
+      property_group_id: scopedGroupUuid,
+      page: String(_vendorDirectoryPage),
+      limit: String(_vendorDirectoryPageSize),
+      search: String($('#vendorSearch') ? $('#vendorSearch').value : ''),
+      trade_category: String($('#vendorTradeFilter') ? $('#vendorTradeFilter').value : ''),
+      property_id: String($('#vendorPropertyFilter') ? $('#vendorPropertyFilter').value : ''),
+      sort: String($('#vendorSortMode') ? $('#vendorSortMode').value : 'trade')
+    });
+    if (options && options.refreshCompliance) params.set('refresh_compliance', '1');
+    var url = localBase + '/api/local/v2/vendors?' + params.toString();
     var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
     var data = {};
     try { data = await res.json(); } catch (e) { data = {}; }
@@ -6883,8 +6907,10 @@ async function fetchVendors() {
         firstName: v.first_name || '',
         lastName: v.last_name || '',
         isCompany: !!v.company_name,
-        compliant: false,
-        compliantStatus: 'Unknown',
+        compliant: v.compliant === true,
+        compliantStatus: v.compliant === true ? 'Compliant' : 'Non-Compliant',
+        complianceDetail: v.compliance || null,
+        openWorkOrderCount: Number(v.open_work_order_count || 0) || 0,
         insurance: v.liability_ins_expires || '',
         autoInsurance: v.auto_ins_expires || '',
         workersComp: v.workers_comp_expires || '',
@@ -6896,11 +6922,16 @@ async function fetchVendors() {
         tradeCategory: v.trade_category || '',
         category: v.vendor_type || v.category || '',
         vendorType: v.vendor_type || v.category || '',
+        propertyIds: Array.isArray(v.property_ids) ? v.property_ids : [],
         doNotUse: v.do_not_use_for_work_order || false,
         tags: v.tags || '',
         link: ''
       };
     });
+    _vendorDirectoryTotal = Number(data.total || 0) || 0;
+    _vendorDirectoryPage = Number(data.page || _vendorDirectoryPage) || 1;
+    _vendorDirectoryPageSize = Number(data.per_page || _vendorDirectoryPageSize) || 50;
+    _vendorDirectoryTotalPages = Number(data.total_pages || 1) || 1;
     buildReferenceMaps(VENDORS, PROPERTIES);
     return true;
   } catch (err) {
@@ -6916,7 +6947,7 @@ async function fetchProperties() {
     setApiStatus('loading', 'Loading properties (local)…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var url = localBase + '/api/local/properties?limit=5000'
+    var url = localBase + '/api/local/properties?limit=100'
       + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
     var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
     var data = {};
@@ -7042,11 +7073,11 @@ async function fetchTurns() {
   setDataSourceState('turns', 'loading', { error: '' });
   try {
     setApiStatus('loading', 'Loading turns (In Progress + Completed)…');
-    var activeData = await proxyAction('turns', { days: 60, status: 'In Progress' });
+    var activeData = await proxyAction('turns', { days: 60, status: 'In Progress', limit: 100 });
     var activeRows = activeData.results || activeData.data || [];
     var completedRows = [];
     try {
-      var completedData = await proxyAction('turns', { days: 30, status: 'Completed' });
+      var completedData = await proxyAction('turns', { days: 30, status: 'Completed', limit: 100 });
       completedRows = completedData.results || completedData.data || [];
     } catch (e) {
       console.log('Completed turns fetch skipped: ' + (e.message || e));
@@ -7200,7 +7231,7 @@ async function fetchInspections() {
     setApiStatus('loading', 'Loading inspections (active properties, ' + INSPECTION_LOOKBACK_DAYS + 'd window)\u2026');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var localUrl = localBase + '/api/local/inspections?limit=6000&active_only=1'
+    var localUrl = localBase + '/api/local/v2/inspections?limit=100&offset=0&active_only=1'
       + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
     var localHeaders = { 'Accept': 'application/json' };
     var localToken = getProxyAccessToken();
@@ -7223,13 +7254,16 @@ async function fetchInspections() {
         tenantPhone: r.tenant_primary_phone_number || '',
         moveIn: r.move_in_date || '',
         moveOut: r.move_out_date || '',
+        missingMoveInInspection: !!r.missing_move_in_inspection,
+        missingMoveOutInspection: !!r.missing_move_out_inspection,
+        moveOutInspection: r.move_out_inspection_date || '',
         rentable: r.rentable || '',
         tags: r.unit_tags || ''
       };
     }).filter(function(row) {
       return isActiveInspectionProperty(row)
         && isCurrentLeaseWithActiveResident(row, now)
-        && isMissingLeaseInspectionEvidence(row, now);
+        && (row.missingMoveInInspection || row.missingMoveOutInspection || isMissingLeaseInspectionEvidence(row, now));
     });
     setDataSourceState('inspections', 'ok', { count: INSPECTIONS.length, error: '' });
     return true;
@@ -7260,7 +7294,7 @@ async function fetchPropertyGroups() {
       }
     }
 
-    var localUrl = localBase + '/api/local/property_group_directory?limit=5000'
+    var localUrl = localBase + '/api/local/property_group_directory?limit=100'
       + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
     var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 15000);
     var data = {};
@@ -7708,7 +7742,7 @@ async function fetchUpcomingMoveouts() {
   setDataSourceState('upcoming_moveouts', 'loading', { error: '' });
   try {
     setApiStatus('loading', 'Loading upcoming move-outs…');
-    var data = await proxyAction('upcoming_moveouts', { days: 60 });
+    var data = await proxyAction('upcoming_moveouts', { days: 60, limit: 100 });
     var results = data.results || data.data || [];
 
     UPCOMING_MOVEOUTS = results.map(function(t) {
@@ -7745,7 +7779,7 @@ async function fetchUpcomingMoveouts() {
 async function fetchTurnWorkOrders() {
   try {
     setApiStatus('loading', 'Loading turn work orders\u2026');
-    var data = await proxyAction('turn_work_orders', { days: 90 });
+    var data = await proxyAction('turn_work_orders', { days: 90, limit: 100 });
     var results = data.results || data.data || [];
     TURN_WORK_ORDERS = results.map(function(wo) {
       return {
@@ -7781,7 +7815,7 @@ async function fetchTurnWorkOrders() {
 async function fetchUnitTurnsDB() {
   try {
     setApiStatus('loading', 'Loading unit turn tracker…');
-    var data = await proxyAction('unit_turns', { days: '90' });
+    var data = await proxyAction('unit_turns', { days: '90', limit: 100 });
     var results = data.results || data.data || [];
     UNIT_TURN_TRACKER_BY_KEY = {};
     UNIT_TURNS_DB = results.map(function(t) {
@@ -10378,19 +10412,20 @@ async function loadPropertyGroupDirectory() {
 }
 
 /**
- * Filter billing results by property group (for PM scope enforcement)
+ * Filter billing results by property group. Applies to both PM forced scope
+ * and a manager's selected global property group filter so the KPI cards and
+ * WO Status Mix always reflect the same scoped dataset.
  */
-function filterBillingByPropertyGroup(results, groupUuid) {
-  if (!groupUuid || !Array.isArray(results)) return results;
-  if (_accessRole === 'full' || _accessRole === 'manager') return results; // Admins see all
-  
+function filterBillingByPropertyGroup(results, groupScope) {
+  if (!groupScope || !Array.isArray(results)) return results;
+
   return results.filter(function(row) {
     var propCtx = row.property_context || {};
     var rowGroupId = propCtx.property_group_id;
-    if (rowGroupId && String(rowGroupId).trim() === String(groupUuid).trim()) return true;
+    if (rowGroupId && String(rowGroupId).trim().toLowerCase() === String(groupScope).trim().toLowerCase()) return true;
     var propertyId = row.property_id || row.propertyId || propCtx.property_id || '';
     var propertyName = propCtx.property_name || row.property_name || row.property || '';
-    return isInPropertyGroup(propertyId, propertyName, String(groupUuid));
+    return isInPropertyGroup(propertyId, propertyName, String(groupScope));
   });
 }
 
@@ -13690,6 +13725,7 @@ var currentWOGridSearch = '';
 var currentWOSelection = null;
 var woGridApi = null;
 var inspectionsGridApi = null;
+var vendorsGridApi = null;
 var WO_ANALYTICS_FILTERS = { ageBucket: '', owner: '', status: '' };
 var INSP_ANALYTICS_FILTERS = { status: '', ageBucket: '', turnLinked: '' };
 var WO_CHARTS = {
@@ -13706,6 +13742,8 @@ var WO_MODAL_STATUS_CHART = null;
 var WO_CHART_RESIZE_OBSERVER = null;
 var WO_THEME_OBSERVER = null;
 var WO_VENDOR_SPEND_CACHE = { key: '', rows: [] };
+var BILLING_VENDOR_SPEND_CACHE = { key: '', payload: null };
+var BILLING_VENDOR_SPEND_CHART = null;
 var INSP_CHARTS = { mix: null, age: null, link: null };
 var currentBillingSubtab = 'main'; // main | payables | charge-detail | bill-detail
 var _billingKpisLoading = false;
@@ -13828,12 +13866,14 @@ async function loadBillingKpis(opts) {
       var v2Report = await loadBillingV2Report({ forceRefresh: opts.forceRefresh });
       if (v2Report && v2Report.ok && Array.isArray(v2Report.billing_search_results)) {
         var v2Results = v2Report.billing_search_results;
-        
-        // Apply PM property group filtering
-        if (_accessRole === 'pm_readonly' && window.forcedPropertyGroupUuid) {
-          v2Results = filterBillingByPropertyGroup(v2Results, window.forcedPropertyGroupUuid);
+
+        // Scope to the PM's assigned group (OTP login) or the manager's selected
+        // global property group filter — same scope WO Status Mix already uses.
+        var kpiScope = grpUuid || grpName;
+        if (kpiScope) {
+          v2Results = filterBillingByPropertyGroup(v2Results, kpiScope);
         }
-        
+
         stats = aggregateBillingV2Kpis(v2Results);
         useV2 = true;
         _lastBillingSearchResults = v2Results;
@@ -15058,6 +15098,7 @@ function renderBillingSection(opts) {
   if (currentBillingSubtab === 'bill-detail') { renderBillDetailSection(opts); return; }
   // default: main
   loadBillingKpis();
+  renderBillingVendorSpendInsights();
   if (opts && opts.forceRefresh) {
     loadBillingMain();
     return;
@@ -15067,6 +15108,96 @@ function renderBillingSection(opts) {
     return;
   }
   loadBillingMain();
+}
+
+// In-House vs 3rd-Party horizontal bar fed by /api/local/v2/billing/vendor-spend, cached per property group.
+async function renderBillingVendorSpendInsights() {
+  var chartEl = document.getElementById('billingVendorSpendChart');
+  var listEl = document.getElementById('billingVendorTop5List');
+  var meta = document.getElementById('billingVendorMeta');
+  if (!chartEl) return;
+
+  var groupId = getEffectiveGroupUuid() || '';
+  if (!groupId) {
+    destroyChartInstance(BILLING_VENDOR_SPEND_CHART);
+    BILLING_VENDOR_SPEND_CHART = null;
+    chartEl.innerHTML = '';
+    if (meta) meta.textContent = 'Select a property group';
+    if (listEl) listEl.innerHTML = '<li class="billing-vendor-top5-empty">Select a property group to load vendor spend.</li>';
+    return;
+  }
+
+  try {
+    var payload;
+    if (BILLING_VENDOR_SPEND_CACHE.key === groupId && BILLING_VENDOR_SPEND_CACHE.payload) {
+      payload = BILLING_VENDOR_SPEND_CACHE.payload;
+    } else {
+      var path = '/api/local/v2/billing/vendor-spend?property_group_id=' + encodeURIComponent(groupId);
+      payload = await apiFetch(path);
+      BILLING_VENDOR_SPEND_CACHE = { key: groupId, payload: payload };
+    }
+
+    var buckets = payload.buckets || {};
+    var inHouseTotal = Number((buckets.in_house && buckets.in_house.total_spend) || 0);
+    var thirdPartyTotal = Number((buckets.third_party && buckets.third_party.total_spend) || 0);
+    var topVendors = Array.isArray(payload.top_third_party_vendors) ? payload.top_third_party_vendors : [];
+
+    BILLING_VENDOR_SPEND_CHART = ensureWOChart(BILLING_VENDOR_SPEND_CHART, chartEl);
+    BILLING_VENDOR_SPEND_CHART.setOption({
+      animationDuration: 320,
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: function(params) {
+          var point = params && params[0];
+          return point ? (escapeHtml(String(point.name || '')) + ': ' + formatBillingInsightMoney(point.value)) : '';
+        }
+      },
+      grid: { containLabel: true, top: 8, bottom: 8, left: 8, right: 20 },
+      xAxis: {
+        type: 'value',
+        axisLabel: { color: '#7f8ca3', formatter: function(value) { return '$' + Math.round(Number(value || 0) / 1000) + 'k'; } },
+        splitLine: { lineStyle: { color: 'rgba(127,140,163,0.16)' } }
+      },
+      yAxis: {
+        type: 'category',
+        inverse: true,
+        data: ['In-House', '3rd-Party'],
+        axisLabel: { color: '#5a6378' }
+      },
+      series: [{
+        type: 'bar',
+        barMaxWidth: 28,
+        data: [
+          { value: inHouseTotal, itemStyle: { color: '#0f8d91' } },
+          { value: thirdPartyTotal, itemStyle: { color: '#d97706' } }
+        ]
+      }]
+    }, { notMerge: true });
+
+    if (meta) {
+      meta.textContent = (inHouseTotal + thirdPartyTotal) > 0
+        ? (formatBillingInsightMoney(inHouseTotal) + ' in-house \u00b7 ' + formatBillingInsightMoney(thirdPartyTotal) + ' 3rd-party')
+        : 'No spend recorded';
+    }
+
+    if (listEl) {
+      listEl.innerHTML = topVendors.length
+        ? topVendors.map(function(vendor, idx) {
+            var name = String(vendor.vendor_name || 'Unknown vendor');
+            return '<li class="billing-vendor-top5-row">' +
+              '<span class="billing-vendor-top5-rank">' + (idx + 1) + '</span>' +
+              '<span class="billing-vendor-top5-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' +
+              '<span class="billing-vendor-top5-amount">' + formatBillingInsightMoney(vendor.total_spend) + '</span>' +
+            '</li>';
+          }).join('')
+        : '<li class="billing-vendor-top5-empty">No 3rd-party vendor spend in this window.</li>';
+    }
+  } catch (error) {
+    if (meta) meta.textContent = 'Vendor spend unavailable';
+    if (listEl) listEl.innerHTML = '<li class="billing-vendor-top5-empty">Failed to load vendor spend.</li>';
+    console.warn('[billing-vendor-spend] load failed', error);
+  }
 }
 
 function getReportRows(payload, preferredKey) {
@@ -15170,15 +15301,12 @@ function renderBillingMiniChart(containerId, rows, options) {
 function renderBillingInsights(rows) {
   var list = Array.isArray(rows) ? rows : [];
   var statusMeta = $('#billingStatusMeta');
-  var vendorMeta = $('#billingVendorMeta');
   var agingMeta = $('#billingAgingMeta');
 
   if (!list.length) {
     if (statusMeta) statusMeta.textContent = '0 rows';
-    if (vendorMeta) vendorMeta.textContent = 'No vendor spend';
     if (agingMeta) agingMeta.textContent = 'No aging totals';
     renderBillingMiniChart('billingStatusChart', []);
-    renderBillingMiniChart('billingVendorChart', []);
     renderBillingMiniChart('billingAgingChart', []);
     return;
   }
@@ -15198,41 +15326,6 @@ function renderBillingInsights(rows) {
   });
   var statusRows = Object.keys(statusAgg)
     .map(function(key) { return { label: key, value: statusAgg[key] }; })
-    .sort(function(a, b) { return b.value - a.value; })
-    .slice(0, 5);
-
-  var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
-  var vendorSource;
-  if (Array.isArray(BILL_DETAIL_REPORT_ROWS) && BILL_DETAIL_REPORT_ROWS.length) {
-    // Filter bill detail rows by the active property group so vendor spend
-    // reflects the same scope as the rest of the billing view
-    vendorSource = effectiveGroup
-      ? BILL_DETAIL_REPORT_ROWS.filter(function(row) {
-          var propId   = row.property_id   || row.propertyId   || '';
-          var propName = row.property_name || row.property     || '';
-          return isInPropertyGroup(propId, propName, effectiveGroup);
-        })
-      : BILL_DETAIL_REPORT_ROWS;
-  } else {
-    // list is already filtered by applyBillingMainFilters
-    vendorSource = list;
-  }
-  var vendorAgg = {};
-  vendorSource.forEach(function(row) {
-    var vendor = String((row.payee_name || (row.vendor && row.vendor.vendor_name) || row.vendor || '')).trim();
-    if (!vendor) return;
-    var amt = 0;
-    if (row.payee_name || row.unpaid != null || row.paid != null) {
-      amt = amountToNumber(row.unpaid || 0) + amountToNumber(row.paid || 0);
-    } else {
-      amt = Number(getPreferredBillingAmount(row) || 0);
-      if (!isFinite(amt)) amt = 0;
-    }
-    if (amt <= 0) return;
-    vendorAgg[vendor] = (vendorAgg[vendor] || 0) + amt;
-  });
-  var vendorRows = Object.keys(vendorAgg)
-    .map(function(key) { return { label: key, value: vendorAgg[key] }; })
     .sort(function(a, b) { return b.value - a.value; })
     .slice(0, 5);
 
@@ -15266,14 +15359,10 @@ function renderBillingInsights(rows) {
   }
 
   if (statusMeta) statusMeta.textContent = list.length + ' rows';
-  if (vendorMeta) vendorMeta.textContent = vendorRows.length ? formatBillingInsightMoney(vendorRows[0].value) + ' top vendor' : 'No vendor spend';
   if (agingMeta) agingMeta.textContent = nonZeroAmountRows ? formatBillingInsightMoney(totalAmount) + ' non-zero total' : 'No non-zero totals';
 
   renderBillingMiniChart('billingStatusChart', statusRows, {
     valueFormatter: function(v) { return Number(v || 0).toLocaleString(); },
-  });
-  renderBillingMiniChart('billingVendorChart', vendorRows, {
-    valueFormatter: formatBillingInsightMoney,
   });
   renderBillingMiniChart('billingAgingChart', agingRows, {
     valueFormatter: formatBillingInsightMoney,
@@ -15999,7 +16088,7 @@ async function loadPropertyPerformance() {
   if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
     var perfScope = getEffectiveGroupUuid();
-    var perfPath = '/api/local/property_performance?limit=15000';
+    var perfPath = '/api/local/property_performance?limit=100';
     if (perfScope) perfPath += '&property_group_id=' + encodeURIComponent(perfScope);
     var data = await apiFetch(perfPath);
     var rows = getReportRows(data, 'results');
@@ -16051,7 +16140,7 @@ async function loadPropertyVacancies() {
   if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
     var vacancyScope = getEffectiveGroupUuid();
-    var vacancyPath = '/api/local/vacancies?limit=15000';
+    var vacancyPath = '/api/local/vacancies?limit=100';
     if (vacancyScope) vacancyPath += '&property_group_id=' + encodeURIComponent(vacancyScope);
     var data = await apiFetch(vacancyPath);
     var rows = getReportRows(data, 'results');
@@ -16478,7 +16567,7 @@ async function loadOccupancySubtab(subtab) {
       await fetchUpcomingMoveouts();
       data = { results: UPCOMING_MOVEOUTS.slice() };
     } else if (subtab === 'tenant-directory') {
-      var tenantPath = '/api/local/tenant_directory?limit=15000';
+      var tenantPath = '/api/local/tenant_directory?limit=100';
       if (scopeUuid) tenantPath += '&property_group_id=' + encodeURIComponent(scopeUuid);
       data = await apiFetch(tenantPath);
     } else {
@@ -16772,6 +16861,10 @@ function destroyGridInstance(apiRefName) {
   if (apiRefName === 'insp' && inspectionsGridApi) {
     try { inspectionsGridApi.destroy(); } catch (_) {}
     inspectionsGridApi = null;
+  }
+  if (apiRefName === 'vendors' && vendorsGridApi) {
+    try { vendorsGridApi.destroy(); } catch (_) {}
+    vendorsGridApi = null;
   }
 }
 
@@ -17116,7 +17209,7 @@ function createInspectionsServerDatasource() {
 
           var url = localBase + '/api/local/grid/inspections?limit=' + encodeURIComponent(String(blockSize))
             + '&offset=' + encodeURIComponent(String(startRow))
-            + '&active_only=1'
+            + '&active_only=0'
             + '&sort_by=' + encodeURIComponent(sort.sortBy)
             + '&sort_dir=' + encodeURIComponent(sort.sortDir)
             + '&search=' + encodeURIComponent(search || '')
@@ -17142,11 +17235,14 @@ function createInspectionsServerDatasource() {
             var statusLabel = r.status_bucket === 'overdue'
               ? 'Overdue'
               : (r.status_bucket === 'due_soon' ? 'Due soon' : 'Current');
-            if (r.missing_move_in_inspection) statusLabel = 'Missing move-in inspection';
+            if (r.missing_move_in_inspection && r.missing_move_out_inspection) statusLabel = 'Missing move-in + move-out';
+            else if (r.missing_move_in_inspection) statusLabel = 'Missing move-in inspection';
+            else if (r.missing_move_out_inspection) statusLabel = 'Missing move-out inspection';
             return {
               propertyName: r.property_name || '-',
               unit: r.unit_name || '-',
               tenant: r.tenant_name || '-',
+              tenantStatus: r.tenant_status || '',
               lastInspectionLabel: r.last_inspection_date ? (formatDate(r.last_inspection_date) + ' (' + days + 'd ago)') : 'Never',
               daysSince: days,
               statusLabel: statusLabel,
@@ -17166,12 +17262,20 @@ function createInspectionsServerDatasource() {
                 turnLinked: !!r.turn_linked,
                 statusBucket: r.status_bucket || 'current',
                 missingMoveInInspection: !!r.missing_move_in_inspection,
+                missingMoveOutInspection: !!r.missing_move_out_inspection,
+                moveOutInspection: r.move_out_inspection_date || '',
                 daysSince: days
               }
             };
           });
 
           params.successCallback(rows, Number(data.total || 0));
+          var severeBadge = document.getElementById('inspSevereBadge');
+          if (severeBadge) {
+            var severeCount = Number(data.missing_move_in_total || 0) || 0;
+            severeBadge.textContent = severeCount + (severeCount === 1 ? ' missing move-in inspection' : ' missing move-in inspections');
+            severeBadge.dataset.count = String(severeCount);
+          }
         } catch (err) {
           console.error('[insp-grid] datasource error', err);
           params.failCallback();
@@ -17614,6 +17718,11 @@ function renderInspectionsGrid() {
     maxBlocksInCache: 8,
     rowSelection: 'single',
     suppressCellFocus: true,
+    getRowClass: function(params) {
+      return String(params && params.data && params.data.tenantStatus || '').toLowerCase() === 'past'
+        ? 'inspection-history-row'
+        : '';
+    },
     overlayNoRowsTemplate: '<span style="padding:10px;color:var(--text-muted)">No inspections match the current filters.</span>',
     defaultColDef: {
       sortable: true,
@@ -17628,7 +17737,18 @@ function renderInspectionsGrid() {
       { field: 'tenant', headerName: 'Tenant', minWidth: 170 },
       { field: 'lastInspectionLabel', headerName: 'Last Inspection', minWidth: 180 },
       { field: 'daysSince', headerName: 'Days', minWidth: 90, maxWidth: 100 },
-      { field: 'statusLabel', headerName: 'Status', minWidth: 140 },
+      {
+        field: 'statusLabel',
+        headerName: 'Status',
+        minWidth: 180,
+        cellRenderer: function(params) {
+          var row = params.data || {};
+          var missing = !!(row.__raw && (row.__raw.missingMoveInInspection || row.__raw.missingMoveOutInspection));
+          var label = missing ? String(row.statusLabel || 'Missing inspection') : 'Inspection verified';
+          var cls = missing ? 'inspection-status-badge--missing' : 'inspection-status-badge--verified';
+          return '<span class="inspection-status-badge ' + cls + '"><i class="fas ' + (missing ? 'fa-triangle-exclamation' : 'fa-check-circle') + '"></i>' + escapeHtml(label) + '</span>';
+        }
+      },
       { field: 'turnLabel', headerName: 'Turn', minWidth: 140 },
       { field: 'moveInLabel', headerName: 'Move-In', minWidth: 120 },
       { field: 'moveOutLabel', headerName: 'Move-Out', minWidth: 120 }
@@ -17642,11 +17762,12 @@ function renderInspectionsGrid() {
         { label: 'Property', value: r.propertyName },
         { label: 'Unit', value: r.unit },
         { label: 'Last Inspection', value: r.lastInspection ? formatDate(r.lastInspection) + ' (' + (r.daysSince || 0) + ' days ago)' : 'Never' },
-        { label: 'Status', value: r.missingMoveInInspection ? 'Missing move-in inspection' : (r.statusBucket === 'overdue' ? 'OVERDUE' : r.statusBucket === 'due_soon' ? 'Due Soon' : 'Current') },
+        { label: 'Status', value: r.missingMoveInInspection && r.missingMoveOutInspection ? 'Missing move-in + move-out' : r.missingMoveInInspection ? 'Missing move-in inspection' : r.missingMoveOutInspection ? 'Missing move-out inspection' : (r.statusBucket === 'overdue' ? 'OVERDUE' : r.statusBucket === 'due_soon' ? 'Due Soon' : 'Current') },
         { section: 'Tenant', icon: 'fa-user' },
         { label: 'Tenant', value: r.tenant || '-' },
         { label: 'Move-In', value: r.moveIn ? formatDate(r.moveIn) : '-' },
         { label: 'Move-Out', value: r.moveOut ? formatDate(r.moveOut) : '-' },
+        { label: 'Move-Out Inspection', value: r.moveOutInspection ? formatDate(r.moveOutInspection) : (r.missingMoveOutInspection ? 'MISSING' : '-') },
         { label: 'Tags', value: r.tags || '-' }
       ], appfolioUrl('inspection_property', r.propertyId));
     }
@@ -19631,7 +19752,7 @@ async function fetchUnits() {
     setApiStatus('loading', 'Loading units (local Postgres)…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var url = localBase + '/api/local/units?limit=5000'
+    var url = localBase + '/api/local/units?limit=100'
       + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
     var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
     var data = {};
@@ -19738,6 +19859,12 @@ function renderPropertiesRowsFromCache() {
     properties = properties.filter(propertyIsVacantForFilter);
   }
 
+  if (_propertiesVendorFilterIds.length) {
+    var vendorScopedIds = {};
+    _propertiesVendorFilterIds.forEach(function(id) { vendorScopedIds[String(id)] = true; });
+    properties = properties.filter(function(p) { return !!vendorScopedIds[String(p.id || '')]; });
+  }
+
   if (search) {
     properties = properties.filter(function(p) {
       var hay = [
@@ -19781,10 +19908,24 @@ function renderPropertiesRowsFromCache() {
 
   if (footer) footer.style.display = 'flex';
   if (meta) {
+    var metaText;
     if (total === 0) {
-      meta.textContent = 'Page 1 of 1 • 0 results' + (_propertiesVacancyOnly ? ' • vacancy-only' : '');
+      metaText = 'Page 1 of 1 • 0 results' + (_propertiesVacancyOnly ? ' • vacancy-only' : '');
     } else {
-      meta.textContent = 'Page ' + (_propertiesPage + 1) + ' of ' + pages + ' • Showing ' + (start + 1) + '-' + end + ' of ' + total + (_propertiesVacancyOnly ? ' • vacancy-only' : '');
+      metaText = 'Page ' + (_propertiesPage + 1) + ' of ' + pages + ' • Showing ' + (start + 1) + '-' + end + ' of ' + total + (_propertiesVacancyOnly ? ' • vacancy-only' : '');
+    }
+    if (_propertiesVendorFilterIds.length) {
+      meta.innerHTML = escapeHtml(metaText) + ' • vendor-scoped <button type="button" id="propertiesClearVendorFilter" class="action-btn u-action-btn-sm">Clear vendor filter</button>';
+      var clearVendorBtn = document.getElementById('propertiesClearVendorFilter');
+      if (clearVendorBtn) {
+        clearVendorBtn.onclick = function() {
+          _propertiesVendorFilterIds = [];
+          setVendorUrlParam('');
+          renderPropertiesRowsFromCache();
+        };
+      }
+    } else {
+      meta.textContent = metaText;
     }
   }
   if (prevBtn) prevBtn.disabled = (_propertiesPage <= 0 || total === 0);
@@ -20806,16 +20947,6 @@ function renderInspections(search) {
   renderInspectionInsights(filtered);
 }
 
-function vendorCatClass(cat) {
-  if (!cat) return 'cat-uncategorized';
-  return 'cat-' + cat.toLowerCase().replace(/[\s]+/g, '-');
-}
-
-function getVendorInitial(name) {
-  var first = String(name || '').trim().charAt(0).toUpperCase();
-  return /[A-Z]/.test(first) ? first : '#';
-}
-
 function resolveVendorCompliance(v) {
   // Manual override takes priority over API value
   var manual = isVendorManuallyCompliant(v.id);
@@ -20985,6 +21116,163 @@ function navigateToCompletedWOsForVendor(vendorName) {
   }
 }
 
+// Mirrors backend evaluateVendorCompliance; a manual override still wins when a manager set one.
+function resolveVendorGridCompliance(v) {
+  var today = new Date();
+  var missing = [];
+  var expired = [];
+  [['Liability insurance', v.insurance], ['Workers comp', v.workersComp]].forEach(function(entry) {
+    var raw = String(entry[1] || '').trim();
+    if (!raw) { missing.push(entry[0]); return; }
+    var parsed = new Date(raw);
+    if (isNaN(parsed.getTime())) { missing.push(entry[0]); return; }
+    if (parsed < today) expired.push(entry[0]);
+  });
+  var manual = isVendorManuallyCompliant(v.id);
+  var documentsValid = missing.length === 0 && expired.length === 0;
+  return {
+    compliant: manual === null ? documentsValid : manual,
+    isManual: manual !== null,
+    missing: missing,
+    expired: expired
+  };
+}
+
+function vendorGridComplianceRenderer(params) {
+  var v = params && params.data ? params.data.__vendor : null;
+  if (!v) return '';
+  var state = resolveVendorGridCompliance(v);
+  var reasons = state.missing.map(function(item) { return item + ' missing'; })
+    .concat(state.expired.map(function(item) { return item + ' expired'; }));
+  var title = state.compliant
+    ? 'Liability insurance and workers comp are on file and current'
+    : (reasons.join(' \u2022 ') || 'Compliance documents unavailable');
+  return '<span class="vendor-compliance-badge ' + (state.compliant ? 'is-compliant' : 'is-noncompliant') + '" title="' + escapeHtml(title) + '">' +
+    '<i class="fas ' + (state.compliant ? 'fa-circle-check' : 'fa-circle-exclamation') + '"></i>' +
+    (state.compliant ? 'Compliant' : 'Non-Compliant') + (state.isManual ? ' (manual)' : '') +
+    '</span>';
+}
+
+function vendorGridExpiryRenderer(params) {
+  var raw = String((params && params.value) || '').trim();
+  if (!raw) return '<span class="vendor-grid-missing">Missing</span>';
+  var parsed = new Date(raw);
+  if (isNaN(parsed.getTime())) return '<span class="vendor-grid-missing">' + escapeHtml(raw) + '</span>';
+  var label = escapeHtml(formatDate(raw));
+  return parsed < new Date()
+    ? '<span class="vendor-grid-expired">' + label + ' \u00b7 expired</span>'
+    : label;
+}
+
+function vendorGridActionsRenderer(params) {
+  var vendorId = escapeHtml(String((params && params.data && params.data.vendorId) || ''));
+  if (!vendorId) return '';
+  return '<div class="vendor-grid-actions">' +
+    '<button type="button" class="vendor-grid-link" data-vendor-action="bills" data-vendor-id="' + vendorId + '"><i class="fas fa-file-invoice-dollar"></i> Bills</button>' +
+    '<button type="button" class="vendor-grid-link" data-vendor-action="properties" data-vendor-id="' + vendorId + '"><i class="fas fa-building"></i> Properties</button>' +
+    '<button type="button" class="vendor-grid-link" data-vendor-action="wos" data-vendor-id="' + vendorId + '"><i class="fas fa-screwdriver-wrench"></i> WOs</button>' +
+    '</div>';
+}
+
+function setVendorUrlParam(vendorId) {
+  try {
+    var url = new URL(window.location.href);
+    if (vendorId) url.searchParams.set('vendor_id', String(vendorId));
+    else url.searchParams.delete('vendor_id');
+    window.history.replaceState(null, '', url.toString());
+  } catch (e) { /* history is best-effort */ }
+}
+
+function navigateToPropertiesForVendor(vendorId, vendor) {
+  var ids = (vendor && Array.isArray(vendor.propertyIds)) ? vendor.propertyIds.slice() : [];
+  _propertiesVendorFilterIds = ids;
+  var propertiesTab = document.querySelector('.nav-tab[data-tab="properties"]');
+  if (propertiesTab) propertiesTab.click();
+  setPropertiesSubtab('directory');
+  renderPropertiesRowsFromCache();
+  showToast(ids.length
+    ? ('Properties scoped to ' + ids.length + ' worked at by this vendor')
+    : 'No worked-at properties recorded for this vendor');
+}
+
+function openVendorCrossLink(action, vendorId, vendor) {
+  setVendorUrlParam(vendorId);
+  if (action === 'bills') { navigateToBillsForVendor(vendorId); return; }
+  if (action === 'properties') { navigateToPropertiesForVendor(vendorId, vendor); return; }
+  if (action === 'wos') { navigateToOpenWOsForVendor(vendor ? vendor.name : ''); }
+}
+
+function renderVendorsGrid(rowData) {
+  var host = document.getElementById('vendorsGridHost');
+  if (!host) return;
+
+  if (vendorsGridApi) {
+    vendorsGridApi.setGridOption('rowData', rowData);
+    return;
+  }
+
+  vendorsGridApi = createGrid(host, {
+    theme: 'legacy',
+    rowModelType: 'clientSide',
+    rowData: rowData,
+    rowSelection: 'single',
+    stopEditingWhenCellsLoseFocus: true,
+    overlayNoRowsTemplate: '<span style="padding:10px;color:var(--text-muted)">No vendors match the current filters.</span>',
+    defaultColDef: {
+      sortable: true,
+      resizable: true,
+      minWidth: 110,
+      flex: 1,
+      cellStyle: { fontFamily: 'var(--font-sans)', fontSize: '12px' }
+    },
+    rowClassRules: {
+      'vendor-grid-band-alt': function(params) { return !!params.data && params.data.__band === 1; }
+    },
+    columnDefs: [
+      { field: 'vendorName', headerName: 'Vendor', minWidth: 200 },
+      {
+        field: 'trade',
+        headerName: 'Trade (editable)',
+        minWidth: 170,
+        editable: true,
+        cellEditor: 'agSelectCellEditor',
+        cellEditorParams: { values: VENDOR_TRADE_CATEGORIES }
+      },
+      { field: 'phone', headerName: 'Phone', minWidth: 130 },
+      { field: 'email', headerName: 'Email', minWidth: 180 },
+      { field: 'liabilityExpires', headerName: 'Liability Ins.', minWidth: 150, cellRenderer: vendorGridExpiryRenderer },
+      { field: 'workersCompExpires', headerName: 'Workers Comp', minWidth: 150, cellRenderer: vendorGridExpiryRenderer },
+      { field: 'compliance', headerName: 'Compliance', minWidth: 165, cellRenderer: vendorGridComplianceRenderer },
+      { colId: 'vendorLinks', headerName: 'Cross-Links', minWidth: 250, sortable: false, cellRenderer: vendorGridActionsRenderer }
+    ],
+    onCellValueChanged: function(evt) {
+      if (!evt || !evt.data || !evt.colDef || evt.colDef.field !== 'trade') return;
+      var vendorId = String(evt.data.vendorId || '');
+      var nextTrade = String(evt.newValue || '').trim();
+      if (!vendorId || !nextTrade) return;
+      saveVendorOverride(vendorId, { tradeCategory: nextTrade }).then(function() {
+        showToast('Trade category \u2192 ' + nextTrade);
+        renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+      });
+    },
+    onCellClicked: function(evt) {
+      var origin = evt && evt.event ? evt.event.target : null;
+      var actionBtn = origin && origin.closest ? origin.closest('[data-vendor-action]') : null;
+      if (actionBtn) {
+        evt.event.stopPropagation();
+        openVendorCrossLink(
+          actionBtn.getAttribute('data-vendor-action'),
+          actionBtn.getAttribute('data-vendor-id') || '',
+          evt.data ? evt.data.__vendor : null
+        );
+        return;
+      }
+      if (evt && evt.colDef && evt.colDef.field === 'trade') return;
+      if (evt && evt.data && evt.data.vendorId) openVendorModal(evt.data.vendorId);
+    }
+  });
+}
+
 function renderVendors(search) {
   var container = $('#vendorGrid');
   if (!container) return;
@@ -21006,26 +21294,43 @@ function renderVendors(search) {
   var sortMode = $('#vendorSortMode') ? $('#vendorSortMode').value : 'name';
   var compFilter = $('#vendorComplianceFilter') ? $('#vendorComplianceFilter').value : '';
 
-  var tradeCounts = {};
-  VENDORS.forEach(function(v) {
-    var tc = getVendorTradeCategory(v);
-    tradeCounts[tc] = (tradeCounts[tc] || 0) + 1;
-  });
   var tradeSel = $('#vendorTradeFilter');
   if (tradeSel) {
     var currentTradeFilter = tradeFilter;
     tradeSel.innerHTML = '<option value="">All Trade Categories</option>';
     VENDOR_TRADE_CATEGORIES.slice().sort(function(a, b) { return a.localeCompare(b); }).forEach(function(tc) {
-      if (!tradeCounts[tc]) return;
       var opt = document.createElement('option');
       opt.value = tc;
-      opt.textContent = tc + ' (' + tradeCounts[tc] + ')';
+      opt.textContent = tc;
       tradeSel.appendChild(opt);
     });
-    if (currentTradeFilter && !tradeCounts[currentTradeFilter]) currentTradeFilter = '';
     tradeSel.value = currentTradeFilter;
     tradeFilter = currentTradeFilter;
   }
+
+  var propertySel = $('#vendorPropertyFilter');
+  if (propertySel) {
+    var selectedPropertyId = propertySel.value;
+    propertySel.innerHTML = '<option value="">Worked at Any Property</option>';
+    PROPERTIES.filter(function(property) {
+      return isInPropertyGroup(property.id, property.name, currentPropertyGroup);
+    }).sort(function(a, b) {
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    }).forEach(function(property) {
+      var option = document.createElement('option');
+      option.value = String(property.id || '');
+      option.textContent = String(property.name || property.address || property.id || 'Property');
+      propertySel.appendChild(option);
+    });
+    propertySel.value = selectedPropertyId;
+  }
+
+  var pageMeta = $('#vendorPageMeta');
+  if (pageMeta) pageMeta.textContent = 'Page ' + _vendorDirectoryPage + ' of ' + _vendorDirectoryTotalPages + ' \u00b7 ' + _vendorDirectoryTotal + ' vendors';
+  var prevPage = $('#vendorPrevPage');
+  var nextPage = $('#vendorNextPage');
+  if (prevPage) prevPage.disabled = _vendorDirectoryPage <= 1;
+  if (nextPage) nextPage.disabled = _vendorDirectoryPage >= _vendorDirectoryTotalPages;
 
   var searchText = (search || '').trim();
   var searchLower = searchText.toLowerCase();
@@ -21069,129 +21374,39 @@ function renderVendors(search) {
     return aName.localeCompare(bName);
   });
 
-  var availableInitials = {};
-  baseFiltered.forEach(function(v) { availableInitials[getVendorInitial(v.name)] = true; });
-
-  var filtered = baseFiltered.filter(function(v) {
-    return !currentVendorInitial || getVendorInitial(v.name) === currentVendorInitial;
-  });
+  var filtered = baseFiltered;
 
   if (filtered.length === 0) {
     container.innerHTML = emptyHtml('fa-hard-hat', VENDORS.length === 0 ? 'No vendors loaded' : 'No vendors match filters');
+    renderVendorsGrid([]);
     return;
   }
 
-  var renderKey = [currentPropertyGroup || '', catFilter || '', tradeFilter || '', sortMode || 'name', compFilter || '', searchLower, currentVendorInitial || ''].join('|');
-  if (_vendorRenderKey !== renderKey) {
-    _vendorRenderKey = renderKey;
-    _vendorRenderLimit = isConstrainedDevice() ? CONFIG.VENDOR_GRID_INITIAL_LIMIT_MOBILE : CONFIG.VENDOR_GRID_INITIAL_LIMIT_DESKTOP;
-    if (searchText.length >= CONFIG.VENDOR_SELECT_MIN_SEARCH_CHARS) {
-      _vendorRenderLimit = Math.max(_vendorRenderLimit, CONFIG.VENDOR_GRID_LOAD_MORE_STEP * 2);
+  var groupByTrade = sortMode === 'trade';
+  var lastTrade = null;
+  var bandIndex = 0;
+  var rowData = filtered.map(function(v) {
+    var trade = getVendorTradeCategory(v) || 'Uncategorized';
+    if (groupByTrade && trade !== lastTrade) {
+      if (lastTrade !== null) bandIndex = bandIndex === 0 ? 1 : 0;
+      lastTrade = trade;
     }
-  }
-
-  var visible = filtered.slice(0, _vendorRenderLimit);
-  var constrained = isConstrainedDevice();
-  container.classList.toggle('stagger', !(constrained || filtered.length > 120));
-  var html = '<div class="vendor-render-meta">Showing ' + visible.length + ' of ' + filtered.length + ' vendors' + (searchText ? ' for "' + escapeHtml(searchText) + '"' : '') + (currentVendorInitial ? ' • initial ' + escapeHtml(currentVendorInitial) : '') + '.</div>';
-  html += '<div class="vendor-directory-shell">';
-  html += '<div class="vendor-directory-rail">';
-  html += '<button class="vendor-rail-btn' + (!currentVendorInitial ? ' active' : '') + '" data-vendor-initial="">All</button>';
-  'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('').forEach(function(letter) {
-    var enabled = !!availableInitials[letter];
-    html += '<button class="vendor-rail-btn' + (currentVendorInitial === letter ? ' active' : '') + '" data-vendor-initial="' + letter + '"' + (enabled ? '' : ' disabled') + '>' + letter + '</button>';
+    return {
+      vendorId: String(v.id || ''),
+      vendorName: v.name || '',
+      trade: trade,
+      phone: v.phone || '',
+      email: v.email || '',
+      liabilityExpires: v.insurance || '',
+      workersCompExpires: v.workersComp || '',
+      compliance: resolveVendorGridCompliance(v).compliant ? 'Compliant' : 'Non-Compliant',
+      __band: groupByTrade ? bandIndex : 0,
+      __vendor: v
+    };
   });
-  html += '</div>';
-  html += '<div class="vendor-cards">';
-  var today = new Date();
-  visible.forEach(function(v) {
-    var ed = normalizeVendorDate(v.insurance);
-    var exp = ed ? ed < today : false;
-    var due = ed ? daysBetween(today, ed) : 999;
-    var wrn = !exp && due <= 60;
-    var cRes = resolveVendorCompliance(v);
-    var governance = summarizeVendorGovernance(v);
-    var cc = '';
-    if (cRes.compliant && cRes.isManual) { cc = 'manual-compliant'; }
-    else if (governance.expired) { cc = 'expired'; }
-    else if (wrn) { cc = 'warn'; }
-    var vCat = getVendorCategory(v.id);
-    var catBadgeCls = vendorCatClass(vCat);
-    var afUrl = appfolioUrl('vendor', v.id);
 
-    html += '<div class="vendor-card vendor-card-compact ' + cc + '" data-vendorid="' + escapeHtml(String(v.id)) + '" data-vendor-initial="' + getVendorInitial(v.name) + '" style="cursor:pointer">';
-    html += '<div class="vendor-card-head">';
-    html += '<div class="vendor-name">' + escapeHtml(v.name) + '</div>';
-    html += '<div class="vendor-governance-badges">';
-    if (governance.expired) {
-      html += '<span class="vendor-governance-badge expired">Expired</span>';
-    }
-    if (governance.doNotUse) {
-      html += '<span class="vendor-governance-badge blocked">Do not use</span>';
-    }
-    html += '</div>';
-    html += '<div class="vendor-id"><span><i class="fas fa-fingerprint"></i> ' + escapeHtml(String(v.id)) + '</span>';
-    html += '<span class="vendor-category-badge ' + catBadgeCls + '">' + escapeHtml(vCat || 'Uncategorized') + '</span>';
-    html += '</div>';
-    html += '</div>';
-    if (v.trades) html += '<div class="vendor-trades">' + escapeHtml(v.trades) + '</div>';
-    html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Category</span><span class="vendor-row-value">' + escapeHtml(vCat || 'Uncategorized') + '</span></div>';
-    var vTradeCat = getVendorTradeCategory(v);
-    html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Trade Cat.</span><span class="vendor-row-value">' + escapeHtml(vTradeCat || 'Uncategorized') + '</span></div>';
-    var compLabel = cRes.compliant ? 'Compliant' : (v.compliantStatus || 'Non-Compliant');
-    html += '<div class="vendor-row vendor-row-compact" style="align-items:center"><span class="vendor-row-label">Compliance</span>';
-    html += '<span class="vendor-row-value" style="font-weight:600;color:' + (cRes.compliant ? 'var(--success)' : 'var(--danger)') + '"><i class="fas ' + (cRes.compliant ? 'fa-check-circle' : 'fa-times-circle') + '"></i> ' + escapeHtml(compLabel) + (cRes.isManual ? ' (manual)' : '') + '</span></div>';
-    if (v.phone || v.email) {
-      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Contact</span><span class="vendor-row-value vendor-contact-compact">' + escapeHtml(v.phone || v.email || '\u2014') + (v.phone && v.email ? ' \u2022 ' + escapeHtml(v.email) : '') + '</span></div>';
-    }
-    if (v.address) {
-      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Address</span><span class="vendor-row-value" style="font-size:10px">' + escapeHtml(v.address) + '</span></div>';
-    }
-    if (v.insurance) {
-      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Liability Ins.</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (exp ? 'var(--danger)' : wrn ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.insurance) + (exp ? ' \u26a0\ufe0f EXPIRED' : wrn ? ' (' + due + 'd)' : '') + '</span></div>';
-    }
-    if (v.autoInsurance) {
-      var aed = new Date(v.autoInsurance); var aexp = aed < today; var adue = daysBetween(today, aed);
-      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Auto Ins.</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (aexp ? 'var(--danger)' : adue <= 60 ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.autoInsurance) + (aexp ? ' \u26a0\ufe0f EXPIRED' : adue <= 60 ? ' (' + adue + 'd)' : '') + '</span></div>';
-    }
-    if (v.workersComp) {
-      var wced = new Date(v.workersComp); var wcexp = wced < today; var wcdue = daysBetween(today, wced);
-      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Workers Comp</span><span class="vendor-row-value" style="font-family:var(--font-mono);color:' + (wcexp ? 'var(--danger)' : wcdue <= 60 ? 'var(--warning)' : 'var(--text-secondary)') + '">' + escapeHtml(v.workersComp) + (wcexp ? ' \u26a0\ufe0f EXPIRED' : wcdue <= 60 ? ' (' + wcdue + 'd)' : '') + '</span></div>';
-    }
-    if (governance.doNotUse) {
-      html += '<div class="vendor-row vendor-row-compact" style="color:var(--danger);font-weight:700"><span class="vendor-row-label" style="color:var(--danger)">⛔ Status</span><span class="vendor-row-value">DO NOT USE</span></div>';
-    }
-    html += '<div class="vendor-row vendor-row-compact" style="align-items:center;gap:6px">' +
-      '<span class="vendor-row-label">Type</span>' +
-      '<select class="vendor-cat-select" data-vid="' + escapeHtml(String(v.id)) + '">' +
-        VENDOR_CATEGORIES.map(function(cat) {
-          return '<option value="' + escapeHtml(cat) + '"' + ((vCat || 'Uncategorized') === cat ? ' selected' : '') + '>' + escapeHtml(cat) + '</option>';
-        }).join('') +
-      '</select>' +
-    '</div>';
-    html += '<div class="vendor-row vendor-row-compact" style="align-items:center;gap:6px">' +
-      '<span class="vendor-row-label">Trade</span>' +
-      '<select class="vendor-trade-cat-select" data-vid="' + escapeHtml(String(v.id)) + '">' +
-        VENDOR_TRADE_CATEGORIES.map(function(tc) {
-          return '<option value="' + escapeHtml(tc) + '"' + (vTradeCat === tc ? ' selected' : '') + '>' + escapeHtml(tc) + '</option>';
-        }).join('') +
-      '</select>' +
-    '</div>';
-    if (v.tags) {
-      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">Tags</span><span class="vendor-row-value" style="font-size:10px">' + escapeHtml(v.tags) + '</span></div>';
-    }
-    if (afUrl) {
-      html += '<div class="vendor-row vendor-row-compact"><span class="vendor-row-label">AppFolio</span><span class="vendor-row-value" style="color:var(--text-muted)">Open from vendor details modal</span></div>';
-    }
-    html += '</div>';
-  });
-  if (filtered.length > visible.length) {
-    var remaining = filtered.length - visible.length;
-    html += '<div class="vendor-load-more-wrap"><button class="vendor-load-more-btn" data-vendor-load-more="1">Load ' + Math.min(CONFIG.VENDOR_GRID_LOAD_MORE_STEP, remaining) + ' More (' + remaining + ' remaining)</button></div>';
-  }
-  html += '</div></div>';
-  container.innerHTML = html;
-  // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
+  container.innerHTML = '';
+  renderVendorsGrid(rowData);
 }
 
 function renderNewWOVendorOptions(filterText) {
@@ -22767,75 +22982,6 @@ function wireUpUI() {
     });
   });
 
-  // Vendor grid — card clicks, compliance toggles, category selects
-  (function() {
-    var vendGrid = $('#vendorGrid');
-    if (!vendGrid) return;
-    vendGrid.addEventListener('click', function(e) {
-      var initialBtn = e.target.closest('.vendor-rail-btn[data-vendor-initial]');
-      if (initialBtn) {
-        e.stopPropagation();
-        currentVendorInitial = initialBtn.getAttribute('data-vendor-initial') || '';
-        renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-        return;
-      }
-
-      var moreBtn = e.target.closest('[data-vendor-load-more]');
-      if (moreBtn) {
-        e.stopPropagation();
-        _vendorRenderLimit += CONFIG.VENDOR_GRID_LOAD_MORE_STEP;
-        renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-        return;
-      }
-
-      // Compliance toggle
-      var compBtn = e.target.closest('.vendor-compliance-toggle');
-      if (compBtn) {
-        e.stopPropagation();
-        var vid = compBtn.getAttribute('data-vid');
-        var current = isVendorManuallyCompliant(vid);
-        var newVal;
-        if (current === null) { newVal = true; }
-        else if (current === true) { newVal = false; }
-        else { newVal = null; }
-        saveVendorOverride(vid, { compliant: newVal }).then(function() {
-          renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-          var label = newVal === true ? 'Marked compliant (manual)' : newVal === false ? 'Marked non-compliant (manual)' : 'Reset to API value';
-          showToast(label);
-        });
-        return;
-      }
-      // Vendor card click — open vendor detail modal
-      var card = e.target.closest('.vendor-card');
-      if (card && !e.target.closest('.vendor-cat-select') && !e.target.closest('.vendor-trade-cat-select')) {
-        var vid2 = card.getAttribute('data-vendorid');
-        openVendorModal(vid2);
-      }
-    });
-    vendGrid.addEventListener('change', function(e) {
-      var sel = e.target.closest('.vendor-cat-select');
-      if (sel) {
-        e.stopPropagation();
-        var vid = sel.getAttribute('data-vid');
-        saveVendorOverride(vid, { category: sel.value }).then(function() {
-          renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-          showToast('Category \u2192 ' + sel.value);
-        });
-        return;
-      }
-
-      var tradeSel = e.target.closest('.vendor-trade-cat-select');
-      if (tradeSel) {
-        e.stopPropagation();
-        var tvid = tradeSel.getAttribute('data-vid');
-        saveVendorOverride(tvid, { tradeCategory: tradeSel.value }).then(function() {
-          renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
-          showToast('Trade category \u2192 ' + tradeSel.value);
-        });
-      }
-    });
-  })();
-
   // Webhook data table — expand/collapse buttons
   (function() {
     var whBody = $('#whDataBody');
@@ -23554,7 +23700,9 @@ function wireUpUI() {
   }
 
   /* btnLoadBills removed — billing stripped */
-  $('#vendorSearch').addEventListener('input', debounce(function() { renderVendors(this.value); }, isConstrainedDevice() ? 450 : CONFIG.DEBOUNCE_MS));
+  $('#vendorSearch').addEventListener('input', debounce(function() {
+    fetchVendors({ resetPage: true }).then(function(ok) { if (ok) renderVendors($('#vendorSearch').value); });
+  }, isConstrainedDevice() ? 450 : CONFIG.DEBOUNCE_MS));
   if ($('#vendorCategoryFilter')) {
     $('#vendorCategoryFilter').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
   }
@@ -23562,10 +23710,39 @@ function wireUpUI() {
     $('#vendorComplianceFilter').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
   }
   if ($('#vendorTradeFilter')) {
-    $('#vendorTradeFilter').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+    $('#vendorTradeFilter').addEventListener('change', function() {
+      fetchVendors({ resetPage: true }).then(function(ok) { if (ok) renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+    });
+  }
+  if ($('#vendorPropertyFilter')) {
+    $('#vendorPropertyFilter').addEventListener('change', function() {
+      fetchVendors({ resetPage: true }).then(function(ok) { if (ok) renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+    });
   }
   if ($('#vendorSortMode')) {
-    $('#vendorSortMode').addEventListener('change', function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+    $('#vendorSortMode').addEventListener('change', function() {
+      fetchVendors({ resetPage: true }).then(function(ok) { if (ok) renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+    });
+  }
+  if ($('#vendorPageSize')) {
+    $('#vendorPageSize').addEventListener('change', function() {
+      _vendorDirectoryPageSize = Number(this.value || 50) || 50;
+      fetchVendors({ resetPage: true }).then(function(ok) { if (ok) renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+    });
+  }
+  if ($('#vendorPrevPage')) {
+    $('#vendorPrevPage').addEventListener('click', function() {
+      if (_vendorDirectoryPage <= 1) return;
+      _vendorDirectoryPage -= 1;
+      fetchVendors().then(function(ok) { if (ok) renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+    });
+  }
+  if ($('#vendorNextPage')) {
+    $('#vendorNextPage').addEventListener('click', function() {
+      if (_vendorDirectoryPage >= _vendorDirectoryTotalPages) return;
+      _vendorDirectoryPage += 1;
+      fetchVendors().then(function(ok) { if (ok) renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); });
+    });
   }
   document.addEventListener('visibilitychange', function() {
     if (!document.hidden && _vendorsNeedRender) {
@@ -24146,7 +24323,11 @@ function wireUpUI() {
       managerreview: function() { renderManagerReviewSection(); },
       turnboard: function() { renderTurnPipelineUI(); },
       inspections: function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
-      vendors: function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); }
+      vendors: function() {
+        fetchVendors({ resetPage: true }).then(function(ok) {
+          if (ok) renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+        });
+      }
     },
     renderDashboardKPIs: renderDashboardKPIs,
     updateGlobalGroupIndicator: updateGlobalGroupIndicator,
@@ -24390,7 +24571,7 @@ async function sectionRefresh(section, btn) {
     }
     if (section === 'vendors' || section === 'dashboard') {
       showToast('Refreshing vendors\u2026');
-      await fetchVendors();
+      await fetchVendors({ resetPage: true, refreshCompliance: true });
       renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
     }
     if (section === 'turns' || section === 'dashboard') {
@@ -25287,10 +25468,11 @@ renderDashboardKPIs = function() {
     }
   }
 
-  function populatePMGroupDropdown(currentUuid) {
+  function populatePMGroupDropdown(currentUuid, selectedScopeUuids) {
     currentUuid = currentUuid || '';
     var sel    = document.getElementById('pm-user-group-select');
     var hidden = document.getElementById('pmUserGroupUuid');
+    var scopes = parseScopeUuidList(selectedScopeUuids || (pmUserScopesEl && pmUserScopesEl.value) || '', currentUuid);
     if (!sel) return;
     var groups = (typeof PROPERTY_GROUPS !== 'undefined' ? PROPERTY_GROUPS : []);
     if (!Array.isArray(groups) || !groups.length) {
@@ -25314,12 +25496,22 @@ renderDashboardKPIs = function() {
       sel.appendChild(opt);
     });
     sel.onchange = function() {
-      if (hidden) hidden.value = sel.value;
-      sel.style.borderColor = sel.value ? 'var(--accent, #5c9eff)' : '';
+      var selected = normalizeScopeUuid(sel.value);
+      if (!selected) return;
+      if (!scopes.length) {
+        scopes.push(selected);
+        if (hidden) hidden.value = selected;
+      } else if (scopes.indexOf(selected) === -1) {
+        scopes.push(selected);
+      }
+      if (pmUserScopesEl) pmUserScopesEl.value = scopes.join(', ');
+      sel.value = hidden && hidden.value ? hidden.value : scopes[0];
+      sel.style.borderColor = scopes.length ? 'var(--accent, #5c9eff)' : '';
     };
-    if (hidden) hidden.value = currentUuid;
-    if (currentUuid) {
-      sel.value = currentUuid;
+    if (hidden) hidden.value = scopes[0] || '';
+    if (scopes.length) {
+      if (pmUserScopesEl) pmUserScopesEl.value = scopes.join(', ');
+      sel.value = scopes[0];
       sel.style.borderColor = 'var(--accent, #5c9eff)';
     } else {
       sel.style.borderColor = '';
@@ -25567,7 +25759,7 @@ renderDashboardKPIs = function() {
         if (pmUserGroupUuidEl) pmUserGroupUuidEl.value = tr.getAttribute('data-group-uuid') || '';
         if (pmUserScopesEl) pmUserScopesEl.value = tr.getAttribute('data-scope-uuids') || '';
         if (pmUserActiveEl) pmUserActiveEl.checked = (tr.getAttribute('data-active') || '1') === '1';
-        populatePMGroupDropdown(tr.getAttribute('data-group-uuid') || '');
+        populatePMGroupDropdown(tr.getAttribute('data-group-uuid') || '', tr.getAttribute('data-scope-uuids') || '');
         if (pmUserSaveBtn) pmUserSaveBtn.innerHTML = '<i class="fas fa-save"></i> Update';
         if (pmUserEmailEl) pmUserEmailEl.focus();
         return;
@@ -27525,7 +27717,7 @@ var DispatchControl = {
 
         updateDispatchStats(queueData);
       }
-      if(commsData.ok)DISPATCH.comms=commsData.results||[];
+      if(commsData.ok)DISPATCH.comms=commsData.results||commsData.data||[];
       try {
         var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
         var token = getProxyAccessToken();

@@ -684,6 +684,52 @@ body.theme-neo {
   background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #ffffff 45%));
 }
 
+.billing-vendor-spend-chart {
+  height: 130px;
+}
+
+.billing-vendor-top5 {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.billing-vendor-top5-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.billing-vendor-top5-rank {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.billing-vendor-top5-name {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.billing-vendor-top5-amount {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.billing-vendor-top5-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .dashboard-insight-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -6929,8 +6975,162 @@ html.dark #sec-workorders .hm-ag-theme .ag-grid-scrolling-rows {
   gap: 10px;
 }
 
+.inspection-evidence-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.inspection-severe-badge,
+.inspection-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font: 700 10px/1 var(--font-mono);
+  white-space: nowrap;
+}
+
+.inspection-severe-badge,
+.inspection-status-badge--missing {
+  color: #fff;
+  background: color-mix(in srgb, var(--danger) 86%, #7b1113);
+}
+
+.inspection-severe-badge[data-count="0"] {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, var(--bg-card));
+}
+
+.inspection-status-badge--verified {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 15%, var(--bg-card));
+}
+
+.inspection-disclaimer {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--warning) 10%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 11px;
+  cursor: help;
+}
+
+.inspection-disclaimer-tooltip {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(560px, calc(100vw - 36px));
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
+  border-radius: 6px;
+  background: var(--bg-card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .22);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.inspection-disclaimer:hover .inspection-disclaimer-tooltip,
+.inspection-disclaimer:focus .inspection-disclaimer-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.inspection-history-row {
+  opacity: .58;
+}
+
 .hm-ag-theme--inspections {
   height: clamp(420px, 65vh, 760px);
+}
+
+.hm-ag-theme--vendors {
+  height: clamp(420px, 65vh, 760px);
+}
+
+.vendor-grid-status:empty {
+  display: none;
+}
+
+/* Alternating band marks each vendor_trades group since community AG Grid has no row grouping. */
+.hm-ag-theme--vendors .ag-row.vendor-grid-band-alt {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.vendor-compliance-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+}
+
+.vendor-compliance-badge.is-compliant {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 65%, var(--border));
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+}
+
+.vendor-compliance-badge.is-noncompliant {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 65%, var(--border));
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.vendor-grid-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.vendor-grid-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.vendor-grid-link:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+}
+
+.vendor-grid-expired {
+  color: var(--danger);
+  font-family: var(--font-mono);
+}
+
+.vendor-grid-missing {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 @media (max-width: 1320px) {
