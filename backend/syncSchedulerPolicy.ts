@@ -20,3 +20,12 @@ export function buildRequestedSyncEndpoints(
 
   return Array.from(new Set([...configured, ...required]));
 }
+
+export async function runSequentially<T>(
+  values: readonly T[],
+  run: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) {
+    await run(value);
+  }
+}

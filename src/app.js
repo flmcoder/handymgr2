@@ -2237,23 +2237,33 @@ function forceProxySessionExpiryLockout(contextLabel) {
 function startAutoSync() {
   stopAutoSync(); // clear any existing
   _autoSyncTimer = setInterval(async function() {
-    if (!API_CREDS || !API_VHOST) return; // not unlocked
+    if (!API_CREDS || !API_VHOST || document.hidden || _autoSyncInFlight) return;
+    var activeSection = document.querySelector('.section.active');
+    var activeSectionId = activeSection ? activeSection.id : '';
+    var syncTasks = [];
+
+    if (activeSectionId === 'sec-dashboard' || activeSectionId === 'sec-workorders') {
+      syncTasks.push(fetchWorkOrders());
+    }
+    if (activeSectionId === 'sec-dashboard' || activeSectionId === 'sec-turnboard') {
+      syncTasks.push(fetchTurns(), fetchUpcomingMoveouts(), fetchTurnWorkOrders(), fetchUnitTurnsDB());
+    }
+    if (activeSectionId === 'sec-dashboard' || activeSectionId === 'sec-inspections') {
+      syncTasks.push(fetchInspections());
+    }
+    if (!syncTasks.length) return;
+
+    _autoSyncInFlight = true;
     try {
-      await fetchWorkOrders();
-      await fetchTurns();
-      await fetchUpcomingMoveouts();
-      await fetchTurnWorkOrders();
-      await fetchUnitTurnsDB();
-      await fetchInspections();
-      renderWorkOrders();
-      renderTurnBoard();
-      renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
-      renderDashboardKPIs();
-      var now = new Date();
-      var timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      showToast('Auto-synced at ' + timeStr);
+      await Promise.allSettled(syncTasks);
+      if (activeSectionId === 'sec-workorders') renderWorkOrders();
+      if (activeSectionId === 'sec-turnboard') renderTurnBoard();
+      if (activeSectionId === 'sec-inspections') renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+      if (activeSectionId === 'sec-dashboard') renderDashboardKPIs();
     } catch (err) {
       console.warn('Auto-sync failed:', err.message || err);
+    } finally {
+      _autoSyncInFlight = false;
     }
   }, AUTO_SYNC_INTERVAL_MS);
 }
@@ -4349,6 +4359,8 @@ var WEBHOOK_EVENTS = [];
 var _schemaHealthWarned = false;
 var _webhookPollTimer = null;
 var _autoSyncTimer = null;      // 30-min background selective refresh
+var _webhookPollInFlight = false;
+var _autoSyncInFlight = false;
 var _vendorsLazyLoaded = false; // lazy-load flag — vendors fetched on tab click
 var _inspLazyLoaded = false;   // lazy-load flag — inspections fetched on tab click
 var _estimatesLazyLoaded = false; // lazy-load flag — estimates fetched on tab click
@@ -8991,11 +9003,11 @@ function setupWebhookAutoPoll(intervalSec) {
   _webhookPollErrorCount = 0;
   _webhookPollPaused = false;
   if (intervalSec > 0) {
-    _webhookPollTimer = setInterval(function() {
+    _webhookPollTimer = setInterval(async function() {
       // Skip this tick if we are in an error backoff window
-      if (_webhookPollPaused) return;
-      // Wrap in async IIFE to avoid blocking the interval handler
-      (async function() {
+      if (_webhookPollPaused || _webhookPollInFlight || document.hidden) return;
+      _webhookPollInFlight = true;
+      try {
         var prevCount = WEBHOOK_EVENTS.length;
         var ok = await pollWebhookEvents();
         if (!ok) {
@@ -9061,7 +9073,9 @@ function setupWebhookAutoPoll(intervalSec) {
             showToast('Webhook updated ' + meaningfulEvents.length + ' event(s)', { kind: 'info', iconClass: 'fa-bolt' });
           }
         });
-      })();
+      } finally {
+        _webhookPollInFlight = false;
+      }
     }, intervalSec * 1000);
   }
 }

@@ -4,6 +4,7 @@
 // =============================================================================
 
 import * as echarts from 'echarts/core';
+import { LEGACY_DASHBOARD_CHART_IDS, shouldInitializeLegacyDashboard } from './dashboardLifecycle';
 import { BarChart, PieChart, RadarChart, TreemapChart, EffectScatterChart, FunnelChart, SunburstChart, SankeyChart } from 'echarts/charts';
 import {
   GridComponent,
@@ -2204,6 +2205,9 @@ export function buildWoSankeyOption(wos: WoRecord[]): ECOption {
 // CSS-driven dimensions before ECharts measures them.
 // =============================================================================
 function initDashboardCharts(): void {
+  const availableLegacyMounts = LEGACY_DASHBOARD_CHART_IDS.filter(id => document.getElementById(id));
+  if (!shouldInitializeLegacyDashboard(availableLegacyMounts)) return;
+
   // Mount chart instances now that the DOM is fully painted.
   // Note: These IDs may not exist on all routes/views - mountChart returns null if not found.
   chartOccupancy   = mountChart('dashOccupancyDonut');

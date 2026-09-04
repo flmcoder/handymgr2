@@ -22,7 +22,8 @@ import {
 } from './reportCachePolicy';
 import { filterBillsForPropertyScope, resolveBillScope } from './billScopePolicy';
 import { enforceScopedSession } from './scopedSessionGuard';
-import { buildRequestedSyncEndpoints } from './syncSchedulerPolicy';
+import { isClientAbortError } from './requestErrorPolicy';
+import { buildRequestedSyncEndpoints, runSequentially } from './syncSchedulerPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
 
@@ -8345,8 +8346,11 @@ app.use((_req: Request, res: Response) => {
   res.status(404).json({ ok: false, error: 'Route not found' });
 });
 
-app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
-  logTunnelError(error, 'express-middleware');
+app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
+  if (req.aborted || res.destroyed || isClientAbortError(error)) return;
+
+  logTunnelError(error, req.originalUrl || 'express-middleware');
+  if (res.headersSent || res.writableEnded) return;
   res.status(500).json({ ok: false, error: error.message || 'Unhandled server error' });
 });
 
@@ -8384,6 +8388,7 @@ function startRecurringSyncScheduler(): void {
   const maxPages = Math.max(0, Number(process.env.SYNC_SCHEDULER_MAX_PAGES || '0') || 0);
   const runOnBoot = !/^(0|false|no|off)$/i.test(String(process.env.SYNC_SCHEDULER_RUN_ON_BOOT || 'true').trim());
   const inFlight = new Set<string>();
+  let tickInFlight = false;
   syncSchedulerState.intervalMinutes = intervalMinutes;
   syncSchedulerState.endpoints = endpoints.slice();
   syncSchedulerState.rejectedEndpoints = endpointSelection.rejected.slice();
@@ -8413,15 +8418,24 @@ function startRecurringSyncScheduler(): void {
   }
 
   async function tick(triggerType: string): Promise<void> {
+    if (tickInFlight) {
+      console.warn(`[server:sync-scheduler] skipped ${triggerType} tick because the previous cycle is still running`);
+      return;
+    }
+    tickInFlight = true;
     syncSchedulerState.lastTickTriggerType = triggerType;
     syncSchedulerState.lastTickStartedAt = new Date().toISOString();
-    await ensurePropertyGroupsTable();
-    const endpointGroups = getSchedulerEndpointGroups(endpoints);
-    for (const endpointKey of endpointGroups.v0.concat(endpointGroups.other)) {
-      await runEndpoint(endpointKey, triggerType);
+    try {
+      await ensurePropertyGroupsTable();
+      const endpointGroups = getSchedulerEndpointGroups(endpoints);
+      await runSequentially(
+        endpointGroups.v0.concat(endpointGroups.other, endpointGroups.v2),
+        (endpointKey) => runEndpoint(endpointKey, triggerType),
+      );
+      syncSchedulerState.lastTickFinishedAt = new Date().toISOString();
+    } finally {
+      tickInFlight = false;
     }
-    await Promise.all(endpointGroups.v2.map((endpointKey) => runEndpoint(endpointKey, triggerType)));
-    syncSchedulerState.lastTickFinishedAt = new Date().toISOString();
   }
 
   if (runOnBoot) {
