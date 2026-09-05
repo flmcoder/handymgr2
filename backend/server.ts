@@ -42,6 +42,7 @@ import { parseVendorDirectoryQuery, evaluateVendorCompliance } from './vendorDir
 import { parseTenantCommsQuery } from './tenantCommsPolicy';
 import { parseInspectionPage } from './inspectionPolicy';
 import { classifyBillingVendorBucket, parseBillingSpendTimeframe } from './billingVendorSpendPolicy';
+import { setStaticCacheHeaders } from './staticCache';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
@@ -8213,6 +8214,7 @@ app.get('/api/local/property_stats', async (req: Request, res: Response) => {
 // Serve built frontend assets when running monolith mode on Render.
 app.use(express.static(DIST_DIR, {
   index: 'index.html',
+  setHeaders: setStaticCacheHeaders,
 }));
 
 // Units

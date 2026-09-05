@@ -707,16 +707,88 @@ function registerOfflineServiceWorker() {
 
   var basePath = String(location.pathname || '/').replace(/[^/]*$/, '');
   var swUrl = basePath + 'sw.js?v=' + encodeURIComponent(APP_VERSION);
+  var updateRegistration = null;
+  var updateReloadRequested = false;
+
+  function ensureUpdatePrompt() {
+    var existing = document.getElementById('appUpdatePrompt');
+    if (existing) return existing;
+
+    var prompt = document.createElement('section');
+    prompt.id = 'appUpdatePrompt';
+    prompt.className = 'app-update-prompt';
+    prompt.hidden = true;
+    prompt.setAttribute('role', 'alertdialog');
+    prompt.setAttribute('aria-live', 'assertive');
+    prompt.setAttribute('aria-labelledby', 'appUpdatePromptTitle');
+    prompt.setAttribute('aria-describedby', 'appUpdatePromptMessage');
+    prompt.innerHTML =
+      '<div class="app-update-prompt__copy">' +
+        '<strong id="appUpdatePromptTitle">Update Available</strong>' +
+        '<span id="appUpdatePromptMessage">Please Refresh to load the latest version.</span>' +
+      '</div>' +
+      '<button type="button" id="appUpdateRefreshButton" class="app-update-prompt__button">' +
+        '<i class="fas fa-rotate" aria-hidden="true"></i><span>Refresh</span>' +
+      '</button>';
+    document.body.appendChild(prompt);
+
+    prompt.querySelector('#appUpdateRefreshButton').addEventListener('click', function() {
+      var waitingWorker = updateRegistration && (updateRegistration.waiting || updateRegistration.installing);
+      updateReloadRequested = true;
+      if (waitingWorker) {
+        waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+      }
+      window.setTimeout(function() {
+        window.location.reload();
+      }, 1200);
+    });
+
+    return prompt;
+  }
+
+  function showUpdatePrompt(registration) {
+    updateRegistration = registration;
+    var prompt = ensureUpdatePrompt();
+    prompt.hidden = false;
+    prompt.classList.add('show');
+  }
+
+  function watchInstallingWorker(registration) {
+    var installingWorker = registration.installing;
+    if (!installingWorker) return;
+    installingWorker.addEventListener('statechange', function() {
+      if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+        showUpdatePrompt(registration);
+      }
+    });
+  }
 
   navigator.serviceWorker.register(swUrl)
-    .then(function(reg) {
-      if (reg && reg.waiting) {
-        showToast('Offline mode ready', { kind: 'info', duration: 1800, iconClass: 'fa-wifi' });
-      }
+    .then(function(registration) {
+      updateRegistration = registration;
+      if (registration.waiting) showUpdatePrompt(registration);
+      registration.addEventListener('updatefound', function() {
+        watchInstallingWorker(registration);
+      });
+      watchInstallingWorker(registration);
+
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') {
+          registration.update().catch(function(error) {
+            console.warn('Service worker update check failed:', error && error.message ? error.message : error);
+          });
+        }
+      });
     })
     .catch(function(err) {
       console.warn('Service worker registration failed:', err && err.message ? err.message : err);
     });
+
+  navigator.serviceWorker.addEventListener('controllerchange', function() {
+    if (!updateReloadRequested) return;
+    updateReloadRequested = false;
+    window.location.reload();
+  });
 
   navigator.serviceWorker.addEventListener('message', function(evt) {
     var data = evt && evt.data ? evt.data : null;
