@@ -1,4 +1,5 @@
 import { queryClient } from './db';
+import { formatSignInLine } from './logNoisePolicy';
 
 type PmProxyUser = {
   user_uuid: string;
@@ -526,6 +527,7 @@ export async function handleDeviceSetup(req: Request): Promise<any> {
   const userName = getBodyField(body, 'user_name', 'userName', 'user') || 'trusted-device';
   const token = generateUuid();
   await insertTrustedDeviceSession({ token, userName, role: 'full' });
+  console.log(formatSignInLine({ method: 'device_setup', userName, role: 'full' }));
   return { ok: true, token, user_name: userName, created_at: new Date().toISOString() };
 }
 
@@ -646,12 +648,14 @@ export async function handleDeviceOtpVerify(req: Request): Promise<any> {
   let token = generateUuid();
   try {
     await insertTrustedDeviceSession({ token, userName, role, loginEmail: email, propertyGroupUuid: scopeUuid, phone });
+    console.log(formatSignInLine({ method: 'otp', userName, role, email, scopeUuid }));
   } catch (err) {
     const fallback = await mintSignedToken(role, userName);
     if (!fallback) {
       return { ok: false, status: 503, error: 'OTP verified but session token could not be created. Configure FRONTEND_PROXY_SECRET or restore database access.' };
     }
     token = fallback;
+    console.log(formatSignInLine({ method: 'otp', userName, role, email, scopeUuid, tokenKind: 'signed-fallback' }));
   }
   return { ok: true, token, user_name: userName, email, role, property_group_uuid: scopeUuid, phone, created_at: new Date().toISOString() };
 }
@@ -718,10 +722,14 @@ export async function handleVerifyRole(req: Request): Promise<any> {
   try {
     const token = generateUuid();
     await insertTrustedDeviceSession({ token, userName, role: matchedRole });
+    console.log(formatSignInLine({ method: 'password', userName, role: matchedRole }));
     return { ok: true, role: matchedRole, token };
   } catch {
     const signedToken = await mintSignedToken(matchedRole, userName);
-    if (signedToken) return { ok: true, role: matchedRole, token: signedToken };
+    if (signedToken) {
+      console.log(formatSignInLine({ method: 'password', userName, role: matchedRole, tokenKind: 'signed-fallback' }));
+      return { ok: true, role: matchedRole, token: signedToken };
+    }
     return { ok: false, status: 503, error: 'Password verified but session token could not be created. Check database write access or set FRONTEND_PROXY_SECRET.' };
   }
 }

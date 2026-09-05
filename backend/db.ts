@@ -95,6 +95,9 @@ export const queryClient = postgres({
   idle_timeout: Number(process.env.DB_IDLE_TIMEOUT || 20),
   connect_timeout: Number(process.env.DB_CONNECT_TIMEOUT || 10),
   prepare: false,
+  // Swallow non-critical schema notices (e.g. 42P07 "relation already exists")
+  // emitted by idempotent migrations on every server restart.
+  onnotice: () => {},
 });
 
 export const db = drizzle(queryClient, { schema });

@@ -24,6 +24,7 @@ import { filterBillsForPropertyScope, resolveBillScope } from './billScopePolicy
 import { enforceScopedSession } from './scopedSessionGuard';
 import { isClientAbortError } from './requestErrorPolicy';
 import { buildRequestedSyncEndpoints, runSequentially } from './syncSchedulerPolicy';
+import { formatSyncSummaryLine, shouldLogSyncSummary } from './logNoisePolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
 import { TURN_ENGINE_SQL } from './turnEngineQuery';
@@ -9110,7 +9111,11 @@ function startRecurringSyncScheduler(): void {
         ...summary,
         updated_at: new Date().toISOString(),
       };
-      console.log('[server:sync-scheduler] completed', summary);
+      // Condense scheduler output to a single line, and only when something
+      // actually changed or failed — skips the noisy "0 rows upserted" ticks.
+      if (shouldLogSyncSummary(summary)) {
+        console.log(formatSyncSummaryLine(summary.endpointKey, summary));
+      }
     } catch (error) {
       syncSchedulerState.lastError = `${endpointKey}: ${String((error as any)?.message || error)}`;
       console.error('[server:sync-scheduler] failed', endpointKey, String((error as any)?.message || error));
