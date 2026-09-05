@@ -4310,15 +4310,24 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
   display: inline-flex; align-items: center;
 }
 
-/* Card center: stage dots */
-.pipe-card-stages {
-  flex: 1; display: flex; justify-content: space-between; align-items: center;
-  max-width: 420px; padding: 0 8px; position: relative;
-}
-.pipe-card-stages::before {
-  content: ''; position: absolute; top: 50%; left: 20px; right: 20px;
-  height: 2px; background: var(--border); z-index: 0;
-}
+/* Card center: server-authoritative turn engine */
+.turn-engine-summary { flex: 1; min-width: 0; padding: 0 10px; }
+.turn-milestone-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-family: var(--font-mono); font-size: 10px; font-weight: 700; color: var(--text-secondary); }
+.turn-milestone-grid { display: grid; grid-template-columns: repeat(6, minmax(72px, 1fr)); gap: 4px; }
+.turn-milestone-pill { min-width: 0; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-input); color: var(--text-muted); font-size: 9px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turn-milestone-pill i { width: 12px; margin-right: 3px; text-align: center; }
+.turn-milestone-pill.completed { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); background: var(--success-dim); color: var(--success); }
+.turn-milestone-pill.in_progress { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); background: var(--warning-dim); color: var(--warning); }
+.turn-engine-pending { padding: 10px; border: 1px dashed var(--border); color: var(--text-muted); font-size: 10px; text-align: center; }
+.turn-cost-split { display: flex; gap: 16px; margin-top: 7px; font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--text-primary); }
+.turn-cost-split span { display: inline-flex; gap: 5px; }
+.turn-cost-split small { color: var(--text-muted); font-size: 9px; font-weight: 600; text-transform: uppercase; }
+.turn-compliance-badges { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 6px; }
+.turn-source-badge, .turn-rogue-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 5px; border-radius: 4px; font-size: 8px; font-weight: 700; line-height: 1.2; }
+.turn-source-badge.native { background: var(--success-dim); color: var(--success); }
+.turn-source-badge.shadow { background: var(--warning-dim); color: var(--warning); }
+.turn-rogue-badge { background: var(--danger-dim); color: var(--danger); animation: turn-rogue-pulse 1.8s ease-in-out infinite; }
+@keyframes turn-rogue-pulse { 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent); } }
 .pipe-dot {
   width: 26px; height: 26px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
@@ -4355,6 +4364,11 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 .pipe-card-cost {
   font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
 }
+.turn-deposit-clock { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-align: left; }
+.turn-deposit-clock small { display: block; font-size: 8px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); }
+.turn-deposit-clock.green { color: var(--success); }
+.turn-deposit-clock.yellow { color: var(--warning); }
+.turn-deposit-clock.red { color: var(--danger); }
 
 /* Expanded detail panel */
 .pipe-detail {
@@ -4428,8 +4442,10 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
   .pipe-stage-legend { display: none; }
   .pipe-card { flex-direction: column; align-items: flex-start; gap: 6px; }
   .pipe-card-unit { min-width: unset; max-width: unset; }
-  .pipe-card-stages { max-width: 100%; width: 100%; }
-  .pipe-card-status { align-items: flex-start; flex-direction: row; gap: 10px; }
+  .turn-engine-summary { width: 100%; padding: 4px 0; }
+  .turn-milestone-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .turn-cost-split { justify-content: space-between; }
+  .pipe-card-status { width: 100%; align-items: flex-start; text-align: left; }
   .pipe-legend-stages { max-width: unset; }
 }
 

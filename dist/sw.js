@@ -1,4 +1,4 @@
-const HM_CACHE_VERSION = "hm-static-v9.8.24";
+const HM_CACHE_VERSION = "hm-static-v9.8.25";
 const HM_BASE_PATH = new URL(self.registration.scope).pathname;
 const HM_SHELL_URL = HM_BASE_PATH + "index.html";
 const HM_STATIC_ASSETS = [

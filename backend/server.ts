@@ -26,6 +26,18 @@ import { isClientAbortError } from './requestErrorPolicy';
 import { buildRequestedSyncEndpoints, runSequentially } from './syncSchedulerPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
+import { TURN_ENGINE_SQL } from './turnEngineQuery';
+import {
+  buildMagicPortalSmsMessage,
+  consumeMagicTokenTransaction,
+  createMagicPortalSession,
+  ensureMagicPortalTables,
+  findMagicPortalToken,
+  normalizePortalPayload,
+  renderMagicPortalHtml,
+  sendMagicPortalSms,
+  type MagicPortalInput,
+} from './magicPortal';
 import { parseVendorDirectoryQuery, evaluateVendorCompliance } from './vendorDirectoryPolicy';
 import { parseTenantCommsQuery } from './tenantCommsPolicy';
 import { parseInspectionPage } from './inspectionPolicy';
@@ -3220,6 +3232,28 @@ async function respondSessionInfo(req: Request, res: Response): Promise<void> {
   res.json({ ok: true, authenticated: true, session });
 }
 
+const magicPortalJson = express.json({ limit: '64kb' });
+const magicPortalForm = express.urlencoded({ extended: false, limit: '64kb' });
+const magicPortalLegacyActions = new Set([
+  'portal_validate',
+  'portal_status',
+  'portal_schedule',
+  'portal_reschedule',
+  'portal_note',
+  'portal_reassign_request',
+]);
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const action = String(req.query?.action || '').trim();
+  const isPortalRequest = req.path.startsWith('/api/magic-portal') || magicPortalLegacyActions.has(action);
+  if (req.method !== 'POST' || !isPortalRequest) {
+    next();
+    return;
+  }
+  const parser = req.is('application/x-www-form-urlencoded') ? magicPortalForm : magicPortalJson;
+  parser(req, res, next);
+});
+
 app.use(express.json({ limit: '10mb' }));
 
 const allowedOrigins = new Set([
@@ -3249,6 +3283,175 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
 }));
+
+function readMagicPortalInput(req: Request): MagicPortalInput {
+  const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+  return {
+    woId: String(body.wo_id || '').trim(),
+    woNumber: String(body.wo_number || '').trim(),
+    techId: String(body.tech_id || '').trim(),
+    techName: String(body.tech_name || '').trim(),
+    techPhone: String(body.tech_phone || '').trim(),
+    tenantName: String(body.tenant_name || 'Resident').trim(),
+    tenantPhone: String(body.tenant_phone || '').trim(),
+    propertyAddress: String(body.property_address || '').trim(),
+  };
+}
+
+async function respondGenerateMagicPortal(req: Request, res: Response): Promise<void> {
+  const session = await requireProxySession(req, res);
+  if (!session) return;
+  if (String(session.role || '').toLowerCase() === 'pm_readonly') {
+    res.status(403).json({ ok: false, error: 'Read-only PM sessions cannot generate Magic Portal links' });
+    return;
+  }
+  if (!applyProxySessionScope(req, res, session)) return;
+
+  const input = readMagicPortalInput(req);
+  const propertyGroupId = getPropertyGroupFilter(req) || null;
+  const workOrderRows = await queryClient.unsafe(
+    `SELECT id, work_order_uuid, wo_number, property_group_id, raw_json
+       FROM appfolio_work_orders
+      WHERE (id = $1 OR work_order_uuid = $1)
+        AND ($2::text IS NULL OR property_group_id = $2)
+      LIMIT 1`,
+    [input.woId, propertyGroupId],
+  );
+  const workOrder = (workOrderRows as any[])[0];
+  if (!workOrder) {
+    res.status(404).json({ ok: false, error: 'Work order was not found in the authorized property scope' });
+    return;
+  }
+  const rawWorkOrder = workOrder.raw_json && typeof workOrder.raw_json === 'object' ? workOrder.raw_json : {};
+  input.woId = String(workOrder.work_order_uuid || workOrder.id || input.woId);
+  input.woNumber = String(workOrder.wo_number || input.woNumber || '');
+  input.propertyAddress = String(
+    rawWorkOrder.PropertyAddress
+      || rawWorkOrder.property_address
+      || rawWorkOrder.Address
+      || input.propertyAddress
+      || '',
+  ).trim();
+
+  await ensureMagicPortalTables(queryClient as any);
+  const portalSession = await createMagicPortalSession(queryClient as any, input);
+  let smsMessageId = '';
+  const shouldSendSms = (req.body as any)?.send_sms === true || String((req.body as any)?.send_sms || '') === '1';
+
+  if (shouldSendSms) {
+    if (!input.techPhone) {
+      res.status(400).json({ ok: false, error: 'tech_phone is required when send_sms=true' });
+      return;
+    }
+    const message = buildMagicPortalSmsMessage(input.woNumber || input.woId, portalSession.magicLink);
+    try {
+      const smsResult = await sendMagicPortalSms(input.techPhone, message);
+      smsMessageId = smsResult.messageId;
+    } catch (error) {
+      console.error('[magic-portal] SMS hand-off failed before queue confirmation', {
+        wo_id: input.woId,
+        tech_id: input.techId,
+        error: String((error as any)?.message || error),
+      });
+      res.status(502).json({
+        ok: false,
+        error: String((error as any)?.message || error || 'Magic Portal SMS dispatch failed'),
+        magic_link: portalSession.magicLink,
+        short_code: portalSession.shortCode,
+        expires_at: portalSession.expiresAt,
+      });
+      return;
+    }
+  }
+
+  res.status(200).json({
+    ok: true,
+    magic_link: portalSession.magicLink,
+    short_code: portalSession.shortCode,
+    expires_at: portalSession.expiresAt,
+    sms_sent: shouldSendSms,
+    rc_message_id: smsMessageId,
+  });
+}
+
+async function respondMagicPortalSubmission(req: Request, res: Response, compatibilityAction = ''): Promise<void> {
+  const normalized = normalizePortalPayload(req.body);
+  const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+  if (compatibilityAction === 'portal_schedule' || compatibilityAction === 'portal_reschedule') {
+    normalized.status = 'Scheduled';
+    normalized.action = compatibilityAction === 'portal_schedule' ? 'scheduled' : 'rescheduled';
+    normalized.noteText = [body.scheduled_date, body.scheduled_window].filter(Boolean).join(' · ');
+  } else if (compatibilityAction === 'portal_reassign_request') {
+    normalized.status = 'Waiting';
+    normalized.action = 'reassignment_requested';
+    normalized.noteText = [body.reason, body.details].filter(Boolean).join(': ').slice(0, 1200);
+  } else if (compatibilityAction === 'portal_note') {
+    normalized.status = '';
+    normalized.action = 'note';
+  }
+
+  try {
+    await ensureMagicPortalTables(queryClient as any);
+    const result = await consumeMagicTokenTransaction(queryClient as any, normalized);
+    res.status(200).json({
+      ok: true,
+      received: true,
+      work_order_id: result.workOrderId,
+      status: result.status,
+    });
+  } catch (error) {
+    const message = String((error as any)?.message || error || 'Magic Portal submission failed');
+    const status = /not found/i.test(message) ? 404 : /already been used|expired/i.test(message) ? 409 : /required|invalid/i.test(message) ? 400 : 500;
+    console.error('[magic-portal] submission failed; transaction rolled back', {
+      action: normalized.action,
+      error: message,
+    });
+    res.status(status).json({ ok: false, received: false, error: message });
+  }
+}
+
+app.get('/s/:shortCode', async (req: Request, res: Response) => {
+  try {
+    await ensureMagicPortalTables(queryClient as any);
+    const tokenRow = await findMagicPortalToken(queryClient as any, { shortCode: req.params.shortCode });
+    if (!tokenRow) {
+      res.status(404).type('text/plain').send('Magic Portal link not found.');
+      return;
+    }
+    res.redirect(302, `/magic-portal?token=${encodeURIComponent(String(tokenRow.token || ''))}`);
+  } catch (error) {
+    console.error('[magic-portal] short-link lookup failed', String((error as any)?.message || error));
+    res.status(500).type('text/plain').send('Magic Portal is temporarily unavailable.');
+  }
+});
+
+app.get('/magic-portal', async (req: Request, res: Response) => {
+  try {
+    await ensureMagicPortalTables(queryClient as any);
+    const tokenRow = await findMagicPortalToken(queryClient as any, { token: String(req.query.token || '') });
+    if (!tokenRow) {
+      res.status(404).type('text/plain').send('Magic Portal token not found.');
+      return;
+    }
+    res.status(200).type('html').send(renderMagicPortalHtml(tokenRow));
+  } catch (error) {
+    console.error('[magic-portal] portal render failed', String((error as any)?.message || error));
+    res.status(500).type('text/plain').send('Magic Portal is temporarily unavailable.');
+  }
+});
+
+app.post('/api/magic-portal/generate', magicPortalJson, magicPortalForm, async (req: Request, res: Response) => {
+  try {
+    await respondGenerateMagicPortal(req, res);
+  } catch (error) {
+    console.error('[magic-portal] link generation failed', String((error as any)?.message || error));
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Magic Portal link generation failed') });
+  }
+});
+
+app.post('/api/magic-portal/submit', magicPortalJson, magicPortalForm, async (req: Request, res: Response) => {
+  await respondMagicPortalSubmission(req, res);
+});
 
 const legacyActionRoutes = {
   units: async (req: Request, res: Response) => {
@@ -3931,6 +4134,45 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
       logTunnelError(error, '/api?action=session_info');
       res.status(500).json({ ok: false, error: 'Session validation failed' });
     }
+    return;
+  }
+
+  if (action === 'generate_magic_link' || action === 'handleGenerateMagicLink') {
+    try {
+      await respondGenerateMagicPortal(req, res);
+    } catch (error) {
+      console.error('[magic-portal] legacy link generation failed', String((error as any)?.message || error));
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Magic Portal link generation failed') });
+    }
+    return;
+  }
+
+  if (action === 'portal_validate') {
+    try {
+      await ensureMagicPortalTables(queryClient as any);
+      const tokenRow = await findMagicPortalToken(queryClient as any, { token: String((req.body as any)?.token || '') });
+      const valid = !!tokenRow && tokenRow.used !== true && new Date(tokenRow.expires_at).getTime() > Date.now();
+      res.status(200).json({
+        ok: valid,
+        valid,
+        portal: valid ? {
+          wo_id: String(tokenRow.wo_id || ''),
+          wo_number: String(tokenRow.wo_number || ''),
+          tech_name: String(tokenRow.tech_name || ''),
+          tenant_name: String(tokenRow.tenant_name || ''),
+          property_address: String(tokenRow.property_address || ''),
+          expires_at: tokenRow.expires_at,
+        } : undefined,
+        error: valid ? undefined : 'Magic Portal token is invalid, expired, or used',
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, valid: false, error: String((error as any)?.message || error) });
+    }
+    return;
+  }
+
+  if (['portal_status', 'portal_schedule', 'portal_reschedule', 'portal_note', 'portal_reassign_request'].includes(action)) {
+    await respondMagicPortalSubmission(req, res, action);
     return;
   }
 
@@ -6166,6 +6408,66 @@ app.get('/api/local/units', async (req: Request, res: Response) => {
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local units query failed') });
   }
 });
+app.get('/api/local/v2/turns', async (req: Request, res: Response) => {
+  const days = parseDays(req.query.days, 365);
+  const limit = parseLimit(req.query.limit, 1000, 3000);
+  const statusFilter = String(req.query.status || '').trim();
+  const propertyGroupId = getPropertyGroupFilter(req) || null;
+
+  try {
+    const rows = await queryClient.unsafe(TURN_ENGINE_SQL, [
+      days,
+      limit,
+      propertyGroupId,
+      statusFilter,
+    ]);
+    const results = (rows as any[]).map((row) => ({
+      turn_key: String(row.turn_key || ''),
+      unit_turn_id: row.unit_turn_id ? String(row.unit_turn_id) : '',
+      unit_id: String(row.unit_id || ''),
+      property_id: String(row.property_id || ''),
+      unit_name: String(row.unit_name || ''),
+      property_name: String(row.property_name || ''),
+      move_out_date: asIso(row.move_out_date),
+      move_in_date: asIso(row.next_move_in_date),
+      expected_move_in_date: asIso(row.next_move_in_date),
+      next_resident_name: String(row.next_resident_name || ''),
+      inspection_date: asIso(row.inspection_date),
+      turn_end_date: asIso(row.turn_end_date),
+      status: String(row.status || 'In Progress'),
+      unit_turn_status: String(row.unit_turn_status || ''),
+      milestones: Array.isArray(row.milestones) ? row.milestones : [],
+      milestones_completed: Number(row.milestones_completed || 0),
+      completion_percent: Number(row.completion_percent || 0),
+      work_order_count: Number(row.work_order_count || 0),
+      swept_work_orders: Array.isArray(row.swept_work_orders) ? row.swept_work_orders : [],
+      in_house_cost: Number(row.in_house_cost || 0),
+      third_party_cost: Number(row.third_party_cost || 0),
+      all_work_orders_completed: !!row.all_work_orders_completed,
+      has_current_resident: !!row.has_current_resident,
+      strict_completed: !!row.strict_completed,
+      compliance_status: row.compliance_status || {
+        is_native_turn: !!row.unit_turn_id,
+        rogue_wos_detected: 0,
+      },
+      _source: 'postgres_turn_engine',
+    }));
+
+    res.json({
+      ok: true,
+      results,
+      count: results.length,
+      source: 'postgres_turn_engine',
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/v2/turns');
+    res.status(500).json({
+      ok: false,
+      error: String((error as any)?.message || error || 'Turn engine query failed'),
+    });
+  }
+});
+
 app.get('/api/local/turns', async (req: Request, res: Response) => {
   const days = parseDays(req.query.days, 90);
   const limit = parseLimit(req.query.limit, 3000);

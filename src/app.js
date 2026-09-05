@@ -2667,7 +2667,7 @@ function getLocalReadActionPath(action) {
     recent_tasks: '/api/local/recent_tasks',
     turns: '/api/local/turns',
     turn_work_orders: '/api/local/turn_work_orders',
-    unit_turns: '/api/local/turns',
+    unit_turns: '/api/local/v2/turns',
     turns_incremental: '/api/local/turns',
     unit_turns_history: '/api/local/turns_history',
     turn_records: '/api/local/turn_records',
@@ -4860,7 +4860,7 @@ var CONFIG = {
   TURN_TARGET_DAYS: 30,         // default target completion days
   TURN_STALLED_DAYS: 7,         // days before a turn is flagged stalled
   TURN_WARNING_DAYS: 14,        // elapsed days before amber warning
-  DEPOSIT_BUSINESS_DAYS: 21,    // AZ deposit deadline: 21 business days
+  DEPOSIT_BUSINESS_DAYS: 14,    // AZ deposit deadline: 14 business days
   DEPOSIT_HOLIDAYS: [           // company holidays (YYYY-MM-DD) — update annually
     '2026-01-01','2026-01-19','2026-02-16','2026-05-25','2026-07-03',
     '2026-09-07','2026-11-26','2026-11-27','2026-12-24','2026-12-25'
@@ -4923,7 +4923,7 @@ function isConstrainedDevice() {
   return !!(narrow || touch);
 }
 
-// 21-business-day deposit deadline countdown from move-out date
+// 14-business-day deposit deadline countdown from move-out date
 // Returns { deadline, businessDaysLeft, calendarDaysLeft, overdue (bool), pct }
 function calculateDepositDeadline(moveOutDateStr) {
   if (!moveOutDateStr) return null;
@@ -7815,11 +7815,15 @@ async function fetchTurnWorkOrders() {
 async function fetchUnitTurnsDB() {
   try {
     setApiStatus('loading', 'Loading unit turn tracker…');
-    var data = await proxyAction('unit_turns', { days: '90', limit: 100 });
+    var data = await proxyAction('unit_turns', { days: '365', limit: 1000 });
     var results = data.results || data.data || [];
     UNIT_TURN_TRACKER_BY_KEY = {};
     UNIT_TURNS_DB = results.map(function(t) {
       var linked = Array.isArray(t.linked_work_orders) ? t.linked_work_orders : [];
+      var swept = Array.isArray(t.swept_work_orders) ? t.swept_work_orders : [];
+      var compliance = t.compliance_status && typeof t.compliance_status === 'object'
+        ? t.compliance_status
+        : {};
       var normalized = {
         id: t.tracking_uuid || t.Id || t.id || '',
         trackingUuid: t.tracking_uuid || '',
@@ -7849,7 +7853,33 @@ async function fetchUnitTurnsDB() {
         targetDays: parseInt(t.target_days_to_complete || t.TargetDaysToComplete || 0, 10) || 0,
         turnEnd: t.turn_end_date || t.TurnEndDate || t.turnEnd || '',
         link: t.link || t.Link || '',
-        milestones: t.milestones || {},
+        milestones: Array.isArray(t.milestones) ? {} : (t.milestones || {}),
+        milestones11: Array.isArray(t.milestones) ? t.milestones : [],
+        milestonesCompleted: parseInt(t.milestones_completed || 0, 10) || 0,
+        completionPercent: parseInt(t.completion_percent || 0, 10) || 0,
+        inHouseCost: Number(t.in_house_cost || 0),
+        thirdPartyCost: Number(t.third_party_cost || 0),
+        strictCompleted: !!t.strict_completed,
+        allWorkOrdersCompleted: !!t.all_work_orders_completed,
+        hasCurrentResident: !!t.has_current_resident,
+        isNativeTurn: compliance.is_native_turn === true,
+        rogueWorkOrders: parseInt(compliance.rogue_wos_detected || 0, 10) || 0,
+        nextResidentName: t.next_resident_name || '',
+        sweptWorkOrders: swept.map(function(w) {
+          return {
+            id: w.wo_number || w.id || '',
+            dbApiId: w.work_order_uuid || '',
+            source: 'shadow_engine',
+            status: w.status || '',
+            description: w.description || '',
+            created: w.created_at || '',
+            vendor: w.vendor_name || '',
+            vendorTrade: w.vendor_trade || '',
+            unitTurnCategory: w.unit_turn_category || '',
+            vendorBillAmount: Number(w.vendor_bill_amount || 0),
+            cost: Number(w.cost || 0)
+          };
+        }),
         linkedWorkOrders: linked.map(function(w) {
           return {
             id: w.wo_id || w.id || '',
@@ -7862,6 +7892,31 @@ async function fetchUnitTurnsDB() {
       };
       if (normalized.turnKey) UNIT_TURN_TRACKER_BY_KEY[normalized.turnKey] = normalized;
       return normalized;
+    });
+
+    UNIT_TURNS_DB.forEach(function(engineTurn) {
+      var existing = TURNS.find(function(turn) {
+        if (engineTurn.unitTurnId && String(turn.unitTurnId || '') === String(engineTurn.unitTurnId)) return true;
+        return String(turn.unitId || '') === String(engineTurn.unitId || '') &&
+          String(turn.propertyId || '') === String(engineTurn.propertyId || '') &&
+          String(turn.moveOut || '').slice(0, 10) === String(engineTurn.moveOut || '').slice(0, 10);
+      });
+      if (existing) return;
+      TURNS.push({
+        unitTurnId: engineTurn.unitTurnId,
+        unitId: engineTurn.unitId,
+        propertyId: engineTurn.propertyId,
+        unit: engineTurn.unit,
+        property: engineTurn.property,
+        moveOut: engineTurn.moveOut,
+        expectedMoveIn: engineTurn.expectedMoveIn,
+        turnEnd: engineTurn.strictCompleted ? (engineTurn.turnEnd || engineTurn.moveIn || '') : '',
+        status: engineTurn.status,
+        totalBilled: String(engineTurn.inHouseCost + engineTurn.thirdPartyCost),
+        isRegisteredUnitTurn: engineTurn.isNativeTurn,
+        registeredUnitTurnId: engineTurn.unitTurnId,
+        _shadowEngine: true
+      });
     });
 
     // Merge tracker data into TURNS array by unit_turn_id or unit/property key
@@ -19544,7 +19599,18 @@ function buildTurnPipeline() {
     if (moveOutDate && !isNaN(moveOutDate.getTime()) && moveOutDate < turnYearStart) {
       return; // Exclude prior-year turns from active board and badge counts
     }
-    var matchingWOs = findMatchingWOs(key, unit, property, propId, unitId, moveOutDate, turnData);
+    var dbTurnMatch = null;
+    if (UNIT_TURNS_DB.length > 0) {
+      dbTurnMatch = UNIT_TURNS_DB.find(function(u) {
+        if (turnData && turnData.unitTurnId && u.unitTurnId && String(u.unitTurnId) === String(turnData.unitTurnId)) return true;
+        return unitId && String(u.unitId) === String(unitId) &&
+          (!propId || String(u.propertyId) === String(propId)) &&
+          String(u.moveOut || '').slice(0, 10) === String(moveOut || '').slice(0, 10);
+      }) || null;
+    }
+    var matchingWOs = dbTurnMatch && dbTurnMatch.sweptWorkOrders.length > 0
+      ? dbTurnMatch.sweptWorkOrders.slice()
+      : findMatchingWOs(key, unit, property, propId, unitId, moveOutDate, turnData);
     var matchingInsp = findMatchingInsp(unit, property);
     var stages = deriveStages(moveOut, matchingWOs, matchingInsp, isUpcoming);
 
@@ -19612,7 +19678,7 @@ function buildTurnPipeline() {
     var allWOsDone = isTurnFullyComplete(matchingWOs);
     // A turn is CONFIRMED when AppFolio is tracking it (comes from unit_turn_detail report)
     // OR when a post-move-out inspection exists for that unit (the confirmation gate).
-    var isConfirmed = (turnData !== null) || stages.inspection.done;
+    var isConfirmed = (turnData !== null) || stages.inspection.done || !!dbTurnMatch;
     var isOnRadar = !isConfirmed; // watching but not yet a confirmed active turn
     // Completed requires confirmation — unconfirmed upcoming never counts as done
     var isCompleted = isConfirmed && (
@@ -19624,23 +19690,16 @@ function buildTurnPipeline() {
       stages.work_done.done = false;
       isCompleted = false;
     }
+    if (dbTurnMatch) {
+      isCompleted = dbTurnMatch.strictCompleted;
+      stages.work_done.done = dbTurnMatch.allWorkOrdersCompleted && dbTurnMatch.hasCurrentResident;
+    }
     // Compute current stage index after work-order completion safety checks.
     var currentStageIdx = -1;
     PIPE_STAGES.forEach(function(ps, i) {
       if (stages[ps.key] && stages[ps.key].done) currentStageIdx = i;
     });
     var isStalled = !isUpcoming && elapsed > CONFIG.TURN_STALLED_DAYS && currentStageIdx >= 1 && currentStageIdx < PIPE_STAGES.length - 1;
-    // Look up DB API unit turn data for this entry
-    var dbTurnMatch = null;
-    if (UNIT_TURNS_DB.length > 0) {
-      dbTurnMatch = UNIT_TURNS_DB.find(function(u) {
-        return (unitId && String(u.unitId) === String(unitId) && propId && String(u.propertyId) === String(propId)) ||
-               (unit && property && u.unit && u.property &&
-                String(u.unit).toLowerCase() === String(unit).toLowerCase() &&
-                String(u.property).toLowerCase() === String(property).toLowerCase());
-      }) || null;
-    }
-
     // Deposit deadline countdown (override with DB API date if available)
     var depositMoveOut = (dbTurnMatch && dbTurnMatch.moveOut) || moveOut;
     var sla = (!isUpcoming && depositMoveOut) ? calculateDepositDeadline(depositMoveOut) : null;
@@ -19689,6 +19748,16 @@ function buildTurnPipeline() {
       sla: sla,
       costNum: costNum,
       totalBilled: totalBilledStr,
+      milestones11: (dbTurnMatch && dbTurnMatch.milestones11) || [],
+      milestonesCompleted: (dbTurnMatch && dbTurnMatch.milestonesCompleted) || 0,
+      completionPercent: (dbTurnMatch && dbTurnMatch.completionPercent) || 0,
+      inHouseCost: (dbTurnMatch && dbTurnMatch.inHouseCost) || 0,
+      thirdPartyCost: (dbTurnMatch && dbTurnMatch.thirdPartyCost) || 0,
+      isNativeTurn: dbTurnMatch ? dbTurnMatch.isNativeTurn : !!(turnData && turnData.unitTurnId),
+      rogueWorkOrders: (dbTurnMatch && dbTurnMatch.rogueWorkOrders) || 0,
+      strictCompleted: dbTurnMatch ? dbTurnMatch.strictCompleted : false,
+      hasCurrentResident: dbTurnMatch ? dbTurnMatch.hasCurrentResident : false,
+      nextResidentName: (dbTurnMatch && dbTurnMatch.nextResidentName) || '',
       depositStatus: (dbTurnMatch && dbTurnMatch.depositStatus) || '',
       depositAmount: (dbTurnMatch && dbTurnMatch.depositAmount) || '',
       depositReturnDeadline: (dbTurnMatch && dbTurnMatch.depositReturnDeadline) || '',
@@ -20436,61 +20505,58 @@ function renderTurnPipelineUI() {
     html += '<div class="pipe-card-prop">' + escapeHtml(p.property) + '</div>';
     if (!currentPropertyGroup && p.turn && p.turn._propertyGroup) html += '<div class="pipe-card-prop pipe-card-group-badge"><i class="fas fa-layer-group" style="font-size:9px;margin-right:3px"></i>' + escapeHtml(p.turn._propertyGroup) + '</div>';
     if (p.tenant) html += '<div class="pipe-card-prop" style="font-size:10px;color:var(--accent)">' + escapeHtml(p.tenant) + '</div>';
-    html += '</div>';
-
-    // Center: stage dots
-    html += '<div class="pipe-card-stages">';
-    PIPE_STAGES.forEach(function(ps, si) {
-      var stage = p.stages[ps.key] || {};
-      var dotClass = '';
-      var isGate     = p.isOnRadar && ps.key === 'inspection' && !stage.done;
-      var isPostGate = p.isOnRadar && si > 2 && !(p.stages.inspection && p.stages.inspection.done);
-      if (stage.done) {
-        dotClass = 'done';
-      } else if (isGate) {
-        dotClass = 'gate';
-      } else if (!p.isOnRadar && si === p.currentStageIdx + 1) {
-        dotClass = p.isStalled ? 'warn' : 'active';
-      } else if (isPostGate) {
-        dotClass = 'waiting-gate';
+    if (p.milestones11 && p.milestones11.length > 0) {
+      html += '<div class="turn-compliance-badges">';
+      html += '<span class="turn-source-badge ' + (p.isNativeTurn ? 'native' : 'shadow') + '">' +
+        (p.isNativeTurn ? '<i class="fas fa-check-circle"></i> Verified AppFolio Turn' : '<i class="fas fa-eye"></i> Shadow Turn') + '</span>';
+      if (p.rogueWorkOrders > 0) {
+        html += '<span class="turn-rogue-badge"><i class="fas fa-triangle-exclamation"></i> ' + p.rogueWorkOrders + ' Rogue Work Order' + (p.rogueWorkOrders === 1 ? '' : 's') + ' Found</span>';
       }
-      html += '<div class="pipe-dot ' + dotClass + '" title="' + escapeHtml(ps.title) + (stage.date ? ' — ' + formatDate(stage.date) : '') + '">';
-      html += '<i class="fas ' + ps.icon + '"></i></div>';
-    });
+      html += '</div>';
+    }
     html += '</div>';
 
-    // Right: status
+    // Center: authoritative milestone matrix and financial split
+    html += '<div class="turn-engine-summary">';
+    if (p.milestones11 && p.milestones11.length > 0) {
+      html += '<div class="turn-milestone-heading"><span>' + p.milestonesCompleted + ' of 11 Completed</span><span>' + p.completionPercent + '%</span></div>';
+      html += '<div class="turn-milestone-grid">';
+      p.milestones11.forEach(function(milestone) {
+        var milestoneStatus = ['completed', 'in_progress', 'not_started'].indexOf(milestone.status) !== -1 ? milestone.status : 'not_started';
+        html += '<span class="turn-milestone-pill ' + milestoneStatus + '" title="' + escapeHtml(milestone.label + ': ' + milestoneStatus.replace('_', ' ')) + '">' +
+          '<i class="fas ' + (milestoneStatus === 'completed' ? 'fa-check' : milestoneStatus === 'in_progress' ? 'fa-spinner' : 'fa-minus') + '"></i>' +
+          escapeHtml(milestone.label) + '</span>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="turn-engine-pending">Milestone evidence is syncing</div>';
+    }
+    var inHouseCost = Number(p.inHouseCost || 0);
+    var thirdPartyCost = Number(p.thirdPartyCost || 0);
+    html += '<div class="turn-cost-split"><span><small>In-House</small>$' + inHouseCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</span>' +
+      '<span><small>3rd-Party</small>$' + thirdPartyCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</span></div>';
+    html += '</div>';
+
+    // Right: strict status and deposit clock
     html += '<div class="pipe-card-status">';
     if (p.isCompleted) {
       var completeDays = (p.turn && p.turn.totalDays) || p.elapsed;
       html += '<span class="pipe-card-elapsed" style="color:var(--success)">' + completeDays + 'd</span>';
-      html += '<span class="pipe-card-cost">Complete</span>';
+      html += '<span class="pipe-card-cost">Strictly complete</span>';
     } else if (p.isUpcoming) {
       var daysUntil = Math.abs(p.elapsed);
       html += '<span class="pipe-card-elapsed" style="color:var(--info,#60a5fa)">' + daysUntil + 'd</span>';
       html += '<span class="pipe-card-cost">Move-out: ' + formatDate(p.moveOut) + '</span>';
-    } else if (p.isOnRadar) {
-      html += '<span class="radar-badge" style="margin-bottom:3px">ON RADAR</span>';
-      html += '<span class="pipe-card-elapsed" style="color:var(--accent)">' + p.elapsed + 'd</span>';
-      html += '<span class="pipe-card-cost" style="color:var(--text-muted)">Awaiting inspection</span>';
     } else {
       var eColor = p.elapsed > p.target ? 'var(--danger)' : p.elapsed > CONFIG.TURN_WARNING_DAYS ? 'var(--warning)' : 'var(--text-primary)';
       html += '<span class="pipe-card-elapsed" style="color:' + eColor + '">' + p.elapsed + 'd</span>';
-      var nextStage = p.currentStageIdx < PIPE_STAGES.length - 1 ? PIPE_STAGES[p.currentStageIdx + 1] : null;
-      html += '<span class="pipe-card-cost">';
-      if (nextStage) html += 'Next: ' + nextStage.label;
-      else html += 'In progress';
-      // WO progress: show X/Y done when there are multiple WOs
-      if (p.stages.work_done && p.stages.work_done.totalCount > 0) {
-        html += ' <span style="color:var(--text-muted);font-size:10px">(' + p.stages.work_done.doneCount + '/' + p.stages.work_done.totalCount + ' WOs)</span>';
-      }
-      html += '</span>';
-      // Deposit deadline progress bar
-      if (p.sla) {
-        var slaColor = p.sla.businessDaysLeft <= 2 ? 'red' : p.sla.businessDaysLeft <= 6 ? 'yellow' : 'green';
-        var slaLabel = p.sla.overdue ? 'Past deposit deadline' : p.sla.businessDaysLeft + ' biz days remaining';
-        html += '<div class="sla-bar" title="Deposit deadline \u2014 ' + slaLabel + '"><div class="sla-bar-fill ' + slaColor + '" style="width:' + p.sla.pct + '%"></div></div>';
-      }
+      html += '<span class="pipe-card-cost">' + (p.hasCurrentResident ? 'Current resident confirmed' : 'Awaiting current resident') + '</span>';
+    }
+    if (p.sla && !p.isUpcoming) {
+      var slaColor = p.sla.overdue || p.sla.businessDaysLeft < 3 ? 'red' : p.sla.businessDaysLeft <= 7 ? 'yellow' : 'green';
+      var slaLabel = p.sla.overdue ? Math.abs(p.sla.calendarDaysLeft) + 'd overdue' : p.sla.businessDaysLeft + ' business days left';
+      html += '<div class="turn-deposit-clock ' + slaColor + '" title="14-business-day deposit deadline"><i class="fas fa-hourglass-half"></i><span><small>Deposit clock</small>' + slaLabel + '</span></div>';
+      html += '<div class="sla-bar"><div class="sla-bar-fill ' + slaColor + '" style="width:' + p.sla.pct + '%"></div></div>';
     }
     html += '</div>';
 
