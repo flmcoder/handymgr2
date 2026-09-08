@@ -25,6 +25,8 @@ import { enforceScopedSession } from './scopedSessionGuard';
 import { isClientAbortError } from './requestErrorPolicy';
 import { buildRequestedSyncEndpoints, runSequentially } from './syncSchedulerPolicy';
 import { formatSyncSummaryLine, shouldLogSyncSummary } from './logNoisePolicy';
+import { buildBadgeCountsPayload, OPEN_WORK_ORDER_STATUS_FILTER } from './badgeCountsPolicy';
+import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
 import { TURN_ENGINE_SQL } from './turnEngineQuery';
@@ -5089,10 +5091,104 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
 
     rows = await hydrateWorkOrderProperties(rows as any[]);
     const results = (rows as any[]).map(normalizeWorkOrderRow);
-    res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
+
+    // Total open work orders in scope, independent of the page `limit` so the
+    // nav badge can show the true count even though the table stays paginated.
+    let total = results.length;
+    try {
+      const totalRows = propertyGroupId
+        ? await queryClient.unsafe(
+            `select count(*)::int as total from appfolio_work_orders where property_group_id = $1 and ${OPEN_WORK_ORDER_STATUS_FILTER}`,
+            [propertyGroupId],
+          )
+        : await queryClient.unsafe(
+            `select count(*)::int as total from appfolio_work_orders where ${OPEN_WORK_ORDER_STATUS_FILTER}`,
+          );
+      total = Number((totalRows as any[])[0]?.total || 0) || 0;
+    } catch (countErr) {
+      console.warn('[work_orders] total count failed; falling back to page length', String((countErr as any)?.message || countErr));
+    }
+
+    res.json({ ok: true, results, count: results.length, total, source: 'postgres_local' });
   } catch (error) {
     logTunnelError(error, '/api/local/work_orders');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local work orders query failed') });
+  }
+});
+
+// Postgres-backed table search for the Database admin section. Replaces the
+// legacy SQLite console; only allow-listed read-only tables can be searched.
+app.get('/api/local/db_search', async (req: Request, res: Response) => {
+  try {
+    const query = buildTableSearchQuery(req.query.table, req.query.q, req.query.limit);
+    if (!query) {
+      res.status(400).json({ ok: false, error: 'Unknown or non-searchable table. Allowed: ' + SEARCHABLE_TABLES.map((t) => t.key).join(', ') });
+      return;
+    }
+    const rows = await queryClient.unsafe(query.sql, query.params);
+    const table = resolveSearchableTable(req.query.table);
+    res.json({
+      ok: true,
+      table: String(req.query.table || ''),
+      columns: table ? table.columns : [],
+      rows,
+      count: (rows as any[]).length,
+      source: 'postgres_local',
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/db_search');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Database search failed') });
+  }
+});
+
+// Lightweight aggregate counts for the nav badges — returns the true scoped
+// totals without pulling full table pages (the tables stay paginated).
+app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
+  try {
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const scope = propertyGroupId || null;
+
+    const woPromise = scope
+      ? queryClient.unsafe(`select count(*)::int as total from appfolio_work_orders where property_group_id = $1 and ${OPEN_WORK_ORDER_STATUS_FILTER}`, [scope])
+      : queryClient.unsafe(`select count(*)::int as total from appfolio_work_orders where ${OPEN_WORK_ORDER_STATUS_FILTER}`);
+
+    const turnPromise = scope
+      ? queryClient.unsafe(
+          `select count(*)::int as total from unit_turn_tracker t
+           where coalesce(lower(t.status), '') not like '%completed%'
+             and coalesce(lower(t.status), '') not like '%closed%'
+             and exists (select 1 from appfolio_properties p where p.id = t.property_id and p.property_group_id = $1)`,
+          [scope],
+        )
+      : queryClient.unsafe(
+          `select count(*)::int as total from unit_turn_tracker t
+           where coalesce(lower(t.status), '') not like '%completed%'
+             and coalesce(lower(t.status), '') not like '%closed%'`,
+        );
+
+    // Inspections badge mirrors the grid's "missing move-in inspection" count.
+    const inspPromise = scope
+      ? queryClient.unsafe(
+          `select count(*)::int as total from appfolio_unit_inspections i
+           where i.last_inspection_date is null
+             and exists (select 1 from appfolio_properties p where p.id = i.property_id and p.property_group_id = $1)`,
+          [scope],
+        )
+      : queryClient.unsafe(
+          `select count(*)::int as total from appfolio_unit_inspections i where i.last_inspection_date is null`,
+        );
+
+    const [woRows, turnRows, inspRows] = await Promise.all([woPromise, turnPromise, inspPromise]);
+    const payload = buildBadgeCountsPayload({
+      workOrders: (woRows as any[])[0]?.total,
+      turns: (turnRows as any[])[0]?.total,
+      inspections: (inspRows as any[])[0]?.total,
+      propertyGroupId,
+    });
+    res.json(payload);
+  } catch (error) {
+    logTunnelError(error, '/api/local/badge_counts');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Badge counts failed') });
   }
 });
 

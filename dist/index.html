@@ -100,7 +100,7 @@
       <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.8.26</span></div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.8.27</span></div>
   </div>
 </div>
 
@@ -112,7 +112,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.8.26</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.8.27</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -140,7 +140,7 @@
     <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
     <div>
       <div class="sidebar-brand-text">HandyMgr</div>
-      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.8.26</div>
+      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.8.27</div>
     </div>
   </div>
 
@@ -159,7 +159,6 @@
       <button class="nav-tab" data-tab="inspections"><i class="fas fa-clipboard-check"></i> Inspections <span class="badge" id="inspBadge">—</span></button>
       <button class="nav-tab" data-tab="billing"><i class="fas fa-file-invoice-dollar"></i> Billing <span class="badge" id="billingBadge" style="display:none">0</span></button>
       <button class="nav-tab nav-role-gm" data-tab="managerreview"><i class="fas fa-chart-pie"></i> Manager Review</button>
-      <button class="nav-tab nav-role-gm" data-tab="payroll"><i class="fas fa-money-check-alt"></i> Payroll</button>
     </div>
     <div class="nav-section" id="navGroupResources">
       <div class="nav-section-label">Resources</div>
@@ -644,36 +643,6 @@
       <table class="data-table">
         <thead><tr><th>Property Group</th><th>PM Name</th></tr></thead>
         <tbody id="routingPmMapBody"></tbody>
-      </table>
-    </div>
-  </div>
-</section>
-
-<!-- ==================== PAYROLL ==================== -->
-<section class="section" id="sec-payroll">
-  <div class="section-header">
-    <div>
-      <div class="section-title"><i class="fas fa-money-check-alt" style="color:var(--success)"></i> Payroll Review</div>
-      <div class="section-subtitle">Completed and ready-to-bill work orders — Friday-to-Friday pay period</div>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button class="action-btn" id="payrollPrev"><i class="fas fa-chevron-left"></i> Prev</button>
-      <span class="payroll-range-label" id="payrollRange">—</span>
-      <button class="action-btn" id="payrollNext">Next <i class="fas fa-chevron-right"></i></button>
-    </div>
-  </div>
-  <div class="kpi-grid stagger" style="margin-bottom:16px">
-    <div class="kpi-card green"><div class="kpi-label">Completed This Period</div><div class="kpi-value" id="payrollCount">—</div><div class="kpi-sub" id="payrollCountSub">Loading…</div></div>
-    <div class="kpi-card amber"><div class="kpi-label">Total Labor</div><div class="kpi-value" id="payrollTotal">—</div><div class="kpi-sub" id="payrollTotalSub">Loading…</div></div>
-    <div class="kpi-card blue"><div class="kpi-label">Vendors Active</div><div class="kpi-value" id="payrollVendors">—</div><div class="kpi-sub" id="payrollVendorsSub">Loading…</div></div>
-    <div class="kpi-card purple"><div class="kpi-label">Properties Touched</div><div class="kpi-value" id="payrollProps">—</div><div class="kpi-sub" id="payrollPropsSub">Loading…</div></div>
-  </div>
-  <div class="table-wrapper">
-    <div class="table-header"><div class="table-title"><i class="fas fa-clipboard-list" style="color:var(--accent)"></i> Completed This Period</div></div>
-    <div class="table-scroll">
-      <table class="data-table" id="payrollTable">
-        <thead><tr><th>WO #</th><th>Property</th><th>Unit</th><th>Description</th><th>Vendor</th><th>Completed</th><th>Amount</th><th style="width:50px">Flag</th></tr></thead>
-        <tbody id="payrollBody"></tbody>
       </table>
     </div>
   </div>
@@ -1909,28 +1878,30 @@
   <div class="dbadmin-wrap">
     <div class="dbadmin-editor-wrap">
       <div class="dbadmin-toolbar">
-        <div class="dbadmin-toolbar-title"><i class="fas fa-terminal"></i> SQL Editor</div>
+        <div class="dbadmin-toolbar-title"><i class="fas fa-database"></i> Postgres Search</div>
         <div class="dbadmin-shortcuts" id="dbShortcuts">
-          <button class="dbadmin-shortcut" data-sql="SELECT name FROM sqlite_master WHERE type='table' ORDER BY name">Tables</button>
-          <button class="dbadmin-shortcut" data-sql="SELECT * FROM webhook_events ORDER BY id DESC LIMIT 50">Webhooks</button>
-          <button class="dbadmin-shortcut" data-sql="PRAGMA table_list">Table List</button>
-          <button class="dbadmin-shortcut" data-sql="SELECT * FROM api_cache ORDER BY cached_at DESC LIMIT 20">Cache</button>
+          <button class="dbadmin-shortcut" data-table="work_orders">Work Orders</button>
+          <button class="dbadmin-shortcut" data-table="properties">Properties</button>
+          <button class="dbadmin-shortcut" data-table="units">Units</button>
+          <button class="dbadmin-shortcut" data-table="vendors">Vendors</button>
+          <button class="dbadmin-shortcut" data-table="tech_roster">Tech Roster</button>
+          <button class="dbadmin-shortcut" data-table="reassignment_queue">Dispatch Queue</button>
         </div>
       </div>
-      <div class="dbadmin-key-row">
-        <label for="dbAdminKey"><i class="fas fa-key"></i>&nbsp; Admin Key</label>
-        <input type="password" class="dbadmin-key-input" id="dbAdminKey" autocomplete="off" placeholder="PROXY_ADMIN_KEY from Val Town env">
-        <span class="dbadmin-key-hint">Set <code>PROXY_ADMIN_KEY</code> in Val Town env vars to enable SQL access</span>
-      </div>
-      <textarea class="dbadmin-sql-editor" id="dbEditor" spellcheck="false" placeholder="-- Enter SQL here (Ctrl+Enter to run)&#10;-- Read-only: SELECT, PRAGMA, EXPLAIN&#10;-- Write: INSERT, UPDATE, DELETE, CREATE&#10;&#10;SELECT * FROM webhook_events ORDER BY id DESC LIMIT 25;"></textarea>
-      <div class="dbadmin-btn-row">
-        <button class="dbadmin-btn primary" id="dbRunBtn"><i class="fas fa-play"></i> Run Query</button>
-        <button class="dbadmin-btn" id="dbExecBtn"><i class="fas fa-bolt"></i> Execute (Write)</button>
+      <div class="dbadmin-key-row" style="gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="dbSearchTable" class="dbadmin-key-input" style="max-width:220px">
+          <option value="work_orders">Work Orders</option>
+          <option value="properties">Properties</option>
+          <option value="units">Units</option>
+          <option value="vendors">Vendors</option>
+          <option value="tech_roster">Tech Roster</option>
+          <option value="reassignment_queue">Dispatch Queue</option>
+        </select>
+        <input type="text" id="dbSearchInput" class="dbadmin-key-input" style="max-width:none;flex:1 1 280px" placeholder="Search Postgres… (matches WO #, property, unit, vendor, tech, status)">
+        <button class="dbadmin-btn primary" id="dbSearchBtn"><i class="fas fa-search"></i> Search</button>
         <button class="dbadmin-btn" id="dbClearBtn"><i class="fas fa-eraser"></i> Clear</button>
-        <div style="flex:1"></div>
-        <button class="dbadmin-btn" id="dbExportCsv" style="display:none"><i class="fas fa-download"></i> CSV</button>
-        <button class="dbadmin-btn" id="dbExportJson" style="display:none"><i class="fas fa-download"></i> JSON</button>
       </div>
+      <div style="font-size:10px;color:var(--text-muted);padding:2px 2px 0">Searches run read-only against the local Postgres database. Results are capped at 200 rows.</div>
     </div>
     <div class="dbadmin-results" id="dbResultsPanel">
       <div class="dbadmin-results-head"><span>Results</span><span id="dbResultsMeta" style="font-size:10px;color:var(--text-muted)"></span></div>
@@ -2159,18 +2130,6 @@
 </button>
 
 <!-- Destructive SQL Confirmation Dialog -->
-<div class="confirm-overlay" id="dbConfirmOverlay" style="display:none">
-  <div class="confirm-dialog">
-    <h4 style="font-size:16px;color:var(--text-primary);margin-bottom:10px;display:flex;align-items:center;gap:8px"><i class="fas fa-exclamation-triangle" style="color:var(--danger)"></i> Destructive Operation</h4>
-    <p>This query contains a write operation. Execution cannot be undone.</p>
-    <pre id="dbConfirmSQL" style="margin:0 0 16px;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font-mono);font-size:11px;color:var(--danger);white-space:pre-wrap;word-break:break-all;max-height:120px;overflow-y:auto"></pre>
-    <div class="confirm-dialog-btns">
-      <button class="dbadmin-btn" id="dbConfirmCancel"><i class="fas fa-times"></i> Cancel</button>
-      <button class="dbadmin-btn danger" id="dbConfirmExec"><i class="fas fa-exclamation-circle"></i> Execute Anyway</button>
-    </div>
-  </div>
-</div>
-
 <!-- Progress Dock — non-blocking corner indicator -->
 <div class="progress-dock hidden" id="progressDock">
   <div class="progress-dock-title"><span id="progTitle">Loading data…</span><button class="close-prog" id="progClose">&times;</button></div>

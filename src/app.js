@@ -420,6 +420,68 @@ async function hardRefreshToCurrentVersion(serverVersion) {
   window.location.replace(refreshUrl.toString());
 }
 
+// ── Version-mismatch gate ────────────────────────────────────────────────────
+// Show a single blocking modal that the user cannot dismiss without refreshing.
+// A short cooldown prevents the false-flag loop where a stale cached shell keeps
+// re-prompting after the user already reloaded onto the newest build.
+var HM_VERSION_PROMPT_COOLDOWN_KEY = 'hm_version_prompted_at';
+var HM_VERSION_PROMPT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+function hasRecentlyPromptedForVersion(serverVersion) {
+  try {
+    var raw = localStorage.getItem(HM_VERSION_PROMPT_COOLDOWN_KEY) || '';
+    var parts = raw.split('|');
+    var at = Number(parts[0] || 0);
+    var forVersion = String(parts[1] || '');
+    if (!at || !isFinite(at)) return false;
+    if (forVersion !== String(serverVersion || '')) return false;
+    return (Date.now() - at) < HM_VERSION_PROMPT_COOLDOWN_MS;
+  } catch (e) {
+    return false;
+  }
+}
+
+function markVersionPrompted(serverVersion) {
+  try { localStorage.setItem(HM_VERSION_PROMPT_COOLDOWN_KEY, Date.now() + '|' + String(serverVersion || '')); } catch (e) { /* */ }
+}
+
+function clearVersionPromptCooldown() {
+  try { localStorage.removeItem(HM_VERSION_PROMPT_COOLDOWN_KEY); } catch (e) { /* */ }
+}
+
+function showVersionUpdateModal(serverVersion) {
+  // Blocking modal: no cancel, overlay clicks are ignored, only path is refresh.
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay show hm-modal-critical';
+  overlay.setAttribute('role', 'alertdialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'hmVersionUpdateTitle');
+  overlay.innerHTML =
+    '<div class="modal hm-modal-sm">' +
+      '<div class="modal-head"><h3 id="hmVersionUpdateTitle"><i class="fas fa-arrow-rotate-right"></i> New version available</h3></div>' +
+      '<div class="modal-body"><p class="hm-modal-copy">A new version of HandyManager (' + escapeHtml(String(serverVersion || '')) + ') is available. Please refresh to continue.</p></div>' +
+      '<div class="modal-footer">' +
+        '<button class="hm-modal-btn hm-modal-ok-primary" id="hmVersionUpdateRefreshBtn"><i class="fas fa-rotate"></i> Refresh now</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  function doRefresh() {
+    markVersionPrompted(serverVersion);
+    hardRefreshToCurrentVersion(serverVersion);
+  }
+
+  overlay.querySelector('#hmVersionUpdateRefreshBtn').addEventListener('click', doRefresh);
+  // Swallow overlay clicks so the user can't dismiss it by clicking outside.
+  overlay.addEventListener('click', function(e) { e.stopPropagation(); });
+  document.addEventListener('keydown', function onKey(e) {
+    if (!document.body.contains(overlay)) { document.removeEventListener('keydown', onKey); return; }
+    if (e.key === 'Enter') { e.preventDefault(); doRefresh(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  overlay.querySelector('#hmVersionUpdateRefreshBtn').focus();
+}
+
 async function checkForRequiredAppUpdate() {
   try {
     var healthUrl = API_BASE_URL.replace(/\/$/, '') + '/health?hm_version_check=' + Date.now();
@@ -429,12 +491,17 @@ async function checkForRequiredAppUpdate() {
     });
     var health = await response.json();
     var currentServerVersion = health && health.version ? String(health.version) : '';
-    if (!shouldForceVersionReload(currentServerVersion, APP_VERSION)) return;
 
-    var accepted = window.confirm(
-      'A new version of HandyManager is available (' + currentServerVersion + '). The app needs to update before continuing. Click OK to load the current version.'
-    );
-    if (accepted) await hardRefreshToCurrentVersion(currentServerVersion);
+    // False-flag guard: only prompt when the server reports a strictly newer,
+    // well-formed release version, and we haven't just prompted for it.
+    if (!shouldForceVersionReload(currentServerVersion, APP_VERSION)) {
+      clearVersionPromptCooldown();
+      return;
+    }
+    if (hasRecentlyPromptedForVersion(currentServerVersion)) return;
+    if (document.getElementById('hmVersionUpdateTitle')) return; // already showing
+
+    showVersionUpdateModal(currentServerVersion);
   } catch (error) {
     console.warn('App version check failed:', error && error.message ? error.message : error);
   }
@@ -4461,7 +4528,6 @@ var WO_DETAIL_CACHE = {};
 var WO_DETAIL_CACHE_KEYS = []; // LRU order tracker
 var WO_DETAIL_CACHE_MAX = 50;  // max cached entries
 var CURRENT_WO_MODAL = null;
-var PAYROLL_WEEK_OFFSET = 0;
 var currentPropertyGroup = '';
 var _propertiesLocalGroup = '';
 var _propertiesRefreshInFlight = false;
@@ -6204,6 +6270,51 @@ function normalizeLocalWorkOrder(r) {
   };
 }
 
+// ── Nav badge totals (true scoped counts, independent of table pagination) ──
+var NAV_BADGE_TOTALS = { work_orders: 0, turns: 0, inspections: 0 };
+var NAV_BADGE_TOTALS_SCOPE = '';
+var NAV_BADGE_TOTALS_LOADED = false;
+
+function setNavBadge(id, value) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = String(Number(value) || 0);
+}
+
+function applyNavBadgeTotals() {
+  if (!NAV_BADGE_TOTALS_LOADED) return;
+  setNavBadge('woBadge', NAV_BADGE_TOTALS.work_orders);
+  setNavBadge('turnBadge', NAV_BADGE_TOTALS.turns);
+  setNavBadge('inspBadge', NAV_BADGE_TOTALS.inspections);
+}
+
+async function fetchNavBadgeTotals(force) {
+  var scope = String(getEffectiveGroupUuid() || '');
+  if (!force && NAV_BADGE_TOTALS_LOADED && NAV_BADGE_TOTALS_SCOPE === scope) return true;
+  try {
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var token = getProxyAccessToken();
+    var headers = { 'Accept': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    var url = localBase + '/api/local/badge_counts' + (scope ? ('?property_group_id=' + encodeURIComponent(scope)) : '');
+    var res = await fetchWithTimeout(url, { headers: headers }, 30000);
+    var data = {};
+    try { data = await res.json(); } catch (e) { data = {}; }
+    if (!res.ok || data.ok === false) return false;
+    NAV_BADGE_TOTALS = {
+      work_orders: Number(data.work_orders) || 0,
+      turns: Number(data.turns) || 0,
+      inspections: Number(data.inspections) || 0,
+    };
+    NAV_BADGE_TOTALS_SCOPE = scope;
+    NAV_BADGE_TOTALS_LOADED = true;
+    applyNavBadgeTotals();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function fetchWorkOrders() {
   setDataSourceState('work_orders', 'loading', { error: '' });
   try {
@@ -6230,6 +6341,8 @@ async function fetchWorkOrders() {
     
     setApiStatus('loading', 'Work orders: ' + WORK_ORDERS_ACTIVE.length + ' active');
     setDataSourceState('work_orders', 'ok', { count: WORK_ORDERS_ACTIVE.length, active: WORK_ORDERS_ACTIVE.length, inactive: _inactiveWorkOrdersLoaded ? WORK_ORDERS_INACTIVE.length : null, error: '' });
+    // Refresh nav badge totals now that the scoped data has changed.
+    fetchNavBadgeTotals(true);
     return true;
   } catch (err) {
     setDataSourceState('work_orders', 'no_response', { count: null, error: String((err && err.message) || err || 'work orders unavailable') });
@@ -10101,24 +10214,6 @@ function renderTurnDashboardStrip() {
   resetDashboardTurnRotator(totalPages);
 }
 
-function getPayrollWeek(offset) {
-  var now = new Date();
-  var day = now.getDay(); // 0=Sun
-  // Find most recent Friday
-  var fridayOffset = (day + 2) % 7; // days since last Friday
-  var endDate = new Date(now);
-  endDate.setDate(endDate.getDate() - fridayOffset);
-  endDate.setHours(23, 59, 59, 999);
-  // Apply week offset
-  endDate.setDate(endDate.getDate() + (offset * 7));
-  var startDate = new Date(endDate);
-  startDate.setDate(startDate.getDate() - 6);
-  startDate.setHours(0, 0, 0, 0);
-  return { start: startDate, end: endDate };
-}
-
-// Payroll uses shared currentPropertyGroup (global group filter across all tabs)
-
 // ─── Billing / AP Section ──────────────────────────────────────────────────
 var _billsPage = 0;
 var BILLS_PAGE_SIZE = 50;
@@ -11807,6 +11902,13 @@ function wireBillingFilters() {
     });
   }
 
+  // Nav badge totals must be recomputed whenever the property-group scope changes.
+  document.addEventListener('groupFilterChanged', function() {
+    NAV_BADGE_TOTALS_LOADED = false;
+    NAV_BADGE_TOTALS_SCOPE = '';
+    fetchNavBadgeTotals(true);
+  });
+
   document.addEventListener('groupFilterChanged', function() {
     window._currentBillsCache = [];
     _billsPage = 0;
@@ -12541,74 +12643,6 @@ async function runBillHistorySearch() {
   }
 }
 
-function renderPayroll() {
-  var period = getPayrollWeek(PAYROLL_WEEK_OFFSET);
-  var rangeEl = $('#payrollRange');
-  if (rangeEl) rangeEl.textContent = formatDate(period.start) + ' \u2014 ' + formatDate(period.end);
-
-  // Sync global group filter dropdown
-  var pgSel = $('#globalGroupFilter');
-  if (pgSel && pgSel.value !== currentPropertyGroup) pgSel.value = currentPropertyGroup;
-
-  var workDone = WORK_ORDERS.filter(function(wo) {
-    if (!isTurnWorkDoneStatus(wo.status)) return false;
-    var cd = wo.workCompletedOn ? new Date(wo.workCompletedOn) : (wo.completedOn ? new Date(wo.completedOn) : null);
-    if (!cd) return false;
-    if (cd < period.start || cd > period.end) return false;
-    if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return false;
-    return true;
-  });
-
-  var totalAmt = workDone.reduce(function(s, wo) { return s + (parseFloat(wo.amount) || 0); }, 0);
-  var vendorSet = {};
-  var propSet = {};
-  workDone.forEach(function(wo) {
-    if (wo.vendorName) vendorSet[wo.vendorName] = true;
-    if (wo.propertyName) propSet[wo.propertyName] = true;
-  });
-
-  var countEl = $('#payrollCount');
-  if (countEl) countEl.textContent = workDone.length;
-  var countSub = $('#payrollCountSub');
-  if (countSub) countSub.textContent = 'orders completed this period';
-  var totalEl = $('#payrollTotal');
-  if (totalEl) totalEl.textContent = currency(totalAmt);
-  var totalSub = $('#payrollTotalSub');
-  if (totalSub) totalSub.textContent = totalAmt > 0 ? 'total labor this period' : 'no amounts recorded';
-  var vendEl = $('#payrollVendors');
-  if (vendEl) vendEl.textContent = Object.keys(vendorSet).length;
-  var vendSub = $('#payrollVendorsSub');
-  if (vendSub) vendSub.textContent = 'unique vendors this period';
-  var propEl = $('#payrollProps');
-  if (propEl) propEl.textContent = Object.keys(propSet).length;
-  var propSub = $('#payrollPropsSub');
-  if (propSub) propSub.textContent = 'properties with completed work';
-
-  var body = $('#payrollBody');
-  if (!body) return;
-  if (workDone.length === 0) {
-    body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px;font-size:12px">No completed work orders in this pay period</td></tr>';
-    return;
-  }
-  var html = '';
-  workDone.forEach(function(wo) {
-    var flagged = isWOFlagged(wo.id);
-    var afUrl = appfolioUrl('work_order', wo.id || wo.uuid);
-    html += '<tr class="payroll-row" data-woid="' + escapeHtml(String(wo.id)) + '" data-wouuid="' + escapeHtml(String(wo.uuid)) + '" style="cursor:pointer;' + (flagged ? 'background:var(--warning-dim)' : '') + '">';
-    html += '<td style="font-family:var(--font-mono);color:var(--accent)">#' + escapeHtml(String(wo.id)) + (afUrl ? ' <i class="fas fa-external-link-alt" style="font-size:9px;opacity:0.5"></i>' : '') + '</td>';
-    html += '<td>' + escapeHtml(wo.propertyName) + '</td>';
-    html += '<td>' + escapeHtml(wo.unit) + '</td>';
-    html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(wo.description) + '</td>';
-    html += '<td>' + escapeHtml(wo.vendorName || '\u2014') + '</td>';
-    html += '<td style="font-family:var(--font-mono)">' + formatDate(wo.workCompletedOn || wo.completedOn) + '</td>';
-    html += '<td style="font-family:var(--font-mono)">' + (wo.amount ? currency(parseFloat(wo.amount)) : '\u2014') + '</td>';
-    html += '<td><button class="flag-toggle-btn' + (flagged ? ' active' : '') + '" data-flagwo="' + escapeHtml(String(wo.id)) + '"><i class="fas fa-flag"></i></button></td>';
-    html += '</tr>';
-  });
-  body.innerHTML = html;
-  // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
-}
-
 function renderDashboardKPIs() {
   setDashboardKpiSkeleton(false);
   // Sync global group filter dropdown
@@ -12980,8 +13014,8 @@ function renderDashboardKPIs() {
   fetchAndRenderPortfolioSunburst();
   renderWoSankey();
 
-  $('#woBadge').textContent = openWOs.length || '0';
-  $('#turnBadge').textContent = activeTurns.length || '0';
+  $('#woBadge').textContent = (NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.work_orders : openWOs.length) || '0';
+  $('#turnBadge').textContent = (NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.turns : activeTurns.length) || '0';
 
   // Active filter indicator
   var fiEl = document.getElementById('filterIndicator');
@@ -20452,7 +20486,7 @@ function renderTurnKPIs() {
   e('kpiTurnBilledSub', 'active + on radar + completed');
 
   var tb = $('#turnBadge');
-  if (tb) tb.textContent = active.length + onRadar.length;
+  if (tb) tb.textContent = (NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.turns : (active.length + onRadar.length));
 
   renderTurnInsights(inScope);
 
@@ -21080,7 +21114,7 @@ function renderInspections(search) {
   renderInspectionsGrid();
 
   var ib = $('#inspBadge');
-  if (ib) ib.textContent = overdueCount;
+  if (ib) ib.textContent = (NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.inspections : overdueCount);
 
   renderInspectionInsights(filtered);
 }
@@ -22920,7 +22954,6 @@ function renderAll() {
     function() { renderVendors($('#vendorSearch') ? $('#vendorSearch').value : ''); },
     function() { renderTurnBoard(); },
     function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
-    function() { renderPayroll(); },
     function() { renderMoveOuts(); },
     function() { renderDashboardKPIs(); },
     function() { renderActivityFeed(); },
@@ -22967,41 +23000,6 @@ function wireUpUI() {
         kanbanBoardScrollState.top = board.scrollTop;
         expandedWOColumn = columnName;
         renderWorkOrders();
-      }
-    });
-  })();
-
-  // Payroll table — row clicks + flag toggles
-  (function() {
-    var payBody = $('#payrollBody');
-    if (payBody) payBody.addEventListener('click', function(e) {
-      var flagBtn = e.target.closest('[data-flagwo]');
-      if (flagBtn) {
-        e.stopPropagation();
-        var wid = flagBtn.getAttribute('data-flagwo');
-        toggleFlag(wid).then(function() { renderPayroll(); renderWorkOrders(); });
-        return;
-      }
-      var row = e.target.closest('.payroll-row');
-      if (row) {
-        var woid = row.getAttribute('data-woid');
-        var wo = WORK_ORDERS.find(function(w) { return String(w.id) === woid; });
-        if (!wo) return;
-        showItemDetail('Payroll \u2014 WO #' + wo.id, [
-          { section: 'Work Order', icon: 'fa-wrench' },
-          { label: 'WO Number', value: '#' + wo.id },
-          { label: 'Property', value: wo.propertyName },
-          { label: 'Unit', value: wo.unit },
-          { label: 'Description', value: wo.description },
-          { label: 'Vendor', value: wo.vendorName || '\u2014' },
-          { label: 'Status', value: wo.status },
-          { label: 'Priority', value: wo.priority },
-          { section: 'Payroll', icon: 'fa-money-check-alt' },
-          { label: 'Completed', value: formatDate(wo.workCompletedOn || wo.completedOn) },
-          { label: 'Amount', value: wo.amount ? currency(parseFloat(wo.amount)) : '\u2014' },
-          { label: 'Tenant', value: wo.tenant || '\u2014' },
-          { label: 'Assigned To', value: wo.assignedUser || '\u2014' }
-        ], appfolioUrl('work_order', wo.id || wo.uuid));
       }
     });
   })();
@@ -23679,14 +23677,6 @@ function wireUpUI() {
     });
   }
   // WO group filter wired below with global sync
-
-  // Payroll navigation
-  if ($('#payrollPrev')) {
-    $('#payrollPrev').addEventListener('click', function() { PAYROLL_WEEK_OFFSET--; renderPayroll(); });
-  }
-  if ($('#payrollNext')) {
-    $('#payrollNext').addEventListener('click', function() { PAYROLL_WEEK_OFFSET++; renderPayroll(); });
-  }
 
   // Turn pipeline controls
   if ($('#turnPipeFilter')) {
@@ -24451,7 +24441,7 @@ function wireUpUI() {
       workorders: function() { renderWorkOrders(); },
       estimates: function() { renderEstimates(); },
       routing: function() { loadRoutingEventsAndStats().catch(function() {}); loadRoutingCapabilities().catch(function() {}); },
-      payroll: function() { renderPayroll(); },
+      vendors: function() { renderVendors(''); },
       billing: function() { renderBillingSection(); },
       occupancy: function() {
         delete _occupancyRowsBySubtab[currentOccupancySubtab || 'tenant-transactions'];
@@ -25425,23 +25415,16 @@ renderDashboardKPIs = function() {
 };
 
 // ═══════════════════════════════════════════════════════
-// DATABASE ADMIN GUI — sql_query / sql_execute via proxy
+// DATABASE ADMIN GUI — Postgres search + PM/OTP/Dispatch controls
 // ═══════════════════════════════════════════════════════
 (function initDbAdmin() {
-  var editor = document.getElementById('dbEditor');
-  var runBtn = document.getElementById('dbRunBtn');
-  var execBtn = document.getElementById('dbExecBtn');
+  var searchTable = document.getElementById('dbSearchTable');
+  var searchInput = document.getElementById('dbSearchInput');
+  var searchBtn = document.getElementById('dbSearchBtn');
   var clearBtn = document.getElementById('dbClearBtn');
   var resultsBody = document.getElementById('dbResultsBody');
   var resultsMeta = document.getElementById('dbResultsMeta');
   var connStatus = document.getElementById('dbConnStatus');
-  var csvBtn = document.getElementById('dbExportCsv');
-  var jsonBtn = document.getElementById('dbExportJson');
-  var histList = document.getElementById('dbHistoryList');
-  var confirmOverlay = document.getElementById('dbConfirmOverlay');
-  var confirmSQL = document.getElementById('dbConfirmSQL');
-  var confirmCancel = document.getElementById('dbConfirmCancel');
-  var confirmExec = document.getElementById('dbConfirmExec');
   var turnHistoryRefreshBtn = document.getElementById('btnRefreshTurnHistory');
   var pmUsersBody = document.getElementById('pmUsersBody');
   var pmUserUuidEl = document.getElementById('pmUserUuid');
@@ -25454,83 +25437,59 @@ renderDashboardKPIs = function() {
   var pmUserSaveBtn = document.getElementById('btnPmUserSave');
   var pmUserClearBtn = document.getElementById('btnPmUserClear');
   var pmUserRefreshBtn = document.getElementById('btnRefreshPmUsers');
-  if (!editor || !runBtn) return;
+  if (!searchBtn || !resultsBody) return;
 
-  var _dbHistory = [];
   var _dbLastRows = [];
   var _dbLastCols = [];
-  var _pendingSQL = null;
-  var keyInput = document.getElementById('dbAdminKey');
-
-  // Load persisted admin key
-  if (keyInput) {
-    keyInput.value = localStorage.getItem('hm_proxy_admin_key') || '';
-    keyInput.addEventListener('change', function() {
-      localStorage.setItem('hm_proxy_admin_key', keyInput.value.trim());
-    });
-    keyInput.addEventListener('blur', function() {
-      localStorage.setItem('hm_proxy_admin_key', keyInput.value.trim());
-    });
-  }
-
-  function getAdminKey() {
-    return (keyInput ? keyInput.value.trim() : '') || localStorage.getItem('hm_proxy_admin_key') || '';
-  }
 
   function setStatus(cls, text) {
+    if (!connStatus) return;
     connStatus.className = 'dbadmin-status ' + cls;
     connStatus.innerHTML = '<i class="fas fa-circle tiny-dot"></i> ' + text;
   }
 
-  function addHistory(sql) {
-    _dbHistory = _dbHistory.filter(function(h) { return h !== sql; });
-    _dbHistory.unshift(sql);
-    if (_dbHistory.length > 50) _dbHistory.length = 50;
-    renderHistory();
-  }
-
-  function renderHistory() {
-    if (!histList) return;
-    histList.innerHTML = _dbHistory.map(function(sql) {
-      return '<div class="dbadmin-history-item" title="' + escapeHtml(sql) + '">' + escapeHtml(sql.length > 80 ? sql.substring(0, 80) + '\u2026' : sql) + '</div>';
-    }).join('') || '<div class="dbadmin-history-empty">No history yet</div>';
-  }
-
-  // History click → populate editor
-  if (histList) {
-    histList.addEventListener('click', function(ev) {
-      var item = ev.target.closest('.dbadmin-history-item');
-      if (item) { editor.value = item.title; editor.focus(); }
-    });
-  }
-
-  // Shortcut buttons
+  // Shortcut buttons switch the target table and focus the search box.
   var shortcuts = document.getElementById('dbShortcuts');
   if (shortcuts) {
     shortcuts.addEventListener('click', function(ev) {
-      var btn = ev.target.closest('[data-sql]');
-      if (btn) { editor.value = btn.dataset.sql; editor.focus(); }
+      var btn = ev.target.closest('[data-table]');
+      if (!btn) return;
+      if (searchTable) searchTable.value = btn.getAttribute('data-table') || 'work_orders';
+      if (searchInput) searchInput.focus();
     });
   }
 
-  function runQuery() {
-    setStatus('err', 'Disabled');
-    resultsBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-lock"></i> Raw SQL query is disabled. Use Postgres-local PM/OTP/Dispatch controls.</div>';
+  async function runSearch() {
+    var table = searchTable ? String(searchTable.value || 'work_orders') : 'work_orders';
+    var term = searchInput ? String(searchInput.value || '').trim() : '';
+    setStatus('idle', 'Searching…');
+    resultsBody.innerHTML = '<div class="dbadmin-msg">Searching Postgres…</div>';
     resultsMeta.textContent = '';
-    csvBtn.style.display = 'none';
-    jsonBtn.style.display = 'none';
-  }
-
-  function runExecute(sql) {
-    setStatus('err', 'Disabled');
-    resultsBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--warning)"><i class="fas fa-lock"></i> Raw SQL execute is disabled. Use dedicated Postgres-local controls.</div>';
-    resultsMeta.textContent = '';
-    csvBtn.style.display = 'none';
-    jsonBtn.style.display = 'none';
+    try {
+      var token = getProxyAccessToken();
+      var headers = { 'Accept': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+      var url = localBase + '/api/local/db_search?table=' + encodeURIComponent(table) + '&q=' + encodeURIComponent(term) + '&limit=200';
+      var res = await fetchWithTimeout(url, { headers: headers }, 30000);
+      var data = {};
+      try { data = await res.json(); } catch (e) { data = {}; }
+      if (!res.ok || data.ok === false) {
+        throw new Error(String((data && (data.error || data.message)) || ('Search failed: HTTP ' + res.status)));
+      }
+      _dbLastRows = Array.isArray(data.rows) ? data.rows : [];
+      _dbLastCols = Array.isArray(data.columns) ? data.columns : [];
+      renderDbTable(_dbLastRows, _dbLastCols);
+      resultsMeta.textContent = _dbLastRows.length + ' row' + (_dbLastRows.length === 1 ? '' : 's') + ' · ' + table;
+      setStatus('ok', 'OK');
+    } catch (err) {
+      resultsBody.innerHTML = '<div class="dbadmin-msg" style="color:var(--danger)"><i class="fas fa-exclamation-circle"></i> ' + escapeHtml(String((err && err.message) || err)) + '</div>';
+      setStatus('err', 'Error');
+    }
   }
 
   function renderDbTable(rows, cols) {
-    if (!rows.length) { resultsBody.innerHTML = '<div class="dbadmin-msg">No rows returned</div>'; return; }
+    if (!rows.length) { resultsBody.innerHTML = '<div class="dbadmin-msg">No rows matched.</div>'; return; }
 
     function looksLikeUuid(value) {
       return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
@@ -25551,15 +25510,12 @@ renderDashboardKPIs = function() {
       var raw = String(value);
       var safe = escapeHtml(raw);
       var encoded = encodeURIComponent(raw);
-
       if (shouldLinkWorkOrder(colName, raw)) {
         return '<td title="' + safe + '"><button class="dbadmin-cell-link" data-db-link-kind="wo" data-db-link-ref="' + encoded + '">' + safe + '</button></td>';
       }
-
       if (looksLikeUuid(raw)) {
         return '<td title="' + safe + '"><button class="dbadmin-cell-link" data-db-link-kind="uuid" data-db-link-ref="' + encoded + '">' + safe + '</button></td>';
       }
-
       return '<td title="' + safe + '">' + safe + '</td>';
     }
 
@@ -25580,31 +25536,23 @@ renderDashboardKPIs = function() {
       var kind = String(link.getAttribute('data-db-link-kind') || '');
       var ref = decodeURIComponent(String(link.getAttribute('data-db-link-ref') || ''));
       if (!ref) return;
-
-      if (kind === 'wo' && typeof showWODetail === 'function') {
-        showWODetail(ref);
-        return;
-      }
-      if (kind === 'uuid' && typeof showV0UuidDetailModal === 'function') {
-        showV0UuidDetailModal(ref);
-      }
+      if (kind === 'wo' && typeof showWODetail === 'function') { showWODetail(ref); return; }
+      if (kind === 'uuid' && typeof showV0UuidDetailModal === 'function') { showV0UuidDetailModal(ref); }
     });
   }
 
-  function checkDestructive() {
-    var sql = editor.value.trim();
-    if (!sql) return;
-    var up = sql.toUpperCase();
-    var destructive = ['DROP', 'DELETE', 'TRUNCATE', 'UPDATE', 'ALTER', 'INSERT', 'CREATE'];
-    var hit = destructive.find(function(kw) { return new RegExp('(^|;\\s*)' + kw + '\\b').test(up); });
-    if (hit) {
-      _pendingSQL = sql;
-      confirmSQL.textContent = sql.length > 200 ? sql.substring(0, 200) + '\u2026' : sql;
-      confirmOverlay.style.display = '';
-    } else {
-      runExecute(sql);
-    }
-  }
+  // Wire the search controls.
+  searchBtn.addEventListener('click', runSearch);
+  if (clearBtn) clearBtn.addEventListener('click', function() {
+    if (searchInput) searchInput.value = '';
+    resultsBody.innerHTML = '<div class="dbadmin-msg">Run a search to see results here</div>';
+    if (resultsMeta) resultsMeta.textContent = '';
+    _dbLastRows = []; _dbLastCols = [];
+    setStatus('idle', 'Idle');
+  });
+  if (searchInput) searchInput.addEventListener('keydown', function(ev) {
+    if (ev.key === 'Enter') { ev.preventDefault(); runSearch(); }
+  });
 
   function populatePMGroupDropdown(currentUuid, selectedScopeUuids) {
     currentUuid = currentUuid || '';
@@ -25828,39 +25776,6 @@ renderDashboardKPIs = function() {
       showToast(err.message || String(err), 'error');
     });
   }
-
-  // Event listeners
-  runBtn.addEventListener('click', runQuery);
-  execBtn.addEventListener('click', checkDestructive);
-  clearBtn.addEventListener('click', function() { editor.value = ''; resultsBody.innerHTML = '<div class="dbadmin-msg">Run a query to see results here</div>'; resultsMeta.textContent = ''; csvBtn.style.display = 'none'; jsonBtn.style.display = 'none'; });
-  editor.addEventListener('keydown', function(ev) {
-    if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') { ev.preventDefault(); runQuery(); }
-  });
-
-  // Confirm dialog
-  if (confirmCancel) confirmCancel.addEventListener('click', function() { confirmOverlay.style.display = 'none'; _pendingSQL = null; });
-  if (confirmExec) confirmExec.addEventListener('click', function() { confirmOverlay.style.display = 'none'; if (_pendingSQL) runExecute(_pendingSQL); _pendingSQL = null; });
-
-  // Export
-  if (csvBtn) csvBtn.addEventListener('click', function() {
-    if (!_dbLastRows.length) return;
-    var esc2 = function(v) { var s = v == null ? '' : String(v); return (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-    var lines = [_dbLastCols.map(esc2).join(',')];
-    _dbLastRows.forEach(function(row) {
-      lines.push(_dbLastCols.map(function(c) { return esc2(typeof row === 'object' && !Array.isArray(row) ? row[c] : row[_dbLastCols.indexOf(c)]); }).join(','));
-    });
-    var blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a'); a.href = url; a.download = 'db_query_' + new Date().toISOString().slice(0, 10) + '.csv';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
-  });
-  if (jsonBtn) jsonBtn.addEventListener('click', function() {
-    if (!_dbLastRows.length) return;
-    var blob = new Blob([JSON.stringify(_dbLastRows, null, 2)], { type: 'application/json;charset=utf-8;' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a'); a.href = url; a.download = 'db_query_' + new Date().toISOString().slice(0, 10) + '.json';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
-  });
 
   if (turnHistoryRefreshBtn) {
     turnHistoryRefreshBtn.addEventListener('click', function() {
@@ -26245,8 +26160,7 @@ function getDispatchCronSecret() {
   return localStorage.getItem('hm_cron_secret') || DISPATCH.cronSecret || '';
 }
 function getDispatchAdminKey() {
-  var el = document.getElementById('dbAdminKey');
-  return (el ? el.value.trim() : '') || localStorage.getItem('hm_proxy_admin_key') || '';
+  return localStorage.getItem('hm_proxy_admin_key') || '';
 }
 function _dispatchSqlSafe(v) {
   return String(v || '').replace(/'/g, "''");
