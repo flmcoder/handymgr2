@@ -7447,8 +7447,7 @@ async function fetchInspections() {
       };
     }).filter(function(row) {
       return isActiveInspectionProperty(row)
-        && isCurrentLeaseWithActiveResident(row, now)
-        && (row.missingMoveInInspection || row.missingMoveOutInspection || isMissingLeaseInspectionEvidence(row, now));
+        && isCurrentLeaseWithActiveResident(row, now);
     });
     setDataSourceState('inspections', 'ok', { count: INSPECTIONS.length, error: '' });
     return true;
@@ -17434,7 +17433,9 @@ function createInspectionsServerDatasource() {
           var severeBadge = document.getElementById('inspSevereBadge');
           if (severeBadge) {
             var severeCount = Number(data.missing_move_in_total || 0) || 0;
-            severeBadge.textContent = severeCount + (severeCount === 1 ? ' missing move-in inspection' : ' missing move-in inspections');
+            severeBadge.textContent = severeCount === 0
+              ? 'All caught up \u2014 no missing move-in inspections'
+              : (severeCount + (severeCount === 1 ? ' missing move-in inspection' : ' missing move-in inspections'));
             severeBadge.dataset.count = String(severeCount);
           }
         } catch (err) {
@@ -21032,11 +21033,11 @@ function renderInspections(search) {
   var statusFilter = $('#inspStatusFilter') ? $('#inspStatusFilter').value : 'all';
   var today = new Date();
 
-  // Guard against stale IndexedDB cache containing pre-AppFolio artifacts
+  // Guard against stale IndexedDB cache containing pre-AppFolio artifacts.
+  // Includes compliant inspections too, so the KPI strip can show "all caught up".
   var validInspections = INSPECTIONS.filter(function(r) {
     if (!isInPropertyGroup(r.propertyId, r.propertyName, currentPropertyGroup)) return false;
-    if (!isCurrentLeaseWithActiveResident(r, today)) return false;
-    return isMissingLeaseInspectionEvidence(r, today);
+    return isCurrentLeaseWithActiveResident(r, today);
   });
 
   // Classify each inspection
@@ -24869,15 +24870,17 @@ async function initApp() {
     var schemaHealth = applyProxySchemaHealth(pingData);
     if (pingData && pingData.brand) applyBrandConfig(pingData.brand);
 
-    // Cache server version and detect version mismatch (force refresh if needed)
+    // Cache server version and surface the blocking update modal when out of date.
+    // Never auto-reload silently — the user must click "Refresh now" in the modal.
     if (pingData && pingData.version) {
       SERVER_VERSION = String(pingData.version);
       localStorage.setItem('hm_server_version', SERVER_VERSION);
       if (shouldForceVersionReload(SERVER_VERSION, APP_VERSION)) {
-        localStorage.setItem('hm_version_mismatch', '1');
-        setTimeout(function() { location.reload(); }, 2000);
+        if (!hasRecentlyPromptedForVersion(SERVER_VERSION) && !document.getElementById('hmVersionUpdateTitle')) {
+          showVersionUpdateModal(SERVER_VERSION);
+        }
       } else {
-        localStorage.removeItem('hm_version_mismatch');
+        clearVersionPromptCooldown();
       }
     }
 
@@ -28262,16 +28265,6 @@ function decodeWebhookEventV9(evt) {
 
   // Boot
   function _boot(){
-    // Check for version mismatch before initializing
-    if (localStorage.getItem('hm_version_mismatch') === '1') {
-      localStorage.removeItem('hm_version_mismatch');
-      var storedServerVersion = localStorage.getItem('hm_server_version') || '';
-      if (shouldForceVersionReload(storedServerVersion, APP_VERSION)) {
-        location.reload();
-        return;
-      }
-    }
-
     _seedLastId().then(function(){
       _pollTimer=setInterval(function(){if(!document.hidden)_poll();},POLL_MS);
       setTimeout(_poll,1600);

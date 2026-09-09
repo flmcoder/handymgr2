@@ -5166,17 +5166,33 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
              and coalesce(lower(t.status), '') not like '%closed%'`,
         );
 
-    // Inspections badge mirrors the grid's "missing move-in inspection" count.
-    const inspPromise = scope
-      ? queryClient.unsafe(
-          `select count(*)::int as total from appfolio_unit_inspections i
-           where i.last_inspection_date is null
-             and exists (select 1 from appfolio_properties p where p.id = i.property_id and p.property_group_id = $1)`,
-          [scope],
+    // Inspections badge = active residents (current lease, move-in already occurred, not
+    // yet moved out) whose most recent inspection predates their move-in date — i.e. the
+    // same "missing move-in inspection" definition used by the inspections grid.
+    const inspBaseSql = `
+      select count(*)::int as total
+      from appfolio_tenant_directory occ
+      left join lateral (
+        select i0.last_inspection_date
+        from appfolio_unit_inspections i0
+        where (
+          (coalesce(occ.occupancy_id, '') <> '' and i0.occupancy_id = occ.occupancy_id)
+          or (coalesce(occ.occupancy_id, '') = '' and i0.unit_id = occ.unit_id)
         )
-      : queryClient.unsafe(
-          `select count(*)::int as total from appfolio_unit_inspections i where i.last_inspection_date is null`,
-        );
+        order by coalesce(i0.last_inspection_date, i0.last_updated_at, i0.cached_at) desc nulls last
+        limit 1
+      ) i on true
+      left join appfolio_properties p on p.id = occ.property_id
+      where lower(coalesce(occ.status, '')) in ('current', 'past')
+        and coalesce(occ.tenant_name, '') <> ''
+        and occ.move_in_date is not null
+        and occ.move_in_date <= current_date
+        and (occ.move_out_date is null or occ.move_out_date >= current_date)
+        and (i.last_inspection_date is null or i.last_inspection_date < occ.move_in_date)
+    `;
+    const inspPromise = scope
+      ? queryClient.unsafe(`${inspBaseSql} and p.property_group_id = $1`, [scope])
+      : queryClient.unsafe(inspBaseSql);
 
     const [woRows, turnRows, inspRows] = await Promise.all([woPromise, turnPromise, inspPromise]);
     const payload = buildBadgeCountsPayload({
