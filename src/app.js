@@ -11854,9 +11854,15 @@ function wireBillingFilters() {
   }
 
   // Nav badge totals must be recomputed whenever the property-group scope changes.
+  // Blank them immediately so the previous group's numbers never linger on screen
+  // while the new scoped fetch is in flight (no stale cross-scope data bleed).
   document.addEventListener('groupFilterChanged', function() {
     NAV_BADGE_TOTALS_LOADED = false;
     NAV_BADGE_TOTALS_SCOPE = '';
+    NAV_BADGE_TOTALS = { work_orders: 0, turns: 0, inspections: 0 };
+    setNavBadge('woBadge', 0);
+    setNavBadge('turnBadge', 0);
+    setNavBadge('inspBadge', 0);
     fetchNavBadgeTotals(true);
   });
 
