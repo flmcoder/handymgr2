@@ -6,6 +6,9 @@
 <meta name="theme-color" content="#3578e5">
 <title>HandyManager - An AppFolio Utility</title>
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="alternate icon" type="image/png" href="assets/logo.png">
+<link rel="apple-touch-icon" href="assets/logo.png">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=Karla:wght@400;500;600;700&family=Inconsolata:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="stylesheet" href="css/app.css?v=20260503a">
@@ -326,6 +329,45 @@
           <span class="dashboard-insight-card__meta" id="dashUrgencyMeta">Loading…</span>
         </header>
         <div class="billing-mini-chart" id="dashUrgencyChart"></div>
+      </article>
+    </div>
+  </div>
+
+  <div class="table-wrapper neo-surface-raised" style="margin-bottom:20px" id="dashboardEchartsSection">
+    <div class="table-header">
+      <div>
+        <div class="table-title"><i class="fas fa-chart-network" style="color:var(--accent)"></i> Advanced Operations & Portfolio Flow</div>
+        <div class="section-subtitle">Real-time interactive ECharts maps, pipeline funnels, and portfolio sunburst distributions.</div>
+      </div>
+    </div>
+    <div class="dashboard-insight-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+      <article class="dashboard-insight-card" id="dashInsightFunnelCard">
+        <header class="dashboard-insight-card__header">
+          <h4>Turnover Pipeline Funnel</h4>
+          <span class="dashboard-insight-card__meta" id="dashTurnoverFunnelMeta">Loading…</span>
+        </header>
+        <div class="billing-mini-chart" id="dashTurnoverFunnel" style="min-height:260px"></div>
+      </article>
+      <article class="dashboard-insight-card" id="dashInsightSunburstCard">
+        <header class="dashboard-insight-card__header">
+          <h4>Portfolio Sunburst Hierarchy</h4>
+          <span class="dashboard-insight-card__meta" id="dashPortfolioSunburstMeta">Loading…</span>
+        </header>
+        <div class="billing-mini-chart" id="dashPortfolioSunburst" style="min-height:260px"></div>
+      </article>
+      <article class="dashboard-insight-card" id="dashInsightSankeyCard">
+        <header class="dashboard-insight-card__header">
+          <h4>Work Order Flow (Sankey)</h4>
+          <span class="dashboard-insight-card__meta" id="dashSankeyMeta">Loading…</span>
+        </header>
+        <div class="billing-mini-chart" id="dashSankeyChart" style="min-height:260px"></div>
+      </article>
+      <article class="dashboard-insight-card" id="dashInsightMapCard">
+        <header class="dashboard-insight-card__header">
+          <h4>Geocoded Inspection Map</h4>
+          <span class="dashboard-insight-card__meta" id="dashInspectionMapMeta">Loading…</span>
+        </header>
+        <div class="billing-mini-chart" id="dashInspectionMap" style="min-height:260px"></div>
       </article>
     </div>
   </div>
