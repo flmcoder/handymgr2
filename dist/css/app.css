@@ -5621,6 +5621,8 @@ html.dark .form-textarea { background: var(--bg-input); border-color: var(--bord
 #sec-workorders .wo-inactive-context strong { display: block; font-size: 13px; color: var(--text-primary); }
 #sec-workorders .wo-active-context span,
 #sec-workorders .wo-inactive-context span { display: block; margin-top: 2px; color: var(--text-muted); font-size: 11px; }
+#sec-workorders .wo-page-controls { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; }
+#sec-workorders .wo-page-controls .action-btn { min-width: 30px; min-height: 28px; padding: 4px 8px; }
 #sec-workorders .wo-inactive-context b { margin-left: auto; font-family: var(--font-mono); font-size: 18px; color: var(--success); }
 #sec-workorders .wo-history-tools { margin-top: 16px; }
 

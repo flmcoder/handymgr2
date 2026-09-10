@@ -28,7 +28,7 @@ import { formatSyncSummaryLine, shouldLogSyncSummary } from './logNoisePolicy';
 import { buildBadgeCountsPayload, OPEN_WORK_ORDER_STATUS_FILTER } from './badgeCountsPolicy';
 import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
-import { resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
+import { buildWorkOrderPagination, resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
 import { TURN_ENGINE_SQL } from './turnEngineQuery';
 import {
   buildMagicPortalSmsMessage,
@@ -5016,7 +5016,8 @@ app.use('/api/local', pmScopeMiddleware);
 
 app.get('/api/local/work_orders', async (req: Request, res: Response) => {
   try {
-    const limit = parseLimit(req.query.limit, 10000, 20000);
+    const limit = parseLimit(req.query.limit, 100, 20_000);
+    const offset = parseOffset(req.query.offset, 0, 500_000);
     const propertyGroupId = getPropertyGroupFilter(req);
     let rows: any[] = [];
     try {
@@ -5035,6 +5036,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
             )
           order by coalesce(updated_at, created_at) desc
           limit ${limit}
+            offset ${offset}
         `
         : await queryClient`
           select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
@@ -5049,6 +5051,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
             )
           order by coalesce(updated_at, created_at) desc
           limit ${limit}
+            offset ${offset}
         `;
     } catch (error) {
       const message = String((error as any)?.message || error || '');
@@ -5072,6 +5075,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
             )
           order by coalesce(updated_at, created_at) desc
           limit ${limit}
+            offset ${offset}
         `
         : await queryClient`
           select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
@@ -5086,6 +5090,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
             )
           order by coalesce(updated_at, created_at) desc
           limit ${limit}
+            offset ${offset}
         `;
     }
 
@@ -5109,7 +5114,13 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
       console.warn('[work_orders] total count failed; falling back to page length', String((countErr as any)?.message || countErr));
     }
 
-    res.json({ ok: true, results, count: results.length, total, source: 'postgres_local' });
+    res.json({
+      ok: true,
+      results,
+      count: results.length,
+      ...buildWorkOrderPagination(total, limit, offset, results.length),
+      source: 'postgres_local',
+    });
   } catch (error) {
     logTunnelError(error, '/api/local/work_orders');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local work orders query failed') });

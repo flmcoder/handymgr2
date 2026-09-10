@@ -4398,6 +4398,11 @@ function maybeAutoRunSystemHealthCheck() {
 var WORK_ORDERS_ACTIVE = [];
 var WORK_ORDERS_INACTIVE = [];
 var WORK_ORDERS = []; // for backward compat, synced with WORK_ORDERS_ACTIVE
+var WORK_ORDERS_ACTIVE_PAGE_SIZE = 100;
+var WORK_ORDERS_ACTIVE_OFFSET = 0;
+var WORK_ORDERS_ACTIVE_TOTAL = 0;
+var WORK_ORDERS_ACTIVE_HAS_NEXT = false;
+var _workOrdersActivePageLoading = false;
 var _inactiveWorkOrdersLoaded = false;
 var _inactiveWorkOrdersLoading = null;
 var _inactiveWorkOrdersScope = '';
@@ -6267,8 +6272,12 @@ async function fetchNavBadgeTotals(force) {
   }
 }
 
-async function fetchWorkOrders() {
+async function fetchWorkOrders(options) {
   setDataSourceState('work_orders', 'loading', { error: '' });
+  var requestedOffset = options && Number.isFinite(Number(options.offset))
+    ? Math.max(0, Math.floor(Number(options.offset)))
+    : WORK_ORDERS_ACTIVE_OFFSET;
+  _workOrdersActivePageLoading = true;
   try {
     setApiStatus('loading', 'Loading work orders from PostgreSQL…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
@@ -6279,7 +6288,8 @@ async function fetchWorkOrders() {
     if (token) localHeaders['Authorization'] = 'Bearer ' + token;
     
     // Active volume is bounded by status, so do not impose an artificial date window.
-    var urlActive = localBase + '/api/local/work_orders?limit=100' + scopeQuery;
+    var pageQuery = requestedOffset > 0 ? ('&offset=' + requestedOffset) : '';
+    var urlActive = localBase + '/api/local/work_orders?limit=' + WORK_ORDERS_ACTIVE_PAGE_SIZE + pageQuery + scopeQuery;
     var resActive = await fetchWithTimeout(urlActive, { headers: localHeaders }, 45000);
     var dataActive = {};
     try { dataActive = await resActive.json(); } catch (e) { dataActive = {}; }
@@ -6290,15 +6300,20 @@ async function fetchWorkOrders() {
     WORK_ORDERS_ACTIVE = activeResults.map(normalizeLocalWorkOrder);
     WORK_ORDERS = WORK_ORDERS_ACTIVE; // backward compat
     window.WORK_ORDERS = WORK_ORDERS;
+    WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, Number(dataActive.offset) || requestedOffset);
+    WORK_ORDERS_ACTIVE_TOTAL = Math.max(0, Number(dataActive.total) || 0);
+    WORK_ORDERS_ACTIVE_HAS_NEXT = dataActive.has_next === true;
     
-    setApiStatus('loading', 'Work orders: ' + WORK_ORDERS_ACTIVE.length + ' active');
-    setDataSourceState('work_orders', 'ok', { count: WORK_ORDERS_ACTIVE.length, active: WORK_ORDERS_ACTIVE.length, inactive: _inactiveWorkOrdersLoaded ? WORK_ORDERS_INACTIVE.length : null, error: '' });
+    setApiStatus('loading', 'Work orders: ' + WORK_ORDERS_ACTIVE_TOTAL + ' active');
+    setDataSourceState('work_orders', 'ok', { count: WORK_ORDERS_ACTIVE_TOTAL, active: WORK_ORDERS_ACTIVE_TOTAL, inactive: _inactiveWorkOrdersLoaded ? WORK_ORDERS_INACTIVE.length : null, error: '' });
     // Refresh nav badge totals now that the scoped data has changed.
     fetchNavBadgeTotals(true);
     return true;
   } catch (err) {
     setDataSourceState('work_orders', 'no_response', { count: null, error: String((err && err.message) || err || 'work orders unavailable') });
     return false;
+  } finally {
+    _workOrdersActivePageLoading = false;
   }
 }
 
@@ -11864,6 +11879,16 @@ function wireBillingFilters() {
     setNavBadge('turnBadge', 0);
     setNavBadge('inspBadge', 0);
     fetchNavBadgeTotals(true);
+  });
+
+  document.addEventListener('groupFilterChanged', function() {
+    WORK_ORDERS_ACTIVE_OFFSET = 0;
+    WORK_ORDERS_ACTIVE_TOTAL = 0;
+    WORK_ORDERS_ACTIVE_HAS_NEXT = false;
+    fetchWorkOrders({ offset: 0 }).then(function() {
+      var activeTab = document.querySelector('.nav-tab.active');
+      if (activeTab && activeTab.getAttribute('data-tab') === 'workorders') renderWorkOrders();
+    });
   });
 
   document.addEventListener('groupFilterChanged', function() {
@@ -17901,9 +17926,18 @@ function renderWorkOrders() {
   rebuildWOScopedFilters();
   var filtered = sortWorkOrders(getFilteredWOs());
 
+  var activePageStart = WORK_ORDERS_ACTIVE_TOTAL > 0 ? WORK_ORDERS_ACTIVE_OFFSET + 1 : 0;
+  var activePageEnd = Math.min(WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE.length, WORK_ORDERS_ACTIVE_TOTAL);
+  var activePagerHtml = WORK_ORDERS_ACTIVE_TOTAL > WORK_ORDERS_ACTIVE_PAGE_SIZE
+    ? '<div class="wo-page-controls" aria-label="Active work order pages">' +
+        '<span>Showing ' + activePageStart + '-' + activePageEnd + ' of ' + WORK_ORDERS_ACTIVE_TOTAL + '</span>' +
+        '<button class="action-btn" id="woPagePrev" aria-label="Previous work-order page"' + (WORK_ORDERS_ACTIVE_OFFSET <= 0 || _workOrdersActivePageLoading ? ' disabled' : '') + '><i class="fas fa-chevron-left" aria-hidden="true"></i></button>' +
+        '<button class="action-btn" id="woPageNext" aria-label="Next work-order page"' + (!WORK_ORDERS_ACTIVE_HAS_NEXT || _workOrdersActivePageLoading ? ' disabled' : '') + '><i class="fas fa-chevron-right" aria-hidden="true"></i></button>' +
+      '</div>'
+    : '';
   var statusContextHtml = currentWOTab === 'inactive'
     ? '<div class="wo-inactive-context"><i class="fas fa-check-circle"></i><div><strong>Completed / Inactive Work Orders</strong><span>Work already completed, canceled, or otherwise no longer active.</span></div><b>' + WORK_ORDERS_INACTIVE.length + '</b></div>'
-    : '<div class="wo-active-context"><strong>Active Work Queue</strong><span>' + WORK_ORDERS_ACTIVE.length + ' open work orders requiring attention.</span></div>';
+    : '<div class="wo-active-context"><div><strong>Active Work Queue</strong><span>' + WORK_ORDERS_ACTIVE_TOTAL + ' open work orders requiring attention.</span></div>' + activePagerHtml + '</div>';
 
   // ── List view ──────────────────────────────────────────────────────────────
   if (currentWOView === 'list') {
@@ -17959,6 +17993,7 @@ function renderWorkOrders() {
       renderWOCloseAssist();
       renderWOFollowupQueue();
       renderCompletedWOHistorySection();
+      bindWorkOrderPaginationControls();
       return;
     }
 
@@ -18012,10 +18047,11 @@ function renderWorkOrders() {
       });
     });
 
-    $('#woBadge').textContent = filtered.length || '0';
+    applyNavBadgeTotals();
     renderWOCloseAssist();
     renderWOFollowupQueue();
     renderCompletedWOHistorySection();
+    bindWorkOrderPaginationControls();
     return;
   }
   // ── End list view ──────────────────────────────────────────────────────────
@@ -18122,11 +18158,29 @@ function renderWorkOrders() {
     var expandedCol = board.querySelector('.kanban-col.column--expanded .kanban-col-body');
     if (expandedCol) expandedCol.scrollTop = 0;
   }
-  $('#woBadge').textContent = filtered.length || '0';
+  applyNavBadgeTotals();
   renderWOCloseAssist();
   renderWOFollowupQueue();
   renderCompletedWOHistorySection();
+  bindWorkOrderPaginationControls();
   // Event listeners handled by delegation in wireUpUI() — no re-attachment needed
+}
+
+function bindWorkOrderPaginationControls() {
+  var previousButton = document.getElementById('woPagePrev');
+  var nextButton = document.getElementById('woPageNext');
+  if (previousButton) previousButton.onclick = function() {
+    if (_workOrdersActivePageLoading || WORK_ORDERS_ACTIVE_OFFSET <= 0) return;
+    fetchWorkOrders({ offset: Math.max(0, WORK_ORDERS_ACTIVE_OFFSET - WORK_ORDERS_ACTIVE_PAGE_SIZE) }).then(function() {
+      renderWorkOrders();
+    });
+  };
+  if (nextButton) nextButton.onclick = function() {
+    if (_workOrdersActivePageLoading || !WORK_ORDERS_ACTIVE_HAS_NEXT) return;
+    fetchWorkOrders({ offset: WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE_PAGE_SIZE }).then(function() {
+      renderWorkOrders();
+    });
+  };
 }
 
 function normalizeLooseKey(v) {
@@ -24629,7 +24683,7 @@ function wireUpUI() {
 
       closeModal('newWOModal');
       showToast('Work order created \u2014 refreshing list\u2026');
-      await fetchWorkOrders();
+      await fetchWorkOrders({ offset: 0 });
       renderWorkOrders();
       renderDashboardKPIs();
       await saveAllToCache();
@@ -24650,7 +24704,7 @@ async function sectionRefresh(section, btn) {
   try {
     if (section === 'workorders' || section === 'dashboard') {
       showToast('Refreshing open work orders\u2026');
-      await fetchWorkOrders();
+      await fetchWorkOrders({ offset: 0 });
       if (!_billsLoadedAt || (Date.now() - _billsLoadedAt) > (30 * 60 * 1000)) {
         await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS);
       }
