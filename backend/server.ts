@@ -25,7 +25,12 @@ import { enforceScopedSession } from './scopedSessionGuard';
 import { isClientAbortError } from './requestErrorPolicy';
 import { buildRequestedSyncEndpoints, runSequentially } from './syncSchedulerPolicy';
 import { formatSyncSummaryLine, shouldLogSyncSummary } from './logNoisePolicy';
-import { buildBadgeCountsPayload, OPEN_WORK_ORDER_STATUS_FILTER } from './badgeCountsPolicy';
+import {
+  ACTIVE_INSPECTION_RESIDENT_FILTER,
+  ACTIVE_TURN_STATUS_FILTER,
+  buildBadgeCountsPayload,
+  OPEN_WORK_ORDER_STATUS_FILTER,
+} from './badgeCountsPolicy';
 import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { buildWorkOrderPagination, resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
@@ -5166,15 +5171,13 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
     const turnPromise = scope
       ? queryClient.unsafe(
           `select count(*)::int as total from unit_turn_tracker t
-           where coalesce(lower(t.status), '') not like '%completed%'
-             and coalesce(lower(t.status), '') not like '%closed%'
+           where ${ACTIVE_TURN_STATUS_FILTER}
              and exists (select 1 from appfolio_properties p where p.id = t.property_id and p.property_group_id = $1)`,
           [scope],
         )
       : queryClient.unsafe(
           `select count(*)::int as total from unit_turn_tracker t
-           where coalesce(lower(t.status), '') not like '%completed%'
-             and coalesce(lower(t.status), '') not like '%closed%'`,
+           where ${ACTIVE_TURN_STATUS_FILTER}`,
         );
 
     // Inspections badge = active residents (current lease, move-in already occurred, not
@@ -5194,12 +5197,7 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
         limit 1
       ) i on true
       left join appfolio_properties p on p.id = occ.property_id
-      where lower(coalesce(occ.status, '')) in ('current', 'past')
-        and coalesce(occ.tenant_name, '') <> ''
-        and occ.move_in_date is not null
-        and occ.move_in_date <= current_date
-        and (occ.move_out_date is null or occ.move_out_date >= current_date)
-        and (i.last_inspection_date is null or i.last_inspection_date < occ.move_in_date)
+      where ${ACTIVE_INSPECTION_RESIDENT_FILTER}
     `;
     const inspPromise = scope
       ? queryClient.unsafe(`${inspBaseSql} and p.property_group_id = $1`, [scope])

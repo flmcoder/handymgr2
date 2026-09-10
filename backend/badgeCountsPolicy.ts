@@ -9,6 +9,21 @@ export const OPEN_WORK_ORDER_STATUS_FILTER = `(
   and coalesce(lower(status), '') not like '%no need to bill%'
 )`;
 
+export const ACTIVE_TURN_STATUS_FILTER = `(
+  coalesce(lower(t.status), '') not like '%completed%'
+  and coalesce(lower(t.status), '') not like '%closed%'
+  and coalesce(t.updated_at, t.created_at, now()) >= now() - interval '90 days'
+)`;
+
+export const ACTIVE_INSPECTION_RESIDENT_FILTER = `(
+  lower(coalesce(occ.status, '')) = 'current'
+  and coalesce(occ.tenant_name, '') <> ''
+  and occ.move_in_date is not null
+  and occ.move_in_date <= current_date
+  and (occ.move_out_date is null or occ.move_out_date >= current_date)
+  and (i.last_inspection_date is null or i.last_inspection_date < occ.move_in_date)
+)`;
+
 /** Normalize a badge count to a safe non-negative integer. */
 export function toBadgeCount(value: unknown): number {
   const n = Number(value);

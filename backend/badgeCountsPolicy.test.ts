@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  ACTIVE_INSPECTION_RESIDENT_FILTER,
+  ACTIVE_TURN_STATUS_FILTER,
   buildBadgeCountsPayload,
   toBadgeCount,
   OPEN_WORK_ORDER_STATUS_FILTER,
@@ -40,4 +42,17 @@ test('OPEN_WORK_ORDER_STATUS_FILTER excludes terminal statuses', () => {
   assert.match(OPEN_WORK_ORDER_STATUS_FILTER, /not like '%completed%'/);
   assert.match(OPEN_WORK_ORDER_STATUS_FILTER, /not like '%cancel%'/);
   assert.match(OPEN_WORK_ORDER_STATUS_FILTER, /not like '%no need to bill%'/);
+});
+
+test('ACTIVE_TURN_STATUS_FILTER excludes completed and closed turns within the active window', () => {
+  assert.match(ACTIVE_TURN_STATUS_FILTER, /not like '%completed%'/);
+  assert.match(ACTIVE_TURN_STATUS_FILTER, /not like '%closed%'/);
+  assert.match(ACTIVE_TURN_STATUS_FILTER, /updated_at/);
+  assert.match(ACTIVE_TURN_STATUS_FILTER, /interval '90 days'/);
+});
+
+test('ACTIVE_INSPECTION_RESIDENT_FILTER includes current residents only', () => {
+  assert.match(ACTIVE_INSPECTION_RESIDENT_FILTER, /lower\(coalesce\(occ\.status, ''\)\) = 'current'/);
+  assert.doesNotMatch(ACTIVE_INSPECTION_RESIDENT_FILTER, /'past'/);
+  assert.match(ACTIVE_INSPECTION_RESIDENT_FILTER, /occ\.move_out_date is null or occ\.move_out_date >= current_date/);
 });

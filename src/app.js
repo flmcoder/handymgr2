@@ -1054,7 +1054,7 @@ function hmPrompt(msg, defaultVal, opts) {
 function loadingHtml(msg) { return '<div class="loading-overlay"><i class="fas fa-circle-notch"></i><p>' + escapeHtml(msg) + '</p></div>'; }
 function emptyHtml(icon, msg) { return '<div class="empty-state"><i class="fas ' + icon + '"></i><p>' + escapeHtml(msg) + '</p></div>'; }
 
-// ── Top-of-page progress bar ──────────────────────────────────────────────────
+// ── Top-of-page loading indicator ──────────────────────────────────────────────
 var _topLoadBarPending = 0;
 var _topLoadBarEl = null;
 function _getTopLoadBar() {
@@ -1065,26 +1065,19 @@ function topBarStart() {
   _topLoadBarPending++;
   var el = _getTopLoadBar();
   if (!el) return;
-  el.style.width = '30%';
   el.classList.add('active');
 }
 function topBarAdvance(pct) {
-  if (_topLoadBarPending <= 0) return;
-  var el = _getTopLoadBar();
-  if (!el) return;
-  var cur = parseFloat(el.style.width) || 0;
-  el.style.width = Math.min(Math.max(cur, pct || 60), 90) + '%';
+  void pct;
 }
 function topBarFinish() {
   _topLoadBarPending = Math.max(0, _topLoadBarPending - 1);
   if (_topLoadBarPending > 0) return;
   var el = _getTopLoadBar();
   if (!el) return;
-  el.style.width = '100%';
   setTimeout(function() {
     el.classList.remove('active');
-    el.style.width = '0%';
-  }, 380);
+  }, 120);
 }
 
 
@@ -6151,7 +6144,6 @@ function showProgress(title, steps) {
   var dock = $('#progressDock');
   $('#progTitle').textContent = title;
   $('#progStatus').textContent = 'Starting\u2026';
-  $('#progBar').style.width = '0%';
   var stepsHtml = '';
   _progSteps.forEach(function() { stepsHtml += '<div class="progress-step"></div>'; });
   $('#progSteps').innerHTML = stepsHtml;
@@ -6162,9 +6154,6 @@ function updateProgress(stepIndex, state, statusText) {
   if (stepIndex >= 0 && stepIndex < _progSteps.length) {
     _progSteps[stepIndex].state = state;
   }
-  var doneCount = _progSteps.filter(function(s) { return s.state === 'done'; }).length;
-  var pct = _progSteps.length > 0 ? Math.round((doneCount / _progSteps.length) * 100) : 0;
-  $('#progBar').style.width = pct + '%';
   if (statusText) { $('#progStatus').textContent = statusText; }
   // Update step dots
   var dots = $$('#progSteps .progress-step');
