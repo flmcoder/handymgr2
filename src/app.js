@@ -11889,7 +11889,9 @@ function wireBillingFilters() {
     fetchWorkOrders({ offset: 0 }).then(function() {
       var activeTab = document.querySelector('.nav-tab.active');
       if (activeTab && activeTab.getAttribute('data-tab') === 'workorders') renderWorkOrders();
+      if (activeTab && activeTab.getAttribute('data-tab') === 'dashboard') renderDashboardKPIs();
     });
+    renderDashboardKPIs();
   });
 
   document.addEventListener('groupFilterChanged', function() {
@@ -13061,7 +13063,7 @@ function openDashboardChartModal(title, rows, selectedLabel) {
   if (!host || !rowsEl) return;
 
   var chartRows = (Array.isArray(rows) ? rows : []).map(function(row) {
-    return { name: String(row.label || ''), value: Number(row.value || 0) };
+    return { name: String(row.label || row.name || ''), value: Number(row.value || 0) };
   });
   var total = chartRows.reduce(function(sum, row) { return sum + row.value; }, 0);
   if (titleEl) titleEl.textContent = String(title || 'Dashboard insight');
@@ -13241,7 +13243,7 @@ function renderDashboardInsightChart(elId, rows, title) {
         }
       },
       data: rows.map(function(row) {
-        return { name: row.label, value: Number(row.value || 0) };
+        return { name: row.label || row.name || 'Segment', value: Number(row.value || 0) };
       })
     }]
   });
@@ -13454,8 +13456,9 @@ function renderDashboardInsightCharts(openWOs, urgentWOs) {
 // server-side in SQLite), then renders EffectScatter + Funnel via dashboard.ts.
 // ---------------------------------------------------------------------------
 var _geoChartsRendered = false;
+var _geocodedCache = null;
 
-function renderDashboardGeoCharts() {
+function renderDashboardGeoCharts(force) {
   var buildInspMap = window.buildInspectionMapOption;
   var buildFunnel  = window.buildTurnoverPipelineOption;
   var echartsCore  = window.echartsCore;
@@ -13464,34 +13467,82 @@ function renderDashboardGeoCharts() {
   // ── Turnover Funnel (synchronous — uses TURN_PIPE_DATA in memory) ─────────
   var funnelEl = document.getElementById('dashTurnoverFunnel');
   var funnelMeta = document.getElementById('dashTurnoverFunnelMeta');
-  if (funnelEl && typeof TURN_PIPE_DATA !== 'undefined' && TURN_PIPE_DATA.length > 0) {
+  var turnPipe = Array.isArray(TURN_PIPE_DATA) ? TURN_PIPE_DATA : [];
+  if (currentPropertyGroup) {
+    turnPipe = turnPipe.filter(function(p) {
+      return isInPropertyGroup(p.propertyId || p.property_id, p.propertyName || p.property_name, currentPropertyGroup);
+    });
+  }
+  if (funnelEl && turnPipe.length > 0) {
     var existingFunnel = echartsCore.getInstanceByDom(funnelEl);
     if (existingFunnel) existingFunnel.dispose();
     var funnelChart = echartsCore.init(funnelEl, null, { renderer: 'canvas' });
-    funnelChart.setOption(buildFunnel(TURN_PIPE_DATA));
-    if (funnelMeta) funnelMeta.textContent = TURN_PIPE_DATA.filter(function(p) { return !p.isClosed; }).length + ' active turns';
+    funnelChart.setOption(buildFunnel(turnPipe));
+    if (funnelMeta) funnelMeta.textContent = turnPipe.filter(function(p) { return !p.isClosed; }).length + ' active turns';
   } else if (funnelEl && funnelMeta) {
     funnelMeta.textContent = 'No turn data';
+    var existingFunnelEmpty = echartsCore.getInstanceByDom(funnelEl);
+    if (existingFunnelEmpty) existingFunnelEmpty.clear();
   }
 
   // ── Inspection Map (async — geocodes each unique property address) ─────────
-  // Only run once per page load to avoid hammering the geocode endpoint.
-  if (_geoChartsRendered) return;
-  _geoChartsRendered = true;
-
   var mapEl = document.getElementById('dashInspectionMap');
   var mapMeta = document.getElementById('dashInspectionMapMeta');
   if (!mapEl) return;
 
   var inspData = Array.isArray(INSPECTIONS) ? INSPECTIONS : [];
+  if (currentPropertyGroup) {
+    inspData = inspData.filter(function(r) {
+      return isInPropertyGroup(r.property_id || r.propertyId, r.property_name || r.propertyName, currentPropertyGroup);
+    });
+  }
   if (!inspData.length) {
     if (mapMeta) mapMeta.textContent = 'No inspection data';
+    var existingMapEmpty = echartsCore.getInstanceByDom(mapEl);
+    if (existingMapEmpty) existingMapEmpty.clear();
+    return;
+  }
+
+  function renderMapWithCoords(withCoords) {
+    var filteredCoords = withCoords;
+    if (currentPropertyGroup) {
+      filteredCoords = withCoords.filter(function(r) {
+        return isInPropertyGroup(r.property_id || r.propertyId, r.property_name || r.propertyName, currentPropertyGroup);
+      });
+    }
+    if (!filteredCoords.length) {
+      if (mapMeta) mapMeta.textContent = 'No mapped properties in scope';
+      var existingMap = echartsCore.getInstanceByDom(mapEl);
+      if (existingMap) existingMap.clear();
+      return;
+    }
+    var existingMap = echartsCore.getInstanceByDom(mapEl);
+    if (existingMap) existingMap.dispose();
+    var mapChart = echartsCore.init(mapEl, null, { renderer: 'canvas' });
+    mapChart.setOption(buildInspMap(filteredCoords));
+    if (mapMeta) mapMeta.textContent = filteredCoords.length + ' properties mapped';
+
+    mapChart.on('click', function(params) {
+      if (!params || !params.value) return;
+      var propertyId = params.value[3];
+      if (propertyId) {
+        showTab('properties');
+        setPropertiesSubtab('inspections');
+        setTimeout(function() {
+          var fInput = document.getElementById('inspectionSearchInput');
+          if (fInput) { fInput.value = String(params.name || ''); fInput.dispatchEvent(new Event('input')); }
+        }, 300);
+      }
+    });
+  }
+
+  if (_geocodedCache && !force) {
+    renderMapWithCoords(_geocodedCache);
     return;
   }
 
   if (mapMeta) mapMeta.textContent = 'Geocoding…';
 
-  // De-duplicate by property_id or property_address
   var seen = {};
   var unique = inspData.filter(function(r) {
     var key = String(r.property_id || r.propertyId || r.property_address || r.propertyName || '');
@@ -13500,7 +13551,6 @@ function renderDashboardGeoCharts() {
     return true;
   });
 
-  // Batch geocode (sequential to be polite to the proxy / OSM rate-limit)
   Promise.all(unique.map(function(r) {
     var addr = String(r.property_address || r.propertyAddress || r.property_name || r.propertyName || '').trim();
     if (!addr) return Promise.resolve(null);
@@ -13514,31 +13564,9 @@ function renderDashboardGeoCharts() {
       })
       .catch(function() { return null; });
   })).then(function(geocoded) {
-    var withCoords = geocoded.filter(function(r) { return r && r._x != null; });
-    if (!withCoords.length) {
-      if (mapMeta) mapMeta.textContent = 'Geocoding failed';
-      return;
-    }
-    var existingMap = echartsCore.getInstanceByDom(mapEl);
-    if (existingMap) existingMap.dispose();
-    var mapChart = echartsCore.init(mapEl, null, { renderer: 'canvas' });
-    mapChart.setOption(buildInspMap(withCoords));
-    if (mapMeta) mapMeta.textContent = withCoords.length + ' properties mapped';
-
-    // Click on a dot → navigate to Inspections tab filtered by property
-    mapChart.on('click', function(params) {
-      if (!params || !params.value) return;
-      var propertyId = params.value[3];
-      if (propertyId) {
-        showTab('properties');
-        setPropertiesSubtab('inspections');
-        setTimeout(function() {
-          var fInput = document.getElementById('inspectionSearchInput');
-          if (fInput) { fInput.value = String(params.name || ''); fInput.dispatchEvent(new Event('input')); }
-        }, 300);
-      }
-    });
-   });
+    _geocodedCache = geocoded.filter(function(r) { return r && r._x != null; });
+    renderMapWithCoords(_geocodedCache);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -13547,12 +13575,9 @@ function renderDashboardGeoCharts() {
 // on the proxy side). Renders via buildPortfolioSunburstOption from dashboard.ts.
 // Click: Property ring → navigate to Properties tab filtered by name.
 // ---------------------------------------------------------------------------
-var _sunburstRendered = false;
+var _sunburstRenderedKey = '';
 
-async function fetchAndRenderPortfolioSunburst() {
-  // Only fetch once per session — proxy caches for 2h anyway
-  if (_sunburstRendered) return;
-
+async function fetchAndRenderPortfolioSunburst(force) {
   var buildSunburst = window.buildPortfolioSunburstOption;
   var echartsCore   = window.echartsCore;
   if (!buildSunburst || !echartsCore) return; // dashboard.ts not yet loaded
@@ -13561,18 +13586,32 @@ async function fetchAndRenderPortfolioSunburst() {
   var meta = document.getElementById('dashPortfolioSunburstMeta');
   if (!el) return;
 
+  var grpUuid = getEffectiveGroupUuid();
+  var grpName = currentPropertyGroup;
+  var cacheKey = grpUuid || grpName || '__all__';
+
+  if (!force && _sunburstRenderedKey === cacheKey) return;
+
   if (meta) meta.textContent = 'Fetching…';
 
   try {
-    var data = await proxyAction('chart_portfolio_pulse', {});
+    var params = {};
+    if (grpUuid) {
+      params.group_uuid = grpUuid;
+      params.property_group_uuid = grpUuid;
+    } else if (grpName) {
+      params.property_group = grpName;
+    }
+    var data = await proxyAction('chart_portfolio_pulse', params);
 
-    // Proxy returns the shaped array directly (not wrapped in {ok, results})
     if (!Array.isArray(data) || !data.length) {
       if (meta) meta.textContent = data && data.error ? data.error : 'No data';
+      var existingEmpty = echartsCore.getInstanceByDom(el);
+      if (existingEmpty) existingEmpty.clear();
       return;
     }
 
-    _sunburstRendered = true;
+    _sunburstRenderedKey = cacheKey;
 
     var existing = echartsCore.getInstanceByDom(el);
     if (existing) existing.dispose();
@@ -13580,7 +13619,6 @@ async function fetchAndRenderPortfolioSunburst() {
     var chart = echartsCore.init(el, null, { renderer: 'canvas' });
     chart.setOption(buildSunburst(data));
 
-    // Count properties and units for meta label
     var propCount = data.length;
     var unitCount = data.reduce(function(total, prop) {
       return total + (prop.children || []).reduce(function(s, status) {
@@ -13589,11 +13627,9 @@ async function fetchAndRenderPortfolioSunburst() {
     }, 0);
     if (meta) meta.textContent = propCount + ' properties · ' + unitCount + ' units';
 
-    // Click outer/status ring → navigate to Properties tab, filter by name
     chart.on('click', function(params) {
       if (!params || !params.treePathInfo) return;
       var path = params.treePathInfo;
-      // path[0] is root (empty), path[1] is property name
       var propName = path.length > 1 ? String(path[1].name || '') : '';
       if (!propName) return;
       if (typeof showTab === 'function') showTab('properties');
@@ -13607,7 +13643,6 @@ async function fetchAndRenderPortfolioSunburst() {
       }, 300);
     });
 
-    // Resize with the rest of the dashboard charts
     window.addEventListener('resize', function() { chart.resize(); });
 
   } catch (e) {
@@ -13621,11 +13656,7 @@ async function fetchAndRenderPortfolioSunburst() {
 // Renders via buildWoSankeyOption from dashboard.ts.
 // Uses WORK_ORDERS global (already loaded by loadWorkOrders).
 // ---------------------------------------------------------------------------
-var _sankeyRendered = false;
-
 function renderWoSankey() {
-  if (_sankeyRendered) return;
-
   var buildSankey = window.buildWoSankeyOption;
   var echartsCore = window.echartsCore;
   if (!buildSankey || !echartsCore) return;
@@ -13634,9 +13665,20 @@ function renderWoSankey() {
   var meta = document.getElementById('dashSankeyMeta');
   if (!el) return;
 
-  var wos = Array.isArray(WORK_ORDERS) ? WORK_ORDERS : [];
+  var wos = Array.isArray(WORK_ORDERS_ACTIVE) && WORK_ORDERS_ACTIVE.length > 0
+    ? WORK_ORDERS_ACTIVE
+    : (Array.isArray(WORK_ORDERS) ? WORK_ORDERS : []);
+
+  if (currentPropertyGroup) {
+    wos = wos.filter(function(wo) {
+      return isInPropertyGroup(wo.propertyId || wo.property_id, wo.propertyName || wo.property_name, currentPropertyGroup);
+    });
+  }
+
   if (!wos.length) {
     if (meta) meta.textContent = 'No work orders';
+    var existingEmpty = echartsCore.getInstanceByDom(el);
+    if (existingEmpty) existingEmpty.clear();
     return;
   }
 
@@ -13644,8 +13686,9 @@ function renderWoSankey() {
   if (existing) existing.dispose();
   var chart = echartsCore.init(el, null, { renderer: 'canvas' });
   chart.setOption(buildSankey(wos));
+  chart.off('click');
   chart.on('click', function(params) {
-    var query = String(params && params.name || '').trim();
+    var query = String(params && params.name || '').replace(/^[^\s]+\s+/, '').trim();
     if (!query) return;
     var workordersTab = document.querySelector('.nav-tab[data-tab="workorders"]');
     if (workordersTab) workordersTab.click();
@@ -13660,7 +13703,6 @@ function renderWoSankey() {
   el.style.cursor = 'pointer';
   el.setAttribute('title', 'Click a flow node to filter Work Orders');
   if (meta) meta.textContent = wos.length + ' work orders';
-  _sankeyRendered = true;
 
   window.addEventListener('resize', function() { chart.resize(); });
 }
