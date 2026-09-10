@@ -77,3 +77,11 @@ test('version update modal only fires for a genuine newer server version and can
   assert.match(source, /overlay\.addEventListener\(['"]click['"],\s*function\(e\)\s*\{\s*e\.stopPropagation\(\);\s*\}\)/);
   assert.match(source, /if\s*\(e\.key === ['"]Escape['"]\)\s*\{\s*e\.preventDefault\(\);\s*e\.stopPropagation\(\);\s*\}/);
 });
+
+test('visible tabs poll the health endpoint and check immediately when they regain focus', async () => {
+  const source = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+
+  assert.match(source, /VERSION_MISMATCH_POLL_MS\s*=\s*60\s*\*\s*1000/);
+  assert.match(source, /setInterval\(function\(\)\s*\{[\s\S]{0,180}checkForRequiredAppUpdate\(\)/);
+  assert.match(source, /document\.addEventListener\(['"]visibilitychange['"][\s\S]{0,240}checkForRequiredAppUpdate\(\)/);
+});

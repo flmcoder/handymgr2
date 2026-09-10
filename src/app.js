@@ -359,6 +359,7 @@ const API_BASE_URL = window.location.hostname === 'localhost' || window.location
 var DEFAULT_PROXY_URL = API_BASE_URL;
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
+var VERSION_MISMATCH_POLL_MS = 60 * 1000;
 var DASHBOARD_KPI_HISTORY = [];
 var DASHBOARD_KPI_HISTORY_MAX = 16;
 var DASHBOARD_KPI_CHART_MODE = false;
@@ -507,6 +508,17 @@ async function checkForRequiredAppUpdate() {
   }
 }
 
+function initVersionMismatchMonitor() {
+  if (VERSION_MISMATCH_TIMER) clearInterval(VERSION_MISMATCH_TIMER);
+  VERSION_MISMATCH_TIMER = setInterval(function() {
+    if (document.visibilityState === 'visible') void checkForRequiredAppUpdate();
+  }, VERSION_MISMATCH_POLL_MS);
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') void checkForRequiredAppUpdate();
+  });
+  void checkForRequiredAppUpdate();
+}
+
 function getConfiguredForceRefreshIntervalMs() {
   var configuredMs = 0;
   var configuredMinutes = 0;
@@ -598,7 +610,7 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', syncDisplayedAppVersion);
 }
 initForcedClientRefreshPolicy();
-void checkForRequiredAppUpdate();
+initVersionMismatchMonitor();
 
 function applyBrandConfig(brand) {
   if (!brand || typeof brand !== 'object') return;
