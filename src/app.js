@@ -6256,7 +6256,7 @@ function applyNavBadgeTotals() {
   setNavBadge('inspBadge', NAV_BADGE_TOTALS.inspections);
 }
 
-async function fetchNavBadgeTotals(force) {
+async function fetchNavBadgeTotals(force, retryCount) {
   var scope = String(getEffectiveGroupUuid() || '');
   var requestGeneration = _scopeRequestGeneration;
   if (!force && NAV_BADGE_TOTALS_LOADED && NAV_BADGE_TOTALS_SCOPE === scope) return true;
@@ -6286,6 +6286,9 @@ async function fetchNavBadgeTotals(force) {
     if (activeTab && activeTab.getAttribute('data-tab') === 'dashboard') renderDashboardKPIs();
     return true;
   } catch (e) {
+    if ((Number(retryCount) || 0) < 1 && requestGeneration === _scopeRequestGeneration) {
+      setTimeout(function() { fetchNavBadgeTotals(true, 1); }, 1500);
+    }
     return false;
   }
 }
@@ -13628,13 +13631,13 @@ function renderDashboardGeoCharts(force) {
 
 // ---------------------------------------------------------------------------
 // Portfolio Health Sunburst
-// Fetches server-shaped hierarchy from ?action=chart_portfolio_pulse (2h cache
-// on the proxy side). Renders via buildPortfolioSunburstOption from dashboard.ts.
+// Builds a hierarchy from the authenticated local property and unit catalogs.
+// Renders via buildPortfolioSunburstOption from dashboard.ts.
 // Click: Property ring → navigate to Properties tab filtered by name.
 // ---------------------------------------------------------------------------
 var _sunburstRenderedKey = '';
 
-async function fetchAndRenderPortfolioSunburst(force) {
+function fetchAndRenderPortfolioSunburst(force) {
   var buildSunburst = window.buildPortfolioSunburstOption;
   var echartsCore   = window.echartsCore;
   if (!buildSunburst || !echartsCore) return; // dashboard.ts not yet loaded
@@ -13649,63 +13652,68 @@ async function fetchAndRenderPortfolioSunburst(force) {
 
   if (!force && _sunburstRenderedKey === cacheKey) return;
 
-  if (meta) meta.textContent = 'Fetching…';
-
-  try {
-    var params = {};
-    if (grpUuid) {
-      params.group_uuid = grpUuid;
-      params.property_group_uuid = grpUuid;
-    } else if (grpName) {
-      params.property_group = grpName;
-    }
-    var data = await proxyAction('chart_portfolio_pulse', params);
-
-    if (!Array.isArray(data) || !data.length) {
-      if (meta) meta.textContent = data && data.error ? data.error : 'No data';
-      var existingEmpty = echartsCore.getInstanceByDom(el);
-      if (existingEmpty) existingEmpty.clear();
-      return;
-    }
-
-    _sunburstRenderedKey = cacheKey;
-
-    var existing = echartsCore.getInstanceByDom(el);
-    if (existing) existing.dispose();
-
-    var chart = echartsCore.init(el, null, { renderer: 'canvas' });
-    chart.setOption(buildSunburst(data));
-
-    var propCount = data.length;
-    var unitCount = data.reduce(function(total, prop) {
-      return total + (prop.children || []).reduce(function(s, status) {
-        return s + (status.children || []).length;
-      }, 0);
-    }, 0);
-    if (meta) meta.textContent = propCount + ' properties · ' + unitCount + ' units';
-
-    chart.on('click', function(params) {
-      if (!params || !params.treePathInfo) return;
-      var path = params.treePathInfo;
-      var propName = path.length > 1 ? String(path[1].name || '') : '';
-      if (!propName) return;
-      if (typeof showTab === 'function') showTab('properties');
-      setTimeout(function() {
-        var search = document.getElementById('propSearch') ||
-                     document.getElementById('propertySearchInput');
-        if (search) {
-          search.value = propName;
-          search.dispatchEvent(new Event('input'));
-        }
-      }, 300);
+  var properties = (PROPERTIES || []).filter(function(property) {
+    return !grpName || isInPropertyGroup(property.id, property.name, grpName);
+  });
+  var data = properties.map(function(property) {
+    var propertyUnits = (_unitsByPropertyId[String(property.id || '')] || []);
+    var statuses = {};
+    propertyUnits.forEach(function(unit) {
+      var status = String(unit.status || 'Unknown').trim() || 'Unknown';
+      if (!statuses[status]) statuses[status] = [];
+      statuses[status].push({
+        name: String(unit.name || unit.unit_number || 'Unit'),
+        value: Math.max(1, Number(unit.market_rent || 0) || 1)
+      });
     });
+    return {
+      name: String(property.name || 'Property'),
+      value: Math.max(1, propertyUnits.length),
+      children: Object.keys(statuses).map(function(status) {
+        return { name: status, children: statuses[status] };
+      })
+    };
+  }).filter(function(property) { return property.children.length > 0; });
 
-    window.addEventListener('resize', function() { chart.resize(); });
-
-  } catch (e) {
-    console.warn('[Sunburst] fetch failed:', e.message || e);
-    if (meta) meta.textContent = 'Unavailable';
+  if (!data.length) {
+    if (meta) meta.textContent = 'No unit data';
+    var existingEmpty = echartsCore.getInstanceByDom(el);
+    if (existingEmpty) existingEmpty.clear();
+    return;
   }
+
+  _sunburstRenderedKey = cacheKey;
+
+  var existing = echartsCore.getInstanceByDom(el);
+  if (existing) existing.dispose();
+
+  var chart = echartsCore.init(el, null, { renderer: 'canvas' });
+  chart.setOption(buildSunburst(data));
+
+  var propCount = data.length;
+  var unitCount = data.reduce(function(total, prop) {
+    return total + (prop.children || []).reduce(function(s, status) {
+      return s + (status.children || []).length;
+    }, 0);
+  }, 0);
+  if (meta) meta.textContent = propCount + ' properties · ' + unitCount + ' units';
+
+  chart.on('click', function(params) {
+    if (!params || !params.treePathInfo) return;
+    var path = params.treePathInfo;
+    var propName = path.length > 1 ? String(path[1].name || '') : '';
+    if (!propName) return;
+    if (typeof showTab === 'function') showTab('properties');
+    setTimeout(function() {
+      var search = document.getElementById('propSearch') || document.getElementById('propertySearchInput');
+      if (search) {
+        search.value = propName;
+        search.dispatchEvent(new Event('input'));
+      }
+    }, 300);
+  });
+
+  window.addEventListener('resize', function() { chart.resize(); });
 }
 
 // ---------------------------------------------------------------------------
