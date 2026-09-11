@@ -5229,7 +5229,7 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
       from appfolio_tenant_directory occ
       ${scope
         ? `join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || occ.property_id
-          and p.raw_json->'PropertyGroupIds' @> jsonb_build_array($1)`
+          and p.raw_json->'PropertyGroupIds' @> jsonb_build_array($1::text)`
         : ''}
       left join lateral (
         select i0.last_inspection_date
