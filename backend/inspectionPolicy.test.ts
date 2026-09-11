@@ -39,5 +39,5 @@ test('inspection grid uses active-only residency and returns association fields'
   assert.match(source, /tenant_type/);
   assert.match(source, /has_valid_unit_association/);
   assert.match(source, /raw_json\s*->>\s*'Link'\s*=\s*'https:\/\/flraz\.appfolio\.com\/properties\/'\s*\|\|\s*occ\.property_id/);
-  assert.match(source, /PropertyGroupIds'\s*@>/);
+  assert.match(source, /PropertyGroupIds'\s*\?\|\s*\(/);
 });

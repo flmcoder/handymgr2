@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import { flattenedVerify } from 'jose';
-import { and, asc, eq, gte, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, or, sql } from 'drizzle-orm';
 import { db, pingDatabase, queryClient } from './db';
 import * as schema from './schema';
 import * as deviceAuthHandlers from './deviceAuth';
@@ -424,12 +424,12 @@ async function readUnitTurnsHistoryFromDb(params: Record<string, string>): Promi
 
 async function readEstimatesFromDb(params: Record<string, string>): Promise<any> {
   const limit = parseLimit(params.limit || params.max || params.per_page, 200, 2000);
-  const propertyGroupId = normalizeDbRowValue(params.property_group_id || params.propertyGroupId || params.group_id || params.groupId);
+  const scopeIds = parsePropertyGroupIds(params.property_group_id || params.propertyGroupId || params.group_id || params.groupId);
   const status = normalizeDbRowValue(params.status || params.current_status);
 
   const query = db.select().from(schema.appfolioEstimates);
   const filters = [] as any[];
-  if (propertyGroupId) filters.push(eq(schema.appfolioEstimates.propertyGroupId, propertyGroupId));
+  if (scopeIds.length) filters.push(inArray(schema.appfolioEstimates.propertyGroupId, scopeIds));
   if (status) filters.push(eq(schema.appfolioEstimates.currentStatus, status));
   if (filters.length) query.where(and(...filters));
 
@@ -587,13 +587,28 @@ function sanitizeSyncEndpoints(
 function parsePropertyGroupId(value: unknown): string {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
-  // Accept single values or comma-delimited lists; local endpoints currently scope to one group.
+  // Accept single values or comma-delimited lists; single-group callers use
+  // the first entry, union scopes use parsePropertyGroupIds below.
   const first = raw.split(',').map((v) => v.trim()).find(Boolean);
   return String(first || '');
 }
 
+function parsePropertyGroupIds(value: unknown): string[] {
+  return deviceAuthHandlers.parseScopeUuidSet(value);
+}
+
 function getRequestedPropertyGroupId(req: Request): string {
   return parsePropertyGroupId(
+    req.query.property_group_id
+      ?? req.query.property_group_uuid
+      ?? req.query.group_id
+      ?? req.query.group_uuid
+      ?? req.query.propertyGroupId,
+  );
+}
+
+function getRequestedPropertyGroupIds(req: Request): string[] {
+  return parsePropertyGroupIds(
     req.query.property_group_id
       ?? req.query.property_group_uuid
       ?? req.query.group_id
@@ -610,8 +625,11 @@ function getBearerToken(req: Request): string {
 type LocalScopeContext = {
   role: string;
   requestedGroupId: string;
+  requestedGroupIds: string[];
   sessionGroupId: string;
+  sessionGroupIds: string[];
   effectiveGroupId: string;
+  effectiveGroupIds: string[];
   scopeSource: 'query' | 'session';
   enforced: boolean;
 };
@@ -636,6 +654,15 @@ function getPropertyGroupFilter(req: Request): string {
     return String(localScope.effectiveGroupId || '');
   }
   return getRequestedPropertyGroupId(req);
+}
+
+/** Union scope: every assigned/requested group id (empty = unscoped GM view). */
+function getPropertyGroupFilters(req: Request): string[] {
+  const localScope = (req as any).localScope as LocalScopeContext | undefined;
+  if (localScope && Array.isArray(localScope.effectiveGroupIds)) {
+    return localScope.effectiveGroupIds.filter(Boolean);
+  }
+  return getRequestedPropertyGroupIds(req);
 }
 
 function asIso(value: unknown): string {
@@ -1171,7 +1198,7 @@ async function fetchLiveInspectionRows(propertyGroupId: string, timeoutMs: numbe
       'move_in_date', 'move_out_date', 'rentable', 'unit_tags',
     ],
   };
-  if (propertyGroupId) body.property_groups_ids = [propertyGroupId];
+  if (propertyGroupId) body.property_groups_ids = parsePropertyGroupIds(propertyGroupId);
 
   const url = `${AF_REPORTS_BASE}/api/v2/reports/unit_inspection.json`;
   const attempt = await fetchWithHardTimeout(url, {
@@ -3345,14 +3372,14 @@ async function respondGenerateMagicPortal(req: Request, res: Response): Promise<
   if (!applyProxySessionScope(req, res, session)) return;
 
   const input = readMagicPortalInput(req);
-  const propertyGroupId = getPropertyGroupFilter(req) || null;
+  const scopeIds = getPropertyGroupFilters(req);
   const workOrderRows = await queryClient.unsafe(
     `SELECT id, work_order_uuid, wo_number, property_group_id, raw_json
        FROM appfolio_work_orders
       WHERE (id = $1 OR work_order_uuid = $1)
-        AND ($2::text IS NULL OR property_group_id = $2)
+        AND ($2 IS NULL OR property_group_id = ANY($2::text[]))
       LIMIT 1`,
-    [input.woId, propertyGroupId],
+    [input.woId, scopeIds.length ? scopeIds : null],
   );
   const workOrder = (workOrderRows as any[])[0];
   if (!workOrder) {
@@ -3568,10 +3595,14 @@ async function requireProxySession(req: Request, res: Response): Promise<any | n
 }
 
 function applyProxySessionScope(req: Request, res: Response, session: any): boolean {
-  const requestedGroupId = getRequestedPropertyGroupId(req);
+  const requestedGroupIds = getRequestedPropertyGroupIds(req);
+  const requestedGroupId = requestedGroupIds[0] || '';
   const role = String(session?.role || '').toLowerCase();
-  const sessionGroupId = normalizeScopeUuid(session?.property_group_uuid || '');
-  const scope = resolveBillScope(role, sessionGroupId, requestedGroupId);
+  const sessionGroupIds = deviceAuthHandlers.parseScopeUuidSet(
+    session?.property_group_uuids?.length ? session.property_group_uuids : session?.property_group_uuid || '',
+  );
+  const sessionGroupId = sessionGroupIds[0] || '';
+  const scope = resolveBillScope(role, sessionGroupIds, requestedGroupIds);
   if (!scope.allowed) {
     res.status(403).json({ ok: false, error: 'PM session missing scoped property group' });
     return false;
@@ -3580,8 +3611,11 @@ function applyProxySessionScope(req: Request, res: Response, session: any): bool
   (req as any).localScope = {
     role,
     requestedGroupId,
+    requestedGroupIds,
     sessionGroupId,
+    sessionGroupIds,
     effectiveGroupId: scope.propertyGroupId,
+    effectiveGroupIds: scope.propertyGroupIds,
     scopeSource: role === 'pm_readonly' ? 'session' : 'query',
     enforced: role === 'pm_readonly',
   } as LocalScopeContext;
@@ -3637,10 +3671,10 @@ function isoMonthOnly(value: Date): string {
 
 function buildScopedPropertiesFromParams(req: Request, params: Params): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
-  const scopedGroupId = String(getPropertyGroupFilter(req) || '').trim();
+  const scopeIds = getPropertyGroupFilters(req);
 
-  if (scopedGroupId) {
-    properties.property_groups_ids = [scopedGroupId];
+  if (scopeIds.length) {
+    properties.property_groups_ids = scopeIds;
   }
 
   if (params.property_groups_ids) {
@@ -3917,20 +3951,20 @@ function buildBillsSinceIso(params: Params): string {
   return new Date(Date.now() - (days * 86400000)).toISOString();
 }
 
-async function fetchBillsFromDbApi(params: Params, propertyGroupId = ''): Promise<{ ok: boolean; results: any[]; total: number; page: number; per_page: number; source: string }> {
+async function fetchBillsFromDbApi(params: Params, scopeIds: string[] = []): Promise<{ ok: boolean; results: any[]; total: number; page: number; per_page: number; source: string }> {
   const limit = parseLimit(params.limit || params.max || params.per_page, 200, 1000);
   const offset = Math.max(0, Number.parseInt(String(params.offset || '0'), 10) || 0);
   const page = Math.max(1, Number.parseInt(String(params.page || (Math.floor(offset / Math.max(1, limit)) + 1)), 10) || 1);
   const perPage = limit;
   const sinceIso = buildBillsSinceIso(params);
 
-  if (propertyGroupId) {
+  if (scopeIds.length) {
     await ensureBillsTable();
     const countRows = await queryClient`
       select count(*)::int as total
       from appfolio_bills b
       inner join appfolio_properties p on p.id = b.property_id
-      where p.property_group_id = ${propertyGroupId}
+      where p.property_group_id = ANY(${scopeIds}::text[])
         and coalesce(b.updated_at, b.cached_at) >= ${sinceIso}::timestamptz
     `;
     const total = Number((countRows as any[])[0]?.total || 0) || 0;
@@ -3955,7 +3989,7 @@ async function fetchBillsFromDbApi(params: Params, propertyGroupId = ''): Promis
         b.cached_at
       from appfolio_bills b
       inner join appfolio_properties p on p.id = b.property_id
-      where p.property_group_id = ${propertyGroupId}
+      where p.property_group_id = ANY(${scopeIds}::text[])
         and coalesce(b.updated_at, b.cached_at) >= ${sinceIso}::timestamptz
       order by coalesce(b.updated_at, b.invoice_date, b.cached_at) desc, b.id desc
       limit ${limit} offset ${offset}
@@ -4005,10 +4039,10 @@ async function fetchBillsFromDbApi(params: Params, propertyGroupId = ''): Promis
     ? parsed.data
     : (Array.isArray(parsed?.results) ? parsed.results : []);
 
-  if (propertyGroupId) {
+  if (scopeIds.length) {
     const propertyRows = await queryClient.unsafe(
-      `select id from appfolio_properties where property_group_id = $1`,
-      [propertyGroupId],
+      `select id from appfolio_properties where property_group_id = ANY($1::text[])`,
+      [scopeIds],
     );
     const allowedPropertyIds = new Set(
       (propertyRows as any[]).map((property) => String(property?.id || '').trim()).filter(Boolean),
@@ -4023,7 +4057,7 @@ async function fetchBillsFromDbApi(params: Params, propertyGroupId = ''): Promis
     count: results.length,
     page,
     per_page: perPage,
-    source: propertyGroupId ? 'appfolio_db_v0_scoped' : 'appfolio_db_v0',
+    source: scopeIds.length ? 'appfolio_db_v0_scoped' : 'appfolio_db_v0',
   } as any;
 }
 
@@ -4307,7 +4341,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
       if (!session) return;
       if (!applyProxySessionScope(req, res, session)) return;
       const params = toParams(req);
-      res.json(await fetchBillsFromDbApi(params, getPropertyGroupFilter(req)));
+      res.json(await fetchBillsFromDbApi(params, getPropertyGroupFilters(req)));
     } catch (error) {
       logTunnelError(error, '/api?action=bills');
       res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Bills proxy failed') });
@@ -4321,7 +4355,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
       if (!session) return;
       if (!applyProxySessionScope(req, res, session)) return;
       const params = toParams(req);
-      const payload = await fetchBillsFromDbApi(params, getPropertyGroupFilter(req));
+      const payload = await fetchBillsFromDbApi(params, getPropertyGroupFilters(req));
       const offset = Math.max(0, Number.parseInt(String(params.offset || '0'), 10) || 0);
       const limit = parseLimit(params.limit || params.per_page, 50, 1000);
       const sliced = payload.results.slice(offset, offset + limit);
@@ -4425,9 +4459,9 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
       await ensureTenantCommsTable();
 
       const query = parseTenantCommsQuery(req.query as Record<string, unknown>);
-      const propertyGroupId = getPropertyGroupFilter(req);
-      const filters = propertyGroupId ? 'where property_group_id = $1' : '';
-      const baseParams = propertyGroupId ? [propertyGroupId] : [];
+      const scopeIds = getPropertyGroupFilters(req);
+      const filters = scopeIds.length ? 'where property_group_id = ANY($1::text[])' : '';
+      const baseParams = scopeIds.length ? [scopeIds] : [];
       const countRows = await queryClient.unsafe(
         `select count(*)::int as total from tenant_communications_log ${filters}`,
         baseParams,
@@ -4475,7 +4509,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
           offset: query.offset,
           totalPages: Math.max(1, Math.ceil(total / query.limit)),
         },
-        property_group_id: propertyGroupId,
+        property_group_id: scopeIds.join(','),
         source: 'postgres_local',
       });
     } catch (error) {
@@ -4620,6 +4654,8 @@ app.get(['/api/health/providers', '/api/local/health/providers'], async (_req: R
 
 app.get('/api/local/webhook_events', async (req: Request, res: Response) => {
   try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
     await ensureWebhookEventsTable();
     const limit = parseLimit(req.query.limit, 100, 1000);
     const rows = await queryClient`
@@ -4930,8 +4966,8 @@ app.get('/api/local/vendor_overrides', async (req: Request, res: Response) => {
     if (!session) return;
     if (!applyProxySessionScope(req, res, session)) return;
     await ensureVendorOverrideTable();
-    const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
+    const scopeIds = getPropertyGroupFilters(req);
+    const rows = scopeIds.length
       ? await queryClient.unsafe(
           `SELECT vo.vendor_id, vo.category, vo.trade_category, vo.compliant, vo.updated_at
              FROM vendor_overrides vo
@@ -4940,16 +4976,16 @@ app.get('/api/local/vendor_overrides', async (req: Request, res: Response) => {
                       FROM appfolio_bills b
                       JOIN appfolio_properties p ON p.id = b.property_id
                      WHERE b.vendor_id = vo.vendor_id
-                       AND p.property_group_id = $1
+                       AND p.property_group_id = ANY($1::text[])
                   )
                OR EXISTS (
                     SELECT 1
                       FROM appfolio_work_orders wo
                      WHERE wo.vendor_id = vo.vendor_id
-                       AND wo.property_group_id = $1
+                       AND wo.property_group_id = ANY($1::text[])
                   )
             ORDER BY vo.vendor_id`,
-          [propertyGroupId],
+          [scopeIds],
         )
       : await queryClient.unsafe(
           `SELECT vendor_id, category, trade_category, compliant, updated_at
@@ -5062,17 +5098,17 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 100, 20_000);
     const offset = parseOffset(req.query.offset, 0, 500_000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
     let rows: any[] = [];
     try {
-      rows = propertyGroupId
+      rows = scopeIds.length
         ? await queryClient`
           select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                  category, priority, status, assigned_user_id, assigned_user_name,
                  vendor_id, vendor_name, estimated_amount, total_cost,
                  created_at, updated_at, raw_json
           from appfolio_work_orders
-          where property_group_id = ${propertyGroupId}
+          where property_group_id = ANY(${scopeIds}::text[])
             and (
               coalesce(lower(status), '') not like '%completed%'
               and coalesce(lower(status), '') not like '%cancel%'
@@ -5104,14 +5140,14 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
         throw error;
       }
 
-      rows = propertyGroupId
+      rows = scopeIds.length
         ? await queryClient`
           select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                  category, priority, status, assigned_user_id, assigned_user_name,
                  vendor_id, vendor_name, estimated_amount, total_cost,
                  created_at, updated_at, raw_json
           from appfolio_work_orders
-          where property_group_id = ${propertyGroupId}
+          where property_group_id = ANY(${scopeIds}::text[])
             and (
               coalesce(lower(status), '') not like '%completed%'
               and coalesce(lower(status), '') not like '%cancel%'
@@ -5145,10 +5181,10 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
     // nav badge can show the true count even though the table stays paginated.
     let total = results.length;
     try {
-      const totalRows = propertyGroupId
+      const totalRows = scopeIds.length
         ? await queryClient.unsafe(
-            `select count(*)::int as total from appfolio_work_orders where property_group_id = $1 and ${OPEN_WORK_ORDER_STATUS_FILTER}`,
-            [propertyGroupId],
+            `select count(*)::int as total from appfolio_work_orders where property_group_id = ANY($1::text[]) and ${OPEN_WORK_ORDER_STATUS_FILTER}`,
+            [scopeIds],
           )
         : await queryClient.unsafe(
             `select count(*)::int as total from appfolio_work_orders where ${OPEN_WORK_ORDER_STATUS_FILTER}`,
@@ -5200,8 +5236,8 @@ app.get('/api/local/db_search', async (req: Request, res: Response) => {
 // totals without pulling full table pages (the tables stay paginated).
 app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
   try {
-    const propertyGroupId = getPropertyGroupFilter(req);
-    const scope = propertyGroupId || null;
+    const scopeIds = getPropertyGroupFilters(req);
+    const scope = scopeIds.length ? scopeIds : null;
 
     const woAggregateSql = `
       select
@@ -5214,7 +5250,7 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
         count(*) filter (where ${WORK_ORDER_CREATED_AT_EXPR} is null)::int as age_unknown
       from appfolio_work_orders
       where ${OPEN_WORK_ORDER_STATUS_FILTER}
-      ${scope ? 'and property_group_id = $1' : ''}
+      ${scope ? 'and property_group_id = ANY($1::text[])' : ''}
     `;
     const woPromise = queryClient.unsafe(woAggregateSql, scope ? [scope] : []);
 
@@ -5234,7 +5270,7 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
       from appfolio_tenant_directory occ
       ${scope
         ? `join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || occ.property_id
-          and p.raw_json->'PropertyGroupIds' @> jsonb_build_array($1::text)`
+          and p.raw_json->'PropertyGroupIds' ?| ($1::text[])`
         : ''}
       left join lateral (
         select i0.last_inspection_date
@@ -5266,7 +5302,7 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
       turns: activeTurnRows.length,
       upcomingTurns: upcomingTurnRows.length,
       inspections: (inspRows as any[])[0]?.total,
-      propertyGroupId,
+      propertyGroupId: scopeIds.join(','),
     });
     res.json(payload);
   } catch (error) {
@@ -5279,9 +5315,8 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
 // badge_counts, so chart totals reconcile with badges and lists.
 app.get('/api/local/analytics/work-orders', async (req: Request, res: Response) => {
   try {
-    const propertyGroupId = getPropertyGroupFilter(req);
-    const scope = propertyGroupId || null;
-    const { sql, params } = buildWorkOrdersAnalyticsQuery(scope);
+    const scopeIds = getPropertyGroupFilters(req);
+    const { sql, params } = buildWorkOrdersAnalyticsQuery(scopeIds);
     const rows = (await queryClient.unsafe(sql, params)) as any[];
     const m = rows[0] || {};
     res.json({
@@ -5302,7 +5337,7 @@ app.get('/api/local/analytics/work-orders', async (req: Request, res: Response) 
       avg_age_by_owner: toCountBuckets(m.avg_age_by_owner, 12),
       by_property: toCountBuckets(m.by_property, 12),
       by_status_owner: Array.isArray(m.by_status_owner) ? m.by_status_owner : [],
-      property_group_id: propertyGroupId,
+      property_group_id: scopeIds.join(','),
       source: 'postgres_local',
     });
   } catch (error) {
@@ -5313,11 +5348,10 @@ app.get('/api/local/analytics/work-orders', async (req: Request, res: Response) 
 
 app.get('/api/local/analytics/inspections', async (req: Request, res: Response) => {
   try {
-    const propertyGroupId = getPropertyGroupFilter(req);
-    const scope = propertyGroupId || null;
+    const scopeIds = getPropertyGroupFilters(req);
     const overdueDays = parseDays(req.query.overdue_days, 365, 5000);
     const dueSoonDays = parseDays(req.query.due_soon_days, 270, 5000);
-    const { sql, params } = buildInspectionsAnalyticsQuery(scope, overdueDays, dueSoonDays);
+    const { sql, params } = buildInspectionsAnalyticsQuery(scopeIds, overdueDays, dueSoonDays);
     const rows = (await queryClient.unsafe(sql, params)) as any[];
     const m = rows[0] || {};
     const overdue = Number(m.overdue || 0);
@@ -5341,7 +5375,7 @@ app.get('/api/local/analytics/inspections', async (req: Request, res: Response) 
       linked: Number(m.linked || 0),
       not_linked: Math.max(0, totalActive - Number(m.linked || 0)),
       by_property: Array.isArray(m.by_property) ? m.by_property : [],
-      property_group_id: propertyGroupId,
+      property_group_id: scopeIds.join(','),
       source: 'postgres_local',
     });
   } catch (error) {
@@ -5354,10 +5388,10 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
   try {
     const days = parseDays(req.query.days, 3650, 3650);
     const limit = parseLimit(req.query.limit, 10000, 25000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
     let rows: any[] = [];
     try {
-      rows = propertyGroupId
+      rows = scopeIds.length
         ? await queryClient`
           select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                  category, priority, status, assigned_user_id, assigned_user_name,
@@ -5365,7 +5399,7 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
                  created_at, updated_at, raw_json
           from appfolio_work_orders
           where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-            and property_group_id = ${propertyGroupId}
+            and property_group_id = ANY(${scopeIds}::text[])
             and (
               coalesce(lower(status), '') like '%completed%'
               or coalesce(lower(status), '') like '%cancel%'
@@ -5396,7 +5430,7 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
         throw error;
       }
 
-      rows = propertyGroupId
+      rows = scopeIds.length
         ? await queryClient`
           select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                  category, priority, status, assigned_user_id, assigned_user_name,
@@ -5404,7 +5438,7 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
                  created_at, updated_at, raw_json
           from appfolio_work_orders
           where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-            and property_group_id = ${propertyGroupId}
+            and property_group_id = ANY(${scopeIds}::text[])
             and (
               coalesce(lower(status), '') like '%completed%'
               or coalesce(lower(status), '') like '%cancel%'
@@ -5444,7 +5478,7 @@ app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
     const days = resolveWorkOrderHistoryDays(req.query.days);
     const limit = parseLimit(req.query.limit, 100, 400);
     const offset = parseOffset(req.query.offset, 0, 500000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
     const statusScope = String(req.query.status_scope || req.query.tab || 'active').trim().toLowerCase() === 'inactive'
       ? 'inactive'
       : 'active';
@@ -5532,8 +5566,8 @@ app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
       whereParts.push(`coalesce(wo.updated_at, wo.created_at, now()) >= now() - (${bind(days)}::int * interval '1 day')`);
     }
 
-    if (propertyGroupId) {
-      whereParts.push(`wo.property_group_id = ${bind(propertyGroupId)}`);
+    if (scopeIds.length) {
+      whereParts.push(`wo.property_group_id = ANY(${bind(scopeIds)}::text[])`);
     }
 
     if (statusScope === 'inactive') {
@@ -5684,7 +5718,7 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
     const inspectionPage = parseInspectionPage(req.query as Record<string, unknown>);
     const limit = inspectionPage.limit;
     const offset = inspectionPage.offset;
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
     const activeOnly = /^(1|true|yes|on)$/i.test(String(req.query.active_only || '1').trim());
     const statusFilter = String(req.query.status_filter || '').trim().toLowerCase();
     const ageBucket = String(req.query.age_bucket || '').trim();
@@ -5726,8 +5760,8 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
       return `$${baseParams.length}`;
     };
 
-    if (propertyGroupId) {
-      baseWhereParts.push(`p.raw_json->'PropertyGroupIds' @> jsonb_build_array(${bind(propertyGroupId)}::text)`);
+    if (scopeIds.length) {
+      baseWhereParts.push(`p.raw_json->'PropertyGroupIds' ?| (${bind(scopeIds)}::text[])`);
     }
 
     const baseWhereSql = baseWhereParts.length ? `where ${baseWhereParts.join(' and ')}` : '';
@@ -5917,7 +5951,7 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
       page: inspectionPage.page,
       total_pages: Math.max(1, Math.ceil(total / limit)),
       source: 'postgres_local_grid',
-      property_group_id: String(propertyGroupId || ''),
+      property_group_id: scopeIds.join(','),
     });
   } catch (error) {
     logTunnelError(error, '/api/local/grid/inspections');
@@ -6042,11 +6076,11 @@ app.get('/api/local/work_orders/:workOrderRef/attachments', async (req: Request,
 app.get('/api/local/properties', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 5000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
     let rows: any[] = [];
 
     try {
-      rows = propertyGroupId
+      rows = scopeIds.length
         ? await queryClient`
           select
             p.id,
@@ -6063,7 +6097,7 @@ app.get('/api/local/properties', async (req: Request, res: Response) => {
           left join appfolio_property_groups g
             on g.uuid = p.property_group_id
             or g.id = p.property_group_id
-          where p.property_group_id = ${propertyGroupId}
+          where p.property_group_id = ANY(${scopeIds}::text[])
           order by p.name asc
           limit ${limit}
         `
@@ -6093,11 +6127,11 @@ app.get('/api/local/properties', async (req: Request, res: Response) => {
         throw joinError;
       }
 
-      rows = propertyGroupId
+      rows = scopeIds.length
         ? await queryClient`
           select id, name, property_group_id, street, city, state, zip, raw_json
           from appfolio_properties
-          where property_group_id = ${propertyGroupId}
+          where property_group_id = ANY(${scopeIds}::text[])
           order by name asc
           limit ${limit}
         `
@@ -6122,8 +6156,8 @@ app.get('/api/local/properties', async (req: Request, res: Response) => {
 
 app.get(['/api/local/vendors', '/api/local/v2/vendors'], async (req: Request, res: Response) => {
   try {
-    const propertyGroupId = getPropertyGroupFilter(req);
-    if (!propertyGroupId) {
+    const scopeIds = getPropertyGroupFilters(req);
+    if (!scopeIds.length) {
       res.status(400).json({ ok: false, error: 'property_group_id is required' });
       return;
     }
@@ -6139,18 +6173,18 @@ app.get(['/api/local/vendors', '/api/local/v2/vendors'], async (req: Request, re
         complianceSyncError = String((error as any)?.message || error || 'compliance refresh failed');
       }
     }
-    const vendorPolicy = await readReportPolicy('v0:work_orders:vendors', String(propertyGroupId || ''));
+    const vendorPolicy = await readReportPolicy('v0:work_orders:vendors', scopeIds.join(','));
     const vendorPolicyCheckedAt = Date.parse(String(vendorPolicy?.last_checked_at || ''));
     if (!vendorPolicy || !Number.isFinite(vendorPolicyCheckedAt) || (Date.now() - vendorPolicyCheckedAt) > REPORT_POLICY_TTL_MS) {
-      void monitorVendorSlowPath(String(propertyGroupId || ''));
+      void monitorVendorSlowPath(scopeIds.join(','));
     }
 
-    const params: any[] = [propertyGroupId];
+    const params: any[] = [scopeIds];
     const bind = (value: unknown): string => {
       params.push(value);
       return `$${params.length}`;
     };
-    const whereParts = ['wo.property_group_id = $1'];
+    const whereParts = ['wo.property_group_id = ANY($1::text[])'];
     if (pageQuery.propertyId) whereParts.push(`wo.property_id = ${bind(pageQuery.propertyId)}`);
     if (pageQuery.search) {
       const searchParam = bind(`%${pageQuery.search}%`);
@@ -6252,7 +6286,7 @@ app.get(['/api/local/vendors', '/api/local/v2/vendors'], async (req: Request, re
       compliance_sync: complianceSync ? { ...complianceSync, error: complianceSyncError } : null,
       latency_policy: {
         dataset_key: 'v0:work_orders:vendors',
-        property_group_id: String(propertyGroupId || ''),
+        property_group_id: scopeIds.join(','),
         last_status: String(vendorPolicy?.last_status || ''),
         last_latency_ms: Number(vendorPolicy?.last_latency_ms || 0) || 0,
         prefer_local_until: asIso(vendorPolicy?.prefer_local_until),
@@ -6268,16 +6302,16 @@ app.get('/api/local/property_group_directory', async (req: Request, res: Respons
   try {
     await ensurePropertyGroupsTable();
     const limit = parseLimit(req.query.limit, 1000, 5000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
     let results: Array<{ property_group_uuid: string; property_group_name: string }> = [];
     let lastRefreshedAt = '';
     try {
-      const rows = propertyGroupId
+      const rows = scopeIds.length
         ? await queryClient`
           select coalesce(uuid, id) as group_uuid, coalesce(name, id) as group_name, raw_json, last_updated_at, cached_at
           from appfolio_property_groups
-          where coalesce(uuid, id) = ${propertyGroupId}
-             or id = ${propertyGroupId}
+          where coalesce(uuid, id) = ANY(${scopeIds}::text[])
+             or id = ANY(${scopeIds}::text[])
           order by coalesce(name, id) asc
           limit ${limit}
         `
@@ -6306,12 +6340,12 @@ app.get('/api/local/property_group_directory', async (req: Request, res: Respons
         throw tableError;
       }
 
-      const propertyRows = propertyGroupId
+      const propertyRows = scopeIds.length
         ? await queryClient`
           select property_group_id, raw_json
           from appfolio_properties
           where coalesce(property_group_id, '') <> ''
-            and property_group_id = ${propertyGroupId}
+            and property_group_id = ANY(${scopeIds}::text[])
         `
         : await queryClient`
           select property_group_id, raw_json
@@ -6343,8 +6377,8 @@ app.get('/api/local/property_group_directory', async (req: Request, res: Respons
       source: 'postgres_local',
       cache: {
         last_refreshed_at: lastRefreshedAt || null,
-        scoped: !!propertyGroupId,
-        property_group_id: propertyGroupId || null,
+        scoped: scopeIds.length > 0,
+        property_group_id: scopeIds.join(',') || null,
       },
     });
   } catch (error) {
@@ -6358,16 +6392,16 @@ app.get('/api/local/property_groups', async (req: Request, res: Response) => {
     await ensurePropertyGroupsTable();
     const limit = parseLimit(req.query.limit, 1000);
     const includeInactive = String(req.query.include_inactive || '').toLowerCase() === 'true';
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
 
     let groupsRows: any[] = [];
     try {
-      groupsRows = propertyGroupId
+      groupsRows = scopeIds.length
         ? await queryClient`
           select id, uuid, name, type, property_ids, raw_json, last_updated_at, cached_at
           from appfolio_property_groups
-          where coalesce(uuid, id) = ${propertyGroupId}
-             or id = ${propertyGroupId}
+          where coalesce(uuid, id) = ANY(${scopeIds}::text[])
+             or id = ANY(${scopeIds}::text[])
           order by name asc
           limit ${limit}
         `
@@ -6449,11 +6483,11 @@ app.get('/api/local/property_groups', async (req: Request, res: Response) => {
       return;
     }
 
-    const rows = propertyGroupId
+    const rows = scopeIds.length
       ? await queryClient`
         select id, name, property_group_id, street, city, state, zip, raw_json
         from appfolio_properties
-        where property_group_id = ${propertyGroupId}
+        where property_group_id = ANY(${scopeIds}::text[])
       `
       : await queryClient`
         select id, name, property_group_id, street, city, state, zip, raw_json
@@ -6619,16 +6653,16 @@ app.get('/api/local/units', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 5000);
     const propertyId = req.query.property_id ? String(req.query.property_id) : undefined;
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
 
-    if (propertyId && propertyGroupId) {
+    if (propertyId && scopeIds.length) {
       const rows = await queryClient`
         select u.unit_id, u.property_id, u.name, u.unit_number, u.status, u.bedrooms, u.bathrooms,
                u.square_feet, u.market_rent, u.raw_json
         from appfolio_units u
         inner join appfolio_properties p on p.id = u.property_id
         where u.property_id = ${propertyId}
-          and p.property_group_id = ${propertyGroupId}
+          and p.property_group_id = ANY(${scopeIds}::text[])
         order by u.unit_number asc
         limit ${limit}
       `;
@@ -6645,13 +6679,13 @@ app.get('/api/local/units', async (req: Request, res: Response) => {
       `;
       const results = (rows as any[]).map(normalizeUnitRow);
       res.json({ ok: true, results, count: results.length, source: 'postgres_local' });
-    } else if (propertyGroupId) {
+    } else if (scopeIds.length) {
       const rows = await queryClient`
         select u.unit_id, u.property_id, u.name, u.unit_number, u.status, u.bedrooms, u.bathrooms,
                u.square_feet, u.market_rent, u.raw_json
         from appfolio_units u
         inner join appfolio_properties p on p.id = u.property_id
-        where p.property_group_id = ${propertyGroupId}
+        where p.property_group_id = ANY(${scopeIds}::text[])
         order by u.unit_number asc
         limit ${limit}
       `;
@@ -6677,13 +6711,13 @@ app.get('/api/local/v2/turns', async (req: Request, res: Response) => {
   const days = parseDays(req.query.days, 365);
   const limit = parseLimit(req.query.limit, 1000, 3000);
   const statusFilter = String(req.query.status || '').trim();
-  const propertyGroupId = getPropertyGroupFilter(req) || null;
+  const scopeIds = getPropertyGroupFilters(req);
 
   try {
     const rows = await queryClient.unsafe(TURN_ENGINE_SQL, [
       days,
       limit,
-      propertyGroupId,
+      scopeIds.length ? scopeIds : null,
       statusFilter,
     ]);
     const results = (rows as any[]).map((row) => ({
@@ -6737,7 +6771,8 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
   const days = parseDays(req.query.days, 90);
   const limit = parseLimit(req.query.limit, 3000);
   const statusFilter = String(req.query.status || '').trim().toLowerCase();
-  const propertyGroupId = getPropertyGroupFilter(req);
+  const scopeIds = getPropertyGroupFilters(req);
+  const scopeOrNull = scopeIds.length ? scopeIds : null;
 
   try {
     const rows = await queryClient`
@@ -6798,9 +6833,9 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
       left join appfolio_unit_inspections ui
         on ui.unit_id = t.unit_id and ui.property_id = t.property_id
       where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
-        and (${propertyGroupId || null}::text is null or exists (
+        and (${scopeOrNull} is null or exists (
           select 1 from appfolio_properties p_scope
-          where p_scope.id = t.property_id and p_scope.property_group_id = ${propertyGroupId || ''}
+          where p_scope.id = t.property_id and p_scope.property_group_id = ANY(${scopeOrNull}::text[])
         ))
       order by coalesce(t.updated_at, t.created_at) desc
       limit ${limit}
@@ -6837,9 +6872,9 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
           d.last_updated_at
         from appfolio_unit_turn_details d
         where coalesce(d.last_updated_at, d.cached_at, now()) >= now() - (${days}::int * interval '1 day')
-          and (${propertyGroupId || null}::text is null or exists (
+          and (${scopeOrNull} is null or exists (
             select 1 from appfolio_properties p_scope
-            where p_scope.id = d.property_id and p_scope.property_group_id = ${propertyGroupId || ''}
+            where p_scope.id = d.property_id and p_scope.property_group_id = ANY(${scopeOrNull}::text[])
           ))
         order by coalesce(d.move_out_date, d.cached_at, d.last_updated_at) desc
         limit ${limit}
@@ -6945,9 +6980,9 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
             t.updated_at
           from unit_turn_tracker t
           where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
-            and (${propertyGroupId || null}::text is null or exists (
+            and (${scopeOrNull} is null or exists (
               select 1 from appfolio_properties p_scope
-              where p_scope.id = t.property_id and p_scope.property_group_id = ${propertyGroupId || ''}
+              where p_scope.id = t.property_id and p_scope.property_group_id = ANY(${scopeOrNull}::text[])
             ))
           order by coalesce(t.updated_at, t.created_at) desc
           limit ${limit}
@@ -7011,7 +7046,8 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 90);
     const limit = parseLimit(req.query.limit, 3000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
+    const scopeOrNull = scopeIds.length ? scopeIds : null;
     const rows = await queryClient`
       select
         tw.wo_id,
@@ -7040,11 +7076,11 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
       left join appfolio_work_orders wo
         on wo.id = coalesce(tw.wo_db_uuid, tw.wo_id)
            or wo.wo_number = tw.wo_id
-      where coalesce(tw.removed, false) = false
+       where coalesce(tw.removed, false) = false
         and coalesce(tw.created_at, now()) >= now() - (${days}::int * interval '1 day')
-        and (${propertyGroupId || null}::text is null or exists (
+        and (${scopeOrNull} is null or exists (
           select 1 from appfolio_properties p_scope
-          where p_scope.id = wo.property_id and p_scope.property_group_id = ${propertyGroupId || ''}
+          where p_scope.id = wo.property_id and p_scope.property_group_id = ANY(${scopeOrNull}::text[])
         ))
       order by coalesce(wo.updated_at, tw.created_at) desc
       limit ${limit}
@@ -7091,9 +7127,10 @@ app.get('/api/local/turn_records', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 540, 3650);
     const limit = parseLimit(req.query.limit, 500, 5000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
+    const scopeOrNull = scopeIds.length ? scopeIds : null;
 
-    const rows = propertyGroupId
+    const rows = scopeIds.length
       ? await queryClient`
         select
           t.turn_key,
@@ -7112,7 +7149,7 @@ app.get('/api/local/turn_records', async (req: Request, res: Response) => {
         from unit_turn_tracker t
         inner join appfolio_properties p on p.id = t.property_id
         where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
-          and p.property_group_id = ${propertyGroupId}
+          and p.property_group_id = ANY(${scopeIds}::text[])
         order by coalesce(t.updated_at, t.created_at) desc
         limit ${limit}
       `
@@ -7155,9 +7192,10 @@ app.get('/api/local/closed_turns', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 540, 3650);
     const limit = parseLimit(req.query.limit, 500, 5000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
+    const scopeOrNull = scopeIds.length ? scopeIds : null;
 
-    const rows = propertyGroupId
+    const rows = scopeIds.length
       ? await queryClient`
         select
           t.tracking_uuid,
@@ -7182,7 +7220,7 @@ app.get('/api/local/closed_turns', async (req: Request, res: Response) => {
             limit 1) as move_in_date
         from unit_turn_tracker t
         inner join appfolio_properties p on p.id = t.property_id
-        where p.property_group_id = ${propertyGroupId}
+        where p.property_group_id = ANY(${scopeIds}::text[])
           and (t.closed_at is not null or lower(coalesce(t.status, '')) in ('closed', 'completed'))
           and coalesce(t.closed_at, t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
         order by coalesce(t.closed_at, t.updated_at, t.created_at) desc
@@ -7252,9 +7290,9 @@ app.get('/api/local/turns_history', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 540, 3650);
     const limit = parseLimit(req.query.limit, 300, 5000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
 
-    const rows = propertyGroupId
+    const rows = scopeIds.length
       ? await queryClient`
         select
           t.tracking_uuid,
@@ -7279,7 +7317,7 @@ app.get('/api/local/turns_history', async (req: Request, res: Response) => {
             limit 1) as move_in_date
         from unit_turn_tracker t
         inner join appfolio_properties p on p.id = t.property_id
-        where p.property_group_id = ${propertyGroupId}
+        where p.property_group_id = ANY(${scopeIds}::text[])
           and (t.closed_at is not null or lower(coalesce(t.status, '')) in ('closed', 'completed'))
           and coalesce(t.closed_at, t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
         order by coalesce(t.closed_at, t.updated_at, t.created_at) desc
@@ -7343,8 +7381,8 @@ app.get('/api/local/turns_history', async (req: Request, res: Response) => {
 app.get('/api/local/estimates', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 2500, 10000);
-    const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
+    const scopeIds = getPropertyGroupFilters(req);
+    const rows = scopeIds.length
       ? await queryClient`
         select
           e.estimate_id,
@@ -7361,7 +7399,7 @@ app.get('/api/local/estimates', async (req: Request, res: Response) => {
         left join appfolio_work_orders wo on wo.id = e.work_order_id
         left join appfolio_properties p on p.id = wo.property_id
         left join appfolio_units u on u.unit_id = wo.unit_id
-        where coalesce(e.property_group_id, wo.property_group_id) = ${propertyGroupId}
+        where coalesce(e.property_group_id, wo.property_group_id) = ANY(${scopeIds}::text[])
         order by coalesce(e.updated_at, now()) desc
         limit ${limit}
       `
@@ -7420,7 +7458,7 @@ app.get('/api/local/bills', async (req: Request, res: Response) => {
     if (!session) return;
     if (!applyProxySessionScope(req, res, session)) return;
     const params = toParams(req);
-    const payload = await fetchBillsFromDbApi(params, getPropertyGroupFilter(req));
+    const payload = await fetchBillsFromDbApi(params, getPropertyGroupFilters(req));
     res.json(payload);
   } catch (error) {
     logTunnelError(error, '/api/local/bills');
@@ -7431,8 +7469,8 @@ app.get('/api/local/bills', async (req: Request, res: Response) => {
 app.get('/api/local/analytics/vendor-spend', async (req: Request, res: Response) => {
   try {
     await ensureVendorOverrideTable();
-    const propertyGroupId = getPropertyGroupFilter(req);
-    if (!propertyGroupId) {
+    const scopeIds = getPropertyGroupFilters(req);
+    if (!scopeIds.length) {
       res.status(400).json({ ok: false, error: 'property_group_id is required' });
       return;
     }
@@ -7454,7 +7492,7 @@ app.get('/api/local/analytics/vendor-spend', async (req: Request, res: Response)
         from appfolio_bills b
         join appfolio_properties p on p.id = b.property_id
         left join vendor_overrides vo on vo.vendor_id = b.vendor_id
-        where p.property_group_id = ${propertyGroupId}
+        where p.property_group_id = ANY(${scopeIds}::text[])
           and coalesce(b.bill_total_amount, 0) > 0
         group by coalesce(nullif(b.vendor_id, ''), 'unknown')
       )
@@ -7491,7 +7529,7 @@ app.get('/api/local/analytics/vendor-spend', async (req: Request, res: Response)
       limit,
       offset,
       baseline,
-      property_group_id: propertyGroupId,
+      property_group_id: scopeIds.join(','),
       source: 'postgres_local',
     });
   } catch (error) {
@@ -7504,8 +7542,8 @@ app.get(['/api/local/v2/billing/vendor-spend', '/api/local/v2/billing/vendor-spe
   try {
     await ensureBillsTable();
     await ensureVendorDirectoryTable();
-    const propertyGroupId = getPropertyGroupFilter(req);
-    if (!propertyGroupId) {
+    const scopeIds = getPropertyGroupFilters(req);
+    if (!scopeIds.length) {
       res.status(400).json({ ok: false, error: 'property_group_id is required' });
       return;
     }
@@ -7524,7 +7562,7 @@ app.get(['/api/local/v2/billing/vendor-spend', '/api/local/v2/billing/vendor-spe
         join appfolio_properties p on p.id = b.property_id
         left join vendor_directory vd
           on vd.vendor_key = coalesce(nullif(b.vendor_id, ''), 'name:' || lower(coalesce(b.vendor_name, '')))
-        where p.property_group_id = ${propertyGroupId}
+        where p.property_group_id = ANY(${scopeIds}::text[])
           and coalesce(b.bill_total_amount, 0) > 0
           and coalesce(b.invoice_date, b.updated_at, b.cached_at) >= ${timeframe.sinceIso}::timestamptz
           and coalesce(nullif(b.raw_json->>'WorkOrderId', ''), nullif(b.raw_json->>'work_order_id', '')) is not null
@@ -7574,7 +7612,7 @@ app.get(['/api/local/v2/billing/vendor-spend', '/api/local/v2/billing/vendor-spe
         third_party: { total_spend: thirdPartyTotal, bill_count: thirdPartyCount },
       },
       top_third_party_vendors: thirdPartyVendors.slice(0, 5),
-      property_group_id: propertyGroupId,
+      property_group_id: scopeIds.join(','),
       source: 'postgres_local',
     });
   } catch (error) {
@@ -7596,7 +7634,7 @@ async function respondManagerReviewAggregate(req: Request, res: Response): Promi
 
     const fromMonth = fromDate.slice(0, 7);
     const toMonth = toDate.slice(0, 7);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
     const limit = parseLimit(req.query.limit, 2500, 10000);
 
     const reportResults = await Promise.allSettled([
@@ -7632,7 +7670,7 @@ async function respondManagerReviewAggregate(req: Request, res: Response): Promi
       .map((row) => normalizeStrictLedgerRow(row))
       .filter((row): row is Record<string, any> => !!row);
 
-    const estimateRows = propertyGroupId
+    const estimateRows = scopeIds.length
       ? await queryClient`
         select
           estimate_id,
@@ -7645,7 +7683,7 @@ async function respondManagerReviewAggregate(req: Request, res: Response): Promi
           created_at,
           raw_data
         from appfolio_estimates
-        where property_group_id = ${propertyGroupId}
+        where property_group_id = ANY(${scopeIds}::text[])
         order by coalesce(updated_at, created_at, now()) desc
         limit ${limit}
       `
@@ -7665,7 +7703,7 @@ async function respondManagerReviewAggregate(req: Request, res: Response): Promi
         limit ${limit}
       `;
 
-    const workOrderRows = propertyGroupId
+    const workOrderRows = scopeIds.length
       ? await queryClient`
         select
           id,
@@ -7676,7 +7714,7 @@ async function respondManagerReviewAggregate(req: Request, res: Response): Promi
           created_at,
           raw_json
         from appfolio_work_orders
-        where property_group_id = ${propertyGroupId}
+        where property_group_id = ANY(${scopeIds}::text[])
           and coalesce(updated_at, created_at, now()) >= now() - interval '365 days'
         order by coalesce(updated_at, created_at, now()) desc
         limit ${limit}
@@ -7724,7 +7762,7 @@ async function respondManagerReviewAggregate(req: Request, res: Response): Promi
       ok: true,
       source: 'manager_review_aggregate',
       window: { from: fromDate, to: toDate, from_month: fromMonth, to_month: toMonth },
-      property_group_id: propertyGroupId || '',
+      property_group_id: scopeIds.join(','),
       tickler_rows: ticklerRows,
       renewal_rows: renewalRows,
       ledger_rows: normalizedLedgerRows,
@@ -7753,10 +7791,10 @@ app.get('/api/local/work_orders_completed_history', async (req: Request, res: Re
   try {
     const days = parseDays(req.query.days, 365, 3650);
     const limit = parseLimit(req.query.limit, 10000, 25000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
     let rows: any[] = [];
     try {
-      rows = propertyGroupId
+      rows = scopeIds.length
         ? await queryClient`
           select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                  category, priority, status, assigned_user_id, assigned_user_name,
@@ -7764,7 +7802,7 @@ app.get('/api/local/work_orders_completed_history', async (req: Request, res: Re
                  created_at, updated_at, raw_json
           from appfolio_work_orders
           where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
-            and property_group_id = ${propertyGroupId}
+            and property_group_id = ANY(${scopeIds}::text[])
             and (
               coalesce(lower(status), '') like '%completed%'
               or coalesce(lower(status), '') like '%no need to bill%'
@@ -7795,7 +7833,7 @@ app.get('/api/local/work_orders_completed_history', async (req: Request, res: Re
         throw error;
       }
 
-      rows = propertyGroupId
+      rows = scopeIds.length
         ? await queryClient`
           select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
                  category, priority, status, assigned_user_id, assigned_user_name,
@@ -7803,7 +7841,7 @@ app.get('/api/local/work_orders_completed_history', async (req: Request, res: Re
                  created_at, updated_at, raw_json
           from appfolio_work_orders
           where coalesce(updated_at, created_at, now()) >= now() - (${days}::int * interval '1 day')
-            and property_group_id = ${propertyGroupId}
+            and property_group_id = ANY(${scopeIds}::text[])
             and (
               coalesce(lower(status), '') like '%completed%'
               or coalesce(lower(status), '') like '%no need to bill%'
@@ -7842,13 +7880,13 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
     const limit = parseLimit(req.query.limit, 500, 5000);
     const offsetRaw = Number.parseInt(String(req.query.offset || '0'), 10);
     const offset = Number.isFinite(offsetRaw) && offsetRaw > 0 ? Math.min(offsetRaw, 250000) : 0;
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
     const activeOnly = /^(1|true|yes|on)$/i.test(String(req.query.active_only || '1').trim());
-    const groupKey = String(propertyGroupId || '');
+    const groupKey = scopeIds.join(',');
 
     let rows: any[] = [];
     try {
-      rows = propertyGroupId
+      rows = scopeIds.length
         ? await queryClient`
           select
             i.inspection_id,
@@ -7879,7 +7917,7 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
           ) td on true
           left join appfolio_properties p on p.id = i.property_id
           left join appfolio_units u on u.unit_id = i.unit_id
-          where p.property_group_id = ${propertyGroupId}
+          where p.property_group_id = ANY(${scopeIds}::text[])
           order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
           limit ${limit}
           offset ${offset}
@@ -7984,8 +8022,8 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
 app.get('/api/local/tenant_directory', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 5000, 15000);
-    const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
+    const scopeIds = getPropertyGroupFilters(req);
+    const rows = scopeIds.length
       ? await queryClient`
         select
           t.record_id,
@@ -8007,9 +8045,9 @@ app.get('/api/local/tenant_directory', async (req: Request, res: Response) => {
           t.occupancy_id,
           p.property_group_id
         from appfolio_tenant_directory t
-        left join appfolio_properties p on p.id = t.property_id
+        join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || t.property_id
         left join appfolio_units u on u.unit_id = t.unit_id
-        where p.property_group_id = ${propertyGroupId}
+        where p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
         order by coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc, t.tenant_name asc
         limit ${limit}
       `
@@ -8051,8 +8089,8 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
   try {
     const days = parseDays(req.query.days, 60, 3650);
     const limit = parseLimit(req.query.limit, 2500, 10000);
-    const propertyGroupId = getPropertyGroupFilter(req);
-    let rows = propertyGroupId
+    const scopeIds = getPropertyGroupFilters(req);
+    let rows = scopeIds.length
       ? await queryClient`
         select
           t.record_id,
@@ -8068,9 +8106,9 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
           t.rent,
           t.occupancy_id
         from appfolio_tenant_directory t
-        left join appfolio_properties p on p.id = t.property_id
+        join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || t.property_id
         left join appfolio_units u on u.unit_id = t.unit_id
-        where p.property_group_id = ${propertyGroupId}
+        where p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
         order by coalesce(t.move_out_date, t.cached_at) asc, coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc
         limit ${limit}
       `
@@ -8096,7 +8134,7 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
       `;
 
     if ((rows as any[]).length === 0) {
-      rows = propertyGroupId
+      rows = scopeIds.length
         ? await queryClient`
           select
             u.unit_id,
@@ -8112,7 +8150,7 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
             coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id
           from appfolio_units u
           inner join appfolio_properties p on p.id = u.property_id
-          where p.property_group_id = ${propertyGroupId}
+          where p.property_group_id = ANY(${scopeIds}::text[])
           order by p.name asc, u.name asc
           limit ${limit}
         `
@@ -8170,10 +8208,10 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
 app.get('/api/local/vacancies', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 5000, 15000);
-    const propertyGroupId = getPropertyGroupFilter(req);
+    const scopeIds = getPropertyGroupFilters(req);
     // v.property_id is the numeric AppFolio id (tail of the properties Link);
     // group scope follows the PropertyGroupIds array (multi-group safe).
-    let rows = propertyGroupId
+    let rows = scopeIds.length
       ? await queryClient`
         select
           v.record_id,
@@ -8191,7 +8229,7 @@ app.get('/api/local/vacancies', async (req: Request, res: Response) => {
         from appfolio_unit_vacancies v
         join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || v.property_id
         left join appfolio_units u on u.unit_id = v.unit_id
-        where p.raw_json->'PropertyGroupIds' @> jsonb_build_array(${propertyGroupId}::text)
+        where p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
         order by coalesce(v.vacant_from, v.cached_at) asc, coalesce(v.property_name, p.name) asc, coalesce(v.unit_name, u.name) asc
         limit ${limit}
       `
@@ -8254,8 +8292,8 @@ app.get('/api/local/vacancies', async (req: Request, res: Response) => {
 app.get('/api/local/property_performance', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 5000, 15000);
-    const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
+    const scopeIds = getPropertyGroupFilters(req);
+    const rows = scopeIds.length
       ? await queryClient`
         with vacancy_counts as (
           select p2.id as property_id, count(*)::integer as vacant_units
@@ -8279,7 +8317,7 @@ app.get('/api/local/property_performance', async (req: Request, res: Response) =
         left join appfolio_property_groups pg on pg.id = p.property_group_id or pg.uuid = p.property_group_id
         left join appfolio_units u on u.property_id = p.id
         left join vacancy_counts vc on vc.property_id = p.id
-        where p.property_group_id = ${propertyGroupId}
+        where p.property_group_id = ANY(${scopeIds}::text[])
         group by p.id, p.name, p.property_group_id, pg.name, vc.vacant_units
         order by p.name asc
         limit ${limit}
@@ -8336,12 +8374,12 @@ app.get('/api/local/property_performance', async (req: Request, res: Response) =
 app.get('/api/local/property_map', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 7000, 20000);
-    const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
+    const scopeIds = getPropertyGroupFilters(req);
+    const rows = scopeIds.length
       ? await queryClient`
         select id, name, property_group_id, raw_json
         from appfolio_properties
-        where property_group_id = ${propertyGroupId}
+        where property_group_id = ANY(${scopeIds}::text[])
         order by name asc
         limit ${limit}
       `
@@ -8374,8 +8412,8 @@ app.get('/api/local/property_map', async (req: Request, res: Response) => {
 
 app.get('/api/local/property_stats', async (req: Request, res: Response) => {
   try {
-    const propertyGroupId = getPropertyGroupFilter(req);
-    const rows = propertyGroupId
+    const scopeIds = getPropertyGroupFilters(req);
+    const rows = scopeIds.length
       ? await queryClient`
         select p.id,
           (
@@ -8399,7 +8437,7 @@ app.get('/api/local/property_stats', async (req: Request, res: Response) => {
             where e.property_group_id = p.property_group_id
           ) as estimates
         from appfolio_properties p
-        where p.property_group_id = ${propertyGroupId}
+        where p.property_group_id = ANY(${scopeIds}::text[])
       `
       : await queryClient`
         select p.id,

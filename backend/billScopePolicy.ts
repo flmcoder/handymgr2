@@ -1,7 +1,18 @@
 export type BillScopeDecision = {
   allowed: boolean;
   propertyGroupId: string;
+  propertyGroupIds: string[];
 };
+
+function toScopeList(value: unknown): string[] {
+  const parts = Array.isArray(value) ? value : String(value ?? '').split(',');
+  const out: string[] = [];
+  for (const part of parts) {
+    const v = String(part || '').trim();
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
 
 export function resolveBillScope(
   role: unknown,
@@ -9,17 +20,18 @@ export function resolveBillScope(
   requestedGroupId: unknown,
 ): BillScopeDecision {
   const normalizedRole = String(role || '').trim().toLowerCase();
-  const normalizedSessionGroupId = String(sessionGroupId || '').trim();
-  const normalizedRequestedGroupId = String(requestedGroupId || '').trim();
+  const sessionIds = toScopeList(sessionGroupId);
+  const requestedIds = toScopeList(requestedGroupId);
 
   if (normalizedRole === 'pm_readonly') {
     return {
-      allowed: Boolean(normalizedSessionGroupId),
-      propertyGroupId: normalizedSessionGroupId,
+      allowed: sessionIds.length > 0,
+      propertyGroupId: sessionIds[0] || '',
+      propertyGroupIds: sessionIds,
     };
   }
 
-  return { allowed: true, propertyGroupId: normalizedRequestedGroupId };
+  return { allowed: true, propertyGroupId: requestedIds[0] || '', propertyGroupIds: requestedIds };
 }
 
 function collectBillPropertyIds(bill: unknown): string[] {

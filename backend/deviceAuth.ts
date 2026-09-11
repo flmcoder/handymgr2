@@ -53,9 +53,25 @@ function normalizeEmail(rawEmail: string): string {
 
 function normalizeScopeUuid(rawScope: string): string {
   const value = String(rawScope || '').trim().toLowerCase();
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  // Accept any hex UUID shape (versions/variants beyond v1-v5 exist in data).
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
     ? value
     : '';
+}
+
+/**
+ * Parse a scope set: comma-joined string or string array → deduped non-empty
+ * values. Lenient on format (group ids are not always strict UUIDs); SQL
+ * matching against an unknown value simply returns no rows.
+ */
+export function parseScopeUuidSet(value: unknown): string[] {
+  const parts = Array.isArray(value) ? value : String(value ?? '').split(',');
+  const out: string[] = [];
+  for (const part of parts) {
+    const v = String(part || '').trim();
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out;
 }
 
 function stripPhoneExtension(raw: string): string {
@@ -273,6 +289,7 @@ async function ensureAuthTables(): Promise<void> {
       value TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE trusted_devices ADD COLUMN IF NOT EXISTS property_group_uuids TEXT NOT NULL DEFAULT '';
   `);
   authTablesReady = true;
 }
@@ -459,8 +476,8 @@ async function resolvePmProxyUsers(identifier: string): Promise<PmProxyUser[]> {
   });
 }
 
-async function selectPmScopedAccount(users: PmProxyUser[], requestedScopeUuidRaw: string): Promise<{ user: PmProxyUser | null; scopeUuid: string; scopeOptions?: ScopeOption[]; error?: string }> {
-  if (!users.length) return { user: null, scopeUuid: '' };
+async function selectPmScopedAccount(users: PmProxyUser[], requestedScopeUuidRaw: string): Promise<{ user: PmProxyUser | null; scopeUuid: string; scopeUuids: string[]; scopeOptions?: ScopeOption[]; error?: string }> {
+  if (!users.length) return { user: null, scopeUuid: '', scopeUuids: [] };
 
   const requestedScopeUuid = normalizeScopeUuid(requestedScopeUuidRaw);
   const allScopeUuids = users.flatMap((user) => user.scopes || []).filter(Boolean);
@@ -471,49 +488,61 @@ async function selectPmScopedAccount(users: PmProxyUser[], requestedScopeUuidRaw
       return {
         user: null,
         scopeUuid: '',
+        scopeUuids: [],
         scopeOptions: await buildScopeOptions(allScopeUuids),
         error: 'Requested property group scope is not assigned to this PM account.',
       };
     }
-    return { user: scoped, scopeUuid: requestedScopeUuid };
+    // Union model: the session always carries every assigned scope; the
+    // requested scope only selects the primary display scope.
+    const scopeUuids = Array.from(new Set(allScopeUuids));
+    return { user: scoped, scopeUuid: requestedScopeUuid, scopeUuids };
   }
 
   if (users.length === 1) {
     const user = users[0];
-    if (user.primary_scope_uuid) return { user, scopeUuid: user.primary_scope_uuid };
-    if ((user.scopes || []).length === 1) return { user, scopeUuid: user.scopes[0] };
+    const scopeUuids = Array.from(new Set(user.scopes || []));
+    if (user.primary_scope_uuid) return { user, scopeUuid: user.primary_scope_uuid, scopeUuids };
+    if (scopeUuids.length === 1) return { user, scopeUuid: scopeUuids[0], scopeUuids };
+    if (scopeUuids.length > 1) return { user, scopeUuid: scopeUuids[0], scopeUuids };
   }
 
   const distinctScopes = Array.from(new Set(allScopeUuids));
   if (distinctScopes.length === 1) {
     const onlyScope = distinctScopes[0];
     const user = users.find((candidate) => (candidate.scopes || []).includes(onlyScope)) || users[0];
-    return { user, scopeUuid: onlyScope };
+    return { user, scopeUuid: onlyScope, scopeUuids: distinctScopes };
+  }
+  if (distinctScopes.length > 1) {
+    return { user: users[0], scopeUuid: distinctScopes[0], scopeUuids: distinctScopes };
   }
 
   return {
     user: null,
     scopeUuid: '',
+    scopeUuids: [],
     scopeOptions: await buildScopeOptions(distinctScopes),
-    error: 'Multiple property-group scopes are assigned to this PM account. Provide property_group_uuid to continue OTP login.',
+    error: 'No PM scope is available for this account.',
   };
 }
 
-async function insertTrustedDeviceSession(args: { token: string; userName: string; role?: string; loginEmail?: string; propertyGroupUuid?: string; phone?: string }): Promise<void> {
+async function insertTrustedDeviceSession(args: { token: string; userName: string; role?: string; loginEmail?: string; propertyGroupUuid?: string; propertyGroupUuids?: string[]; phone?: string }): Promise<void> {
   await ensureAuthTables();
+  const scopeUuids = Array.from(new Set([...(args.propertyGroupUuids || []), args.propertyGroupUuid || ''].map((v) => String(v || '').trim()).filter(Boolean)));
   await queryClient.unsafe(
-    `INSERT INTO trusted_devices (device_token, user_name, role, login_email, property_group_uuid, phone, last_seen_at, expires_at, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW() + INTERVAL '30 days', NOW())
+    `INSERT INTO trusted_devices (device_token, user_name, role, login_email, property_group_uuid, property_group_uuids, phone, last_seen_at, expires_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW() + INTERVAL '30 days', NOW())
      ON CONFLICT (device_token) DO UPDATE SET
        user_name = EXCLUDED.user_name,
        role = EXCLUDED.role,
        login_email = EXCLUDED.login_email,
        property_group_uuid = EXCLUDED.property_group_uuid,
+       property_group_uuids = EXCLUDED.property_group_uuids,
        phone = EXCLUDED.phone,
        revoked = FALSE,
        last_seen_at = NOW(),
        expires_at = NOW() + INTERVAL '30 days'`,
-    [args.token, args.userName, args.role || 'full', args.loginEmail || '', args.propertyGroupUuid || '', args.phone || ''],
+    [args.token, args.userName, args.role || 'full', args.loginEmail || '', scopeUuids[0] || '', scopeUuids.join(','), args.phone || ''],
   );
 }
 
@@ -578,6 +607,7 @@ export async function handleDeviceOtpRequest(req: Request): Promise<any> {
       message: pmUser ? `OTP sent to phone on file for ${pmUser.full_name || 'PM User'}.` : 'OTP sent to the provided phone number.',
       phone_hint: smsPhone.length > 7 ? smsPhone.slice(0, 5) + '***' + smsPhone.slice(-2) : '***',
       property_group_uuid: String(scopeUuid || pmUser?.primary_scope_uuid || ''),
+      scope_uuids: selection.scopeUuids || [],
       expires_in_minutes: policy.ttlMinutes,
     };
   } catch (err: any) {
@@ -644,10 +674,11 @@ export async function handleDeviceOtpVerify(req: Request): Promise<any> {
   const userName = getBodyField(body, 'user_name', 'userName', 'user') || pmUser?.full_name || userNameFromOtp || email;
   const role = 'pm_readonly';
   const scopeUuid = String(requestedScope || pmUser?.primary_scope_uuid || scopeUuidFromOtp || '');
+  const scopeUuids = Array.from(new Set([...(selection.scopeUuids || []), scopeUuid].filter(Boolean)));
   const phone = String(pmUser?.phone || '');
   let token = generateUuid();
   try {
-    await insertTrustedDeviceSession({ token, userName, role, loginEmail: email, propertyGroupUuid: scopeUuid, phone });
+    await insertTrustedDeviceSession({ token, userName, role, loginEmail: email, propertyGroupUuid: scopeUuid, propertyGroupUuids: scopeUuids, phone });
     console.log(formatSignInLine({ method: 'otp', userName, role, email, scopeUuid }));
   } catch (err) {
     const fallback = await mintSignedToken(role, userName);
@@ -657,7 +688,7 @@ export async function handleDeviceOtpVerify(req: Request): Promise<any> {
     token = fallback;
     console.log(formatSignInLine({ method: 'otp', userName, role, email, scopeUuid, tokenKind: 'signed-fallback' }));
   }
-  return { ok: true, token, user_name: userName, email, role, property_group_uuid: scopeUuid, phone, created_at: new Date().toISOString() };
+  return { ok: true, token, user_name: userName, email, role, property_group_uuid: scopeUuid, scope_uuids: scopeUuids, phone, created_at: new Date().toISOString() };
 }
 
 export async function getTrustedDeviceSession(token: string): Promise<any | null> {
@@ -671,6 +702,7 @@ export async function getTrustedDeviceSession(token: string): Promise<any | null
       role: decoded.role,
       login_email: '',
       property_group_uuid: '',
+      property_group_uuids: [],
       phone: '',
       created_at: new Date(decoded.iat * 1000).toISOString(),
       last_seen_at: new Date().toISOString(),
@@ -681,7 +713,7 @@ export async function getTrustedDeviceSession(token: string): Promise<any | null
   if (recent) return recent;
   await ensureAuthTables();
   const rows = await queryClient.unsafe(
-    `SELECT device_token, user_name, role, login_email, property_group_uuid, phone, created_at, last_seen_at, expires_at
+    `SELECT device_token, user_name, role, login_email, property_group_uuid, property_group_uuids, phone, created_at, last_seen_at, expires_at
      FROM trusted_devices
      WHERE device_token = $1 AND coalesce(revoked, false) = false AND (expires_at IS NULL OR expires_at > NOW())
      LIMIT 1`,
@@ -690,12 +722,14 @@ export async function getTrustedDeviceSession(token: string): Promise<any | null
   if (!(rows as any[]).length) return null;
   const row: any = (rows as any[])[0];
   await queryClient.unsafe(`UPDATE trusted_devices SET last_seen_at = NOW(), expires_at = NOW() + INTERVAL '30 days' WHERE device_token = $1`, [token]).catch(() => {});
+  const sessionScopeUuids = parseScopeUuidSet([row.property_group_uuids, row.property_group_uuid]);
   const session = {
     device_token: String(row.device_token || ''),
     user_name: String(row.user_name || ''),
     role: String(row.role || 'full') || 'full',
     login_email: String(row.login_email || ''),
-    property_group_uuid: String(row.property_group_uuid || ''),
+    property_group_uuid: String(row.property_group_uuid || sessionScopeUuids[0] || ''),
+    property_group_uuids: sessionScopeUuids,
     phone: String(row.phone || ''),
     created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
     last_seen_at: new Date().toISOString(),

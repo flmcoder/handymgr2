@@ -21,15 +21,16 @@ export const WO_STATUS_EXPR = `coalesce(nullif(wo.status, ''), 'Unknown')`;
 
 export const WO_PROPERTY_EXPR = `coalesce(nullif(p.name, ''), nullif(wo.raw_json->>'property_name', ''), 'Unknown')`;
 
-const WO_BASE_WHERE = (scope: boolean): string => scope
-  ? `${OPEN_WORK_ORDER_STATUS_FILTER} and wo.property_group_id = $1`
+const WO_BASE_WHERE = (scoped: boolean): string => scoped
+  ? `${OPEN_WORK_ORDER_STATUS_FILTER} and wo.property_group_id = ANY($1::text[])`
   : OPEN_WORK_ORDER_STATUS_FILTER;
 
 const WO_AGE = WORK_ORDER_CREATED_AT_EXPR;
 
-export function buildWorkOrdersAnalyticsQuery(scope: string | null): { sql: string; params: string[] } {
-  const where = WO_BASE_WHERE(!!scope);
-  const params: string[] = scope ? [scope] : [];
+export function buildWorkOrdersAnalyticsQuery(scopeIds: string[]): { sql: string; params: string[][] } {
+  const scoped = scopeIds.length > 0;
+  const where = WO_BASE_WHERE(scoped);
+  const params: string[][] = scoped ? [scopeIds] : [];
   const sql = `
     select
       (select count(*)::int from appfolio_work_orders wo where ${where}) as total,
@@ -52,7 +53,7 @@ export function buildWorkOrdersAnalyticsQuery(scope: string | null): { sql: stri
 
 const OCC_SCOPE_JOIN = (scope: boolean): string => scope
   ? `join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || occ.property_id
-     and p.raw_json->'PropertyGroupIds' @> jsonb_build_array($1::text)`
+     and p.raw_json->'PropertyGroupIds' ?| ($1::text[])`
   : '';
 
 const INSP_LATERAL = `
@@ -101,17 +102,18 @@ const INSP_BASE = (scope: boolean): string => `
 `;
 
 export function buildInspectionsAnalyticsQuery(
-  scope: string | null,
+  scopeIds: string[],
   overdueDays = 365,
   dueSoonDays = 270,
-): { sql: string; params: string[] } {
+): { sql: string; params: string[][] } {
   const od = Math.max(1, Math.floor(Number(overdueDays) || 365));
   const ds = Math.max(1, Math.floor(Number(dueSoonDays) || 270));
-  const params: string[] = scope ? [scope] : [];
+  const scoped = scopeIds.length > 0;
+  const params: string[][] = scoped ? [scopeIds] : [];
   const daysSince = `greatest(coalesce((current_date - b.anchor_date), 0), 0)`;
   const isOverdue = `(b.missing or b.anchor_date is null or (current_date - b.anchor_date) > ${od})`;
   const sql = `
-    with base as (${INSP_BASE(!!scope)})
+    with base as (${INSP_BASE(scoped)})
     select
       (select count(*)::int from base b) as total_active,
       (select count(*)::int from base b where b.missing) as total_missing,

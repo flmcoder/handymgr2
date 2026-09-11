@@ -964,9 +964,8 @@ async function resumeFromPendingSession() {
   API_VHOST = vhost;
   API_CREDS = { p: token };
   _accessRole = normalizeAccessRole(freshSession.role || prevRole);
-  if (freshSession.property_group_uuid) {
-    forcedPropertyGroupUuid = String(freshSession.property_group_uuid);
-    try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (e) { /* */ }
+  if (freshSession.property_group_uuid || freshSession.scope_uuids) {
+    setForcedScopeUuids(freshSession.scope_uuids || freshSession.property_group_uuid);
   }
   if (freshSession.login_email) {
     _pmScopeEmail = String(freshSession.login_email);
@@ -983,7 +982,7 @@ async function resumeFromPendingSession() {
   await initApp();
   maybeAutoRunSystemHealthCheck();
   if (_accessRole === 'pm_readonly') {
-    try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (e) { /* */ }
+    try { loadForcedScopeUuids(); } catch (e) { /* */ }
     enforceScopedPropertyGroup();
   }
   applyAccessRole();
@@ -4507,6 +4506,7 @@ window.filteredUnitName = '';
 var UNITS = [];
 var _unitsByPropertyId = {};  // propertyId -> Unit[]
 var forcedPropertyGroupUuid = '';
+var forcedPropertyGroupUuids = [];
 var forcedPropertyGroupName = '';
 var currentTurnFilter = 'open';
 var currentWOCloseAssistAge = 14;
@@ -4554,7 +4554,41 @@ function saveRoutingSettings() {
 
 loadRoutingSettings();
 
-try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || ''; } catch (e) { /* */ }
+// Union scope: a PM may be assigned several group UUIDs; the server scopes
+// every query to the whole set. Storage keeps the array plus the legacy
+// single key (first entry) for backward compatibility.
+function setForcedScopeUuids(ids) {
+  var list = [];
+  (Array.isArray(ids) ? ids : String(ids || '').split(',')).forEach(function(v) {
+    v = String(v || '').trim();
+    if (v && list.indexOf(v) === -1) list.push(v);
+  });
+  forcedPropertyGroupUuids = list;
+  forcedPropertyGroupUuid = list[0] || '';
+  try {
+    localStorage.setItem('hm_scope_group_uuids', JSON.stringify(list));
+    if (list[0]) localStorage.setItem('hm_scope_group_uuid', list[0]);
+    else localStorage.removeItem('hm_scope_group_uuid');
+  } catch (e) { /* */ }
+}
+function loadForcedScopeUuids() {
+  var list = [];
+  try {
+    var raw = localStorage.getItem('hm_scope_group_uuids');
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) list = parsed;
+    }
+  } catch (e) { /* */ }
+  if (!list.length) {
+    try {
+      var legacy = localStorage.getItem('hm_scope_group_uuid');
+      if (legacy) list = [legacy];
+    } catch (e2) { /* */ }
+  }
+  setForcedScopeUuids(list);
+}
+loadForcedScopeUuids();
 try { _pmScopeEmail = localStorage.getItem('hm_scope_email') || ''; } catch (e) { /* */ }
 
 // Show returning-PM identity hint on the login screen before user connects
@@ -4904,10 +4938,14 @@ function resolvePropertyMetaFromMaps(propertyId, fallbackName, fallbackGroupId) 
 }
 
 function enforceScopedPropertyGroup() {
-  if (!forcedPropertyGroupUuid) return;
-  var scopedName = resolveGroupNameFromUuid(forcedPropertyGroupUuid) || forcedPropertyGroupName;
+  var forcedIds = forcedPropertyGroupUuids.length
+    ? forcedPropertyGroupUuids
+    : (forcedPropertyGroupUuid ? [forcedPropertyGroupUuid] : []);
+  if (!forcedIds.length) return;
+  // Union scope: show the primary group name (plus count when several).
+  var scopedName = resolveGroupNameFromUuid(forcedIds[0]) || forcedPropertyGroupName;
   if (!scopedName) return;
-  forcedPropertyGroupName = scopedName;
+  forcedPropertyGroupName = forcedIds.length > 1 ? (scopedName + ' (+' + (forcedIds.length - 1) + ' more)') : scopedName;
   currentPropertyGroup = scopedName;
   var sel = document.getElementById('globalGroupFilter');
   if (sel) {
@@ -4945,12 +4983,37 @@ function getEffectiveGroupId() {
   return _normalizeEffectiveGroup(currentPropertyGroup || '');
 }
 
-function getEffectiveGroupUuid(groupName) {
+// Parse a scope set from a comma/space-joined string (or array) into deduped
+// UUID-shaped values. Accepts any hex UUID shape (versions beyond v1-v5
+// exist in production group data).
+function parseScopeUuidList(raw, primaryScope) {
+  var seen = {};
+  var out = [];
+  var tokens = Array.isArray(raw) ? raw : String(raw || '').split(/[\s,]+/);
+  (tokens || []).forEach(function(token) {
+    var scope = String(token || '').trim().toLowerCase();
+    var normalized = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(scope) ? scope : '';
+    if (!normalized || seen[normalized]) return;
+    seen[normalized] = true;
+    out.push(normalized);
+  });
+  var primary = String(primaryScope || '').trim().toLowerCase();
+  var normalizedPrimary = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(primary) ? primary : '';
+  if (normalizedPrimary && !seen[normalizedPrimary]) out.unshift(normalizedPrimary);
+  return out;
+}
+
+function getEffectiveGroupUuid(groupName) {  // PM sessions carry the whole assigned set; the wire format is comma-joined
+  // (the server splits it back into a set).
+  if (_accessRole === 'pm_readonly') {
+    var ids = forcedPropertyGroupUuids.length
+      ? forcedPropertyGroupUuids
+      : (forcedPropertyGroupUuid ? [String(forcedPropertyGroupUuid).trim()] : []);
+    ids = ids.filter(Boolean);
+    if (ids.length) return ids.join(',');
+  }
   var normalizedName = normalizeGroupSelectionValue(groupName || getEffectiveGroupId());
   if (!normalizedName) return '';
-  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
-    return String(forcedPropertyGroupUuid).trim();
-  }
   return resolveGroupUuidFromName(normalizedName);
 }
 
@@ -5189,11 +5252,12 @@ async function enforceSessionTypeTransitionReset(previousRole, nextRole) {
   // Scope/session artifacts must not bleed between role types.
   resetInMemoryDataForSessionTransition();
   currentPropertyGroup = '';
-  forcedPropertyGroupUuid = '';
+  setForcedScopeUuids([]);
   forcedPropertyGroupName = '';
   _pmScopeGroupUuid = '';
   _pmScopeEmail = '';
   try { localStorage.removeItem('hm_scope_group_uuid'); } catch (e1) { /* */ }
+  try { localStorage.removeItem('hm_scope_group_uuids'); } catch (e1b) { /* */ }
   try { localStorage.removeItem('hm_scope_email'); } catch (e2) { /* */ }
   await clearSessionScopedApiCache();
   updateCacheBadge('offline');
@@ -5558,10 +5622,9 @@ if ($('#btnVerifyOtp')) {
         _accessRole = normalizeAccessRole(verifyData.role);
         persistAccessRole(_accessRole);
       }
-      if (verifyData.property_group_uuid) {
-        forcedPropertyGroupUuid = String(verifyData.property_group_uuid);
+      if (verifyData.property_group_uuid || verifyData.scope_uuids) {
+        setForcedScopeUuids(verifyData.scope_uuids || verifyData.property_group_uuid);
         forcedPropertyGroupName = '';
-        try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (e3) { /* */ }
       }
       if (verifyData.email) {
         _pmScopeEmail = String(verifyData.email || '');
@@ -5608,10 +5671,9 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
     var sess = await proxyAction('session_info');
     if (sess && sess.ok && sess.session) {
       _accessRole = normalizeAccessRole(sess.session.role || _accessRole);
-      if (sess.session.property_group_uuid) {
-        forcedPropertyGroupUuid = String(sess.session.property_group_uuid);
+      if (sess.session.property_group_uuid || sess.session.property_group_uuids) {
+        setForcedScopeUuids(sess.session.property_group_uuids || sess.session.property_group_uuid);
         forcedPropertyGroupName = '';
-        try { localStorage.setItem('hm_scope_group_uuid', forcedPropertyGroupUuid); } catch (scopeErr) { /* */ }
       }
       if (sess.session.login_email) {
         _pmScopeEmail = String(sess.session.login_email);
@@ -5860,7 +5922,7 @@ $('#vaultUnlockBtn').addEventListener('click', async function() {
     });
     maybeAutoRunSystemHealthCheck();
     if (_accessRole === 'pm_readonly') {
-      try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (eScope) { /* */ }
+      try { loadForcedScopeUuids(); } catch (eScope) { /* */ }
       enforceScopedPropertyGroup();
     }
     applyAccessRole();
@@ -6456,13 +6518,9 @@ function renderEstimates() {
   if (!tbody) return;
 
   var searchTerm = String(($('#estSearch') && $('#estSearch').value) || '').trim().toLowerCase();
-  var groupUuid = String(forcedPropertyGroupUuid || '').trim().toLowerCase();
 
+  // Estimates arrive server-scoped; no client group re-filter.
   var filtered = ESTIMATES.filter(function(row) {
-    if (groupUuid) {
-      var rowGroup = String(row.propertyGroupId || '').trim().toLowerCase();
-      if (!rowGroup || rowGroup !== groupUuid) return false;
-    }
     if (!searchTerm) return true;
     var hay = [
       row.workOrderNumber,
@@ -7322,7 +7380,7 @@ function getCurrentYearStartDate(nowRef) {
 }
 
 function isUuidString(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
 }
 
 function isActiveInspectionProperty(row) {
@@ -11802,7 +11860,7 @@ function wireBillingFilters() {
     }
     if (type === 'bills_by_vendor' && value) payload.vendor_id = value;
     if (type === 'bills_by_property' && value) {
-      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
         payload.property_group_uuid = value;
       } else {
         payload.search = value;
@@ -14550,10 +14608,10 @@ function ensureBillDetailDateRange() {
 }
 
 function buildScopedPropertiesPayload() {
-  var explicitUuid = String(getEffectiveGroupUuid() || '').trim();
-  if (explicitUuid) return { property_groups_ids: [explicitUuid] };
+  var ids = parseScopeUuidList(getEffectiveGroupUuid() || '', forcedPropertyGroupUuid);
+  if (ids.length) return { property_groups_ids: ids };
   if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
-    return { property_groups_ids: [String(forcedPropertyGroupUuid).trim()] };
+    return { property_groups_ids: parseScopeUuidList(forcedPropertyGroupUuid) };
   }
   return { property_groups_ids: [] };
 }
@@ -14691,10 +14749,10 @@ function ensurePayablesAsOfDate() {
 }
 
 function getPayablesScopeGroupUuids() {
-  var explicitUuid = String(getEffectiveGroupUuid() || '').trim();
-  if (explicitUuid) return [explicitUuid];
+  var ids = parseScopeUuidList(getEffectiveGroupUuid() || '', forcedPropertyGroupUuid);
+  if (ids.length) return ids;
   if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuid) {
-    return [String(forcedPropertyGroupUuid).trim()];
+    return parseScopeUuidList(forcedPropertyGroupUuid);
   }
   return [];
 }
@@ -22750,8 +22808,9 @@ function buildEmailDeliveryErrorsRequestPayload() {
     }
   };
   if (groupUuid) {
-    payload.property_group_ids = [groupUuid];
-    payload.properties.property_groups_ids = [groupUuid];
+    var groupUuids = parseScopeUuidList(groupUuid);
+    payload.property_group_ids = groupUuids.length ? groupUuids : [groupUuid];
+    payload.properties.property_groups_ids = groupUuids.length ? groupUuids : [groupUuid];
   }
   return payload;
 }
@@ -25730,25 +25789,6 @@ renderDashboardKPIs = function() {
     return String(value || '').replace(/'/g, "''");
   }
 
-  function normalizeScopeUuid(value) {
-    var scope = String(value || '').trim().toLowerCase();
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(scope) ? scope : '';
-  }
-
-  function parseScopeUuidList(raw, primaryScope) {
-    var seen = {};
-    var out = [];
-    (String(raw || '').split(/[\s,]+/) || []).forEach(function(token) {
-      var normalized = normalizeScopeUuid(token);
-      if (!normalized || seen[normalized]) return;
-      seen[normalized] = true;
-      out.push(normalized);
-    });
-    var normalizedPrimary = normalizeScopeUuid(primaryScope);
-    if (normalizedPrimary && !seen[normalizedPrimary]) out.unshift(normalizedPrimary);
-    return out;
-  }
-
   async function localPmAdminRequest(path, options) {
     var token = getProxyAccessToken();
     if (!token) throw new Error('Sign in with manager/admin access first.');
@@ -25788,7 +25828,7 @@ renderDashboardKPIs = function() {
         '<td>' + fullName + '</td>' +
         '<td style="font-family:var(--font-mono)">' + phone + '</td>' +
         '<td style="font-family:var(--font-mono)">' + groupUuid + '</td>' +
-        '<td style="font-family:var(--font-mono);font-size:10px;max-width:340px;word-break:break-all">' + scopeCsv + '</td>' +
+        '<td class="pm-scope-cell" style="font-family:var(--font-mono);font-size:10px">' + scopeCsv + '</td>' +
         '<td>' + (active ? '<span style="color:var(--success)">Active</span>' : '<span style="color:var(--danger)">Inactive</span>') + '</td>' +
         '<td style="text-align:right;white-space:nowrap">' +
           '<button class="dbadmin-btn pm-edit" style="padding:2px 8px;font-size:10px" data-uuid="' + uuid + '"><i class="fas fa-pen"></i> Edit</button> ' +

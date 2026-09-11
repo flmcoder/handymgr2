@@ -330,11 +330,11 @@ select
   ) as compliance_status
 from final_rows fr
 where fr.move_out_date >= current_date - ($1::int * interval '1 day')
-  and ($3::text is null or exists (
+  and ($3 is null or exists (
     select 1
     from appfolio_properties p_scope
     where ${propertyIdentityMatch('fr.property_id', 'p_scope')}
-      and p_scope.property_group_id = $3::text
+      and p_scope.property_group_id = ANY($3::text[])
   ))
   and ($4::text = '' or lower(case
     when fr.strict_completed then 'Completed'

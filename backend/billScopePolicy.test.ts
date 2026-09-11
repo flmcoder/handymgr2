@@ -8,25 +8,36 @@ import {
 test('resolveBillScope enforces the PM session group over a requested group', () => {
   assert.deepEqual(
     resolveBillScope('pm_readonly', 'session-group', 'other-group'),
-    { allowed: true, propertyGroupId: 'session-group' },
+    { allowed: true, propertyGroupId: 'session-group', propertyGroupIds: ['session-group'] },
   );
 });
 
 test('resolveBillScope rejects a PM session without an assigned group', () => {
   assert.deepEqual(
     resolveBillScope('pm_readonly', '', 'requested-group'),
-    { allowed: false, propertyGroupId: '' },
+    { allowed: false, propertyGroupId: '', propertyGroupIds: [] },
   );
 });
 
 test('resolveBillScope allows managers to request one group or all groups', () => {
   assert.deepEqual(
     resolveBillScope('manager', '', 'requested-group'),
-    { allowed: true, propertyGroupId: 'requested-group' },
+    { allowed: true, propertyGroupId: 'requested-group', propertyGroupIds: ['requested-group'] },
   );
   assert.deepEqual(
     resolveBillScope('manager', '', ''),
-    { allowed: true, propertyGroupId: '' },
+    { allowed: true, propertyGroupId: '', propertyGroupIds: [] },
+  );
+});
+
+test('resolveBillScope carries a multi-group union for PM sessions', () => {
+  assert.deepEqual(
+    resolveBillScope('pm_readonly', ['group-a', 'group-b', 'group-a'], 'group-a'),
+    { allowed: true, propertyGroupId: 'group-a', propertyGroupIds: ['group-a', 'group-b'] },
+  );
+  assert.deepEqual(
+    resolveBillScope('manager', '', 'group-a,group-b'),
+    { allowed: true, propertyGroupId: 'group-a', propertyGroupIds: ['group-a', 'group-b'] },
   );
 });
 

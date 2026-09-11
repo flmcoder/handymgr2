@@ -6,7 +6,8 @@ test('vacancies list resolves properties through the numeric AppFolio link id', 
   const source = await readFile(new URL('./server.ts', import.meta.url), 'utf8');
 
   assert.match(source, /from appfolio_unit_vacancies v\s*\n\s*join appfolio_properties p on p\.raw_json->>'Link'/);
-  assert.match(source, /PropertyGroupIds'\s*@>\s*jsonb_build_array/);
+  assert.match(source, /PropertyGroupIds'\s*\?\|\s*\(/);
+  assert.match(source, /getPropertyGroupFilters\(req\)/);
 });
 
 test('vacancies response prefers the stored days_vacant count', async () => {
