@@ -8091,6 +8091,8 @@ app.get('/api/local/vacancies', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 5000, 15000);
     const propertyGroupId = getPropertyGroupFilter(req);
+    // v.property_id is the numeric AppFolio id (tail of the properties Link);
+    // group scope follows the PropertyGroupIds array (multi-group safe).
     let rows = propertyGroupId
       ? await queryClient`
         select
@@ -8107,9 +8109,9 @@ app.get('/api/local/vacancies', async (req: Request, res: Response) => {
           p.property_group_id,
           p.raw_json
         from appfolio_unit_vacancies v
-        left join appfolio_properties p on p.id = v.property_id
+        join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || v.property_id
         left join appfolio_units u on u.unit_id = v.unit_id
-        where p.property_group_id = ${propertyGroupId}
+        where p.raw_json->'PropertyGroupIds' @> jsonb_build_array(${propertyGroupId}::text)
         order by coalesce(v.vacant_from, v.cached_at) asc, coalesce(v.property_name, p.name) asc, coalesce(v.unit_name, u.name) asc
         limit ${limit}
       `
@@ -8134,51 +8136,16 @@ app.get('/api/local/vacancies', async (req: Request, res: Response) => {
         limit ${limit}
       `;
 
-    if ((rows as any[]).length === 0) {
-      rows = propertyGroupId
-        ? await queryClient`
-          select
-            u.unit_id,
-            u.property_id,
-            p.name as property_name,
-            coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
-            coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as vacant_from,
-            coalesce(nullif(u.raw_json->>'market_rent',''), nullif(u.raw_json->>'MarketRent',''), nullif(u.raw_json->>'rent','')) as market_rent,
-            coalesce(nullif(u.raw_json->>'bedrooms',''), nullif(u.raw_json->>'Bedrooms','')) as bedrooms,
-            p.property_group_id,
-            p.raw_json
-          from appfolio_units u
-          inner join appfolio_properties p on p.id = u.property_id
-          where p.property_group_id = ${propertyGroupId}
-            and lower(coalesce(u.status, '')) like '%vacant%'
-          order by p.name asc, u.name asc
-          limit ${limit}
-        `
-        : await queryClient`
-          select
-            u.unit_id,
-            u.property_id,
-            p.name as property_name,
-            coalesce(nullif(u.raw_json->>'unit_name',''), nullif(u.raw_json->>'UnitName',''), u.name, '') as unit_name,
-            coalesce(nullif(u.raw_json->>'move_out_date',''), nullif(u.raw_json->>'MoveOutDate','')) as vacant_from,
-            coalesce(nullif(u.raw_json->>'market_rent',''), nullif(u.raw_json->>'MarketRent',''), nullif(u.raw_json->>'rent','')) as market_rent,
-            coalesce(nullif(u.raw_json->>'bedrooms',''), nullif(u.raw_json->>'Bedrooms','')) as bedrooms,
-            p.property_group_id,
-            p.raw_json
-          from appfolio_units u
-          inner join appfolio_properties p on p.id = u.property_id
-          where lower(coalesce(u.status, '')) like '%vacant%'
-          order by p.name asc, u.name asc
-          limit ${limit}
-        `;
-    }
-
     const results = (rows as any[]).map((row) => {
       const raw = (row?.raw_json && typeof row.raw_json === 'object') ? row.raw_json : {};
       const groupName = String(pickRaw(raw, ['property_group', 'group_name', 'property_group_name', 'NameOfPropertyGroup']) || '');
       const vacantFrom = String(row.vacant_from || '');
-      let daysVacant: number | null = null;
-      if (vacantFrom) {
+      // Prefer AppFolio's own day count; fall back to date math only when absent.
+      const storedRaw = row.days_vacant === null || row.days_vacant === undefined || String(row.days_vacant) === ''
+        ? NaN
+        : Math.round(Number(row.days_vacant));
+      let daysVacant: number | null = Number.isFinite(storedRaw) ? storedRaw : null;
+      if (daysVacant === null && vacantFrom) {
         const d = new Date(vacantFrom);
         if (!Number.isNaN(d.getTime())) {
           daysVacant = Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
@@ -8211,9 +8178,10 @@ app.get('/api/local/property_performance', async (req: Request, res: Response) =
     const rows = propertyGroupId
       ? await queryClient`
         with vacancy_counts as (
-          select property_id, count(*)::integer as vacant_units
-          from appfolio_unit_vacancies
-          group by property_id
+          select p2.id as property_id, count(*)::integer as vacant_units
+          from appfolio_unit_vacancies v
+          join appfolio_properties p2 on p2.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || v.property_id
+          group by p2.id
         )
         select
           p.id as property_id,
@@ -8238,9 +8206,10 @@ app.get('/api/local/property_performance', async (req: Request, res: Response) =
       `
       : await queryClient`
         with vacancy_counts as (
-          select property_id, count(*)::integer as vacant_units
-          from appfolio_unit_vacancies
-          group by property_id
+          select p2.id as property_id, count(*)::integer as vacant_units
+          from appfolio_unit_vacancies v
+          join appfolio_properties p2 on p2.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || v.property_id
+          group by p2.id
         )
         select
           p.id as property_id,

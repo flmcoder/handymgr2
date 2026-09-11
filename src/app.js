@@ -16391,18 +16391,11 @@ async function loadPropertyVacancies() {
   if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell"><i class="fas fa-spinner fa-spin"></i> Loading\u2026</td></tr>';
   try {
     var vacancyScope = getEffectiveGroupUuid();
-    var vacancyPath = '/api/local/vacancies?limit=100';
+    var vacancyPath = '/api/local/vacancies?limit=5000';
     if (vacancyScope) vacancyPath += '&property_group_id=' + encodeURIComponent(vacancyScope);
     var data = await apiFetch(vacancyPath);
     var rows = getReportRows(data, 'results');
-    var effectiveGroup = normalizeGroupSelectionValue(getEffectiveGroupId());
-    if (effectiveGroup) {
-      rows = rows.filter(function(r) {
-        var pid = r.property_id || r.propertyId || r.property_uuid || '';
-        var pname = r.property_name || r.property || r.property_label || '';
-        return isInPropertyGroup(pid, pname, effectiveGroup);
-      });
-    }
+    // Server already scopes vacancies to the selected property group.
     if (!rows.length) {
       if (body) body.innerHTML = '<tr><td colspan="8" class="u-table-empty-cell">No vacancy data returned</td></tr>';
       _renderVacancyKpiChart([]);
@@ -16445,7 +16438,7 @@ async function loadPropertyVacancies() {
         sqft: sqft != null ? Number(sqft) : null,
         rent: marketRent != null ? Number(marketRent) : null,
       };
-    }).filter(function(d) { return d.days > 0; }); // exclude rows with no day count
+    });
 
     _renderVacancyKpiChart(dots);
   } catch(e) {
