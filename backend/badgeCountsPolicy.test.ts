@@ -31,6 +31,7 @@ test('buildBadgeCountsPayload produces authoritative scoped dashboard metrics', 
     workOrdersAge8To30: 50,
     workOrdersAge31To60: 20,
     workOrdersAge61Plus: 10,
+    workOrdersAgeUnknown: 4,
     turns: 8,
     upcomingTurns: 2,
     inspections: 3,
@@ -39,7 +40,7 @@ test('buildBadgeCountsPayload produces authoritative scoped dashboard metrics', 
   assert.equal(p.ok, true);
   assert.equal(p.work_orders, 120);
   assert.equal(p.urgent_work_orders, 9);
-  assert.deepEqual(p.work_order_aging, { age_0_7: 40, age_8_30: 50, age_31_60: 20, age_61_plus: 10 });
+  assert.deepEqual(p.work_order_aging, { age_0_7: 40, age_8_30: 50, age_31_60: 20, age_61_plus: 10, age_unknown: 4 });
   assert.equal(p.turns, 8);
   assert.equal(p.upcoming_turns, 2);
   assert.equal(p.inspections, 3);
@@ -71,7 +72,8 @@ test('ACTIVE_INSPECTION_RESIDENT_FILTER includes current residents only', () => 
   assert.doesNotMatch(ACTIVE_INSPECTION_RESIDENT_FILTER, /'past'/);
   assert.match(ACTIVE_INSPECTION_RESIDENT_FILTER, /occ\.move_out_date is null or occ\.move_out_date >= current_date/);
   assert.match(ACTIVE_INSPECTION_RESIDENT_FILTER, /occ\.property_id/);
-  assert.match(ACTIVE_INSPECTION_RESIDENT_FILTER, /occ\.unit_id/);
+  assert.match(ACTIVE_INSPECTION_RESIDENT_FILTER, /financially responsible/);
+  assert.match(ACTIVE_INSPECTION_RESIDENT_FILTER, /occ\.unit_id[\s\S]*or[\s\S]*occ\.occupancy_id/);
   assert.match(ACTIVE_INSPECTION_RESIDENT_FILTER, /occ\.occupancy_id/);
   assert.match(ACTIVE_INSPECTION_RESIDENT_FILTER, /occ\.lease_to is null or occ\.lease_to >= current_date/);
   assert.doesNotMatch(ACTIVE_INSPECTION_RESIDENT_FILTER, /last_inspection_date/);

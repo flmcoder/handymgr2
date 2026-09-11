@@ -18,9 +18,10 @@ export const ACTIVE_TURN_STATUS_FILTER = `(
 export const ACTIVE_INSPECTION_RESIDENT_FILTER = `(
   lower(coalesce(occ.status, '')) = 'current'
   and coalesce(occ.tenant_name, '') <> ''
+  and lower(coalesce(occ.tenant_type, '')) = 'financially responsible'
   and coalesce(occ.property_id, '') <> ''
-  and coalesce(occ.unit_id, '') <> ''
   and coalesce(occ.occupancy_id, '') <> ''
+  and (coalesce(occ.unit_id, '') <> '' or coalesce(occ.occupancy_id, '') <> '')
   and occ.move_in_date is not null
   and occ.move_in_date <= current_date
   and (occ.lease_to is null or occ.lease_to >= current_date)
@@ -58,6 +59,7 @@ export type BadgeCounts = {
     age_8_30: number;
     age_31_60: number;
     age_61_plus: number;
+    age_unknown: number;
   };
   turns: number;
   upcoming_turns: number;
@@ -75,6 +77,7 @@ export function buildBadgeCountsPayload(input: {
   workOrdersAge8To30?: unknown;
   workOrdersAge31To60?: unknown;
   workOrdersAge61Plus?: unknown;
+  workOrdersAgeUnknown?: unknown;
   turns?: unknown;
   upcomingTurns?: unknown;
   inspections?: unknown;
@@ -89,6 +92,7 @@ export function buildBadgeCountsPayload(input: {
       age_8_30: toBadgeCount(input.workOrdersAge8To30),
       age_31_60: toBadgeCount(input.workOrdersAge31To60),
       age_61_plus: toBadgeCount(input.workOrdersAge61Plus),
+      age_unknown: toBadgeCount(input.workOrdersAgeUnknown),
     },
     turns: toBadgeCount(input.turns),
     upcoming_turns: toBadgeCount(input.upcomingTurns),

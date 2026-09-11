@@ -5180,10 +5180,11 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
       select
         count(*)::int as total,
         count(*) filter (where lower(coalesce(priority, '')) in ('urgent', 'emergency', 'critical'))::int as urgent_total,
-        count(*) filter (where current_date - coalesce(created_at::date, current_date) between 0 and 7)::int as age_0_7,
-        count(*) filter (where current_date - coalesce(created_at::date, current_date) between 8 and 30)::int as age_8_30,
-        count(*) filter (where current_date - coalesce(created_at::date, current_date) between 31 and 60)::int as age_31_60,
-        count(*) filter (where current_date - coalesce(created_at::date, current_date) >= 61)::int as age_61_plus
+        count(*) filter (where created_at is not null and current_date - created_at::date between 0 and 7)::int as age_0_7,
+        count(*) filter (where created_at is not null and current_date - created_at::date between 8 and 30)::int as age_8_30,
+        count(*) filter (where created_at is not null and current_date - created_at::date between 31 and 60)::int as age_31_60,
+        count(*) filter (where created_at is not null and current_date - created_at::date >= 61)::int as age_61_plus,
+        count(*) filter (where created_at is null)::int as age_unknown
       from appfolio_work_orders
       where ${OPEN_WORK_ORDER_STATUS_FILTER}
       ${scope ? 'and property_group_id = $1' : ''}
@@ -5228,6 +5229,7 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
       workOrdersAge8To30: workOrderMetrics.age_8_30,
       workOrdersAge31To60: workOrderMetrics.age_31_60,
       workOrdersAge61Plus: workOrderMetrics.age_61_plus,
+      workOrdersAgeUnknown: workOrderMetrics.age_unknown,
       turns: activeTurnRows.length,
       upcomingTurns: upcomingTurnRows.length,
       inspections: (inspRows as any[])[0]?.total,
@@ -5627,7 +5629,7 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
         coalesce(i.inspection_id, 'missing:' || coalesce(occ.occupancy_id, occ.unit_id, occ.record_id)) as inspection_id,
         occ.property_id,
         coalesce(occ.property_name, p.name) as property_name,
-        occ.unit_id,
+        coalesce(occ.unit_id, i.unit_id) as unit_id,
         coalesce(occ.unit_name, u.name, '') as unit_name,
         i.last_inspection_date::date as last_inspection_date,
         coalesce(occ.tenant_name, '') as tenant_name,
@@ -5783,7 +5785,7 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
       tenant_status: String(row.tenant_status || 'Current'),
       tenant_type: String(row.tenant_type || ''),
       has_valid_property_association: !!String(row.property_id || '').trim(),
-      has_valid_unit_association: !!String(row.unit_id || '').trim(),
+      has_valid_unit_association: !!String(row.unit_id || row.occupancy_id || '').trim(),
       has_valid_occupancy_association: !!String(row.occupancy_id || '').trim(),
       rentable: String(row.rentable || ''),
       unit_tags: row.unit_tags || '',

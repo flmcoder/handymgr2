@@ -6234,7 +6234,7 @@ function normalizeLocalWorkOrder(r) {
 var NAV_BADGE_TOTALS = {
   work_orders: 0,
   urgent_work_orders: 0,
-  work_order_aging: { age_0_7: 0, age_8_30: 0, age_31_60: 0, age_61_plus: 0 },
+  work_order_aging: { age_0_7: 0, age_8_30: 0, age_31_60: 0, age_61_plus: 0, age_unknown: 0 },
   turns: 0,
   upcoming_turns: 0,
   inspections: 0
@@ -6274,7 +6274,7 @@ async function fetchNavBadgeTotals(force) {
     NAV_BADGE_TOTALS = {
       work_orders: Number(data.work_orders) || 0,
       urgent_work_orders: Number(data.urgent_work_orders) || 0,
-      work_order_aging: data.work_order_aging || { age_0_7: 0, age_8_30: 0, age_31_60: 0, age_61_plus: 0 },
+      work_order_aging: data.work_order_aging || { age_0_7: 0, age_8_30: 0, age_31_60: 0, age_61_plus: 0, age_unknown: 0 },
       turns: Number(data.turns) || 0,
       upcoming_turns: Number(data.upcoming_turns) || 0,
       inspections: Number(data.inspections) || 0,
@@ -7369,9 +7369,10 @@ function isCurrentLeaseWithActiveResident(row, nowRef) {
   var tenant = String((row && row.tenant) || '').trim();
   if (!tenant) return false;
   if (String((row && row.tenantStatus) || '').trim().toLowerCase() !== 'current') return false;
+  if (String((row && row.tenantType) || '').trim().toLowerCase() !== 'financially responsible') return false;
   if (!String((row && row.propertyId) || '').trim()) return false;
-  if (!String((row && row.unitId) || '').trim()) return false;
   if (!String((row && row.occupancyId) || '').trim()) return false;
+  if (!String((row && (row.unitId || row.occupancyId)) || '').trim()) return false;
 
   var moveInDate = toValidDateOrNull(row && row.moveIn);
   if (!moveInDate || moveInDate > now) return false;
@@ -11916,7 +11917,7 @@ function wireBillingFilters() {
     NAV_BADGE_TOTALS = {
       work_orders: 0,
       urgent_work_orders: 0,
-      work_order_aging: { age_0_7: 0, age_8_30: 0, age_31_60: 0, age_61_plus: 0 },
+      work_order_aging: { age_0_7: 0, age_8_30: 0, age_31_60: 0, age_61_plus: 0, age_unknown: 0 },
       turns: 0,
       upcoming_turns: 0,
       inspections: 0
@@ -12840,6 +12841,9 @@ function renderDashboardKPIs() {
   CONFIG.WO_AGING_BUCKETS.forEach(function(b, bi) {
     if (agingCounts[bi] > 0) agingHtml += '<span class="aging-badge ' + b.cls + '">' + b.label + ': ' + agingCounts[bi] + '</span>';
   });
+  if (authoritativeAging && Number(authoritativeAging.age_unknown || 0) > 0) {
+    agingHtml += '<span class="aging-badge">Unknown: ' + Number(authoritativeAging.age_unknown || 0) + '</span>';
+  }
   agingHtml += '</div>';
 
   // Unassigned urgent count
