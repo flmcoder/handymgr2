@@ -6310,22 +6310,33 @@ async function fetchWorkOrders(options) {
     if (token) localHeaders['Authorization'] = 'Bearer ' + token;
     
     // Active volume is bounded by status, so do not impose an artificial date window.
-    var pageQuery = requestedOffset > 0 ? ('&offset=' + requestedOffset) : '';
-    var urlActive = localBase + '/api/local/work_orders?limit=' + WORK_ORDERS_ACTIVE_PAGE_SIZE + pageQuery + scopeQuery;
-    var resActive = await fetchWithTimeout(urlActive, { headers: localHeaders }, 45000);
-    var dataActive = {};
-    try { dataActive = await resActive.json(); } catch (e) { dataActive = {}; }
-    if (!resActive.ok || dataActive.ok === false) {
-      throw new Error(String((dataActive && (dataActive.error || dataActive.message)) || ('Local active work orders failed: HTTP ' + resActive.status)));
+    var loadWOPage = async function(limit, offset) {
+      var pageUrl = localBase + '/api/local/work_orders?limit=' + limit + (offset > 0 ? ('&offset=' + offset) : '') + scopeQuery;
+      var pageRes = await fetchWithTimeout(pageUrl, { headers: localHeaders }, 45000);
+      var pageData = {};
+      try { pageData = await pageRes.json(); } catch (e) { pageData = {}; }
+      if (!pageRes.ok || pageData.ok === false) {
+        throw new Error(String((pageData && (pageData.error || pageData.message)) || ('Local active work orders failed: HTTP ' + pageRes.status)));
+      }
+      return pageData;
+    };
+    // Load the full scoped set (server allows up to 20000) so the badge, list,
+    // grid and pager all share one truth; paging happens locally in render.
+    var firstPage = await loadWOPage(5000, 0);
+    var combinedResults = firstPage.results || firstPage.data || [];
+    var serverTotal = Math.max(0, Number(firstPage.total) || 0);
+    if (serverTotal > combinedResults.length && combinedResults.length > 0 && combinedResults.length < 20000) {
+      var restPage = await loadWOPage(Math.min(20000 - combinedResults.length, serverTotal - combinedResults.length), combinedResults.length);
+      combinedResults = combinedResults.concat(restPage.results || restPage.data || []);
     }
     if (requestGeneration !== _scopeRequestGeneration || String(scopedGroupUuid || '') !== String(getEffectiveGroupUuid() || '')) return false;
-    var activeResults = (dataActive.results || dataActive.data || []);
+    var activeResults = combinedResults;
     WORK_ORDERS_ACTIVE = activeResults.map(normalizeLocalWorkOrder);
     WORK_ORDERS = WORK_ORDERS_ACTIVE; // backward compat
     window.WORK_ORDERS = WORK_ORDERS;
-    WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, Number(dataActive.offset) || requestedOffset);
-    WORK_ORDERS_ACTIVE_TOTAL = Math.max(0, Number(dataActive.total) || 0);
-    WORK_ORDERS_ACTIVE_HAS_NEXT = dataActive.has_next === true;
+    WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, Math.min(requestedOffset, Math.max(0, WORK_ORDERS_ACTIVE.length - 1)));
+    WORK_ORDERS_ACTIVE_TOTAL = serverTotal || WORK_ORDERS_ACTIVE.length;
+    WORK_ORDERS_ACTIVE_HAS_NEXT = (WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE_PAGE_SIZE) < WORK_ORDERS_ACTIVE_TOTAL;
     
     setApiStatus('loading', 'Work orders: ' + WORK_ORDERS_ACTIVE_TOTAL + ' active');
     setDataSourceState('work_orders', 'ok', { count: WORK_ORDERS_ACTIVE_TOTAL, active: WORK_ORDERS_ACTIVE_TOTAL, inactive: _inactiveWorkOrdersLoaded ? WORK_ORDERS_INACTIVE.length : null, error: '' });
@@ -14354,6 +14365,7 @@ function setWOSubtab(tab) {
 
   if (target === 'active' || target === 'completed') {
     currentWOTab = target === 'completed' ? 'inactive' : 'active';
+    WORK_ORDERS_ACTIVE_OFFSET = 0;
     var historyTools = $('#woCompletedHistoryTools');
     if (historyTools) historyTools.style.display = target === 'completed' ? '' : 'none';
     if (target === 'completed') showCompletedWOHistory = true;
@@ -16911,8 +16923,7 @@ function getFilteredWOs() {
       var woAgeDays = daysBetween(createdDate, new Date());
       if (woAgeDays < Number(currentWOAgeFilter)) return false;
     }
-    // Property group filter — shared helper
-    if (!isInPropertyGroup(wo.propertyId, wo.propertyName, currentPropertyGroup)) return false;
+    // Property group scope is applied server-side on fetch; no client re-filter.
     // Flagged filter
     if (currentWOFilter === 'flagged' && !isWOFlagged(wo.id)) return false;
     // Search
@@ -18027,11 +18038,21 @@ function renderWorkOrders() {
   rebuildWOScopedFilters();
   var filtered = sortWorkOrders(getFilteredWOs());
 
-  var activePageStart = WORK_ORDERS_ACTIVE_TOTAL > 0 ? WORK_ORDERS_ACTIVE_OFFSET + 1 : 0;
-  var activePageEnd = Math.min(WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE.length, WORK_ORDERS_ACTIVE_TOTAL);
-  var activePagerHtml = WORK_ORDERS_ACTIVE_TOTAL > WORK_ORDERS_ACTIVE_PAGE_SIZE
+  // Local paging over the full server set: badge, list, grid and pager share
+  // these rows, so the counts always agree.
+  var woPageSize = WORK_ORDERS_ACTIVE_PAGE_SIZE;
+  var woPageCount = filtered.length;
+  var woMaxStart = Math.max(0, Math.floor(Math.max(0, woPageCount - 1) / woPageSize) * woPageSize);
+  WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, Math.min(WORK_ORDERS_ACTIVE_OFFSET, woMaxStart));
+  WORK_ORDERS_ACTIVE_HAS_NEXT = (WORK_ORDERS_ACTIVE_OFFSET + woPageSize) < woPageCount;
+  var woPageRows = filtered.slice(WORK_ORDERS_ACTIVE_OFFSET, WORK_ORDERS_ACTIVE_OFFSET + woPageSize);
+
+  var activePageStart = woPageCount > 0 ? WORK_ORDERS_ACTIVE_OFFSET + 1 : 0;
+  var activePageEnd = Math.min(WORK_ORDERS_ACTIVE_OFFSET + woPageRows.length, woPageCount);
+  var showPager = currentWOView !== 'list' && woPageCount > woPageSize;
+  var activePagerHtml = showPager
     ? '<div class="wo-page-controls" aria-label="Active work order pages">' +
-        '<span>Showing ' + activePageStart + '-' + activePageEnd + ' of ' + WORK_ORDERS_ACTIVE_TOTAL + '</span>' +
+        '<span>Showing ' + activePageStart + '-' + activePageEnd + ' of ' + woPageCount + '</span>' +
         '<button class="action-btn" id="woPagePrev" aria-label="Previous work-order page"' + (WORK_ORDERS_ACTIVE_OFFSET <= 0 || _workOrdersActivePageLoading ? ' disabled' : '') + '><i class="fas fa-chevron-left" aria-hidden="true"></i></button>' +
         '<button class="action-btn" id="woPageNext" aria-label="Next work-order page"' + (!WORK_ORDERS_ACTIVE_HAS_NEXT || _workOrdersActivePageLoading ? ' disabled' : '') + '><i class="fas fa-chevron-right" aria-hidden="true"></i></button>' +
       '</div>'
@@ -18188,7 +18209,7 @@ function renderWorkOrders() {
 
   // Group WOs by status
   var groups = {};
-  filtered.forEach(function(wo) {
+  woPageRows.forEach(function(wo) {
     var st = wo.status || 'New';
     if (!groups[st]) groups[st] = [];
     groups[st].push(wo);
@@ -18271,16 +18292,14 @@ function bindWorkOrderPaginationControls() {
   var previousButton = document.getElementById('woPagePrev');
   var nextButton = document.getElementById('woPageNext');
   if (previousButton) previousButton.onclick = function() {
-    if (_workOrdersActivePageLoading || WORK_ORDERS_ACTIVE_OFFSET <= 0) return;
-    fetchWorkOrders({ offset: Math.max(0, WORK_ORDERS_ACTIVE_OFFSET - WORK_ORDERS_ACTIVE_PAGE_SIZE) }).then(function() {
-      renderWorkOrders();
-    });
+    if (_workOrdersActivePageLoading) return;
+    WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, WORK_ORDERS_ACTIVE_OFFSET - WORK_ORDERS_ACTIVE_PAGE_SIZE);
+    renderWorkOrders();
   };
   if (nextButton) nextButton.onclick = function() {
     if (_workOrdersActivePageLoading || !WORK_ORDERS_ACTIVE_HAS_NEXT) return;
-    fetchWorkOrders({ offset: WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE_PAGE_SIZE }).then(function() {
-      renderWorkOrders();
-    });
+    WORK_ORDERS_ACTIVE_OFFSET = WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE_PAGE_SIZE;
+    renderWorkOrders();
   };
 }
 
