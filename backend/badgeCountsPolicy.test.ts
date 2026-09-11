@@ -7,6 +7,7 @@ import {
   PROPERTY_IDENTITY_MATCH_FILTER,
   toBadgeCount,
   OPEN_WORK_ORDER_STATUS_FILTER,
+  WORK_ORDER_CREATED_AT_EXPR,
 } from './badgeCountsPolicy.ts';
 
 test('toBadgeCount returns integers for valid numbers', () => {
@@ -58,6 +59,21 @@ test('OPEN_WORK_ORDER_STATUS_FILTER excludes terminal statuses', () => {
   assert.match(OPEN_WORK_ORDER_STATUS_FILTER, /not like '%completed%'/);
   assert.match(OPEN_WORK_ORDER_STATUS_FILTER, /not like '%cancel%'/);
   assert.match(OPEN_WORK_ORDER_STATUS_FILTER, /not like '%no need to bill%'/);
+});
+
+test('WORK_ORDER_CREATED_AT_EXPR falls back to the raw AppFolio payload when the column is null', () => {
+  assert.match(WORK_ORDER_CREATED_AT_EXPR, /coalesce\(/);
+  assert.match(WORK_ORDER_CREATED_AT_EXPR, /created_at/);
+  assert.match(WORK_ORDER_CREATED_AT_EXPR, /raw_json ->> 'CreatedAt'/);
+  assert.match(WORK_ORDER_CREATED_AT_EXPR, /::timestamptz/);
+  assert.match(WORK_ORDER_CREATED_AT_EXPR, /updated_at/);
+  // The raw-value casts stay guarded by a leading-date regex, so a malformed
+  // payload string can never raise an invalid-syntax cast for the aggregate.
+  const guardedCasts = (WORK_ORDER_CREATED_AT_EXPR.match(/~ '\^\[0-9\]\{4\}/g) || []).length;
+  assert.equal(guardedCasts, 3);
+  assert.equal((WORK_ORDER_CREATED_AT_EXPR.match(/::timestamptz/g) || []).length, 3);
+  // Never includes an unguarded table alias (the badge aggregate has none).
+  assert.doesNotMatch(WORK_ORDER_CREATED_AT_EXPR, /wo\.created_at/);
 });
 
 test('ACTIVE_TURN_STATUS_FILTER excludes completed and closed turns within the active window', () => {

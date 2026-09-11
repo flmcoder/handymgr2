@@ -9,6 +9,35 @@ export const OPEN_WORK_ORDER_STATUS_FILTER = `(
   and coalesce(lower(status), '') not like '%no need to bill%'
 )`;
 
+/**
+ * The effective created timestamp of a work order. Prefers the normalized
+ * `created_at` column but falls back to the raw AppFolio payload keys
+ * (`CreatedAt`, snake-case variants) and finally `updated_at`, so rows synced
+ * before `created_at` was populated still report accurate aging. Unqualified on
+ * purpose — the nav-badge aggregate has no table alias. Safe to extend; each
+ * raw fallback is guarded by a leading-date regex so a malformed value can
+ * never break the whole aggregate.
+ */
+export const WORK_ORDER_CREATED_AT_EXPR = `coalesce(
+  created_at,
+  case
+    when (raw_json ->> 'CreatedAt') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      then (raw_json ->> 'CreatedAt')::timestamptz
+    else null
+  end,
+  case
+    when (raw_json ->> 'created_at') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      then (raw_json ->> 'created_at')::timestamptz
+    else null
+  end,
+  case
+    when (raw_json ->> 'created_date') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      then (raw_json ->> 'created_date')::timestamptz
+    else null
+  end,
+  updated_at
+)`;
+
 export const ACTIVE_TURN_STATUS_FILTER = `(
   coalesce(lower(t.status), '') not like '%completed%'
   and coalesce(lower(t.status), '') not like '%closed%'

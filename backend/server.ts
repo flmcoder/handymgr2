@@ -30,6 +30,7 @@ import {
   buildBadgeCountsPayload,
   OPEN_WORK_ORDER_STATUS_FILTER,
   propertyIdentityMatch,
+  WORK_ORDER_CREATED_AT_EXPR,
 } from './badgeCountsPolicy';
 import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
@@ -754,6 +755,28 @@ const reportMonitorInFlight = new Set<string>();
 const reportHydrationInFlight = new Map<string, Promise<void>>();
 let propertyGroupsTableEnsured = false;
 let syncDriftMigrationApplied = false;
+let workOrderCreatedAtBackfillApplied = false;
+
+async function applyWorkOrderCreatedAtBackfill(): Promise<void> {
+  if (workOrderCreatedAtBackfillApplied) return;
+
+  const migrationUrl = new URL('../db/migrations/2026-09-10_work_orders_created_at_backfill.sql', import.meta.url);
+  const rawSql = await readFile(migrationUrl, 'utf8');
+  const statements = rawSql
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n')
+    .split(/;\s*\n/)
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+
+  for (const statement of statements) {
+    await queryClient.unsafe(statement);
+  }
+
+  workOrderCreatedAtBackfillApplied = true;
+  console.log(`[server:migration] applied work order created_at backfill (${statements.length} statements)`);
+}
 
 async function applySyncDriftMigration(): Promise<void> {
   if (syncDriftMigrationApplied) return;
@@ -5180,11 +5203,11 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
       select
         count(*)::int as total,
         count(*) filter (where lower(coalesce(priority, '')) in ('urgent', 'emergency', 'critical'))::int as urgent_total,
-        count(*) filter (where created_at is not null and current_date - created_at::date between 0 and 7)::int as age_0_7,
-        count(*) filter (where created_at is not null and current_date - created_at::date between 8 and 30)::int as age_8_30,
-        count(*) filter (where created_at is not null and current_date - created_at::date between 31 and 60)::int as age_31_60,
-        count(*) filter (where created_at is not null and current_date - created_at::date >= 61)::int as age_61_plus,
-        count(*) filter (where created_at is null)::int as age_unknown
+        count(*) filter (where ${WORK_ORDER_CREATED_AT_EXPR} is not null and current_date - (${WORK_ORDER_CREATED_AT_EXPR})::date between 0 and 7)::int as age_0_7,
+        count(*) filter (where ${WORK_ORDER_CREATED_AT_EXPR} is not null and current_date - (${WORK_ORDER_CREATED_AT_EXPR})::date between 8 and 30)::int as age_8_30,
+        count(*) filter (where ${WORK_ORDER_CREATED_AT_EXPR} is not null and current_date - (${WORK_ORDER_CREATED_AT_EXPR})::date between 31 and 60)::int as age_31_60,
+        count(*) filter (where ${WORK_ORDER_CREATED_AT_EXPR} is not null and current_date - (${WORK_ORDER_CREATED_AT_EXPR})::date >= 61)::int as age_61_plus,
+        count(*) filter (where ${WORK_ORDER_CREATED_AT_EXPR} is null)::int as age_unknown
       from appfolio_work_orders
       where ${OPEN_WORK_ORDER_STATUS_FILTER}
       ${scope ? 'and property_group_id = $1' : ''}
@@ -9323,6 +9346,7 @@ app.listen(PORT, HOST, () => {
   void (async () => {
     try {
       await applySyncDriftMigration();
+      await applyWorkOrderCreatedAtBackfill();
       await ensurePropertyGroupsTable();
       await ensureBillsTable();
       const { failInterruptedRuns } = await import('./sync/runStore.ts');

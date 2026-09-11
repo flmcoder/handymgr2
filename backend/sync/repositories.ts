@@ -579,7 +579,7 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
         vendorName: asStr(row.vendor_name || row.VendorName),
         estimatedAmount: asNum(row.estimated_amount || row.EstimatedAmount),
         totalCost: asNum(row.total_cost || row.TotalCost),
-        createdAt: asDate(row.created_date || row.CreatedDate || row.created_at),
+        createdAt: asDate(row.CreatedAt || row.created_at || row.CreatedDate || row.created_date),
         updatedAt: asDate(row.last_updated_at || row.LastUpdatedAt || row.updated_at),
         rawJson: rawWithUuid,
       })
