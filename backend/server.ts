@@ -27,14 +27,15 @@ import { buildRequestedSyncEndpoints, runSequentially } from './syncSchedulerPol
 import { formatSyncSummaryLine, shouldLogSyncSummary } from './logNoisePolicy';
 import {
   ACTIVE_INSPECTION_RESIDENT_FILTER,
-  ACTIVE_TURN_STATUS_FILTER,
   buildBadgeCountsPayload,
   OPEN_WORK_ORDER_STATUS_FILTER,
+  propertyIdentityMatch,
 } from './badgeCountsPolicy';
 import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { buildWorkOrderPagination, resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
 import { TURN_ENGINE_SQL } from './turnEngineQuery';
+import { upsertTurnTracker } from './sync/repositories';
 import {
   buildMagicPortalSmsMessage,
   consumeMagicTokenTransaction,
@@ -3497,6 +3498,17 @@ const legacyActionRoutes = {
     const params = toActionParams(req);
     res.json(await readUnitTurnsHistoryFromDb(params));
   },
+  unit_turns_sync: async (req: Request, res: Response) => {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    const records = Array.isArray(req.body?.records) ? req.body.records.slice(0, 5_000) : [];
+    if (!records.length) {
+      res.status(400).json({ ok: false, error: 'records must be a non-empty array' });
+      return;
+    }
+    const result = await upsertTurnTracker(records);
+    res.json({ ok: true, ...result, received: records.length, synced_at: new Date().toISOString() });
+  },
   estimates: async (req: Request, res: Response) => {
     const allowed = await enforceScopedSession(req, res, {
       requireSession: requireProxySession,
@@ -5164,21 +5176,23 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
     const propertyGroupId = getPropertyGroupFilter(req);
     const scope = propertyGroupId || null;
 
-    const woPromise = scope
-      ? queryClient.unsafe(`select count(*)::int as total from appfolio_work_orders where property_group_id = $1 and ${OPEN_WORK_ORDER_STATUS_FILTER}`, [scope])
-      : queryClient.unsafe(`select count(*)::int as total from appfolio_work_orders where ${OPEN_WORK_ORDER_STATUS_FILTER}`);
+    const woAggregateSql = `
+      select
+        count(*)::int as total,
+        count(*) filter (where lower(coalesce(priority, '')) in ('urgent', 'emergency', 'critical'))::int as urgent_total,
+        count(*) filter (where current_date - coalesce(created_at::date, current_date) between 0 and 7)::int as age_0_7,
+        count(*) filter (where current_date - coalesce(created_at::date, current_date) between 8 and 30)::int as age_8_30,
+        count(*) filter (where current_date - coalesce(created_at::date, current_date) between 31 and 60)::int as age_31_60,
+        count(*) filter (where current_date - coalesce(created_at::date, current_date) >= 61)::int as age_61_plus
+      from appfolio_work_orders
+      where ${OPEN_WORK_ORDER_STATUS_FILTER}
+      ${scope ? 'and property_group_id = $1' : ''}
+    `;
+    const woPromise = queryClient.unsafe(woAggregateSql, scope ? [scope] : []);
 
-    const turnPromise = scope
-      ? queryClient.unsafe(
-          `select count(*)::int as total from unit_turn_tracker t
-           where ${ACTIVE_TURN_STATUS_FILTER}
-             and exists (select 1 from appfolio_properties p where p.id = t.property_id and p.property_group_id = $1)`,
-          [scope],
-        )
-      : queryClient.unsafe(
-          `select count(*)::int as total from unit_turn_tracker t
-           where ${ACTIVE_TURN_STATUS_FILTER}`,
-        );
+    // Use the same deduplicated native + occupancy-derived turn engine as the
+    // Turn Board, then exclude terminal rows for the navigation/dashboard total.
+    const turnPromise = queryClient.unsafe(TURN_ENGINE_SQL, [365, 20_000, scope, '']);
 
     // Inspections badge = active residents (current lease, move-in already occurred, not
     // yet moved out) whose most recent inspection predates their move-in date — i.e. the
@@ -5196,7 +5210,7 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
         order by coalesce(i0.last_inspection_date, i0.last_updated_at, i0.cached_at) desc nulls last
         limit 1
       ) i on true
-      left join appfolio_properties p on p.id = occ.property_id
+      left join appfolio_properties p on ${propertyIdentityMatch('occ.property_id')}
       where ${ACTIVE_INSPECTION_RESIDENT_FILTER}
     `;
     const inspPromise = scope
@@ -5204,9 +5218,18 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
       : queryClient.unsafe(inspBaseSql);
 
     const [woRows, turnRows, inspRows] = await Promise.all([woPromise, turnPromise, inspPromise]);
+    const activeTurnRows = (turnRows as any[]).filter((row) => String(row?.status || '').toLowerCase() !== 'completed');
+    const upcomingTurnRows = activeTurnRows.filter((row) => String(row?.status || '').toLowerCase() === 'upcoming');
+    const workOrderMetrics = (woRows as any[])[0] || {};
     const payload = buildBadgeCountsPayload({
-      workOrders: (woRows as any[])[0]?.total,
-      turns: (turnRows as any[])[0]?.total,
+      workOrders: workOrderMetrics.total,
+      urgentWorkOrders: workOrderMetrics.urgent_total,
+      workOrdersAge0To7: workOrderMetrics.age_0_7,
+      workOrdersAge8To30: workOrderMetrics.age_8_30,
+      workOrdersAge31To60: workOrderMetrics.age_31_60,
+      workOrdersAge61Plus: workOrderMetrics.age_61_plus,
+      turns: activeTurnRows.length,
+      upcomingTurns: upcomingTurnRows.length,
       inspections: (inspRows as any[])[0]?.total,
       propertyGroupId,
     });
@@ -5610,8 +5633,10 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
         coalesce(occ.tenant_name, '') as tenant_name,
         coalesce(occ.phone_numbers, '') as tenant_primary_phone_number,
         occ.move_in_date::date as move_in_date,
+        occ.lease_to::date as lease_to,
         occ.move_out_date::date as move_out_date,
         coalesce(occ.status, 'Current') as tenant_status,
+        coalesce(occ.tenant_type, '') as tenant_type,
         coalesce(occ.occupancy_id, '') as occupancy_id,
         coalesce(i.rentable, '') as rentable,
         coalesce(i.unit_tags, occ.unit_tags, '') as unit_tags,
@@ -5640,7 +5665,7 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
         order by coalesce(i0.last_inspection_date, i0.last_updated_at, i0.cached_at) desc nulls last
         limit 1
       ) i on true
-      left join appfolio_properties p on p.id = occ.property_id
+      left join appfolio_properties p on ${propertyIdentityMatch('occ.property_id')}
       left join appfolio_units u on u.unit_id = occ.unit_id
       left join lateral (
         select true as active_turn
@@ -5652,7 +5677,9 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
         limit 1
       ) turn_link on true
       ${baseWhereSql}
-        ${baseWhereSql ? 'and' : 'where'} lower(coalesce(occ.status, '')) in ('current', 'past')
+        ${baseWhereSql ? 'and' : 'where'} ${activeOnly
+          ? ACTIVE_INSPECTION_RESIDENT_FILTER
+          : `lower(coalesce(occ.status, '')) in ('current', 'past')`}
     `;
 
     const outerWhereParts: string[] = [];
@@ -5663,9 +5690,7 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
     };
 
     if (activeOnly) {
-      outerWhereParts.push(`coalesce(ins.tenant_name, '') <> ''`);
-      outerWhereParts.push(`(ins.move_in_date is not null and ins.move_in_date <= current_date)`);
-      outerWhereParts.push(`(ins.move_out_date is null or ins.move_out_date >= current_date)`);
+      outerWhereParts.push(`lower(ins.tenant_status) = 'current'`);
     }
 
     if (statusFilter && statusFilter !== 'all') {
@@ -5723,8 +5748,10 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
         ins.tenant_name,
         ins.tenant_primary_phone_number,
         coalesce(ins.move_in_date::text, '') as move_in_date,
+        coalesce(ins.lease_to::text, '') as lease_to,
         coalesce(ins.move_out_date::text, '') as move_out_date,
         ins.tenant_status,
+        ins.tenant_type,
         ins.rentable,
         ins.unit_tags,
         ins.turn_linked,
@@ -5751,8 +5778,13 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
       tenant_name: String(row.tenant_name || ''),
       tenant_primary_phone_number: String(row.tenant_primary_phone_number || ''),
       move_in_date: String(row.move_in_date || ''),
+      lease_to: String(row.lease_to || ''),
       move_out_date: String(row.move_out_date || ''),
       tenant_status: String(row.tenant_status || 'Current'),
+      tenant_type: String(row.tenant_type || ''),
+      has_valid_property_association: !!String(row.property_id || '').trim(),
+      has_valid_unit_association: !!String(row.unit_id || '').trim(),
+      has_valid_occupancy_association: !!String(row.occupancy_id || '').trim(),
       rentable: String(row.rentable || ''),
       unit_tags: row.unit_tags || '',
       turn_linked: !!row.turn_linked,

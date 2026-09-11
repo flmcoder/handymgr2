@@ -1,3 +1,5 @@
+import { propertyIdentityMatch } from './badgeCountsPolicy.ts';
+
 export const TURN_ENGINE_SQL = String.raw`
 with native_turns as (
   select
@@ -331,7 +333,7 @@ where fr.move_out_date >= current_date - ($1::int * interval '1 day')
   and ($3::text is null or exists (
     select 1
     from appfolio_properties p_scope
-    where p_scope.id = fr.property_id
+    where ${propertyIdentityMatch('fr.property_id', 'p_scope')}
       and p_scope.property_group_id = $3::text
   ))
   and ($4::text = '' or lower(case

@@ -1388,11 +1388,13 @@ function setMetricVisualState(valueId, subId, config) {
   var state = String(opts.state || 'ok');
   var displayValue = opts.value;
 
-  if (state === 'loading') displayValue = '··';
+  if (state === 'loading') displayValue = '';
   if (state === 'no_response' || state === 'error') displayValue = '--';
   if (displayValue === undefined || displayValue === null || displayValue === '') displayValue = '—';
 
-  valueEl.textContent = String(displayValue);
+  valueEl.innerHTML = state === 'loading'
+    ? '<span class="kpi-loading-spinner" role="status" aria-label="Loading"></span>'
+    : escapeHtml(String(displayValue));
   valueEl.setAttribute('data-metric-state', state);
   if (card) card.setAttribute('data-metric-state', state);
 
@@ -6229,9 +6231,17 @@ function normalizeLocalWorkOrder(r) {
 }
 
 // ── Nav badge totals (true scoped counts, independent of table pagination) ──
-var NAV_BADGE_TOTALS = { work_orders: 0, turns: 0, inspections: 0 };
+var NAV_BADGE_TOTALS = {
+  work_orders: 0,
+  urgent_work_orders: 0,
+  work_order_aging: { age_0_7: 0, age_8_30: 0, age_31_60: 0, age_61_plus: 0 },
+  turns: 0,
+  upcoming_turns: 0,
+  inspections: 0
+};
 var NAV_BADGE_TOTALS_SCOPE = '';
 var NAV_BADGE_TOTALS_LOADED = false;
+var _scopeRequestGeneration = 0;
 
 function setNavBadge(id, value) {
   var el = document.getElementById(id);
@@ -6248,6 +6258,7 @@ function applyNavBadgeTotals() {
 
 async function fetchNavBadgeTotals(force) {
   var scope = String(getEffectiveGroupUuid() || '');
+  var requestGeneration = _scopeRequestGeneration;
   if (!force && NAV_BADGE_TOTALS_LOADED && NAV_BADGE_TOTALS_SCOPE === scope) return true;
   try {
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
@@ -6259,14 +6270,20 @@ async function fetchNavBadgeTotals(force) {
     var data = {};
     try { data = await res.json(); } catch (e) { data = {}; }
     if (!res.ok || data.ok === false) return false;
+    if (requestGeneration !== _scopeRequestGeneration || scope !== String(getEffectiveGroupUuid() || '')) return false;
     NAV_BADGE_TOTALS = {
       work_orders: Number(data.work_orders) || 0,
+      urgent_work_orders: Number(data.urgent_work_orders) || 0,
+      work_order_aging: data.work_order_aging || { age_0_7: 0, age_8_30: 0, age_31_60: 0, age_61_plus: 0 },
       turns: Number(data.turns) || 0,
+      upcoming_turns: Number(data.upcoming_turns) || 0,
       inspections: Number(data.inspections) || 0,
     };
     NAV_BADGE_TOTALS_SCOPE = scope;
     NAV_BADGE_TOTALS_LOADED = true;
     applyNavBadgeTotals();
+    var activeTab = document.querySelector('.nav-tab.active');
+    if (activeTab && activeTab.getAttribute('data-tab') === 'dashboard') renderDashboardKPIs();
     return true;
   } catch (e) {
     return false;
@@ -6283,6 +6300,7 @@ async function fetchWorkOrders(options) {
     setApiStatus('loading', 'Loading work orders from PostgreSQL…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
+    var requestGeneration = _scopeRequestGeneration;
     var scopeQuery = scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '';
     var token = getProxyAccessToken();
     var localHeaders = { 'Accept': 'application/json' };
@@ -6297,6 +6315,7 @@ async function fetchWorkOrders(options) {
     if (!resActive.ok || dataActive.ok === false) {
       throw new Error(String((dataActive && (dataActive.error || dataActive.message)) || ('Local active work orders failed: HTTP ' + resActive.status)));
     }
+    if (requestGeneration !== _scopeRequestGeneration || String(scopedGroupUuid || '') !== String(getEffectiveGroupUuid() || '')) return false;
     var activeResults = (dataActive.results || dataActive.data || []);
     WORK_ORDERS_ACTIVE = activeResults.map(normalizeLocalWorkOrder);
     WORK_ORDERS = WORK_ORDERS_ACTIVE; // backward compat
@@ -7100,14 +7119,19 @@ async function fetchProperties() {
     setApiStatus('loading', 'Loading properties (local)…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var url = localBase + '/api/local/properties?limit=100'
+    var requestGeneration = _scopeRequestGeneration;
+    var token = getProxyAccessToken();
+    var headers = { 'Accept': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    var url = localBase + '/api/local/properties?limit=8000'
       + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
-    var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
+    var res = await fetchWithTimeout(url, { headers: headers }, 45000);
     var data = {};
     try { data = await res.json(); } catch (e) { data = {}; }
     if (!res.ok || data.ok === false) {
       throw new Error(String((data && (data.error || data.message)) || ('Local properties failed: HTTP ' + res.status)));
     }
+    if (requestGeneration !== _scopeRequestGeneration || String(scopedGroupUuid || '') !== String(getEffectiveGroupUuid() || '')) return false;
     var results = data.results || data.data || [];
     _propertyManagementStateById = {};
     _propertyManagementStateByName = {};
@@ -7224,24 +7248,22 @@ function normalizeTurnRecord(t) {
 // Turns: Proxy ?action=turns — merged In Progress + Completed for richer detail context
 async function fetchTurns() {
   setDataSourceState('turns', 'loading', { error: '' });
+  var scopedGroupUuid = getEffectiveGroupUuid();
+  var requestGeneration = _scopeRequestGeneration;
   try {
-    setApiStatus('loading', 'Loading turns (In Progress + Completed)…');
-    var activeData = await proxyAction('turns', { days: 60, status: 'In Progress', limit: 100 });
-    var activeRows = activeData.results || activeData.data || [];
-    var completedRows = [];
-    try {
-      var completedData = await proxyAction('turns', { days: 30, status: 'Completed', limit: 100 });
-      completedRows = completedData.results || completedData.data || [];
-    } catch (e) {
-      console.log('Completed turns fetch skipped: ' + (e.message || e));
-    }
-
-    var mergedById = {};
-    activeRows.concat(completedRows).forEach(function(r) {
-      var id = r.unit_turn_id || r.unit_turn_uuid || r.unitTurnId || r.id || (r.unit || '') + '|' + (r.property || '') + '|' + (r.move_out_date || r.move_out || '');
-      mergedById[String(id)] = r;
-    });
-    var results = Object.keys(mergedById).map(function(k) { return mergedById[k]; });
+    setApiStatus('loading', 'Loading deduplicated turns…');
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var url = localBase + '/api/local/v2/turns?days=365&limit=3000'
+      + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
+    var token = getProxyAccessToken();
+    var headers = { 'Accept': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    var response = await fetchWithTimeout(url, { headers: headers }, 45000);
+    var data = {};
+    try { data = await response.json(); } catch (e) { data = {}; }
+    if (!response.ok || data.ok === false) throw new Error(String(data.error || ('Turns failed: HTTP ' + response.status)));
+    if (requestGeneration !== _scopeRequestGeneration || String(scopedGroupUuid || '') !== String(getEffectiveGroupUuid() || '')) return false;
+    var results = data.results || [];
 
     TURNS = results.map(normalizeTurnRecord);
     DASH_TURN_LAST_SYNC_AT = new Date().toISOString();
@@ -7346,12 +7368,19 @@ function isCurrentLeaseWithActiveResident(row, nowRef) {
   var now = nowRef || new Date();
   var tenant = String((row && row.tenant) || '').trim();
   if (!tenant) return false;
+  if (String((row && row.tenantStatus) || '').trim().toLowerCase() !== 'current') return false;
+  if (!String((row && row.propertyId) || '').trim()) return false;
+  if (!String((row && row.unitId) || '').trim()) return false;
+  if (!String((row && row.occupancyId) || '').trim()) return false;
 
   var moveInDate = toValidDateOrNull(row && row.moveIn);
   if (!moveInDate || moveInDate > now) return false;
 
   var moveOutDate = toValidDateOrNull(row && row.moveOut);
   if (moveOutDate && moveOutDate < now) return false;
+
+  var leaseToDate = toValidDateOrNull(row && row.leaseTo);
+  if (leaseToDate && leaseToDate < now) return false;
 
   return true;
 }
@@ -7384,6 +7413,7 @@ async function fetchInspections() {
     setApiStatus('loading', 'Loading inspections (active properties, ' + INSPECTION_LOOKBACK_DAYS + 'd window)\u2026');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
+    var requestGeneration = _scopeRequestGeneration;
     var localUrl = localBase + '/api/local/v2/inspections?limit=100&offset=0&active_only=1'
       + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
     var localHeaders = { 'Accept': 'application/json' };
@@ -7395,6 +7425,7 @@ async function fetchInspections() {
     if (!localRes.ok || data.ok === false) {
       throw new Error(String((data && (data.error || data.message)) || ('Local inspections failed: HTTP ' + localRes.status)));
     }
+    if (requestGeneration !== _scopeRequestGeneration || String(scopedGroupUuid || '') !== String(getEffectiveGroupUuid() || '')) return false;
     var results = data.results || [];
     INSPECTIONS = results.map(function(r) {
       return {
@@ -7406,7 +7437,14 @@ async function fetchInspections() {
         tenant: r.tenant_name || '',
         tenantPhone: r.tenant_primary_phone_number || '',
         moveIn: r.move_in_date || '',
+        leaseTo: r.lease_to || '',
         moveOut: r.move_out_date || '',
+        tenantStatus: r.tenant_status || '',
+        tenantType: r.tenant_type || '',
+        occupancyId: r.occupancy_id || '',
+        hasValidPropertyAssociation: !!r.has_valid_property_association,
+        hasValidUnitAssociation: !!r.has_valid_unit_association,
+        hasValidOccupancyAssociation: !!r.has_valid_occupancy_association,
         missingMoveInInspection: !!r.missing_move_in_inspection,
         missingMoveOutInspection: !!r.missing_move_out_inspection,
         moveOutInspection: r.move_out_inspection_date || '',
@@ -9939,9 +9977,8 @@ function renderTurnDashboardTicker(entries) {
     track.innerHTML = '';
     return;
   }
-  var top = entries.slice(0, Math.min(entries.length, 12));
-  var doubled = top.concat(top);
-  var html = doubled.map(function(p) {
+  var top = entries.slice(0, Math.min(entries.length, 8));
+  var html = top.map(function(p) {
     var tone = p.isStalled ? 'stalled' : (p.isUpcoming ? 'upcoming' : 'active');
     var woOpen = p.matchingWOs.filter(function(wo) { return !isClosedTurnWorkOrderStatus(wo.status); }).length;
     return '<span class="turn-dash-ticker-item">' +
@@ -9953,7 +9990,7 @@ function renderTurnDashboardTicker(entries) {
       '</span>';
   }).join('');
   track.innerHTML = html;
-  track.classList.toggle('no-anim', top.length <= 3);
+  track.classList.add('no-anim');
   wrap.style.display = '';
 }
 
@@ -11873,9 +11910,17 @@ function wireBillingFilters() {
   // Blank them immediately so the previous group's numbers never linger on screen
   // while the new scoped fetch is in flight (no stale cross-scope data bleed).
   document.addEventListener('groupFilterChanged', function() {
+    _scopeRequestGeneration++;
     NAV_BADGE_TOTALS_LOADED = false;
     NAV_BADGE_TOTALS_SCOPE = '';
-    NAV_BADGE_TOTALS = { work_orders: 0, turns: 0, inspections: 0 };
+    NAV_BADGE_TOTALS = {
+      work_orders: 0,
+      urgent_work_orders: 0,
+      work_order_aging: { age_0_7: 0, age_8_30: 0, age_31_60: 0, age_61_plus: 0 },
+      turns: 0,
+      upcoming_turns: 0,
+      inspections: 0
+    };
     setNavBadge('woBadge', 0);
     setNavBadge('turnBadge', 0);
     setNavBadge('inspBadge', 0);
@@ -12777,15 +12822,20 @@ function renderDashboardKPIs() {
   })[0] || '';
 
   // WO aging buckets
-  var agingCounts = CONFIG.WO_AGING_BUCKETS.map(function() { return 0; });
+  var authoritativeAging = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.work_order_aging : null;
+  var agingCounts = authoritativeAging
+    ? [authoritativeAging.age_0_7, authoritativeAging.age_8_30, authoritativeAging.age_31_60, authoritativeAging.age_61_plus]
+    : CONFIG.WO_AGING_BUCKETS.map(function() { return 0; });
   var today = new Date();
-  openWOs.forEach(function(wo) {
-    if (!wo.created) return;
-    var age = daysBetween(new Date(wo.created), today);
-    for (var bi = 0; bi < CONFIG.WO_AGING_BUCKETS.length; bi++) {
-      if (age <= CONFIG.WO_AGING_BUCKETS[bi].max) { agingCounts[bi]++; break; }
-    }
-  });
+  if (!authoritativeAging) {
+    openWOs.forEach(function(wo) {
+      if (!wo.created) return;
+      var age = daysBetween(new Date(wo.created), today);
+      for (var bi = 0; bi < CONFIG.WO_AGING_BUCKETS.length; bi++) {
+        if (age <= CONFIG.WO_AGING_BUCKETS[bi].max) { agingCounts[bi]++; break; }
+      }
+    });
+  }
   var agingHtml = '<div class="aging-badges">';
   CONFIG.WO_AGING_BUCKETS.forEach(function(b, bi) {
     if (agingCounts[bi] > 0) agingHtml += '<span class="aging-badge ' + b.cls + '">' + b.label + ': ' + agingCounts[bi] + '</span>';
@@ -12819,18 +12869,20 @@ function renderDashboardKPIs() {
       subText: 'Loading urgent queue…'
     });
   } else {
+    var scopedOpenTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.work_orders : openWOs.length;
+    var scopedUrgentTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.urgent_work_orders : urgentWOs.length;
     setMetricVisualState('kpiOpen', 'kpiOpenSub', {
       state: 'ok',
-      value: String(openWOs.length),
-      subText: WORK_ORDERS.length + ' active loaded'
+      value: String(scopedOpenTotal),
+      subText: WORK_ORDERS.length + ' rows loaded for detail'
     });
     var openSubEl = $('#kpiOpenSub');
-    if (openSubEl) openSubEl.innerHTML = WORK_ORDERS.length + ' active loaded' + agingHtml;
-    var urgSubText = urgentWOs.length > 0 ? urgentWOs.length + ' require attention' : 'No urgent items';
-    if (unassignedUrgent.length > 0) urgSubText += ' \u2022 ' + unassignedUrgent.length + ' unassigned';
+    if (openSubEl) openSubEl.innerHTML = WORK_ORDERS.length + ' rows loaded for detail' + agingHtml;
+    var urgSubText = scopedUrgentTotal > 0 ? scopedUrgentTotal + ' require attention' : 'No urgent items';
+    if (!NAV_BADGE_TOTALS_LOADED && unassignedUrgent.length > 0) urgSubText += ' \u2022 ' + unassignedUrgent.length + ' unassigned';
     setMetricVisualState('kpiUrgent', 'kpiUrgentSub', {
       state: 'ok',
-      value: String(urgentWOs.length),
+      value: String(scopedUrgentTotal),
       subText: urgSubText
     });
   }
@@ -12846,10 +12898,11 @@ function renderDashboardKPIs() {
       subText: 'Loading turns…'
     });
   } else {
+    var scopedTurnTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.turns : activeTurns.length;
     setMetricVisualState('kpiTurns', 'kpiTurnsSub', {
       state: 'ok',
-      value: String(activeTurns.length),
-      subText: activeTurns.length > 0 ? activeTurns.length + ' active now' : 'No active turns'
+      value: String(scopedTurnTotal),
+      subText: scopedTurnTotal > 0 ? scopedTurnTotal + ' active now' : 'No active turns'
     });
   }
 
@@ -17395,7 +17448,7 @@ function createInspectionsServerDatasource() {
 
           var url = localBase + '/api/local/grid/inspections?limit=' + encodeURIComponent(String(blockSize))
             + '&offset=' + encodeURIComponent(String(startRow))
-            + '&active_only=0'
+            + '&active_only=1'
             + '&sort_by=' + encodeURIComponent(sort.sortBy)
             + '&sort_dir=' + encodeURIComponent(sort.sortDir)
             + '&search=' + encodeURIComponent(search || '')
@@ -19983,14 +20036,19 @@ async function fetchUnits() {
     setApiStatus('loading', 'Loading units (local Postgres)…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
-    var url = localBase + '/api/local/units?limit=100'
+    var requestGeneration = _scopeRequestGeneration;
+    var token = getProxyAccessToken();
+    var headers = { 'Accept': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    var url = localBase + '/api/local/units?limit=8000'
       + (scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '');
-    var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
+    var res = await fetchWithTimeout(url, { headers: headers }, 45000);
     var data = {};
     try { data = await res.json(); } catch (e) { data = {}; }
     if (!res.ok || data.ok === false) {
       throw new Error(String((data && (data.error || data.message)) || ('Local units failed: HTTP ' + res.status)));
     }
+    if (requestGeneration !== _scopeRequestGeneration || String(scopedGroupUuid || '') !== String(getEffectiveGroupUuid() || '')) return false;
 
     if (Array.isArray(data.results || data.data)) {
       var unitRows = data.results || data.data || [];
@@ -25951,7 +26009,6 @@ renderDashboardKPIs = function() {
     loadOtpSettings();
   })();
 
-  renderHistory();
 })();
 
 // ═══════════════════════════════════════════════════════

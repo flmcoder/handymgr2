@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { TURN_ENGINE_SQL } from './turnEngineQuery.ts';
@@ -47,4 +48,18 @@ test('turn engine includes compliance, financial, and strict completion fields',
   assert.match(TURN_ENGINE_SQL, /all_work_orders_completed/i);
   assert.match(TURN_ENGINE_SQL, /has_current_resident/i);
   assert.match(TURN_ENGINE_SQL, /strict_completed/i);
+});
+
+test('turn engine property scope bridges canonical and raw AppFolio identifiers', () => {
+  assert.match(TURN_ENGINE_SQL, /p_scope\.id = fr\.property_id/i);
+  assert.match(TURN_ENGINE_SQL, /p_scope\.raw_json/i);
+  assert.match(TURN_ENGINE_SQL, /PropertyId/i);
+});
+
+test('Express registers authenticated unit-turn tracker synchronization', async () => {
+  const source = await readFile(new URL('./server.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /unit_turns_sync:\s*async/);
+  assert.match(source, /unit_turns_sync:[\s\S]{0,300}requireProxySession/);
+  assert.match(source, /unit_turns_sync:[\s\S]{0,700}upsertTurnTracker/);
 });

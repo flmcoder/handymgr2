@@ -2651,8 +2651,17 @@ body.mobile-nav-open .mobile-nav-backdrop { display: block; }
 
 .kpi-value[data-metric-state="loading"] {
   color: var(--text-muted);
-  letter-spacing: 1px;
-  opacity: 0.6;
+  opacity: 1;
+}
+
+.kpi-loading-spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 .kpi-value[data-metric-state="no_response"],
@@ -4483,7 +4492,7 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 .turn-dash-page-label{min-width:52px;text-align:center;font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
 .turn-dash-summary{padding:0 14px 12px;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono)}
 .turn-dash-ticker{margin:0 14px 10px;padding:6px 10px;border:1px solid var(--border-light);border-radius:6px;background:var(--bg-secondary);overflow:hidden}
-.turn-dash-ticker-track{display:flex;gap:22px;white-space:nowrap;animation:dashTickerMove 28s linear infinite}
+.turn-dash-ticker-track{display:flex;gap:22px;white-space:nowrap;overflow-x:auto;scrollbar-width:thin}
 .turn-dash-ticker-track.no-anim{animation:none}
 .turn-dash-ticker-item{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-family:var(--font-mono);color:var(--text-secondary)}
 .turn-dash-ticker-dot{width:7px;height:7px;border-radius:50%;display:inline-block}
@@ -4891,9 +4900,23 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 }
 
 @media (max-width: 768px) {
+  .main-content { padding: 10px; }
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .kpi-card { min-height: 86px; padding: 10px 12px; }
+  .kpi-label { margin-bottom: 5px; font-size: 9px; }
+  .kpi-value { font-size: 22px; }
+  .kpi-sub { margin-top: 5px; font-size: 10px; }
   .kpi-card--neo {
     border-radius: 8px;
   }
+
+  .dashboard-insight-grid { grid-template-columns: 1fr !important; padding: 8px; gap: 8px; }
+  .dashboard-insight-card .billing-mini-chart { min-height: 220px; }
+  #dashboardEchartsSection .billing-mini-chart { min-height: 240px !important; }
+  .dashboard-visual-lane { gap: 10px; }
+  .visual-panel__body { padding: 12px; }
+  .action-board { grid-template-columns: 1fr; padding: 8px; gap: 8px; }
+  .turn-dash-ticker { display: none !important; }
 
   .signal-chip-grid {
     grid-template-columns: 1fr;

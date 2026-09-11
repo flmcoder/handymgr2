@@ -42,6 +42,13 @@ test('Express static serving uses the cache-control header hook', async () => {
   assert.match(source, /express\.static\(DIST_DIR,[\s\S]*setHeaders:\s*setStaticCacheHeaders/);
 });
 
+test('Vite emits content-hashed production assets', async () => {
+  const source = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /entryFileNames:\s*`assets\/\[name\]-\[hash\]\.js`/);
+  assert.match(source, /assetFileNames:\s*`assets\/\[name\]-\[hash\]\.\[ext\]`/);
+});
+
 test('frontend polls for waiting service worker updates and routes them through the blocking version modal', async () => {
   const source = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
 
@@ -84,4 +91,10 @@ test('visible tabs poll the health endpoint and check immediately when they rega
   assert.match(source, /VERSION_MISMATCH_POLL_MS\s*=\s*60\s*\*\s*1000/);
   assert.match(source, /setInterval\(function\(\)\s*\{[\s\S]{0,180}checkForRequiredAppUpdate\(\)/);
   assert.match(source, /document\.addEventListener\(['"]visibilitychange['"][\s\S]{0,240}checkForRequiredAppUpdate\(\)/);
+});
+
+test('frontend startup does not invoke an undefined history renderer', async () => {
+  const source = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(source, /^\s*renderHistory\(\);\s*$/m);
 });

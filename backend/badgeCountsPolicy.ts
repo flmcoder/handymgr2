@@ -18,11 +18,30 @@ export const ACTIVE_TURN_STATUS_FILTER = `(
 export const ACTIVE_INSPECTION_RESIDENT_FILTER = `(
   lower(coalesce(occ.status, '')) = 'current'
   and coalesce(occ.tenant_name, '') <> ''
+  and coalesce(occ.property_id, '') <> ''
+  and coalesce(occ.unit_id, '') <> ''
+  and coalesce(occ.occupancy_id, '') <> ''
   and occ.move_in_date is not null
   and occ.move_in_date <= current_date
+  and (occ.lease_to is null or occ.lease_to >= current_date)
   and (occ.move_out_date is null or occ.move_out_date >= current_date)
-  and (i.last_inspection_date is null or i.last_inspection_date < occ.move_in_date)
 )`;
+
+export const PROPERTY_IDENTITY_MATCH_FILTER = `(
+  p.id = source_property_id
+  or coalesce(
+    p.raw_json ->> 'PropertyId',
+    p.raw_json ->> 'property_id',
+    p.raw_json ->> 'Id',
+    p.raw_json ->> 'id'
+  ) = source_property_id
+)`;
+
+export function propertyIdentityMatch(sourceExpression: string, propertyAlias = 'p'): string {
+  return PROPERTY_IDENTITY_MATCH_FILTER
+    .replaceAll('p.', `${propertyAlias}.`)
+    .replaceAll('source_property_id', sourceExpression);
+}
 
 /** Normalize a badge count to a safe non-negative integer. */
 export function toBadgeCount(value: unknown): number {
@@ -33,7 +52,15 @@ export function toBadgeCount(value: unknown): number {
 
 export type BadgeCounts = {
   work_orders: number;
+  urgent_work_orders: number;
+  work_order_aging: {
+    age_0_7: number;
+    age_8_30: number;
+    age_31_60: number;
+    age_61_plus: number;
+  };
   turns: number;
+  upcoming_turns: number;
   inspections: number;
 };
 
@@ -43,14 +70,28 @@ export type BadgeCounts = {
  */
 export function buildBadgeCountsPayload(input: {
   workOrders?: unknown;
+  urgentWorkOrders?: unknown;
+  workOrdersAge0To7?: unknown;
+  workOrdersAge8To30?: unknown;
+  workOrdersAge31To60?: unknown;
+  workOrdersAge61Plus?: unknown;
   turns?: unknown;
+  upcomingTurns?: unknown;
   inspections?: unknown;
   propertyGroupId?: unknown;
 }): BadgeCounts & { ok: true; property_group_id: string; source: string } {
   return {
     ok: true,
     work_orders: toBadgeCount(input.workOrders),
+    urgent_work_orders: toBadgeCount(input.urgentWorkOrders),
+    work_order_aging: {
+      age_0_7: toBadgeCount(input.workOrdersAge0To7),
+      age_8_30: toBadgeCount(input.workOrdersAge8To30),
+      age_31_60: toBadgeCount(input.workOrdersAge31To60),
+      age_61_plus: toBadgeCount(input.workOrdersAge61Plus),
+    },
     turns: toBadgeCount(input.turns),
+    upcoming_turns: toBadgeCount(input.upcomingTurns),
     inspections: toBadgeCount(input.inspections),
     property_group_id: String(input.propertyGroupId || ''),
     source: 'postgres_local',
