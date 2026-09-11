@@ -3377,7 +3377,7 @@ async function respondGenerateMagicPortal(req: Request, res: Response): Promise<
     `SELECT id, work_order_uuid, wo_number, property_group_id, raw_json
        FROM appfolio_work_orders
       WHERE (id = $1 OR work_order_uuid = $1)
-        AND ($2 IS NULL OR property_group_id = ANY($2::text[]))
+        AND ($2::text[] IS NULL OR property_group_id = ANY($2::text[]))
       LIMIT 1`,
     [input.woId, scopeIds.length ? scopeIds : null],
   );
@@ -6833,7 +6833,7 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
       left join appfolio_unit_inspections ui
         on ui.unit_id = t.unit_id and ui.property_id = t.property_id
       where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
-        and (${scopeOrNull} is null or exists (
+        and (${scopeOrNull}::text[] is null or exists (
           select 1 from appfolio_properties p_scope
           where p_scope.id = t.property_id and p_scope.property_group_id = ANY(${scopeOrNull}::text[])
         ))
@@ -6872,7 +6872,7 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
           d.last_updated_at
         from appfolio_unit_turn_details d
         where coalesce(d.last_updated_at, d.cached_at, now()) >= now() - (${days}::int * interval '1 day')
-          and (${scopeOrNull} is null or exists (
+          and (${scopeOrNull}::text[] is null or exists (
             select 1 from appfolio_properties p_scope
             where p_scope.id = d.property_id and p_scope.property_group_id = ANY(${scopeOrNull}::text[])
           ))
@@ -6980,7 +6980,7 @@ app.get('/api/local/turns', async (req: Request, res: Response) => {
             t.updated_at
           from unit_turn_tracker t
           where coalesce(t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
-            and (${scopeOrNull} is null or exists (
+            and (${scopeOrNull}::text[] is null or exists (
               select 1 from appfolio_properties p_scope
               where p_scope.id = t.property_id and p_scope.property_group_id = ANY(${scopeOrNull}::text[])
             ))
@@ -7078,7 +7078,7 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
            or wo.wo_number = tw.wo_id
        where coalesce(tw.removed, false) = false
         and coalesce(tw.created_at, now()) >= now() - (${days}::int * interval '1 day')
-        and (${scopeOrNull} is null or exists (
+        and (${scopeOrNull}::text[] is null or exists (
           select 1 from appfolio_properties p_scope
           where p_scope.id = wo.property_id and p_scope.property_group_id = ANY(${scopeOrNull}::text[])
         ))
