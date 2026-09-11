@@ -11954,6 +11954,20 @@ function wireBillingFilters() {
     renderDashboardKPIs();
   });
 
+  // Chart aggregates + inspection views are scope-keyed: drop the caches and
+  // reload inspections data when the scope changes.
+  document.addEventListener('groupFilterChanged', function() {
+    clearChartAnalyticsCache();
+    _geocodedCache = null;
+    _geocodedCacheScope = '';
+    fetchInspections().then(function() {
+      var activeTab = document.querySelector('.nav-tab.active');
+      if (activeTab && activeTab.getAttribute('data-tab') === 'inspections') {
+        renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+      }
+    });
+  });
+
   document.addEventListener('groupFilterChanged', function() {
     window._currentBillsCache = [];
     _billsPage = 0;
@@ -12697,17 +12711,14 @@ function renderDashboardKPIs() {
 
   var openWOs = WORK_ORDERS.filter(function(w) {
     if (w.status === 'Completed' || w.status === 'Canceled') return false;
-    if (!isInPropertyGroup(w.propertyId, w.propertyName, currentPropertyGroup)) return false;
     return true;
   });
   var urgentWOs = WORK_ORDERS.filter(function(w) {
     if (!((w.priority === 'Urgent' || w.priority === 'Emergency') && w.status !== 'Completed' && w.status !== 'Canceled')) return false;
-    if (!isInPropertyGroup(w.propertyId, w.propertyName, currentPropertyGroup)) return false;
     return true;
   });
   var activeTurns = TURNS.filter(function(t) {
     if (t.turnEnd) return false;
-    if (!isInPropertyGroup(t.propertyId, t.property, currentPropertyGroup)) return false;
     return true;
   });
 
@@ -12721,7 +12732,6 @@ function renderDashboardKPIs() {
   var completedTurns = TURNS.filter(function(t) {
     var endDate = t.turnEnd || t.moveIn;
     if (!endDate || !t.moveOut) return false;
-    if (!isInPropertyGroup(t.propertyId, t.property, currentPropertyGroup)) return false;
     return true;
   });
   var turnDurations = completedTurns.map(function(t) {
@@ -12750,7 +12760,6 @@ function renderDashboardKPIs() {
 
   var inspectionAges = INSPECTIONS.map(function(i) {
     if (!i.lastInspection) return null;
-    if (!isInPropertyGroup(i.propertyId, i.propertyName, currentPropertyGroup)) return null;
     var d = new Date(i.lastInspection);
     if (isNaN(d.getTime())) return null;
     return Math.max(0, daysBetween(d, new Date()));
@@ -13077,10 +13086,8 @@ function renderDashboardKPIs() {
   var fiEl = document.getElementById('filterIndicator');
   if (fiEl) {
     if (currentPropertyGroup) {
-      // Count properties in this group
-      var propsInGroup = PROPERTIES.filter(function(p) {
-        return isInPropertyGroup(p.id, p.name, currentPropertyGroup);
-      }).length;
+      // PROPERTIES is already the server-scoped set; count it directly.
+      var propsInGroup = (PROPERTIES || []).length;
       fiEl.style.display = '';
       fiEl.className = 'filter-indicator';
       fiEl.innerHTML = '<i class="fas fa-filter"></i> Filtering: <strong>' + escapeHtml(currentPropertyGroup) +
@@ -13378,7 +13385,52 @@ function setDashboardInsightCardText(title1, title2, title3, subtitle) {
   if (subEl) subEl.textContent = String(subtitle || 'Comparative snapshots from indexed work order and turn data.');
 }
 
-function renderDashboardInsightCharts(openWOs, urgentWOs) {
+// ── Chart analytics (server aggregates) ──────────────────────────────────
+// Charts read scope-exact aggregates instead of re-aggregating loaded row
+// pages, so they always reconcile with badges and lists. Cached per scope;
+// cleared on every groupFilterChanged (see subscriber below).
+var _chartAnalyticsCache = {};
+var _chartAnalyticsInflight = {};
+var _chartAnalyticsGeneration = 0;
+function clearChartAnalyticsCache() {
+  _chartAnalyticsCache = {};
+  _chartAnalyticsInflight = {};
+  _chartAnalyticsGeneration++;
+}
+async function fetchChartAnalytics(kind) {
+  var scope = getEffectiveGroupUuid() || '__all__';
+  var key = kind + '|' + scope;
+  if (_chartAnalyticsCache[key]) return _chartAnalyticsCache[key];
+  if (_chartAnalyticsInflight[key]) return _chartAnalyticsInflight[key];
+  var generation = _chartAnalyticsGeneration;
+  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  var token = getProxyAccessToken();
+  var url = localBase + '/api/local/analytics/' + kind + (scope !== '__all__' ? ('?property_group_id=' + encodeURIComponent(scope)) : '');
+  var headers = { 'Accept': 'application/json' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  var request = (async function() {
+    try {
+      var res = await fetchWithTimeout(url, { headers: headers }, 45000);
+      var data = {};
+      try { data = await res.json(); } catch (_) { data = {}; }
+      if (!res.ok || data.ok === false) {
+        throw new Error(String((data && (data.error || data.message)) || ('Chart analytics failed: HTTP ' + res.status)));
+      }
+      if (generation !== _chartAnalyticsGeneration) return null;
+      _chartAnalyticsCache[key] = data;
+      return data;
+    } catch (err) {
+      console.error('[chart-analytics] ' + kind + ' failed', err);
+      return null;
+    } finally {
+      if (_chartAnalyticsInflight[key] === request) delete _chartAnalyticsInflight[key];
+    }
+  })();
+  _chartAnalyticsInflight[key] = request;
+  return request;
+}
+
+async function renderDashboardInsightCharts(openWOs, urgentWOs) {
   var openList = Array.isArray(openWOs) ? openWOs : [];
   var urgentList = Array.isArray(urgentWOs) ? urgentWOs : [];
   var pmMeta = $('#dashPmLoadMeta');
@@ -13402,7 +13454,12 @@ function renderDashboardInsightCharts(openWOs, urgentWOs) {
     );
   }
 
-  if (!openList.length) {
+  // Counts come from the scope-exact server aggregate so cards reconcile with
+  // badges; urgent + avg-days use the complete loaded arrays (same scope).
+  var generation = _chartAnalyticsGeneration;
+  var data = await fetchChartAnalytics('work-orders').catch(function() { return null; });
+  if (generation !== _chartAnalyticsGeneration) return;
+  if (!data || !Number(data.total || 0)) {
     if (pmMeta) pmMeta.textContent = 'No open workload';
     if (woTypeMeta) woTypeMeta.textContent = 'No open WO types';
     if (urgMeta) urgMeta.textContent = 'No urgent workload';
@@ -13415,27 +13472,21 @@ function renderDashboardInsightCharts(openWOs, urgentWOs) {
     return;
   }
 
-  var pmAgg = {};
-  var woTypeAgg = {};
-  var statusAgg = {};
+  var pmRows = (data.by_owner || []).slice(0, 6);
+  var propertyRows = (data.by_property || []).slice(0, 6);
+  var statusRows = (data.by_status || []).slice(0, 6);
+  var woTypeRows = (data.by_type || []).slice(0, 6);
+
   var urgentPmAgg = {};
   var pmAgeAgg = {};
-  var propertyAgg = {};
 
   openList.forEach(function(wo) {
     var pm = String(wo.pmName || wo.pm_name || wo.propertyManager || wo.property_manager || 'Unassigned PM').trim() || 'Unassigned PM';
-    var woType = String(wo.type || wo.workOrderType || wo.work_order_type || 'Unspecified').trim() || 'Unspecified';
-    var statusText = String(wo.status || wo.statusLabel || 'Unknown').trim() || 'Unknown';
-    var propertyName = String(wo.propertyName || wo.property_name || wo.property || 'Unknown Property').trim() || 'Unknown Property';
     var createdRaw = wo.created || wo.createdAt || wo.created_at || wo.statusDate || wo.updatedAt || '';
     var createdMs = Date.parse(String(createdRaw || ''));
     var ageDays = Number.isFinite(createdMs)
       ? Math.max(0, Math.round((Date.now() - createdMs) / 86400000))
       : 0;
-    pmAgg[pm] = (pmAgg[pm] || 0) + 1;
-    woTypeAgg[woType] = (woTypeAgg[woType] || 0) + 1;
-    statusAgg[statusText] = (statusAgg[statusText] || 0) + 1;
-    propertyAgg[propertyName] = (propertyAgg[propertyName] || 0) + 1;
     if (!pmAgeAgg[pm]) pmAgeAgg[pm] = { count: 0, totalDays: 0 };
     pmAgeAgg[pm].count += 1;
     pmAgeAgg[pm].totalDays += ageDays;
@@ -13446,30 +13497,14 @@ function renderDashboardInsightCharts(openWOs, urgentWOs) {
     urgentPmAgg[pm] = (urgentPmAgg[pm] || 0) + 1;
   });
 
-  var pmRows = Object.keys(pmAgg).map(function(key) {
-    return { label: key, value: pmAgg[key] };
-  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
-
   var pmAgingRows = Object.keys(pmAgeAgg).map(function(key) {
     var bucket = pmAgeAgg[key] || { count: 0, totalDays: 0 };
     var avgDays = bucket.count ? (bucket.totalDays / bucket.count) : 0;
     return { label: key, value: Number(avgDays.toFixed(1)) };
   }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
 
-  var woTypeRows = Object.keys(woTypeAgg).map(function(key) {
-    return { label: key, value: woTypeAgg[key] };
-  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
-
-  var propertyRows = Object.keys(propertyAgg).map(function(key) {
-    return { label: key, value: propertyAgg[key] };
-  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
-
   var urgentRows = Object.keys(urgentPmAgg).map(function(key) {
     return { label: key, value: urgentPmAgg[key] };
-  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
-
-  var statusRows = Object.keys(statusAgg).map(function(key) {
-    return { label: key, value: statusAgg[key] };
   }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
 
   if (pmMeta) {
@@ -13528,6 +13563,7 @@ function renderDashboardInsightCharts(openWOs, urgentWOs) {
 // ---------------------------------------------------------------------------
 var _geoChartsRendered = false;
 var _geocodedCache = null;
+var _geocodedCacheScope = '';
 
 function renderDashboardGeoCharts(force) {
   var buildInspMap = window.buildInspectionMapOption;
@@ -13538,12 +13574,7 @@ function renderDashboardGeoCharts(force) {
   // ── Turnover Funnel (synchronous — uses TURN_PIPE_DATA in memory) ─────────
   var funnelEl = document.getElementById('dashTurnoverFunnel');
   var funnelMeta = document.getElementById('dashTurnoverFunnelMeta');
-  var turnPipe = Array.isArray(TURN_PIPE_DATA) ? TURN_PIPE_DATA : [];
-  if (currentPropertyGroup) {
-    turnPipe = turnPipe.filter(function(p) {
-      return isInPropertyGroup(p.propertyId || p.property_id, p.propertyName || p.property_name, currentPropertyGroup);
-    });
-  }
+  var turnPipe = Array.isArray(TURN_PIPE_DATA) ? TURN_PIPE_DATA.slice() : [];
   if (funnelEl && turnPipe.length > 0) {
     var existingFunnel = echartsCore.getInstanceByDom(funnelEl);
     if (existingFunnel) existingFunnel.dispose();
@@ -13561,26 +13592,16 @@ function renderDashboardGeoCharts(force) {
   var mapMeta = document.getElementById('dashInspectionMapMeta');
   if (!mapEl) return;
 
-  var inspData = Array.isArray(INSPECTIONS) ? INSPECTIONS : [];
-  if (currentPropertyGroup) {
-    inspData = inspData.filter(function(r) {
-      return isInPropertyGroup(r.property_id || r.propertyId, r.property_name || r.propertyName, currentPropertyGroup);
-    });
-  }
-  if (!inspData.length) {
-    if (mapMeta) mapMeta.textContent = 'No inspection data';
-    var existingMapEmpty = echartsCore.getInstanceByDom(mapEl);
-    if (existingMapEmpty) existingMapEmpty.clear();
+  // Map plots one point per property with missing inspections, from the
+  // scope-exact aggregate; geocoded coords are cached per scope.
+  var mapScope = getEffectiveGroupUuid() || '__all__';
+  if (_geocodedCache && _geocodedCacheScope === mapScope && !force) {
+    renderMapWithCoords(_geocodedCache);
     return;
   }
 
   function renderMapWithCoords(withCoords) {
     var filteredCoords = withCoords;
-    if (currentPropertyGroup) {
-      filteredCoords = withCoords.filter(function(r) {
-        return isInPropertyGroup(r.property_id || r.propertyId, r.property_name || r.propertyName, currentPropertyGroup);
-      });
-    }
     if (!filteredCoords.length) {
       if (mapMeta) mapMeta.textContent = 'No mapped properties in scope';
       var existingMap = echartsCore.getInstanceByDom(mapEl);
@@ -13607,12 +13628,18 @@ function renderDashboardGeoCharts(force) {
     });
   }
 
-  if (_geocodedCache && !force) {
-    renderMapWithCoords(_geocodedCache);
-    return;
-  }
-
   if (mapMeta) mapMeta.textContent = 'Geocoding…';
+
+  var mapGeneration = _chartAnalyticsGeneration;
+  fetchChartAnalytics('inspections').then(function(mapData) {
+    if (mapGeneration !== _chartAnalyticsGeneration) return;
+    if (!mapData || !(mapData.by_property || []).length) {
+      if (mapMeta) mapMeta.textContent = 'No inspection data';
+      var existingMapEmpty = echartsCore.getInstanceByDom(mapEl);
+      if (existingMapEmpty) existingMapEmpty.clear();
+      return;
+    }
+    var inspData = mapData.by_property;
 
   var seen = {};
   var unique = inspData.filter(function(r) {
@@ -13635,8 +13662,11 @@ function renderDashboardGeoCharts(force) {
       })
       .catch(function() { return null; });
   })).then(function(geocoded) {
+    if (mapGeneration !== _chartAnalyticsGeneration) return;
     _geocodedCache = geocoded.filter(function(r) { return r && r._x != null; });
+    _geocodedCacheScope = mapScope;
     renderMapWithCoords(_geocodedCache);
+  });
   });
 }
 
@@ -13663,9 +13693,7 @@ function fetchAndRenderPortfolioSunburst(force) {
 
   if (!force && _sunburstRenderedKey === cacheKey) return;
 
-  var properties = (PROPERTIES || []).filter(function(property) {
-    return !grpName || isInPropertyGroup(property.id, property.name, grpName);
-  });
+  var properties = (PROPERTIES || []).slice();
   var data = properties.map(function(property) {
     var propertyUnits = (_unitsByPropertyId[String(property.id || '')] || []);
     var statuses = {};
@@ -13742,14 +13770,8 @@ function renderWoSankey() {
   if (!el) return;
 
   var wos = Array.isArray(WORK_ORDERS_ACTIVE) && WORK_ORDERS_ACTIVE.length > 0
-    ? WORK_ORDERS_ACTIVE
-    : (Array.isArray(WORK_ORDERS) ? WORK_ORDERS : []);
-
-  if (currentPropertyGroup) {
-    wos = wos.filter(function(wo) {
-      return isInPropertyGroup(wo.propertyId || wo.property_id, wo.propertyName || wo.property_name, currentPropertyGroup);
-    });
-  }
+    ? WORK_ORDERS_ACTIVE.slice()
+    : (Array.isArray(WORK_ORDERS) ? WORK_ORDERS.slice() : []);
 
   if (!wos.length) {
     if (meta) meta.textContent = 'No work orders';
@@ -15700,8 +15722,7 @@ function renderTurnInsights(rows) {
   });
 }
 
-function renderInspectionInsights(classifiedRows) {
-  var list = Array.isArray(classifiedRows) ? classifiedRows : [];
+function renderInspectionInsights(data) {
   var mixMeta = $('#inspMixMeta');
   var ageMeta = $('#inspAgeMeta');
   var linkMeta = $('#inspLinkMeta');
@@ -15718,39 +15739,36 @@ function renderInspectionInsights(classifiedRows) {
   INSP_CHARTS.age = null;
   INSP_CHARTS.link = null;
 
-  if (!list.length) {
+  var totalActive = data ? Number(data.total_active || 0) : 0;
+  if (!data || !totalActive) {
     if (mixMeta) mixMeta.textContent = '0 rows';
     if (ageMeta) ageMeta.textContent = 'No age data';
     if (linkMeta) linkMeta.textContent = 'No link data';
     return;
   }
 
+  var mix = data.mix || {};
+  var age = data.age || {};
   var mixRows = [
-    { label: 'Overdue', value: list.filter(function(c){ return !!c.overdue; }).length },
-    { label: 'Due Soon', value: list.filter(function(c){ return !!c.dueSoon; }).length },
-    { label: 'Current', value: list.filter(function(c){ return !!c.current; }).length },
+    { label: 'Overdue', value: Number(mix.overdue || 0) },
+    { label: 'Due Soon', value: Number(mix.due_soon || 0) },
+    { label: 'Current', value: Number(mix.current || 0) },
   ];
 
-  var ageBuckets = { '0-30d': 0, '31-90d': 0, '91-180d': 0, '181+d': 0 };
-  list.forEach(function(c) {
-    var d = Number(c.daysSince || 0);
-    if (!isFinite(d) || d < 0) d = 0;
-    if (d <= 30) ageBuckets['0-30d'] += 1;
-    else if (d <= 90) ageBuckets['31-90d'] += 1;
-    else if (d <= 180) ageBuckets['91-180d'] += 1;
-    else ageBuckets['181+d'] += 1;
-  });
-  var ageRows = Object.keys(ageBuckets).map(function(k) {
-    return { label: k, value: ageBuckets[k] };
-  });
+  var ageRows = [
+    { label: '0-30d', value: Number(age.age_0_30 || 0) },
+    { label: '31-90d', value: Number(age.age_31_90 || 0) },
+    { label: '91-180d', value: Number(age.age_91_180 || 0) },
+    { label: '181+d', value: Number(age.age_181_plus || 0) },
+  ];
 
-  var linkedCount = list.filter(function(c){ return !!c.linkedTurn; }).length;
+  var linkedCount = Number(data.linked || 0);
   var linkRows = [
     { label: 'Turn Linked', value: linkedCount },
-    { label: 'Not Linked', value: Math.max(0, list.length - linkedCount) },
+    { label: 'Not Linked', value: Math.max(0, totalActive - linkedCount) },
   ];
 
-  if (mixMeta) mixMeta.textContent = list.length + ' rows';
+  if (mixMeta) mixMeta.textContent = totalActive + ' residents';
   if (ageMeta) ageMeta.textContent = ageRows.length ? (ageRows[ageRows.length - 1].value + ' oldest bucket') : 'No age data';
   if (linkMeta) linkMeta.textContent = linkedCount + ' linked';
 
@@ -17542,30 +17560,32 @@ function createInspectionsServerDatasource() {
   };
 }
 
-function renderWOAnalyticsCharts(rows) {
+async function renderWOAnalyticsCharts() {
   var agingEl = document.getElementById('woAgingChart');
   var ownerEl = document.getElementById('woOwnerChart');
   var statusEl = document.getElementById('woStatusChart');
   if (!agingEl || !ownerEl || !statusEl) return;
   var palette = getWOChartPalette();
+  var generation = _chartAnalyticsGeneration;
+  var data = await fetchChartAnalytics('work-orders').catch(function() { return null; });
+  if (!data || generation !== _chartAnalyticsGeneration) return;
 
-  var agingCounts = { '0-7': 0, '8-30': 0, '31-60': 0, '60+': 0 };
-  var ownerCounts = {};
+  var agingRows = [
+    { name: '0-7', value: Number(data.aging.age_0_7 || 0) },
+    { name: '8-30', value: Number(data.aging.age_8_30 || 0) },
+    { name: '31-60', value: Number(data.aging.age_31_60 || 0) },
+    { name: '60+', value: Number(data.aging.age_61_plus || 0) }
+  ];
+  var ownerRows = (data.by_owner || []).slice(0, 8).map(function(r) {
+    return { name: String(r.label), value: Number(r.value || 0) };
+  });
   var statusOwnerCounts = {};
-  rows.forEach(function(r) {
-    agingCounts[r.ageBucket] = (agingCounts[r.ageBucket] || 0) + 1;
-    ownerCounts[r.owner] = (ownerCounts[r.owner] || 0) + 1;
+  (data.by_status_owner || []).forEach(function(r) {
     var st = String(r.status || 'Unknown');
+    var ow = String(r.owner || 'Unassigned');
     if (!statusOwnerCounts[st]) statusOwnerCounts[st] = {};
-    statusOwnerCounts[st][r.owner] = (statusOwnerCounts[st][r.owner] || 0) + 1;
+    statusOwnerCounts[st][ow] = Number(r.value || 0);
   });
-
-  var agingRows = ['0-7', '8-30', '31-60', '60+'].map(function(k) {
-    return { name: k, value: agingCounts[k] || 0 };
-  });
-  var ownerRows = Object.keys(ownerCounts).map(function(k) {
-    return { name: k, value: ownerCounts[k] };
-  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 8);
 
   WO_CHARTS.aging = ensureWOChart(WO_CHARTS.aging, agingEl);
   WO_CHARTS.aging.setOption({
@@ -18106,7 +18126,7 @@ function renderWorkOrders() {
       renderWOKpiStrip(woGridRowsBase);
       var existingInsightsDrawer = document.querySelector('.wo-insights-drawer');
       if (existingInsightsDrawer && existingInsightsDrawer.open) {
-        renderWOAnalyticsCharts(woGridRowsBase);
+        renderWOAnalyticsCharts();
         renderWOVendorSpendChart();
       }
       renderWOContextPanel(currentWOSelection);
@@ -18160,7 +18180,7 @@ function renderWorkOrders() {
     var insightsDrawer = document.querySelector('.wo-insights-drawer');
     if (insightsDrawer) insightsDrawer.addEventListener('toggle', function() {
       if (!insightsDrawer.open) return;
-      renderWOAnalyticsCharts(woGridRowsBase);
+      renderWOAnalyticsCharts();
       renderWOVendorSpendChart();
       requestAnimationFrame(function() {
         Object.keys(WO_CHARTS).forEach(function(key) {
@@ -21170,71 +21190,26 @@ function renderInspections(search) {
   var statusFilter = $('#inspStatusFilter') ? $('#inspStatusFilter').value : 'all';
   var today = new Date();
 
-  // Guard against stale IndexedDB cache containing pre-AppFolio artifacts.
-  // Includes compliant inspections too, so the KPI strip can show "all caught up".
-  var validInspections = INSPECTIONS.filter(function(r) {
-    if (!isInPropertyGroup(r.propertyId, r.propertyName, currentPropertyGroup)) return false;
-    return isCurrentLeaseWithActiveResident(r, today);
-  });
-
-  // Classify each inspection
-  var classified = validInspections.map(function(r) {
-    var state = getInspectionCompliance(r, today);
-    // Check if linked to an active turn
-    var linkedTurn = TURN_PIPE_DATA.find(function(tp) {
-      return !tp.isCompleted &&
-        tp.unit && r.unit && String(tp.unit).toLowerCase() === String(r.unit).toLowerCase() &&
-        tp.property && r.propertyName && String(tp.property).toLowerCase() === String(r.propertyName).toLowerCase();
-    });
-    return {
-      r: r,
-      daysSince: state.daysSince,
-      overdue: state.overdue,
-      dueSoon: state.dueSoon,
-      current: state.current,
-      missingMoveInInspection: state.missingMoveInInspection,
-      linkedTurn: linkedTurn || null,
-      status: state.overdue ? 'overdue' : state.dueSoon ? 'due_soon' : 'current'
-    };
-  });
-
-  // KPI counts
-  var overdueCount = classified.filter(function(c) { return c.overdue; }).length;
-  var dueSoonCount = classified.filter(function(c) { return c.dueSoon; }).length;
-  var currentCount = classified.filter(function(c) { return c.current; }).length;
-  var turnLinkedCount = classified.filter(function(c) { return c.linkedTurn; }).length;
-
+  // KPI strip + insight charts read the scope-exact server aggregate (the
+  // grid itself pages server-side via its own datasource below).
   var e = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
-  e('kpiInspOverdue', overdueCount);
-  e('kpiInspDueSoon', dueSoonCount);
-  e('kpiInspCurrent', currentCount);
-  e('kpiInspTurnLinked', turnLinkedCount);
-
+  var inspGeneration = _chartAnalyticsGeneration;
+  fetchChartAnalytics('inspections').then(function(inspData) {
+    if (inspGeneration !== _chartAnalyticsGeneration) return;
+    var mix = (inspData && inspData.mix) || { overdue: 0, due_soon: 0, current: 0 };
+    e('kpiInspOverdue', Number(mix.overdue || 0));
+    e('kpiInspDueSoon', Number(mix.due_soon || 0));
+    e('kpiInspCurrent', Number(mix.current || 0));
+    e('kpiInspTurnLinked', inspData ? Number(inspData.linked || 0) : 0);
+    var ib = $('#inspBadge');
+    if (ib) ib.textContent = (NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.inspections : (inspData ? Number(inspData.total_missing || 0) : 0));
+    renderInspectionInsights(inspData);
+  });
   // Sync global group filter dropdown
   var inspGrpSel = $('#globalGroupFilter');
   if (inspGrpSel && inspGrpSel.value !== currentPropertyGroup) inspGrpSel.value = currentPropertyGroup;
 
-  // Filter
-  var filtered = classified.filter(function(c) {
-    if (statusFilter === 'overdue' && !c.overdue) return false;
-    if (statusFilter === 'due_soon' && !c.dueSoon) return false;
-    if (statusFilter === 'current' && !c.current) return false;
-    if (statusFilter === 'turn_linked' && !c.linkedTurn) return false;
-    if (INSP_ANALYTICS_FILTERS.status && c.status !== INSP_ANALYTICS_FILTERS.status) return false;
-    if (INSP_ANALYTICS_FILTERS.ageBucket && getInspectionAgeBucket(c.daysSince) !== INSP_ANALYTICS_FILTERS.ageBucket) return false;
-    if (INSP_ANALYTICS_FILTERS.turnLinked === 'turn_linked' && !c.linkedTurn) return false;
-    if (INSP_ANALYTICS_FILTERS.turnLinked === 'not_linked' && !!c.linkedTurn) return false;
-    // Property group filter
-    if (!isInPropertyGroup(c.r.propertyId, c.r.propertyName, currentPropertyGroup)) return false;
-    if (search) {
-      var s = search.toLowerCase();
-      return (c.r.propertyName || '').toLowerCase().indexOf(s) !== -1
-        || (c.r.unit || '').toLowerCase().indexOf(s) !== -1
-        || (c.r.tenant || '').toLowerCase().indexOf(s) !== -1;
-    }
-    return true;
-  });
-
+  var search = $('#inspSearch') ? String($('#inspSearch').value || '').trim() : '';
   var analyticsMeta = document.getElementById('inspAnalyticsMeta');
   if (analyticsMeta) {
     var chips = [];
@@ -21250,11 +21225,6 @@ function renderInspections(search) {
 
   renderInspectionChartFilterBadges();
   renderInspectionsGrid();
-
-  var ib = $('#inspBadge');
-  if (ib) ib.textContent = (NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.inspections : overdueCount);
-
-  renderInspectionInsights(filtered);
 }
 
 function resolveVendorCompliance(v) {

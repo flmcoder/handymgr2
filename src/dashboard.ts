@@ -2114,7 +2114,8 @@ export function buildWoSankeyOption(wos: WoRecord[]): ECOption {
     const rawGroup = String(
       wo.property_group || wo.property_group_id || wo.propertyGroupId || 'Unassigned Group',
     ).trim();
-    const group = groupNames[rawGroup] || rawGroup.split('-')[0] || rawGroup;
+    const isUuidGroup = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawGroup);
+    const group = groupNames[rawGroup] || (isUuidGroup ? rawGroup.slice(0, 8) + '...' : rawGroup) || rawGroup;
     if (!groupNames[rawGroup]) groupNames[rawGroup] = group;
 
     // Layer 2: WO Type

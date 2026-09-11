@@ -31,6 +31,11 @@ import {
   OPEN_WORK_ORDER_STATUS_FILTER,
   WORK_ORDER_CREATED_AT_EXPR,
 } from './badgeCountsPolicy';
+import {
+  buildInspectionsAnalyticsQuery,
+  buildWorkOrdersAnalyticsQuery,
+  toCountBuckets,
+} from './chartAnalyticsPolicy';
 import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { buildWorkOrderPagination, resolveWorkOrderHistoryDays } from './workOrderQueryPolicy';
@@ -5267,6 +5272,81 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
   } catch (error) {
     logTunnelError(error, '/api/local/badge_counts');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Badge counts failed') });
+  }
+});
+
+// Server-side aggregates for the dashboard charts. Same predicates as
+// badge_counts, so chart totals reconcile with badges and lists.
+app.get('/api/local/analytics/work-orders', async (req: Request, res: Response) => {
+  try {
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const scope = propertyGroupId || null;
+    const { sql, params } = buildWorkOrdersAnalyticsQuery(scope);
+    const rows = (await queryClient.unsafe(sql, params)) as any[];
+    const m = rows[0] || {};
+    res.json({
+      ok: true,
+      total: Number(m.total || 0),
+      urgent: Number(m.urgent || 0),
+      aging: {
+        age_0_7: Number(m.age_0_7 || 0),
+        age_8_30: Number(m.age_8_30 || 0),
+        age_31_60: Number(m.age_31_60 || 0),
+        age_61_plus: Number(m.age_61_plus || 0),
+        age_unknown: Number(m.age_unknown || 0),
+      },
+      by_status: toCountBuckets(m.by_status, 12),
+      by_type: toCountBuckets(m.by_type, 12),
+      by_owner: toCountBuckets(m.by_owner, 12),
+      by_priority: toCountBuckets(m.by_priority, 12),
+      avg_age_by_owner: toCountBuckets(m.avg_age_by_owner, 12),
+      by_property: toCountBuckets(m.by_property, 12),
+      by_status_owner: Array.isArray(m.by_status_owner) ? m.by_status_owner : [],
+      property_group_id: propertyGroupId,
+      source: 'postgres_local',
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/analytics/work-orders');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Work order analytics failed') });
+  }
+});
+
+app.get('/api/local/analytics/inspections', async (req: Request, res: Response) => {
+  try {
+    const propertyGroupId = getPropertyGroupFilter(req);
+    const scope = propertyGroupId || null;
+    const overdueDays = parseDays(req.query.overdue_days, 365, 5000);
+    const dueSoonDays = parseDays(req.query.due_soon_days, 270, 5000);
+    const { sql, params } = buildInspectionsAnalyticsQuery(scope, overdueDays, dueSoonDays);
+    const rows = (await queryClient.unsafe(sql, params)) as any[];
+    const m = rows[0] || {};
+    const overdue = Number(m.overdue || 0);
+    const dueSoon = Number(m.due_soon || 0);
+    const totalActive = Number(m.total_active || 0);
+    res.json({
+      ok: true,
+      total_active: totalActive,
+      total_missing: Number(m.total_missing || 0),
+      mix: {
+        overdue,
+        due_soon: dueSoon,
+        current: Math.max(0, totalActive - overdue - dueSoon),
+      },
+      age: {
+        age_0_30: Number(m.age_0_30 || 0),
+        age_31_90: Number(m.age_31_90 || 0),
+        age_91_180: Number(m.age_91_180 || 0),
+        age_181_plus: Number(m.age_181_plus || 0),
+      },
+      linked: Number(m.linked || 0),
+      not_linked: Math.max(0, totalActive - Number(m.linked || 0)),
+      by_property: Array.isArray(m.by_property) ? m.by_property : [],
+      property_group_id: propertyGroupId,
+      source: 'postgres_local',
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/analytics/inspections');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Inspection analytics failed') });
   }
 });
 
