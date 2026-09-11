@@ -29,7 +29,6 @@ import {
   ACTIVE_INSPECTION_RESIDENT_FILTER,
   buildBadgeCountsPayload,
   OPEN_WORK_ORDER_STATUS_FILTER,
-  propertyIdentityMatch,
   WORK_ORDER_CREATED_AT_EXPR,
 } from './badgeCountsPolicy';
 import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
@@ -5218,12 +5217,20 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
     // Turn Board, then exclude terminal rows for the navigation/dashboard total.
     const turnPromise = queryClient.unsafe(TURN_ENGINE_SQL, [365, 20_000, scope, '']);
 
-    // Inspections badge = active residents (current lease, move-in already occurred, not
-    // yet moved out) whose most recent inspection predates their move-in date — i.e. the
-    // same "missing move-in inspection" definition used by the inspections grid.
+    // Inspections badge = active residents on an active lease with NO move-in
+    // inspection on record (last inspection missing or predating move-in) —
+    // same "missing move-in inspection" definition as the inspections grid.
+    // Occ only resolves to a property through the numeric id in the AppFolio
+    // "Link" (occ.property_id is a number, appfolio_properties.id is a UUID),
+    // and property-group membership is the PropertyGroupIds array since a
+    // property may belong to several groups (shared/all-properties groups).
     const inspBaseSql = `
       select count(*)::int as total
       from appfolio_tenant_directory occ
+      ${scope
+        ? `join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || occ.property_id
+          and p.raw_json->'PropertyGroupIds' @> jsonb_build_array($1)`
+        : ''}
       left join lateral (
         select i0.last_inspection_date
         from appfolio_unit_inspections i0
@@ -5234,12 +5241,10 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
         order by coalesce(i0.last_inspection_date, i0.last_updated_at, i0.cached_at) desc nulls last
         limit 1
       ) i on true
-      left join appfolio_properties p on ${propertyIdentityMatch('occ.property_id')}
       where ${ACTIVE_INSPECTION_RESIDENT_FILTER}
+        and (i.last_inspection_date is null or i.last_inspection_date::date < occ.move_in_date)
     `;
-    const inspPromise = scope
-      ? queryClient.unsafe(`${inspBaseSql} and p.property_group_id = $1`, [scope])
-      : queryClient.unsafe(inspBaseSql);
+    const inspPromise = queryClient.unsafe(inspBaseSql, scope ? [scope] : []);
 
     const [woRows, turnRows, inspRows] = await Promise.all([woPromise, turnPromise, inspPromise]);
     const activeTurnRows = (turnRows as any[]).filter((row) => String(row?.status || '').toLowerCase() !== 'completed');
@@ -5642,7 +5647,7 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
     };
 
     if (propertyGroupId) {
-      baseWhereParts.push(`p.property_group_id = ${bind(propertyGroupId)}`);
+      baseWhereParts.push(`p.raw_json->'PropertyGroupIds' @> jsonb_build_array(${bind(propertyGroupId)}::text)`);
     }
 
     const baseWhereSql = baseWhereParts.length ? `where ${baseWhereParts.join(' and ')}` : '';
@@ -5690,7 +5695,7 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
         order by coalesce(i0.last_inspection_date, i0.last_updated_at, i0.cached_at) desc nulls last
         limit 1
       ) i on true
-      left join appfolio_properties p on ${propertyIdentityMatch('occ.property_id')}
+      left join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || occ.property_id
       left join appfolio_units u on u.unit_id = occ.unit_id
       left join lateral (
         select true as active_turn
