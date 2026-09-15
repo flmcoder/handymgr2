@@ -5026,21 +5026,15 @@ var CONFIG = {
   TURN_STALLED_DAYS: 7,         // days before a turn is flagged stalled
   TURN_WARNING_DAYS: 14,        // elapsed days before amber warning
   TURN_PRIORITY_DAYS: 180,      // 6+ months ongoing turn → priority attention
+  WO_PRIORITY_DAYS: 180,        // 180+ days open → priority attention
+  VACANT_PRIORITY_DAYS: 90,     // 90+ days vacant (3 months) → priority attention
+  GUEST_CARD_NEGLECT_DAYS: 7,
+  SHOWING_NEGLECT_DAYS: 7,
   DEPOSIT_BUSINESS_DAYS: 14,    // AZ deposit deadline: 14 business days
   DEPOSIT_HOLIDAYS: [           // company holidays (YYYY-MM-DD) — update annually
     '2026-01-01','2026-01-19','2026-02-16','2026-05-25','2026-07-03',
     '2026-09-07','2026-11-26','2026-11-27','2026-12-24','2026-12-25'
   ],
-  // Work orders
-  WO_PRIORITY_DAYS: 180,        // 180+ days open → priority attention
-  WO_STALE_DAYS: 90,
-  // Vacancy
-  VACANT_PRIORITY_DAYS: 90,     // 90+ days vacant (3 months) → priority attention
-  VACANT_CRITICAL_DAYS: 60,
-  // Occupancy neglected thresholds
-  GUEST_CARD_NEGLECT_DAYS: 7,
-  SHOWING_NEGLECT_DAYS: 7,
-  RENEWAL_PENDING_DAYS: 30,
   // Inspections
   INSPECTION_OVERDUE_DAYS: 365,
   INSPECTION_DUE_SOON_DAYS: 270,
@@ -8136,11 +8130,9 @@ async function fetchUnitTurnsDB() {
         strictCompleted: !!t.strict_completed,
         allWorkOrdersCompleted: !!t.all_work_orders_completed,
         hasCurrentResident: !!t.has_current_resident,
-        isReadyToClose: !!t.is_ready_to_close,
-        isPriorityTurn: !!t.is_priority_turn,
-        elapsedDays: t.elapsed_days != null ? Number(t.elapsed_days) : null,
-        rentReady: !!t.rent_ready,
-        hasNextResident: !!t.has_next_resident,
+        occupancyState: String(t.occupancy_state || (t.has_current_resident ? 'occupied-active' : (t.move_in_date || t.expected_move_in_date ? 'vacant-rented' : 'vacant-unrented'))),
+        readyToClose: !!(t.ready_to_close ?? (t.move_in_date || t.expected_move_in_date)),
+        isPriority: !!t.is_priority,
         isNativeTurn: compliance.is_native_turn === true,
         rogueWorkOrders: parseInt(compliance.rogue_wos_detected || 0, 10) || 0,
         nextResidentName: t.next_resident_name || '',
@@ -19275,8 +19267,86 @@ var DASH_TURN_ROTATOR = null;
 var DASH_TURN_ROTATE_MS = 8000;
 var DASH_TURN_LAST_SYNC_AT = '';
 var DASH_TURN_SYNC_TIMER = null;
-var currentTurnPipeFilter = 'active';
+var currentTurnPipeFilter = 'priority';
 var currentTurnPipeGroup = '';
+// ── Turnover priority scope (R1) ─────────────────────────────────────────
+// The full board is NEVER trimmed: open turns that still need AppFolio
+// closeout stay in TURN_PIPE_DATA under Active/All/Ready/Completed. The
+// priority scope only controls what clouds the Attention panel + the
+// 'priority' board filter:
+//   occupied-active  = active tenant still in place → keep for closeout, NOT priority.
+//   vacant-rented    = vacant but leased (incoming move-in) → ready-to-close
+//                      / completing bucket, NOT priority.
+//   vacant-unrented  = true vacant needing work → priority.
+// Engine rows carry occupancyState/readyToClose/isPriority from the turn
+// engine; legacy/inferred rows fall back to local inference below.
+var _vacancyLookupCache = null;
+var _vacancyLookupCacheSize = -1;
+function _normTurnKeyPart(v) { return String(v || '').trim().toLowerCase(); }
+function getVacancyLookup() {
+  var size = (typeof VACANCY_V2_UNITS !== 'undefined' && VACANCY_V2_UNITS) ? VACANCY_V2_UNITS.length : 0;
+  if (_vacancyLookupCache && _vacancyLookupCacheSize === size) return _vacancyLookupCache;
+  var map = {};
+  if (typeof VACANCY_V2_UNITS !== 'undefined' && VACANCY_V2_UNITS) {
+    VACANCY_V2_UNITS.forEach(function(v) {
+      var unit = _normTurnKeyPart(v.unit);
+      if (!unit) return;
+      var pid = _normTurnKeyPart(v.propertyId);
+      var pname = _normTurnKeyPart(v.property);
+      if (pid) map[pid + '|' + unit] = v;
+      if (pname) map[pname + '|' + unit] = v;
+    });
+  }
+  _vacancyLookupCache = map;
+  _vacancyLookupCacheSize = size;
+  return map;
+}
+function turnHasIncomingLease(p) {
+  if (!p) return false;
+  var candidates = [p.expectedMoveIn, p.moveIn, p.move_in, p.expected_move_in,
+    (p.turn && (p.turn.expectedMoveIn || p.turn.moveIn))];
+  for (var i = 0; i < candidates.length; i++) {
+    var d = candidates[i] ? new Date(candidates[i]) : null;
+    if (d && !isNaN(d.getTime()) && d >= new Date(Date.now() - 86400000)) return true;
+  }
+  return false;
+}
+// Occupancy state for priority triage. Purely labels — never deletes anything.
+function getTurnOccupancyState(p) {
+  if (!p) return 'vacant-unrented';
+  if (p.occupancyState) return p.occupancyState;
+  if (p.hasCurrentResident) return 'occupied-active';
+  if (p.isUpcoming) return 'occupied-active';
+  if (turnHasIncomingLease(p)) return 'vacant-rented';
+  if (typeof VACANCY_V2_UNITS !== 'undefined' && VACANCY_V2_UNITS && VACANCY_V2_UNITS.length > 0) {
+    var lookup = getVacancyLookup();
+    var unit = _normTurnKeyPart(p.unit);
+    var hit = unit && (lookup[_normTurnKeyPart(p.propertyId) + '|' + unit] ||
+      lookup[_normTurnKeyPart(p.property) + '|' + unit]);
+    return hit ? 'vacant-unrented' : 'occupied-active';
+  }
+  return 'vacant-unrented';
+}
+function isTurnReadyToClose(p) {
+  if (!p || p.isClosed || p.isCompleted) return false;
+  if (p.engineReadyToClose) return true;
+  if (getTurnOccupancyState(p) === 'vacant-rented') return true;
+  if (p.allWOsDone) return true;
+  if (p.turn && p.turn.turnEnd) return true;
+  if (turnHasIncomingLease(p)) return true;
+  return false;
+}
+// Priority = confirmed, past move-out, vacant-unrented, not complete/closed,
+// not ready-to-close. Everything else stays on the board for AppFolio
+// closeout but stays OUT of the priority scope.
+function isTurnPriorityItem(p) {
+  if (!p || p.isClosed || p.isCompleted || p.isUpcoming) return false;
+  if (!p.isConfirmed) return false;
+  if (isTurnReadyToClose(p)) return false;
+  if (p.occupancyState) return p.occupancyState === 'vacant-unrented';
+  if (typeof p.engineIsPriority === 'boolean' && p.engineIsPriority) return true;
+  return getTurnOccupancyState(p) === 'vacant-unrented';
+}
 var currentTurnPipeSortMode = (function() {
   try {
     var saved = localStorage.getItem('hm_turn_pipe_sort_mode') || '';
@@ -20025,7 +20095,10 @@ function buildTurnPipeline() {
     }
     if (dbTurnMatch) {
       isCompleted = dbTurnMatch.strictCompleted;
-      stages.work_done.done = dbTurnMatch.allWorkOrdersCompleted && dbTurnMatch.hasCurrentResident;
+      // Vacancy-driven: work evidence alone marks work_done — never gated on
+      // a current resident (live turns are vacant; the resident gate froze
+      // the board at 0 Completed).
+      stages.work_done.done = dbTurnMatch.allWorkOrdersCompleted;
     }
     // Compute current stage index after work-order completion safety checks.
     var currentStageIdx = -1;
@@ -20090,12 +20163,10 @@ function buildTurnPipeline() {
       rogueWorkOrders: (dbTurnMatch && dbTurnMatch.rogueWorkOrders) || 0,
       strictCompleted: dbTurnMatch ? dbTurnMatch.strictCompleted : false,
       hasCurrentResident: dbTurnMatch ? dbTurnMatch.hasCurrentResident : false,
-      isReadyToClose: dbTurnMatch ? !!dbTurnMatch.isReadyToClose : false,
-      isPriorityTurn: dbTurnMatch ? !!dbTurnMatch.isPriorityTurn : false,
-      rentReady: dbTurnMatch ? !!dbTurnMatch.rentReady : false,
-      hasNextResident: dbTurnMatch ? !!dbTurnMatch.hasNextResident : false,
-      elapsedDays: dbTurnMatch && dbTurnMatch.elapsedDays != null ? Number(dbTurnMatch.elapsedDays) : null,
       nextResidentName: (dbTurnMatch && dbTurnMatch.nextResidentName) || '',
+      occupancyState: (dbTurnMatch && dbTurnMatch.occupancyState) || '',
+      engineReadyToClose: !!(dbTurnMatch && dbTurnMatch.readyToClose),
+      engineIsPriority: !!(dbTurnMatch && dbTurnMatch.isPriority),
       depositStatus: (dbTurnMatch && dbTurnMatch.depositStatus) || '',
       depositAmount: (dbTurnMatch && dbTurnMatch.depositAmount) || '',
       depositReturnDeadline: (dbTurnMatch && dbTurnMatch.depositReturnDeadline) || '',
@@ -20119,10 +20190,11 @@ function buildTurnPipeline() {
     addEntry(key, mo.unit, mo.property, mo.propertyId, mo.unitId, mo.moveOut, null, mo.tenant);
   });
 
-  // Sort: confirmed active priority → ready-to-close (rented/rent-ready) → on-radar → completed
+  // Sort: confirmed active (most elapsed) → on-radar (upcoming first, then oldest-awaiting)
+  // → completed (most recently done first)
   TURN_PIPE_DATA.sort(function(a, b) {
-    var aGroup = a.isCompleted ? 3 : a.isReadyToClose ? 2 : a.isConfirmed ? 0 : 1; // 0=active priority, 1=radar, 2=ready-to-close, 3=done
-    var bGroup = b.isCompleted ? 3 : b.isReadyToClose ? 2 : b.isConfirmed ? 0 : 1;
+    var aGroup = a.isCompleted ? 2 : a.isConfirmed ? 0 : 1; // 0=active, 1=radar, 2=done
+    var bGroup = b.isCompleted ? 2 : b.isConfirmed ? 0 : 1;
     if (aGroup !== bGroup) return aGroup - bGroup;
     if (aGroup === 0) return b.elapsed - a.elapsed; // active: most elapsed first
     if (aGroup === 1) { // on-radar: upcoming (soonest MO first) then past-awaiting-insp
@@ -20130,7 +20202,7 @@ function buildTurnPipeline() {
       if (a.isUpcoming && b.isUpcoming) return a.elapsed - b.elapsed; // days-until asc
       return b.elapsed - a.elapsed; // days-since-moveout desc
     }
-    return b.elapsed - a.elapsed; // ready-to-close / completed: most recent first
+    return b.elapsed - a.elapsed; // completed: most recent first
   });
 
   if (autoClosedCandidates.length > 0) {
@@ -20691,11 +20763,8 @@ function renderTurnKPIs() {
     return isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup);
   });
 
-  // Separate confirmed-active turns from on-radar (unconfirmed) entries — priority vs ready-to-close
-  var confirmedAll = inScope.filter(function(p) { return p.isConfirmed && !p.isCompleted; });
-  var confirmedPriority = confirmedAll.filter(function(p) { return isTurnPriorityCandidate(p); });
-  var readyToClose = confirmedAll.filter(function(p) { return !!p.isReadyToClose; });
-  var confirmed = confirmedPriority; // keep legacy alias for avg etc as priority view
+  // Separate confirmed-active turns from on-radar (unconfirmed) entries
+  var confirmed = inScope.filter(function(p) { return p.isConfirmed && !p.isCompleted; });
   var onRadar   = inScope.filter(function(p) { return p.isOnRadar; });
   var upcoming  = inScope.filter(function(p) { return p.isUpcoming; });
   var radarUpcomingCount = onRadar.filter(function(p) { return p.isUpcoming; }).length;
@@ -20711,8 +20780,8 @@ function renderTurnKPIs() {
   }
 
   var e = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
-  e('kpiActiveTurns', confirmedPriority.length);
-  e('kpiActiveTurnsSub', confirmedPriority.length + ' priority • ' + readyToClose.length + ' ready to close' + (confirmedAll.length > confirmedPriority.length + readyToClose.length ? ' • ' + (confirmedAll.length - confirmedPriority.length - readyToClose.length) + ' other' : ''));
+  e('kpiActiveTurns', confirmed.length);
+  e('kpiActiveTurnsSub', confirmed.length > 0 ? confirmed.length + ' confirmed in-progress' : 'No confirmed active turns');
   e('kpiOnRadar', onRadar.length);
   var radarUpcoming = radarUpcomingCount;
   var radarPast     = onRadar.filter(function(p) { return !p.isUpcoming; }).length;
@@ -20765,12 +20834,19 @@ function renderTurnPipelineUI() {
     // Closed turns only show in 'closed' filter
     if (p.isClosed && filter !== 'closed') return false;
     if (filter === 'closed' && !p.isClosed) return false;
-    // 'active' = confirmed priority turns that aren't yet complete/ready-to-close (excludes rented/rent-ready with current resident)
-    if (filter === 'active' && (!p.isConfirmed || p.isCompleted || p.isReadyToClose)) return false;
+    // 'active' = confirmed turns that aren't yet complete (FULL board incl.
+    // occupied-active + vacant-rented kept for AppFolio closeout)
+    if (filter === 'active' && (!p.isConfirmed || p.isCompleted)) return false;
+    // 'priority' = vacant-unrented only — excludes active-tenant occupancy
+    // and vacant-rented (ready-to-close). Nothing is deleted; switch back to
+    // 'active'/'all' to see closeout rows.
+    if (filter === 'priority' && !isTurnPriorityItem(p)) return false;
+    // 'ready' = vacant-rented / completing — ready to close in AppFolio.
+    if (filter === 'ready' && !isTurnReadyToClose(p)) return false;
     // 'on_radar' = unconfirmed (possible) turns
     if (filter === 'on_radar' && !p.isOnRadar) return false;
-    if (filter === 'completed' && !p.isCompleted && !p.isReadyToClose) return false;
-    if (filter === 'stalled' && (!p.isStalled || p.isCompleted || p.isReadyToClose)) return false;
+    if (filter === 'completed' && !p.isCompleted) return false;
+    if (filter === 'stalled' && (!p.isStalled || p.isCompleted)) return false;
     if (filter === 'upcoming' && !p.isUpcoming) return false;
     if (group && p.property !== group) return false;
     // Property group filter (global)
@@ -20841,8 +20917,8 @@ function renderTurnPipelineUI() {
       }
     }
 
-    var slaBreach = p.sla && p.sla.breached && !p.isCompleted && !p.isReadyToClose;
-    var cardClass = p.isCompleted ? 'completed' : p.isReadyToClose ? 'ready-to-close' : p.isUpcoming ? 'upcoming' : p.isOnRadar ? 'on-radar' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
+    var slaBreach = p.sla && p.sla.breached && !p.isCompleted && !isTurnReadyToClose(p);
+    var cardClass = p.isCompleted ? 'completed' : isTurnReadyToClose(p) ? 'ready-to-close' : p.isUpcoming ? 'upcoming' : p.isOnRadar ? 'on-radar' : slaBreach ? 'sla-breach' : p.isStalled ? 'stalled' : p.elapsed < CONFIG.TURN_WARNING_DAYS ? 'on-track' : 'waiting';
     html += '<div class="pipe-card ' + cardClass + '" data-pipeidx="' + idx + '" data-pipeid="' + escapeHtml(p.id) + '">';
 
     // Left: unit info
@@ -23870,6 +23946,7 @@ function wireUpUI() {
 
   // Turn pipeline controls
   if ($('#turnPipeFilter')) {
+    try { $('#turnPipeFilter').value = currentTurnPipeFilter; } catch (e) { /* */ }
     $('#turnPipeFilter').addEventListener('change', function() {
       currentTurnPipeFilter = this.value;
       renderTurnPipelineUI();
@@ -25429,42 +25506,60 @@ async function refreshData() {
    into the #attentionSection on the dashboard.
    Called by renderAll() and renderDashboardKPIs().
    ================================================================= */
-function isTurnPriorityCandidate(p) {
-  if (!p || p.isCompleted || p.isClosed) return false;
-  if (p.hasCurrentResident) return false;
-  if (p.rentReady) return false;
-  if (p.hasNextResident) return false;
-  if (p.isReadyToClose) return false;
-  if (String(p.status || '').toLowerCase() === 'ready to close') return false;
-  if (String(p.status || '').toLowerCase() === 'completed') return false;
-  return true;
-}
 function renderAttentionPanel() {
   var attnToday = new Date();
 
-  // Stalled turns — priority only (exclude occupied / rent-ready / rented)
+  // Stalled turns — PRIORITY SCOPE ONLY (R1).
+  // Occupied-active (active tenant still in place) and vacant-rented
+  // (ready-to-close / completing) rows stay on the full turn board for
+  // AppFolio closeout but must not cloud the priority view.
   var stalledEl = document.getElementById('attentionStalledBody');
   if (stalledEl) {
-    var stalled = TURN_PIPE_DATA.filter(function(p) {
+    var inScopeTurns = TURN_PIPE_DATA.filter(function(p) {
       if (!isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup)) return false;
-      if (!isTurnPriorityCandidate(p)) return false;
-      return p.isStalled;
+      return !p.isCompleted && !p.isClosed;
     });
-    // Also show turns past deposit deadline — still priority only
-    var depositOverdue = TURN_PIPE_DATA.filter(function(p) {
-      if (!isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup)) return false;
-      if (!isTurnPriorityCandidate(p)) return false;
+    var priorityTurns = inScopeTurns.filter(function(p) {
+      try { return isTurnPriorityItem(p); } catch (e) { return p.isStalled && !p.isCompleted; }
+    });
+    var stalled = priorityTurns.filter(function(p) { return p.isStalled; });
+    // Also show turns past deposit deadline (priority scope)
+    var depositOverdue = priorityTurns.filter(function(p) {
       return p.isConfirmed && p.sla && p.sla.overdue;
     });
-    // Ready-to-close count (vacant rented / rent-ready / occupied — needs AppFolio close but not priority)
-    var readyToCloseCount = TURN_PIPE_DATA.filter(function(p) {
-      if (!isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup)) return false;
-      return !!p.isReadyToClose || String(p.status || '').toLowerCase() === 'ready to close';
+    var readyToCloseCount = inScopeTurns.filter(function(p) {
+      try { return isTurnReadyToClose(p); } catch (e) { return false; }
     }).length;
-    if (stalled.length === 0 && depositOverdue.length === 0) {
-      var emptyMsg = '<div class="attn-empty"><i class="fas fa-check-circle"></i> No stalled turns</div>';
-      if (readyToCloseCount > 0) emptyMsg += '<div class="attn-inline-meta" style="margin-top:6px">' + readyToCloseCount + ' ready to close (rented/rent-ready) — close in AppFolio</div>';
-      stalledEl.innerHTML = emptyMsg;
+    var occupiedActiveCount = inScopeTurns.filter(function(p) {
+      try { return getTurnOccupancyState(p) === 'occupied-active' && p.isConfirmed && !p.isUpcoming; }
+      catch (e) { return false; }
+    }).length;
+    // Aging backlog flags (live totals, priority scope): 180d+ turns,
+    // 180d+ open WOs, 90d+ vacant, pending renewals.
+    var turns180 = priorityTurns.filter(function(p) { return !p.isUpcoming && Number(p.elapsed || 0) >= 180; }).length;
+    var wosOpen180 = (typeof WORK_ORDERS !== 'undefined' ? WORK_ORDERS : []).filter(function(w) {
+      if (!isInPropertyGroup(w.propertyId, w.propertyName, currentPropertyGroup)) return false;
+      var st = String(w.status || '');
+      if (/^(completed|canceled|complete|cancelled)$/i.test(st)) return false;
+      if (!w.created) return false;
+      var d = new Date(w.created);
+      if (isNaN(d.getTime())) return false;
+      return daysBetween(d, attnToday) >= 180;
+    }).length;
+    var vacant90 = (typeof VACANCY_V2_UNITS !== 'undefined' ? getVacancyV2InScope() : []).filter(function(v) {
+      return Number(v.daysVacant || 0) >= 90;
+    }).length;
+    var renewalsPending = (typeof RENEWALS_ROWS !== 'undefined' ? RENEWALS_ROWS : []).filter(function(r) {
+      var eff = null;
+      try { eff = normalizeGroupSelectionValue(getEffectiveGroupId()); } catch (e) { eff = currentPropertyGroup; }
+      if (eff && !isInPropertyGroup(r.property_id || r.propertyId || '', r.property_name || r.property || '', eff)) return false;
+      return String(r.status || '').trim().toLowerCase() === 'pending';
+    }).length;
+    if (stalled.length === 0 && depositOverdue.length === 0 && turns180 === 0 && wosOpen180 === 0 && vacant90 === 0 && renewalsPending === 0) {
+      stalledEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> No stalled turns</div>' +
+        ((readyToCloseCount > 0 || occupiedActiveCount > 0)
+          ? '<div class="attn-more">' + readyToCloseCount + ' ready-to-close • ' + occupiedActiveCount + ' occupied (kept for AppFolio closeout)</div>'
+          : '');
     } else {
       var stalledHtml = '';
       if (depositOverdue.length > 0) {
@@ -25480,7 +25575,17 @@ function renderAttentionPanel() {
         });
         if (stalled.length > 3) stalledHtml += '<div class="attn-more">+' + (stalled.length - 3) + ' more</div>';
       }
-      if (readyToCloseCount > 0) stalledHtml += '<div class="attn-inline-meta" style="margin-top:6px">' + readyToCloseCount + ' ready to close — close in AppFolio</div>';
+      var backlogBits = [];
+      if (turns180 > 0) backlogBits.push(turns180 + ' turns 180d+');
+      if (wosOpen180 > 0) backlogBits.push(wosOpen180 + ' WOs 180d+');
+      if (vacant90 > 0) backlogBits.push(vacant90 + ' vacant 90d+');
+      if (renewalsPending > 0) backlogBits.push(renewalsPending + ' renewals pending');
+      if (backlogBits.length > 0) {
+        stalledHtml += '<div class="attn-section-label" style="margin-top:6px">Aging backlog: ' + escapeHtml(backlogBits.join(' • ')) + '</div>';
+      }
+      if (readyToCloseCount > 0 || occupiedActiveCount > 0) {
+        stalledHtml += '<div class="attn-more">' + readyToCloseCount + ' ready-to-close • ' + occupiedActiveCount + ' occupied (kept for AppFolio closeout, out of priority)</div>';
+      }
       stalledEl.innerHTML = stalledHtml;
     }
   }
@@ -25597,7 +25702,6 @@ function renderAttentionPanel() {
     });
     var pendingOnly = pendingBills.filter(function(b){ return getBillStatusKey(b) === 'pending_approval'; });
     var onHoldOnly = pendingBills.filter(function(b){ return getBillStatusKey(b) === 'on_hold'; });
-
     if (!pendingBills.length) {
       pendingBillsEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> No pending invoices</div>';
     } else {
@@ -25614,61 +25718,45 @@ function renderAttentionPanel() {
     }
   }
 
-  // Priority Attention — 6mo+ turns, 180d+ WOs, 90d+ vacant
+  // Priority Attention — detailed 6mo+ turns, 180d+ WOs, 90d+ vacant (complements stalled backlog line)
   var priorityEl = document.getElementById('attentionPriorityBody');
   if (priorityEl) {
-    var priorityTurns = TURN_PIPE_DATA.filter(function(p){
-      if (!isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup)) return false;
-      if (!isTurnPriorityCandidate(p)) return false;
-      var days = p.elapsedDays != null ? p.elapsedDays : p.elapsed;
-      return days >= CONFIG.TURN_PRIORITY_DAYS;
-    });
-    var openWOs180 = (WORK_ORDERS || []).filter(function(w){
-      if (w.status === 'Completed' || w.status === 'Canceled' || w.status === 'Cancelled') return false;
+    var priorityTurnsDetail = [];
+    try { priorityTurnsDetail = TURN_PIPE_DATA.filter(function(p){ return isTurnPriorityItem(p) && !p.isUpcoming && Number(p.elapsed || 0) >= CONFIG.TURN_PRIORITY_DAYS && isInPropertyGroup(p.propertyId, p.property, currentPropertyGroup); }); } catch(e){}
+    var openWOs180Detail = [];
+    try { openWOs180Detail = (typeof WORK_ORDERS !== 'undefined' ? WORK_ORDERS : []).filter(function(w){
       if (!isInPropertyGroup(w.propertyId, w.propertyName, currentPropertyGroup)) return false;
-      var d = w.createdAt || w.created_at;
-      if (!d) return false;
-      var age = Math.floor((attnToday - new Date(d)) / 86400000);
-      return age >= CONFIG.WO_PRIORITY_DAYS;
-    });
-    var vacant90 = getVacancyV2InScope ? getVacancyV2InScope().filter(function(v){
-      return Number(v.daysVacant) >= CONFIG.VACANT_PRIORITY_DAYS;
-    }) : [];
-    // Fallback if getVacancyV2InScope not yet defined, use VACANCY_V2_UNITS directly filtered by group
-    if (!vacant90.length && typeof VACANCY_V2_UNITS !== 'undefined' && VACANCY_V2_UNITS.length) {
-      var eff = normalizeGroupSelectionValue ? normalizeGroupSelectionValue(getEffectiveGroupId ? getEffectiveGroupId() : currentPropertyGroup) : currentPropertyGroup;
-      vacant90 = VACANCY_V2_UNITS.filter(function(v){
-        var inGroup = !eff || isInPropertyGroup(v.propertyId, v.property, eff);
-        return inGroup && Number(v.daysVacant) >= CONFIG.VACANT_PRIORITY_DAYS;
-      });
-    }
-    if (priorityTurns.length === 0 && openWOs180.length === 0 && vacant90.length === 0) {
+      var st = String(w.status || '');
+      if (/^(completed|canceled|complete|cancelled)$/i.test(st)) return false;
+      if (!w.created) return false;
+      var d = new Date(w.created);
+      if (isNaN(d.getTime())) return false;
+      return daysBetween(d, attnToday) >= CONFIG.WO_PRIORITY_DAYS;
+    }); } catch(e){}
+    var vacant90Detail = [];
+    try { vacant90Detail = (typeof VACANCY_V2_UNITS !== 'undefined' ? getVacancyV2InScope() : []).filter(function(v){ return Number(v.daysVacant || 0) >= CONFIG.VACANT_PRIORITY_DAYS; }); } catch(e){}
+    if (priorityTurnsDetail.length===0 && openWOs180Detail.length===0 && vacant90Detail.length===0) {
       priorityEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> No priority aging items</div>';
     } else {
       var priHtml = '';
-      if (priorityTurns.length) {
-        priHtml += '<div class="attn-count u-danger">' + priorityTurns.length + ' turn' + (priorityTurns.length>1?'s':'') + ' 6mo+ ongoing</div>';
-        priorityTurns.slice(0,2).forEach(function(p){
-          var days = p.elapsedDays != null ? p.elapsedDays : p.elapsed;
-          priHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(p.unit) + ' — ' + escapeHtml(p.property) + '</span><span class="attn-value u-danger">' + days + 'd</span></div>';
+      if (priorityTurnsDetail.length) {
+        priHtml += '<div class="attn-count u-danger">' + priorityTurnsDetail.length + ' turn' + (priorityTurnsDetail.length>1?'s':'') + ' 6mo+ ongoing</div>';
+        priorityTurnsDetail.slice(0,2).forEach(function(p){
+          priHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(p.unit) + ' — ' + escapeHtml(p.property) + '</span><span class="attn-value u-danger">' + p.elapsed + 'd</span></div>';
         });
       }
-      if (openWOs180.length) {
-        priHtml += '<div class="attn-section-label u-danger" style="margin-top:' + (priorityTurns.length?'6':'0') + 'px">' + openWOs180.length + ' WOs 180d+ open</div>';
-        openWOs180.slice(0,2).forEach(function(w){
-          var age = Math.floor((attnToday - new Date(w.createdAt || w.created_at)) / 86400000);
+      if (openWOs180Detail.length) {
+        priHtml += '<div class="attn-section-label u-danger" style="margin-top:' + (priorityTurnsDetail.length?'6':'0') + 'px">' + openWOs180Detail.length + ' WOs 180d+ open</div>';
+        openWOs180Detail.slice(0,2).forEach(function(w){
+          var age = daysBetween(new Date(w.created), attnToday);
           priHtml += '<div class="attn-item"><span class="attn-label">#' + escapeHtml(String(w.id)) + ' — ' + escapeHtml((w.description||'').slice(0,28)) + '</span><span class="attn-value u-danger">' + age + 'd</span></div>';
         });
       }
-      if (vacant90.length) {
-        priHtml += '<div class="attn-section-label u-warning" style="margin-top:6px">' + vacant90.length + ' vacant 90d+ (3mo+)</div>';
-        vacant90.slice(0,2).forEach(function(v){
+      if (vacant90Detail.length) {
+        priHtml += '<div class="attn-section-label u-warning" style="margin-top:6px">' + vacant90Detail.length + ' vacant 90d+ (3mo+)</div>';
+        vacant90Detail.slice(0,2).forEach(function(v){
           priHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(v.unit || v.property) + ' — ' + escapeHtml(v.property) + '</span><span class="attn-value u-warning">' + v.daysVacant + 'd</span></div>';
         });
-      }
-      if (priorityTurns.length > 2 || openWOs180.length > 2 || vacant90.length > 2) {
-        var totalPri = priorityTurns.length + openWOs180.length + vacant90.length;
-        if (totalPri > 6) priHtml += '<div class="attn-more">+' + (totalPri - 6) + ' more priority items</div>';
       }
       priorityEl.innerHTML = priHtml;
     }
@@ -25695,11 +25783,11 @@ function renderAttentionPanel() {
       if (st === 'completed' || st === 'canceled' || st === 'cancelled' || st === 'converted') return false;
       return age >= CONFIG.SHOWING_NEGLECT_DAYS;
     });
-    // Scope filter if guest rows have property info
-    var effGroup = normalizeGroupSelectionValue ? normalizeGroupSelectionValue(getEffectiveGroupId ? getEffectiveGroupId() : currentPropertyGroup) : currentPropertyGroup;
-    if (effGroup) {
-      neglectedGuests = neglectedGuests.filter(function(r){ return isInPropertyGroup('', r.property_name || r.property || '', effGroup); });
-      neglectedShowings = neglectedShowings.filter(function(r){ return isInPropertyGroup('', r.property_name || r.property || '', effGroup); });
+    var effGroup2 = null;
+    try { effGroup2 = normalizeGroupSelectionValue(getEffectiveGroupId()); } catch(e){ effGroup2 = currentPropertyGroup; }
+    if (effGroup2) {
+      neglectedGuests = neglectedGuests.filter(function(r){ return isInPropertyGroup('', r.property_name || r.property || '', effGroup2); });
+      neglectedShowings = neglectedShowings.filter(function(r){ return isInPropertyGroup('', r.property_name || r.property || '', effGroup2); });
     }
     var hasLeasingData = guestRows.length || showingRows.length;
     if (!hasLeasingData) {
@@ -25734,14 +25822,10 @@ function renderAttentionPanel() {
       var st = String(r.status || '').toLowerCase();
       return st === 'pending' || st === 'month to month' || st.indexOf('pending') !== -1;
     });
-    // Vacancy count already computed as vacant90 above, but recompute for this card if needed
-    var vacCount = 0;
-    try {
-      var vacInScope = getVacancyV2InScope ? getVacancyV2InScope() : (typeof VACANCY_V2_UNITS !== 'undefined' ? VACANCY_V2_UNITS : []);
-      vacCount = vacInScope.length;
-    } catch(e){ vacCount = 0; }
+    var vacCount2 = 0;
+    try { var vacInScope2 = getVacancyV2InScope ? getVacancyV2InScope() : (typeof VACANCY_V2_UNITS !== 'undefined' ? VACANCY_V2_UNITS : []); vacCount2 = vacInScope2.length; } catch(e){ vacCount2 = 0; }
     var hasRenewalData = renewalRows.length > 0;
-    if (!hasRenewalData && vacCount === 0) {
+    if (!hasRenewalData && vacCount2 === 0) {
       renewalsEl.innerHTML = '<div class="attn-empty"><i class="fas fa-clock"></i> Open Renewals / Vacancies to load</div>';
     } else {
       var renHtml = '';
@@ -25753,8 +25837,7 @@ function renderAttentionPanel() {
       } else if (hasRenewalData) {
         renHtml += '<div class="attn-empty"><i class="fas fa-check-circle"></i> No pending renewals (' + renewalRows.length + ' total)</div>';
       }
-      // Vacancy summary line
-      if (vacCount) renHtml += '<div class="attn-section-label" style="margin-top:' + (pendingRenewals.length?'6':'0') + 'px">' + vacCount + ' vacant unit' + (vacCount>1?'s':'') + ' in scope</div>';
+      if (vacCount2) renHtml += '<div class="attn-section-label" style="margin-top:' + (pendingRenewals.length?'6':'0') + 'px">' + vacCount2 + ' vacant unit' + (vacCount2>1?'s':'') + ' in scope</div>';
       renewalsEl.innerHTML = renHtml || '<div class="attn-empty">No renewal/vacancy alerts</div>';
     }
   }
