@@ -50,8 +50,8 @@ test('turn engine includes compliance, financial, and strict completion fields',
   assert.match(TURN_ENGINE_SQL, /strict_completed/i);
 });
 
-test('turn engine property scope uses Link + PropertyGroupIds array', () => {
-  assert.match(TURN_ENGINE_SQL, /p_scope\.raw_json->>'Link'/i);
+test('turn engine property scope is badge-identical (singular id or PropertyGroupIds array)', () => {
+  assert.match(TURN_ENGINE_SQL, /p_scope\.property_group_id = ANY/i);
   assert.match(TURN_ENGINE_SQL, /p_scope\.raw_json->'PropertyGroupIds' \?\|/i);
 });
 
