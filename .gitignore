@@ -6,7 +6,9 @@ node_modules/git
 agewf.jsx
 .DS_Store
 afproxy3
-.github
+.github/instructions
+.github/skills
+.github/.DS_Store
 .vscode
 node_modules/
 workOrders.old.ts
