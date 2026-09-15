@@ -283,11 +283,32 @@ milestone_rows as (
       jsonb_build_object('key', 'rent_ready', 'label', 'Rent Ready', 'status', case when te.rent_ready then 'completed' when te.move_out_date <= now() then 'in_progress' else 'not_started' end),
       jsonb_build_object('key', 'marketing_active', 'label', 'Marketing Active', 'status', case when te.ready_for_showing_on is not null then 'completed' when te.move_out_date <= now() then 'in_progress' else 'not_started' end)
     ) as milestones,
+    -- Vacancy-driven completion (R1): a turn completes on work evidence or an
+    -- AppFolio turn end — never gated on a current resident. Live data shows
+    -- vacant turns with has_current_resident=false that must still be able to
+    -- complete; gating on residency froze the whole board at 0 Completed.
+    -- Rows are never dropped here: open turns needing AppFolio closeout stay
+    -- queryable and surface as In Progress / ready_to_close, not Completed.
     (
-      te.work_order_count > 0
-      and te.all_work_orders_completed
-      and coalesce(te.has_current_resident, false)
-    ) as strict_completed
+      (te.work_order_count > 0 and te.all_work_orders_completed)
+      or te.turn_end_date is not null
+      or (te.next_move_in_date is not null and te.next_move_in_date <= now())
+    ) as strict_completed,
+    -- Occupancy triage for the priority view. occupied-active (active tenant
+    -- still in place) and vacant-rented (leased, awaiting move-in → ready to
+    -- close) stay on the full board for AppFolio closeout but stay OUT of
+    -- the priority scope; only vacant-unrented is priority.
+    case
+      when coalesce(te.has_current_resident, false) then 'occupied-active'
+      when te.next_move_in_date is not null then 'vacant-rented'
+      else 'vacant-unrented'
+    end as occupancy_state,
+    (
+      te.all_work_orders_completed
+      or te.turn_end_date is not null
+      or te.next_move_in_date is not null
+      or coalesce(te.rent_ready, false)
+    ) as ready_to_close
   from turn_evidence te
 ),
 final_rows as (
@@ -324,6 +345,9 @@ select
   fr.all_work_orders_completed,
   coalesce(fr.has_current_resident, false) as has_current_resident,
   fr.strict_completed,
+  fr.occupancy_state,
+  fr.ready_to_close,
+  (not fr.strict_completed and fr.move_out_date <= now() and fr.occupancy_state = 'vacant-unrented') as is_priority,
   jsonb_build_object(
     'is_native_turn', fr.is_native_turn,
     'rogue_wos_detected', fr.rogue_wos_detected
@@ -334,7 +358,10 @@ where fr.move_out_date >= current_date - ($1::int * interval '1 day')
     select 1
     from appfolio_properties p_scope
     where ${propertyIdentityMatch('fr.property_id', 'p_scope')}
-      and p_scope.property_group_id = ANY($3::text[])
+      and (
+        p_scope.property_group_id = ANY($3::text[])
+        or p_scope.raw_json->'PropertyGroupIds' ?| ($3::text[])
+      )
   ))
   and ($4::text = '' or lower(case
     when fr.strict_completed then 'Completed'

@@ -6745,6 +6745,9 @@ app.get('/api/local/v2/turns', async (req: Request, res: Response) => {
       all_work_orders_completed: !!row.all_work_orders_completed,
       has_current_resident: !!row.has_current_resident,
       strict_completed: !!row.strict_completed,
+      occupancy_state: String(row.occupancy_state || 'vacant-unrented'),
+      ready_to_close: !!row.ready_to_close,
+      is_priority: !!row.is_priority,
       compliance_status: row.compliance_status || {
         is_native_turn: !!row.unit_turn_id,
         rogue_wos_detected: 0,
@@ -7915,9 +7918,14 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
             order by coalesce(t.move_in_date, t.last_updated_at, t.cached_at) desc nulls last
             limit 1
           ) td on true
-          left join appfolio_properties p on p.id = i.property_id
+          -- Scope identity matches the inspections badge (Link + the
+          -- PropertyGroupIds array): the old p.id = i.property_id join plus
+          -- singular property_group_id column blanked every scoped grid
+          -- while the badge still counted rows.
+          inner join appfolio_properties p
+            on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || i.property_id::text
+            and p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
           left join appfolio_units u on u.unit_id = i.unit_id
-          where p.property_group_id = ANY(${scopeIds}::text[])
           order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
           limit ${limit}
           offset ${offset}

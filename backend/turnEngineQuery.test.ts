@@ -56,6 +56,32 @@ test('turn engine property scope bridges canonical and raw AppFolio identifiers'
   assert.match(TURN_ENGINE_SQL, /PropertyId/i);
 });
 
+test('turn completion is vacancy-driven, never gated on a current resident', () => {
+  // Regression: gating strict_completed on has_current_resident froze the
+  // board at 0 Completed (live turns are vacant). Completion must rest on
+  // work evidence / AppFolio turn end / detected move-in instead.
+  assert.doesNotMatch(
+    TURN_ENGINE_SQL,
+    /has_current_resident[\s\S]{0,200}as strict_completed/i,
+  );
+  assert.match(TURN_ENGINE_SQL, /all_work_orders_completed\)\s*\n\s*or te\.turn_end_date is not null/i);
+  assert.match(TURN_ENGINE_SQL, /te\.next_move_in_date is not null and te\.next_move_in_date <= now\(\)/i);
+});
+
+test('turn engine exposes occupancy triage for the priority view', () => {
+  assert.match(TURN_ENGINE_SQL, /occupied-active/);
+  assert.match(TURN_ENGINE_SQL, /vacant-rented/);
+  assert.match(TURN_ENGINE_SQL, /vacant-unrented/);
+  assert.match(TURN_ENGINE_SQL, /as occupancy_state/i);
+  assert.match(TURN_ENGINE_SQL, /as ready_to_close/i);
+  assert.match(TURN_ENGINE_SQL, /as is_priority/i);
+});
+
+test('turn scope matches badge identity (singular group id or PropertyGroupIds array)', () => {
+  assert.match(TURN_ENGINE_SQL, /p_scope\.property_group_id = ANY\(\$3::text\[\]\)/i);
+  assert.match(TURN_ENGINE_SQL, /p_scope\.raw_json->'PropertyGroupIds' \?\|\s*\(\$3::text\[\]\)/);
+});
+
 test('Express registers authenticated unit-turn tracker synchronization', async () => {
   const source = await readFile(new URL('./server.ts', import.meta.url), 'utf8');
 
