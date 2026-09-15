@@ -1,5 +1,3 @@
-import { propertyIdentityMatch } from './badgeCountsPolicy.ts';
-
 export const TURN_ENGINE_SQL = String.raw`
 with native_turns as (
   select
@@ -287,13 +285,28 @@ milestone_rows as (
       te.work_order_count > 0
       and te.all_work_orders_completed
       and coalesce(te.has_current_resident, false)
-    ) as strict_completed
+    ) as strict_completed,
+    (
+      te.work_order_count > 0
+      and te.all_work_orders_completed
+      and (
+        coalesce(te.has_current_resident, false)
+        or coalesce(te.rent_ready, false)
+        or te.next_move_in_date is not null
+      )
+    ) as is_ready_to_close,
+    (
+      not coalesce(te.has_current_resident, false)
+      and not coalesce(te.rent_ready, false)
+      and te.next_move_in_date is null
+    ) as is_priority_turn
   from turn_evidence te
 ),
 final_rows as (
   select
     mr.*,
-    (select count(*)::int from jsonb_array_elements(mr.milestones) milestone where milestone->>'status' = 'completed') as milestones_completed
+    (select count(*)::int from jsonb_array_elements(mr.milestones) milestone where milestone->>'status' = 'completed') as milestones_completed,
+    (current_date - mr.move_out_date::date) as elapsed_days
   from milestone_rows mr
 )
 select
@@ -310,6 +323,7 @@ select
   fr.turn_end_date,
   case
     when fr.strict_completed then 'Completed'
+    when fr.is_ready_to_close then 'Ready to Close'
     when fr.move_out_date > now() then 'Upcoming'
     else 'In Progress'
   end as status,
@@ -324,6 +338,11 @@ select
   fr.all_work_orders_completed,
   coalesce(fr.has_current_resident, false) as has_current_resident,
   fr.strict_completed,
+  fr.is_ready_to_close,
+  fr.is_priority_turn,
+  fr.elapsed_days,
+  fr.rent_ready,
+  fr.next_move_in_date is not null as has_next_resident,
   jsonb_build_object(
     'is_native_turn', fr.is_native_turn,
     'rogue_wos_detected', fr.rogue_wos_detected
@@ -333,14 +352,15 @@ where fr.move_out_date >= current_date - ($1::int * interval '1 day')
   and ($3::text[] is null or exists (
     select 1
     from appfolio_properties p_scope
-    where ${propertyIdentityMatch('fr.property_id', 'p_scope')}
-      and p_scope.property_group_id = ANY($3::text[])
+    where p_scope.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || fr.property_id
+      and p_scope.raw_json->'PropertyGroupIds' ?| $3::text[]
   ))
   and ($4::text = '' or lower(case
     when fr.strict_completed then 'Completed'
+    when fr.is_ready_to_close then 'Ready to Close'
     when fr.move_out_date > now() then 'Upcoming'
     else 'In Progress'
   end) like '%' || lower($4::text) || '%')
-order by fr.strict_completed asc, fr.move_out_date desc
+order by fr.strict_completed asc, fr.is_ready_to_close asc, fr.move_out_date desc
 limit $2::int
 `;

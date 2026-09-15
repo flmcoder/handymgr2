@@ -50,10 +50,9 @@ test('turn engine includes compliance, financial, and strict completion fields',
   assert.match(TURN_ENGINE_SQL, /strict_completed/i);
 });
 
-test('turn engine property scope bridges canonical and raw AppFolio identifiers', () => {
-  assert.match(TURN_ENGINE_SQL, /p_scope\.id = fr\.property_id/i);
-  assert.match(TURN_ENGINE_SQL, /p_scope\.raw_json/i);
-  assert.match(TURN_ENGINE_SQL, /PropertyId/i);
+test('turn engine property scope uses Link + PropertyGroupIds array', () => {
+  assert.match(TURN_ENGINE_SQL, /p_scope\.raw_json->>'Link'/i);
+  assert.match(TURN_ENGINE_SQL, /p_scope\.raw_json->'PropertyGroupIds' \?\|/i);
 });
 
 test('Express registers authenticated unit-turn tracker synchronization', async () => {

@@ -5288,10 +5288,31 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
     const inspPromise = queryClient.unsafe(inspBaseSql, scope ? [scope] : []);
 
     const [woRows, turnRows, inspRows] = await Promise.all([woPromise, turnPromise, inspPromise]);
-    const activeTurnRows = (turnRows as any[]).filter((row) => String(row?.status || '').toLowerCase() !== 'completed');
+    const activeTurnRows = (turnRows as any[]).filter((row) => {
+      const s = String(row?.status || '').toLowerCase();
+      return s !== 'completed' && s !== 'ready to close';
+    });
     const upcomingTurnRows = activeTurnRows.filter((row) => String(row?.status || '').toLowerCase() === 'upcoming');
-    const workOrderMetrics = (woRows as any[])[0] || {};
-    const payload = buildBadgeCountsPayload({
+    const readyToCloseRows = (turnRows as any[]).filter((row) => String(row?.status || '').toLowerCase() === 'ready to close');
+    const priorityTurnRows = (turnRows as any[]).filter((row) => !!row.is_priority_turn && String(row?.status || '').toLowerCase() === 'in progress');
+    // Priority metrics for dashboard attention panel
+    const now = new Date();
+    const daysSince = (d: any) => {
+      if (!d) return null;
+      const t = new Date(d).getTime();
+      if (Number.isNaN(t)) return null;
+      return Math.floor((now.getTime() - t) / 86400000);
+    };
+    const priorityTurns6mo = priorityTurnRows.filter((row) => {
+      const days = row.elapsed_days != null ? Number(row.elapsed_days) : daysSince(row.move_out_date);
+      return days != null && days >= 180;
+    }).length;
+    const woAge = workOrderMetrics as any;
+    // Approximate 180+ WOs from aging buckets: 61_plus includes 61-180 and 180+; we will compute precisely from WO table if needed frontend
+    const workOrderMetricsAny = woRows as any;
+    const workOrders180Plus = (turnRows as any[]).length ? undefined : undefined; // placeholder, computed client-side from full WO list
+    const workOrderMetricsExtra: any = {};
+    const payloadBase = buildBadgeCountsPayload({
       workOrders: workOrderMetrics.total,
       urgentWorkOrders: workOrderMetrics.urgent_total,
       workOrdersAge0To7: workOrderMetrics.age_0_7,
@@ -5304,6 +5325,14 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
       inspections: (inspRows as any[])[0]?.total,
       propertyGroupId: scopeIds.join(','),
     });
+    const payload: any = {
+      ...payloadBase,
+      turns_priority: priorityTurnRows.length,
+      turns_ready_to_close: readyToCloseRows.length,
+      turns_6mo_plus: priorityTurns6mo,
+      turns_all_active: activeTurnRows.length + readyToCloseRows.length,
+      work_orders_180_plus_hint: workOrderMetricsAny[0]?.age_61_plus || 0,
+    };
     res.json(payload);
   } catch (error) {
     logTunnelError(error, '/api/local/badge_counts');
@@ -6745,6 +6774,11 @@ app.get('/api/local/v2/turns', async (req: Request, res: Response) => {
       all_work_orders_completed: !!row.all_work_orders_completed,
       has_current_resident: !!row.has_current_resident,
       strict_completed: !!row.strict_completed,
+      is_ready_to_close: !!row.is_ready_to_close,
+      is_priority_turn: !!row.is_priority_turn,
+      elapsed_days: row.elapsed_days != null ? Number(row.elapsed_days) : null,
+      rent_ready: !!row.rent_ready,
+      has_next_resident: !!row.has_next_resident,
       compliance_status: row.compliance_status || {
         is_native_turn: !!row.unit_turn_id,
         rogue_wos_detected: 0,
@@ -7884,78 +7918,78 @@ app.get('/api/local/inspections', async (req: Request, res: Response) => {
     const activeOnly = /^(1|true|yes|on)$/i.test(String(req.query.active_only || '1').trim());
     const groupKey = scopeIds.join(',');
 
-    let rows: any[] = [];
+let rows: any[] = [];
     try {
       rows = scopeIds.length
         ? await queryClient`
-          select
-            i.inspection_id,
-            i.property_id,
-            coalesce(i.property_name, p.name) as property_name,
-            i.unit_id,
-            coalesce(i.unit_name, u.name, '') as unit_name,
-            i.last_inspection_date,
-            coalesce(td.tenant_name, i.tenant_name) as tenant_name,
-            coalesce(td.phone_numbers, i.tenant_primary_phone_number) as tenant_primary_phone_number,
-            coalesce(td.move_in_date::text, i.move_in_date::text) as move_in_date,
-            coalesce(td.move_out_date::text, i.move_out_date::text) as move_out_date,
-            td.status as tenant_status,
-            coalesce(td.occupancy_id, i.occupancy_id) as occupancy_id,
-            i.rentable,
-            i.unit_tags
-          from appfolio_unit_inspections i
-          inner join lateral (
-            select t.*
-            from appfolio_tenant_directory t
-            where lower(coalesce(t.status, '')) = 'current'
-              and (
-                (coalesce(i.occupancy_id, '') <> '' and t.occupancy_id = i.occupancy_id)
-                or (coalesce(i.occupancy_id, '') = '' and t.unit_id = i.unit_id)
-              )
-            order by coalesce(t.move_in_date, t.last_updated_at, t.cached_at) desc nulls last
-            limit 1
-          ) td on true
-          left join appfolio_properties p on p.id = i.property_id
-          left join appfolio_units u on u.unit_id = i.unit_id
-          where p.property_group_id = ANY(${scopeIds}::text[])
-          order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
-          limit ${limit}
-          offset ${offset}
-        `
+            select
+              i.inspection_id,
+              i.property_id,
+              coalesce(i.property_name, p.name) as property_name,
+              i.unit_id,
+              coalesce(i.unit_name, u.name, '') as unit_name,
+              i.last_inspection_date,
+              coalesce(td.tenant_name, i.tenant_name) as tenant_name,
+              coalesce(td.phone_numbers, i.tenant_primary_phone_number) as tenant_primary_phone_number,
+              coalesce(td.move_in_date::text, i.move_in_date::text) as move_in_date,
+              coalesce(td.move_out_date::text, i.move_out_date::text) as move_out_date,
+              td.status as tenant_status,
+              coalesce(td.occupancy_id, i.occupancy_id) as occupancy_id,
+              i.rentable,
+              i.unit_tags
+            from appfolio_unit_inspections i
+            inner join lateral (
+              select t.*
+              from appfolio_tenant_directory t
+              where lower(coalesce(t.status, '')) = 'current'
+                and (
+                  (coalesce(i.occupancy_id, '') <> '' and t.occupancy_id = i.occupancy_id)
+                  or (coalesce(i.occupancy_id, '') = '' and t.unit_id = i.unit_id)
+                )
+              order by coalesce(t.move_in_date, t.last_updated_at, t.cached_at) desc nulls last
+              limit 1
+            ) td on true
+            join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || i.property_id
+            left join appfolio_units u on u.unit_id = i.unit_id
+            where p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
+            order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
+            limit ${limit}
+            offset ${offset}
+          `
         : await queryClient`
-          select
-            i.inspection_id,
-            i.property_id,
-            coalesce(i.property_name, p.name) as property_name,
-            i.unit_id,
-            coalesce(i.unit_name, u.name, '') as unit_name,
-            i.last_inspection_date,
-            coalesce(td.tenant_name, i.tenant_name) as tenant_name,
-            coalesce(td.phone_numbers, i.tenant_primary_phone_number) as tenant_primary_phone_number,
-            coalesce(td.move_in_date::text, i.move_in_date::text) as move_in_date,
-            coalesce(td.move_out_date::text, i.move_out_date::text) as move_out_date,
-            td.status as tenant_status,
-            coalesce(td.occupancy_id, i.occupancy_id) as occupancy_id,
-            i.rentable,
-            i.unit_tags
-          from appfolio_unit_inspections i
-          inner join lateral (
-            select t.*
-            from appfolio_tenant_directory t
-            where lower(coalesce(t.status, '')) = 'current'
-              and (
-                (coalesce(i.occupancy_id, '') <> '' and t.occupancy_id = i.occupancy_id)
-                or (coalesce(i.occupancy_id, '') = '' and t.unit_id = i.unit_id)
-              )
-            order by coalesce(t.move_in_date, t.last_updated_at, t.cached_at) desc nulls last
-            limit 1
-          ) td on true
-          left join appfolio_properties p on p.id = i.property_id
-          left join appfolio_units u on u.unit_id = i.unit_id
-          order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
-          limit ${limit}
-          offset ${offset}
-        `;
+            select
+              i.inspection_id,
+              i.property_id,
+              coalesce(i.property_name, p.name) as property_name,
+              i.unit_id,
+              coalesce(i.unit_name, u.name, '') as unit_name,
+              i.last_inspection_date,
+              coalesce(td.tenant_name, i.tenant_name) as tenant_name,
+              coalesce(td.phone_numbers, i.tenant_primary_phone_number) as tenant_primary_phone_number,
+              coalesce(td.move_in_date::text, i.move_in_date::text) as move_in_date,
+              coalesce(td.move_out_date::text, i.move_out_date::text) as move_out_date,
+              td.status as tenant_status,
+              coalesce(td.occupancy_id, i.occupancy_id) as occupancy_id,
+              i.rentable,
+              i.unit_tags
+            from appfolio_unit_inspections i
+            inner join lateral (
+              select t.*
+              from appfolio_tenant_directory t
+              where lower(coalesce(t.status, '')) = 'current'
+                and (
+                  (coalesce(i.occupancy_id, '') <> '' and t.occupancy_id = i.occupancy_id)
+                  or (coalesce(i.occupancy_id, '') = '' and t.unit_id = i.unit_id)
+                )
+              order by coalesce(t.move_in_date, t.last_updated_at, t.cached_at) desc nulls last
+              limit 1
+            ) td on true
+            left join appfolio_properties p on p.id = i.property_id
+            left join appfolio_units u on u.unit_id = i.unit_id
+            order by coalesce(i.last_inspection_date, i.cached_at) desc, coalesce(i.property_name, p.name) asc, coalesce(i.unit_name, u.name) asc
+            limit ${limit}
+            offset ${offset}
+          `;
     } catch (error) {
       const message = String((error as any)?.message || error || '');
       const code = String((error as any)?.code || '');
