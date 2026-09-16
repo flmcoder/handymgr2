@@ -1531,8 +1531,7 @@ async function fetchAndRenderDashboardData(): Promise<void> {
     })
   );
 
-  const baseUrl = resolveProxyUrl();
-  const v2BaseUrl = resolveV2ProxyUrl();
+  const baseUrl = String(window.location.origin || '').replace(/\/+$/, '');
   const headers = { Accept: 'application/json', ...proxyAuthHeaders() };
   const scopedGroupUuid = (() => {
     try {
@@ -1541,17 +1540,6 @@ async function fetchAndRenderDashboardData(): Promise<void> {
       return '';
     }
   })();
-
-  function buildV2ReportUrl(report: string, extraParams: Record<string, string> = {}): string {
-    const sep = v2BaseUrl.includes('?') ? '&' : '?';
-    const params = new URLSearchParams({ action: 'v2_report', report, ...extraParams });
-    if (scopedGroupUuid) {
-      params.set('group_uuid', scopedGroupUuid);
-      params.set('property_group_uuid', scopedGroupUuid);
-      params.set('property_groups_ids', scopedGroupUuid);
-    }
-    return `${v2BaseUrl}${sep}${params.toString()}`;
-  }
 
   // ── 1. Occupancy Doughnut ─────────────────────────────────────────
   if (chartOccupancy) {
@@ -1587,10 +1575,12 @@ async function fetchAndRenderDashboardData(): Promise<void> {
   // ── 2. Move-Outs Bar ──────────────────────────────────────────────
   if (chartMoveOuts) {
     try {
-      const resp = await fetch(buildV2ReportUrl('tenant_directory', {
-        tenant_statuses: '4',
-        columns: 'move_out_date,property_id,unit_id',
-      }), { headers });
+      const moveOutsUrl = `${baseUrl}/api/v2/reports/tenant_directory.json`;
+      const resp = await fetch(moveOutsUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ tenant_statuses: '4', columns: 'move_out_date,property_id,unit_id' }),
+      });
       if (resp.ok) {
         const payload = await resp.json();
         const rows = Array.isArray(payload) ? payload : (Array.isArray(payload?.results) ? payload.results : []);
@@ -1651,9 +1641,12 @@ async function fetchAndRenderDashboardData(): Promise<void> {
   // ── 4. Leasing Velocity Area Chart ───────────────────────────────
   if (chartVelocity) {
     try {
-      const resp = await fetch(buildV2ReportUrl('tenant_directory', {
-        columns: 'move_in_date,move_out_date,property_id,unit_id',
-      }), { headers });
+      const leasingUrl = `${baseUrl}/api/v2/reports/tenant_directory.json`;
+      const resp = await fetch(leasingUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ columns: 'move_in_date,move_out_date,property_id,unit_id' }),
+      });
       if (resp.ok) {
         const payload = await resp.json();
         const rows = Array.isArray(payload) ? payload : (Array.isArray(payload?.results) ? payload.results : []);
