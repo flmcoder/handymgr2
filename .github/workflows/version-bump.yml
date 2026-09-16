@@ -22,6 +22,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: R1
+          token: ${{ secrets.ADMIN_PAT }}
 
       - name: Increment patch version
         run: |
