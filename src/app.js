@@ -17977,7 +17977,7 @@ function getWorkOrderGridColumnDefs(rows) {
     { field: 'propertyManager', headerName: 'Property Manager', minWidth: 160 },
     { field: 'unit', headerName: 'Unit', minWidth: 90, maxWidth: 110 },
     { field: 'description', headerName: 'Description', minWidth: 240, flex: 2 },
-    { field: 'status', headerName: 'Status', minWidth: 150, cellRenderer: function(p) { var value = String(p.value || 'Unknown'); return '<span class="wo-status-pill wo-status-pill--' + getWOStatusClass(value) + '"><i class="fas fa-circle" aria-hidden="true"></i>' + escapeHtml(value) + '</span>'; } },
+    { field: 'status', headerName: 'Status', minWidth: 150, cellRenderer: function(p) { var value = String(p.value || 'Unknown'); // Don't show "Completed" text in active work orders view — separate tab exists if (currentWOTab === 'active' && value.trim().toLowerCase() === 'completed') return '<span class="wo-status-pill wo-status-pill--' + getWOStatusClass(value) + '"><i class="fas fa-circle" aria-hidden="true"></i></span>'; return '<span class="wo-status-pill wo-status-pill--' + getWOStatusClass(value) + '"><i class="fas fa-circle" aria-hidden="true"></i>' + escapeHtml(value) + '</span>'; } },
     { field: 'priority', headerName: 'Priority', minWidth: 110, maxWidth: 120 },
     { field: 'assignedUser', headerName: 'Assignee', minWidth: 150 },
     { field: 'vendorName', headerName: 'Vendor', minWidth: 160 },
