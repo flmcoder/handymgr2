@@ -6656,6 +6656,9 @@ body.theme-neo #vaultScreen {
   border-radius: 6px;
   background: var(--bg-surface);
   box-shadow: none;
+  resize: horizontal;
+  overflow-x: hidden;
+  cursor: ew-resize;
 }
 
 .wo-context-empty {
