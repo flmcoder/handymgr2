@@ -1917,9 +1917,13 @@ html.dark .vault-resume-toggle:hover {
   color: var(--vault-accent-strong);
 }
 .login-info-tip {
-  background: color-mix(in srgb, var(--vault-tooltip-bg) 88%, #ffffff 12%);
-  border-color: color-mix(in srgb, var(--vault-surface-border) 72%, rgba(255,255,255,.28) 28%);
-  color: #f8fbff;
+  background: color-mix(in srgb, var(--vault-tooltip-bg) 95%, #ffffff 5%);
+  border-color: var(--vault-surface-border);
+  color: var(--vault-text);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+:root .login-info-tip {
+  color: var(--vault-text);
 }
 html.dark .login-info-tip {
   background: var(--vault-tooltip-bg);
