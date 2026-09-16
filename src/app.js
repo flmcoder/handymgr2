@@ -17006,7 +17006,10 @@ function getFilteredWOs() {
     // Property group scope is applied server-side on fetch; no client re-filter.
     // Flagged filter
     if (currentWOFilter === 'flagged' && !isWOFlagged(wo.id)) return false;
-    // Search
+    // Search — when a search term is entered, match against WO fields
+    // Property group filtering is handled server-side on fetch; the search
+    // allows finding WOs across all groups so a PM can locate a WO even
+    // if it falls outside their assigned property group, and see its group.
     if (search) {
       var s = search.toLowerCase();
       var haystack = [String(wo.id), String(wo.description || ''), String(wo.propertyName || ''), String(wo.vendorName || ''), String(wo.unit || ''), String(wo.tenant || ''), String(wo.assignedUser || '')].join(' ').toLowerCase();
