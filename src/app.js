@@ -17845,7 +17845,7 @@ function renderWOContextPanel(wo) {
   var timeline = [];
   if (wo.created) timeline.push({ date: wo.created, title: 'Work order opened', detail: wo.createdBy || 'Request received' });
   if (wo.scheduledStart) timeline.push({ date: wo.scheduledStart, title: 'Service scheduled', detail: wo.assignedUser || wo.vendorName || 'Assignment pending' });
-  if (wo.workCompletedOn) timeline.push({ date: wo.workCompletedOn, title: 'Work completed', detail: wo.vendorName || wo.assignedUser || 'Completion recorded' });
+  if (wo.workCompletedOn && wo.status && wo.status.trim().toLowerCase() === 'completed') timeline.push({ date: wo.workCompletedOn, title: 'Work completed', detail: wo.vendorName || wo.assignedUser || 'Completion recorded' });
   if (wo.completedOn && wo.completedOn !== wo.workCompletedOn) timeline.push({ date: wo.completedOn, title: 'Order closed', detail: wo.status || 'Completed' });
   if (!timeline.length && wo.updated) timeline.push({ date: wo.updated, title: 'Last activity', detail: wo.status || 'Updated' });
 
