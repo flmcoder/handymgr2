@@ -6387,23 +6387,19 @@ async function fetchWorkOrders(options) {
       }
       return pageData;
     };
-    // Load the full scoped set (server allows up to 20000) so the badge, list,
-    // grid and pager all share one truth; paging happens locally in render.
-    var firstPage = await loadWOPage(5000, 0);
-    var combinedResults = firstPage.results || firstPage.data || [];
-    var serverTotal = Math.max(0, Number(firstPage.total) || 0);
-    if (serverTotal > combinedResults.length && combinedResults.length > 0 && combinedResults.length < 20000) {
-      var restPage = await loadWOPage(Math.min(20000 - combinedResults.length, serverTotal - combinedResults.length), combinedResults.length);
-      combinedResults = combinedResults.concat(restPage.results || restPage.data || []);
-    }
-    if (requestGeneration !== _scopeRequestGeneration || String(scopedGroupUuid || '') !== String(getEffectiveGroupUuid() || '')) return false;
-    var activeResults = combinedResults;
-    WORK_ORDERS_ACTIVE = activeResults.map(normalizeLocalWorkOrder);
-    WORK_ORDERS = WORK_ORDERS_ACTIVE; // backward compat
-    window.WORK_ORDERS = WORK_ORDERS;
-    WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, Math.min(requestedOffset, Math.max(0, WORK_ORDERS_ACTIVE.length - 1)));
-    WORK_ORDERS_ACTIVE_TOTAL = serverTotal || WORK_ORDERS_ACTIVE.length;
-    WORK_ORDERS_ACTIVE_HAS_NEXT = (WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE_PAGE_SIZE) < WORK_ORDERS_ACTIVE_TOTAL;
+     // Active volume is bounded by status; use server-side pagination
+     // to avoid loading 20k rows into memory at once.
+     var firstPage = await loadWOPage(WORK_ORDERS_ACTIVE_PAGE_SIZE, requestedOffset);
+     var combinedResults = firstPage.results || firstPage.data || [];
+     var serverTotal = Math.max(0, Number(firstPage.total) || 0);
+     if (requestGeneration !== _scopeRequestGeneration || String(scopedGroupUuid || '') !== String(getEffectiveGroupUuid() || '')) return false;
+     var activeResults = combinedResults;
+     WORK_ORDERS_ACTIVE = activeResults.map(normalizeLocalWorkOrder);
+     WORK_ORDERS = WORK_ORDERS_ACTIVE; // backward compat
+     window.WORK_ORDERS = WORK_ORDERS;
+     WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, Math.min(requestedOffset, Math.max(0, WORK_ORDERS_ACTIVE.length - 1)));
+     WORK_ORDERS_ACTIVE_TOTAL = serverTotal || WORK_ORDERS_ACTIVE.length;
+     WORK_ORDERS_ACTIVE_HAS_NEXT = (WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE_PAGE_SIZE) < WORK_ORDERS_ACTIVE_TOTAL;
     
     setApiStatus('loading', 'Work orders: ' + WORK_ORDERS_ACTIVE_TOTAL + ' active');
     setDataSourceState('work_orders', 'ok', { count: WORK_ORDERS_ACTIVE_TOTAL, active: WORK_ORDERS_ACTIVE_TOTAL, inactive: _inactiveWorkOrdersLoaded ? WORK_ORDERS_INACTIVE.length : null, error: '' });
