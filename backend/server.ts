@@ -5108,7 +5108,19 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                  vendor_id, vendor_name, estimated_amount, total_cost,
                  created_at, updated_at, raw_json
           from appfolio_work_orders
-          where property_group_id = ANY(${scopeIds}::text[])
+          where (
+              property_group_id = ANY(${scopeIds}::text[])
+              or exists (
+                select 1 from appfolio_properties p
+                where p.id = appfolio_work_orders.property_id
+                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
+              )
+              or exists (
+                select 1 from appfolio_properties p
+                where p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
+                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
+              )
+            )
             and (
               coalesce(lower(status), '') not like '%completed%'
               and coalesce(lower(status), '') not like '%cancel%'
@@ -5147,7 +5159,19 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                  vendor_id, vendor_name, estimated_amount, total_cost,
                  created_at, updated_at, raw_json
           from appfolio_work_orders
-          where property_group_id = ANY(${scopeIds}::text[])
+          where (
+              property_group_id = ANY(${scopeIds}::text[])
+              or exists (
+                select 1 from appfolio_properties p
+                where p.id = appfolio_work_orders.property_id
+                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
+              )
+              or exists (
+                select 1 from appfolio_properties p
+                where p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
+                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
+              )
+            )
             and (
               coalesce(lower(status), '') not like '%completed%'
               and coalesce(lower(status), '') not like '%cancel%'
@@ -5183,7 +5207,21 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
     try {
       const totalRows = scopeIds.length
         ? await queryClient.unsafe(
-            `select count(*)::int as total from appfolio_work_orders where property_group_id = ANY($1::text[]) and ${OPEN_WORK_ORDER_STATUS_FILTER}`,
+            `select count(*)::int as total from appfolio_work_orders
+             where (
+               property_group_id = ANY($1::text[])
+               or exists (
+                 select 1 from appfolio_properties p
+                 where p.id = appfolio_work_orders.property_id
+                   and p.raw_json->'PropertyGroupIds' ?| $1::text[]
+               )
+               or exists (
+                 select 1 from appfolio_properties p
+                 where p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
+                   and p.raw_json->'PropertyGroupIds' ?| $1::text[]
+               )
+             )
+             and ${OPEN_WORK_ORDER_STATUS_FILTER}`,
             [scopeIds],
           )
         : await queryClient.unsafe(
@@ -5250,7 +5288,19 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
         count(*) filter (where ${WORK_ORDER_CREATED_AT_EXPR} is null)::int as age_unknown
       from appfolio_work_orders
       where ${OPEN_WORK_ORDER_STATUS_FILTER}
-      ${scope ? 'and property_group_id = ANY($1::text[])' : ''}
+      ${scope ? `and (
+        property_group_id = ANY($1::text[])
+        or exists (
+          select 1 from appfolio_properties p
+          where p.id = appfolio_work_orders.property_id
+            and p.raw_json->'PropertyGroupIds' ?| $1::text[]
+        )
+        or exists (
+          select 1 from appfolio_properties p
+          where p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
+            and p.raw_json->'PropertyGroupIds' ?| $1::text[]
+        )
+      )` : ''}
     `;
     const woPromise = queryClient.unsafe(woAggregateSql, scope ? [scope] : []);
 
