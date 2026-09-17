@@ -12083,7 +12083,6 @@ function wireBillingFilters() {
     setNavBadge('woBadge', 0);
     setNavBadge('turnBadge', 0);
     setNavBadge('inspBadge', 0);
-    fetchNavBadgeTotals(true);
   });
 
   document.addEventListener('groupFilterChanged', function() {
@@ -25103,6 +25102,7 @@ function wireUpUI() {
     emitGroupFilterChanged: function(detail) {
       document.dispatchEvent(new CustomEvent('groupFilterChanged', { detail: detail }));
     },
+    refreshNavBadgeTotals: function() { fetchNavBadgeTotals(true); },
     getCurrentPropertyGroup: function() { return currentPropertyGroup || ''; },
     getForcedPropertyGroupUuid: function() { return forcedPropertyGroupUuid || ''; },
     enforceScopedPropertyGroup: enforceScopedPropertyGroup,

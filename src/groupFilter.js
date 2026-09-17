@@ -39,6 +39,11 @@ export function createGroupFilterModule(deps) {
       groupName: deps.getCurrentPropertyGroup() || '',
       forcedGroupUuid: deps.getForcedPropertyGroupUuid() || ''
     });
+    // Keep navigation badges on the same scope transition as the page data.
+    // This is explicit so badge refresh cannot depend on another tab renderer.
+    if (typeof deps.refreshNavBadgeTotals === 'function') {
+      deps.refreshNavBadgeTotals();
+    }
   }
 
   function clearPropertyGroupFilters() {
