@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildActiveWorkOrdersUrl,
   buildWorkOrderPagination,
+  resolveExactWorkOrderReference,
   resolveWorkOrderLookupSearch,
   resolveWorkOrderHistoryDays,
 } from './workOrderQueryPolicy.ts';
@@ -99,6 +100,13 @@ test('global work-order lookup bounds oversized search terms', () => {
   assert.equal(resolveWorkOrderLookupSearch('x'.repeat(500)).length, 180);
 });
 
+test('cross-group lookup accepts only explicit work-order references', () => {
+  assert.equal(resolveExactWorkOrderReference('#WO-554'), 'WO-554');
+  assert.equal(resolveExactWorkOrderReference('554'), '554');
+  assert.equal(resolveExactWorkOrderReference('plumbing'), '');
+  assert.equal(resolveExactWorkOrderReference('property 554'), '');
+});
+
 test('work-order endpoint keeps default scope and redacts global lookup rows', async () => {
   const source = await readFile(new URL('./server.ts', import.meta.url), 'utf8');
   const routeStart = source.indexOf("app.get('/api/local/work_orders'");
@@ -106,6 +114,8 @@ test('work-order endpoint keeps default scope and redacts global lookup rows', a
   const route = source.slice(routeStart, routeEnd);
 
   assert.match(route, /resolveWorkOrderLookupSearch\(req\.query\.search\)/);
+  assert.match(route, /resolveExactWorkOrderReference\(searchQuery\)/);
+  assert.match(route, /buildWorkOrderPropertyGroupScopeSql\('wo', '\$6'\)/);
   assert.match(route, /property_group_id\s*=\s*ANY\(\$\{scopeIds\}::text\[\]\)/i);
   assert.match(route, /PropertyGroupIds'\s*\?\|\s*\$2::text\[\]/);
   assert.match(route, /case when can_open then id else '' end as id/i);

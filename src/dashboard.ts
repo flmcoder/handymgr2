@@ -2044,6 +2044,8 @@ interface WoRecord {
   vendorName?: string;
   priority?: string;
   Priority?: string;
+  count?: number;
+  value?: number;
 }
 
 const SANKEY_COLORS: Record<string, string> = {
@@ -2090,13 +2092,13 @@ export function buildWoSankeyOption(wos: WoRecord[]): ECOption {
     nodes.push({ name, itemStyle: { color } });
   }
 
-  function addLink(source: string, target: string): void {
+  function addLink(source: string, target: string, amount = 1): void {
     const key = `${source}→${target}`;
     const existing = links.find(l => l.source === source && l.target === target);
     if (existing) {
-      existing.value++;
+      existing.value += amount;
     } else {
-      links.push({ source, target, value: 1 });
+      links.push({ source, target, value: amount });
     }
   }
 
@@ -2130,15 +2132,16 @@ export function buildWoSankeyOption(wos: WoRecord[]): ECOption {
     const typeNode = `🏷 ${woType}`;
     const statusNode = `⚡ ${status}`;
     const assigneeNode = `👤 ${assignee.length > 20 ? assignee.slice(0, 18) + '…' : assignee}`;
+    const amount = Math.max(1, Number(wo.count ?? wo.value ?? 1) || 1);
 
     addNode(groupNode, sankeyColor(group));
     addNode(typeNode, sankeyColor(woType));
     addNode(statusNode, sankeyColor(status));
     addNode(assigneeNode, assignee === 'Unassigned' ? '#ef4444' : '#6366f1');
 
-    addLink(groupNode, typeNode);
-    addLink(typeNode, statusNode);
-    addLink(statusNode, assigneeNode);
+    addLink(groupNode, typeNode, amount);
+    addLink(typeNode, statusNode, amount);
+    addLink(statusNode, assigneeNode, amount);
   }
 
   return {

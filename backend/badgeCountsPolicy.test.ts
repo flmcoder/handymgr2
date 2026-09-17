@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   ACTIVE_INSPECTION_RESIDENT_FILTER,
   ACTIVE_TURN_STATUS_FILTER,
+  buildPropertyGroupMembershipSql,
+  buildWorkOrderPropertyGroupScopeSql,
   buildBadgeCountsPayload,
   PROPERTY_IDENTITY_MATCH_FILTER,
   toBadgeCount,
@@ -99,4 +101,14 @@ test('PROPERTY_IDENTITY_MATCH_FILTER bridges canonical and raw AppFolio property
   assert.match(PROPERTY_IDENTITY_MATCH_FILTER, /p\.id = source_property_id/);
   assert.match(PROPERTY_IDENTITY_MATCH_FILTER, /raw_json/);
   assert.match(PROPERTY_IDENTITY_MATCH_FILTER, /PropertyId/);
+});
+
+test('property-group scope helpers include direct and raw membership bridges', () => {
+  const propertySql = buildPropertyGroupMembershipSql('property_row', '$2');
+  assert.match(propertySql, /property_row\.property_group_id = ANY\(\$2::text\[\]\)/);
+  assert.match(propertySql, /PropertyGroupIds.*\?\|.*\$2::text\[\]/s);
+
+  const workOrderSql = buildWorkOrderPropertyGroupScopeSql('work_row', '$3');
+  assert.match(workOrderSql, /work_row\.property_group_id = ANY\(\$3::text\[\]\)/);
+  assert.match(workOrderSql, /scope_property\.raw_json.*PropertyGroupIds/s);
 });

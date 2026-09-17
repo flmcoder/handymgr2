@@ -28,6 +28,7 @@ import { formatSyncSummaryLine, shouldLogSyncSummary } from './logNoisePolicy';
 import {
   ACTIVE_INSPECTION_RESIDENT_FILTER,
   buildBadgeCountsPayload,
+  buildWorkOrderPropertyGroupScopeSql,
   OPEN_WORK_ORDER_STATUS_FILTER,
   WORK_ORDER_CREATED_AT_EXPR,
 } from './badgeCountsPolicy';
@@ -38,7 +39,7 @@ import {
 } from './chartAnalyticsPolicy';
 import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
-import { buildWorkOrderPagination, resolveWorkOrderHistoryDays, resolveWorkOrderLookupSearch } from './workOrderQueryPolicy';
+import { buildWorkOrderPagination, resolveExactWorkOrderReference, resolveWorkOrderHistoryDays, resolveWorkOrderLookupSearch } from './workOrderQueryPolicy';
 import { TURN_ENGINE_SQL } from './turnEngineQuery';
 import { upsertTurnTracker } from './sync/repositories';
 import {
@@ -4036,8 +4037,11 @@ async function fetchBillsFromDbApi(params: Params, scopeIds: string[] = []): Pro
       select count(*)::int as total
       from appfolio_bills b
       inner join appfolio_properties p on p.id = b.property_id
-      where p.property_group_id = ANY(${scopeIds}::text[])
-        and coalesce(b.updated_at, b.cached_at) >= ${sinceIso}::timestamptz
+       where (
+         p.property_group_id = ANY(${scopeIds}::text[])
+         or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+       )
+         and coalesce(b.updated_at, b.cached_at) >= ${sinceIso}::timestamptz
     `;
     const total = Number((countRows as any[])[0]?.total || 0) || 0;
     const rows = await queryClient`
@@ -4061,8 +4065,11 @@ async function fetchBillsFromDbApi(params: Params, scopeIds: string[] = []): Pro
         b.cached_at
       from appfolio_bills b
       inner join appfolio_properties p on p.id = b.property_id
-      where p.property_group_id = ANY(${scopeIds}::text[])
-        and coalesce(b.updated_at, b.cached_at) >= ${sinceIso}::timestamptz
+       where (
+         p.property_group_id = ANY(${scopeIds}::text[])
+         or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+       )
+         and coalesce(b.updated_at, b.cached_at) >= ${sinceIso}::timestamptz
       order by coalesce(b.updated_at, b.invoice_date, b.cached_at) desc, b.id desc
       limit ${limit} offset ${offset}
     `;
@@ -5173,12 +5180,39 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
     const scopeIds = getPropertyGroupFilters(req);
     const enforcedScopeIds = getEnforcedPropertyGroupFilters(req);
     const searchQuery = resolveWorkOrderLookupSearch(req.query.search);
+    const requestedStatusFilter = String(req.query.status_filter || '').trim();
+    const statusFilter = requestedStatusFilter === 'all' || requestedStatusFilter === 'flagged' ? '' : requestedStatusFilter;
+    const exactWorkOrderReference = resolveExactWorkOrderReference(searchQuery);
+    const exactNumericReference = exactWorkOrderReference.replace(/[^0-9]/g, '');
+    const normalSearchScopeIds = enforcedScopeIds.length ? enforcedScopeIds : scopeIds;
     let rows: any[] = [];
     let searchTotal: number | null = null;
 
     if (searchQuery) {
       await ensurePropertyGroupsTable();
       const searchPattern = `%${searchQuery.replace(/[!%_]/g, '!$&')}%`;
+      const searchPredicate = exactWorkOrderReference
+        ? `(
+             coalesce(wo.wo_number, '') = $1
+             or ($5 <> '' and regexp_replace(coalesce(wo.wo_number, ''), '[^0-9]', '', 'g') = $5)
+           )`
+        : `(
+             coalesce(wo.id, '') ilike $1 escape '!'
+             or coalesce(wo.wo_number, '') ilike $1 escape '!'
+             or coalesce(wo.description, wo.raw_json->>'description', wo.raw_json->>'Description', '') ilike $1 escape '!'
+             or coalesce(wo.vendor_name, wo.raw_json->>'vendor_name', wo.raw_json->>'VendorName', '') ilike $1 escape '!'
+             or exists (
+               select 1 from appfolio_properties search_property
+               where (
+                 search_property.id = wo.property_id
+                 or search_property.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || wo.property_id
+               )
+               and coalesce(search_property.name, '') ilike $1 escape '!'
+             )
+           )`;
+      const scopedSearchPredicate = !exactWorkOrderReference && normalSearchScopeIds.length
+        ? `and ${buildWorkOrderPropertyGroupScopeSql('wo', '$6')}`
+        : '';
       rows = await queryClient.unsafe(
         `with matches as (
            select
@@ -5241,21 +5275,9 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                'Unassigned'
              ) as property_group_name
            from appfolio_work_orders wo
-           where (
-             coalesce(wo.id, '') ilike $1 escape '!'
-             or coalesce(wo.wo_number, '') ilike $1 escape '!'
-             or coalesce(wo.description, wo.raw_json->>'description', wo.raw_json->>'Description', '') ilike $1 escape '!'
-             or coalesce(wo.vendor_name, wo.raw_json->>'vendor_name', wo.raw_json->>'VendorName', '') ilike $1 escape '!'
-             or exists (
-               select 1 from appfolio_properties search_property
-               where (
-                 search_property.id = wo.property_id
-                 or search_property.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || wo.property_id
-               )
-               and coalesce(search_property.name, '') ilike $1 escape '!'
-             )
-           )
-         )
+            where ${searchPredicate}
+            ${scopedSearchPredicate}
+          )
          select
            case when can_open then id else '' end as id,
            case when can_open then to_jsonb(matches)->>'work_order_uuid' else null end as work_order_uuid,
@@ -5279,12 +5301,16 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
            resolved_property_name,
            property_group_name,
            can_open,
-           true as global_search_result,
-           (count(*) over())::int as search_total
+            ${exactWorkOrderReference ? 'true' : 'false'} as global_search_result,
+            (count(*) over())::int as search_total
          from matches
          order by coalesce(updated_at, created_at) desc nulls last, wo_number desc
          limit $3 offset $4`,
-        [searchPattern, enforcedScopeIds, limit, offset],
+         exactWorkOrderReference
+           ? [exactWorkOrderReference, enforcedScopeIds, limit, offset, exactNumericReference]
+           : (normalSearchScopeIds.length
+             ? [searchPattern, enforcedScopeIds, limit, offset, '', normalSearchScopeIds]
+             : [searchPattern, enforcedScopeIds, limit, offset]),
       );
       searchTotal = Number((rows as any[])[0]?.search_total || 0) || 0;
     } else {
@@ -5309,12 +5335,13 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                   and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
               )
             )
-            and (
-              coalesce(lower(status), '') not like '%completed%'
-              and coalesce(lower(status), '') not like '%cancel%'
-              and coalesce(lower(status), '') not like '%no need to bill%'
-            )
-          order by coalesce(updated_at, created_at) desc
+             and (
+               coalesce(lower(status), '') not like '%completed%'
+               and coalesce(lower(status), '') not like '%cancel%'
+               and coalesce(lower(status), '') not like '%no need to bill%'
+             )
+             and (${statusFilter} = '' or coalesce(status, '') = ${statusFilter})
+           order by coalesce(updated_at, created_at) desc
           limit ${limit}
             offset ${offset}
           `
@@ -5328,8 +5355,9 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
               coalesce(lower(status), '') not like '%completed%'
               and coalesce(lower(status), '') not like '%cancel%'
               and coalesce(lower(status), '') not like '%no need to bill%'
-            )
-          order by coalesce(updated_at, created_at) desc
+             )
+             and (${statusFilter} = '' or coalesce(status, '') = ${statusFilter})
+           order by coalesce(updated_at, created_at) desc
           limit ${limit}
             offset ${offset}
         `;
@@ -5360,12 +5388,13 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                   and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
               )
             )
-            and (
-              coalesce(lower(status), '') not like '%completed%'
-              and coalesce(lower(status), '') not like '%cancel%'
-              and coalesce(lower(status), '') not like '%no need to bill%'
-            )
-          order by coalesce(updated_at, created_at) desc
+             and (
+               coalesce(lower(status), '') not like '%completed%'
+               and coalesce(lower(status), '') not like '%cancel%'
+               and coalesce(lower(status), '') not like '%no need to bill%'
+             )
+             and (${statusFilter} = '' or coalesce(status, '') = ${statusFilter})
+           order by coalesce(updated_at, created_at) desc
           limit ${limit}
             offset ${offset}
           `
@@ -5375,12 +5404,13 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                  vendor_id, vendor_name, estimated_amount, total_cost,
                  created_at, updated_at, raw_json
           from appfolio_work_orders
-          where (
-              coalesce(lower(status), '') not like '%completed%'
-              and coalesce(lower(status), '') not like '%cancel%'
-              and coalesce(lower(status), '') not like '%no need to bill%'
-            )
-          order by coalesce(updated_at, created_at) desc
+           where (
+               coalesce(lower(status), '') not like '%completed%'
+               and coalesce(lower(status), '') not like '%cancel%'
+               and coalesce(lower(status), '') not like '%no need to bill%'
+             )
+             and (${statusFilter} = '' or coalesce(status, '') = ${statusFilter})
+           order by coalesce(updated_at, created_at) desc
           limit ${limit}
             offset ${offset}
         `;
@@ -5416,12 +5446,16 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                      and p.raw_json->'PropertyGroupIds' ?| $1::text[]
                  )
                )
-               and ${OPEN_WORK_ORDER_STATUS_FILTER}`,
-              [scopeIds],
-            )
-          : await queryClient.unsafe(
-              `select count(*)::int as total from appfolio_work_orders where ${OPEN_WORK_ORDER_STATUS_FILTER}`,
-            );
+                and ${OPEN_WORK_ORDER_STATUS_FILTER}
+                and ($2 = '' or coalesce(status, '') = $2)`,
+               [scopeIds, statusFilter],
+             )
+           : await queryClient.unsafe(
+               `select count(*)::int as total from appfolio_work_orders
+                where ${OPEN_WORK_ORDER_STATUS_FILTER}
+                  and ($1 = '' or coalesce(status, '') = $1)`,
+               [statusFilter],
+             );
         total = Number((totalRows as any[])[0]?.total || 0) || 0;
       } catch (countErr) {
         console.warn('[work_orders] total count failed; falling back to page length', String((countErr as any)?.message || countErr));
@@ -5439,6 +5473,42 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
   } catch (error) {
     logTunnelError(error, '/api/local/work_orders');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Local work orders query failed') });
+  }
+});
+
+app.get('/api/local/dashboard_stats', async (req: Request, res: Response) => {
+  try {
+    const scopeIds = getPropertyGroupFilters(req);
+    const { sql: aggregateSql, params } = buildWorkOrdersAnalyticsQuery(scopeIds);
+    const rows = (await queryClient.unsafe(aggregateSql, params)) as any[];
+    const metrics = rows[0] || {};
+    const statusCounts = toCountBuckets(metrics.by_status, 50);
+    res.json({
+      ok: true,
+      total: Number(metrics.total || 0),
+      urgent: Number(metrics.urgent || 0),
+      aging: {
+        age_0_7: Number(metrics.age_0_7 || 0),
+        age_8_30: Number(metrics.age_8_30 || 0),
+        age_31_60: Number(metrics.age_31_60 || 0),
+        age_61_plus: Number(metrics.age_61_plus || 0),
+        age_unknown: Number(metrics.age_unknown || 0),
+      },
+      // Raw counts, not percentages and not a client-side page sample.
+      status_counts: statusCounts,
+      by_status: statusCounts,
+      by_type: toCountBuckets(metrics.by_type, 24),
+      by_owner: toCountBuckets(metrics.by_owner, 24),
+      by_priority: toCountBuckets(metrics.by_priority, 24),
+      avg_age_by_owner: toCountBuckets(metrics.avg_age_by_owner, 24),
+      by_property: toCountBuckets(metrics.by_property, 24),
+      by_status_owner: Array.isArray(metrics.by_status_owner) ? metrics.by_status_owner : [],
+      property_group_id: scopeIds.join(','),
+      source: 'postgres_local_dashboard_stats',
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/dashboard_stats');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Dashboard stats failed') });
   }
 });
 
@@ -5485,19 +5555,7 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
         count(*) filter (where ${WORK_ORDER_CREATED_AT_EXPR} is null)::int as age_unknown
       from appfolio_work_orders
       where ${OPEN_WORK_ORDER_STATUS_FILTER}
-      ${scope ? `and (
-        property_group_id = ANY($1::text[])
-        or exists (
-          select 1 from appfolio_properties p
-          where p.id = appfolio_work_orders.property_id
-            and p.raw_json->'PropertyGroupIds' ?| $1::text[]
-        )
-        or exists (
-          select 1 from appfolio_properties p
-          where p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
-            and p.raw_json->'PropertyGroupIds' ?| $1::text[]
-        )
-      )` : ''}
+       ${scope ? `and ${buildWorkOrderPropertyGroupScopeSql('appfolio_work_orders', '$1')}` : ''}
     `;
     const woPromise = queryClient.unsafe(woAggregateSql, scope ? [scope] : []);
 
@@ -5667,7 +5725,14 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
                  created_at, updated_at, raw_json
           from appfolio_work_orders
           where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-            and property_group_id = ANY(${scopeIds}::text[])
+             and (
+               property_group_id = ANY(${scopeIds}::text[])
+               or exists (
+                 select 1 from appfolio_properties p
+                 where p.id = appfolio_work_orders.property_id
+                   and p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+               )
+             )
             and (
               coalesce(lower(status), '') like '%completed%'
               or coalesce(lower(status), '') like '%cancel%'
@@ -5706,7 +5771,14 @@ app.get('/api/local/work_orders/inactive', async (req: Request, res: Response) =
                  created_at, updated_at, raw_json
           from appfolio_work_orders
           where coalesce(updated_at, created_at) >= now() - (${days}::int * interval '1 day')
-            and property_group_id = ANY(${scopeIds}::text[])
+             and (
+               property_group_id = ANY(${scopeIds}::text[])
+               or exists (
+                 select 1 from appfolio_properties p
+                 where p.id = appfolio_work_orders.property_id
+                   and p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+               )
+             )
             and (
               coalesce(lower(status), '') like '%completed%'
               or coalesce(lower(status), '') like '%cancel%'
@@ -5835,7 +5907,7 @@ app.get('/api/local/grid/work_orders', async (req: Request, res: Response) => {
     }
 
     if (scopeIds.length) {
-      whereParts.push(`wo.property_group_id = ANY(${bind(scopeIds)}::text[])`);
+      whereParts.push(buildWorkOrderPropertyGroupScopeSql('wo', bind(scopeIds)));
     }
 
     if (statusScope === 'inactive') {
@@ -6392,7 +6464,10 @@ app.get('/api/local/properties', async (req: Request, res: Response) => {
           left join appfolio_property_groups g
             on g.uuid = p.property_group_id
             or g.id = p.property_group_id
-          where p.property_group_id = ANY(${scopeIds}::text[])
+         where (
+           p.property_group_id = ANY(${scopeIds}::text[])
+           or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+         )
           order by p.name asc
           limit ${limit}
         `
@@ -6980,7 +7055,10 @@ app.get('/api/local/units', async (req: Request, res: Response) => {
                u.square_feet, u.market_rent, u.raw_json
         from appfolio_units u
         inner join appfolio_properties p on p.id = u.property_id
-        where p.property_group_id = ANY(${scopeIds}::text[])
+         where (
+           p.property_group_id = ANY(${scopeIds}::text[])
+           or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+         )
         order by u.unit_number asc
         limit ${limit}
       `;
@@ -7524,7 +7602,10 @@ app.get('/api/local/closed_turns', async (req: Request, res: Response) => {
             limit 1) as move_in_date
         from unit_turn_tracker t
         inner join appfolio_properties p on p.id = t.property_id
-        where p.property_group_id = ANY(${scopeIds}::text[])
+         where (
+           p.property_group_id = ANY(${scopeIds}::text[])
+           or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+         )
           and (t.closed_at is not null or lower(coalesce(t.status, '')) in ('closed', 'completed'))
           and coalesce(t.closed_at, t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
         order by coalesce(t.closed_at, t.updated_at, t.created_at) desc
@@ -7621,7 +7702,10 @@ app.get('/api/local/turns_history', async (req: Request, res: Response) => {
             limit 1) as move_in_date
         from unit_turn_tracker t
         inner join appfolio_properties p on p.id = t.property_id
-        where p.property_group_id = ANY(${scopeIds}::text[])
+         where (
+           p.property_group_id = ANY(${scopeIds}::text[])
+           or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+         )
           and (t.closed_at is not null or lower(coalesce(t.status, '')) in ('closed', 'completed'))
           and coalesce(t.closed_at, t.updated_at, t.created_at, now()) >= now() - (${days}::int * interval '1 day')
         order by coalesce(t.closed_at, t.updated_at, t.created_at) desc
@@ -7795,8 +7879,11 @@ app.get('/api/local/analytics/vendor-spend', async (req: Request, res: Response)
           count(*)::int as bill_count
         from appfolio_bills b
         join appfolio_properties p on p.id = b.property_id
-        left join vendor_overrides vo on vo.vendor_id = b.vendor_id
-        where p.property_group_id = ANY(${scopeIds}::text[])
+         left join vendor_overrides vo on vo.vendor_id = b.vendor_id
+         where (
+           p.property_group_id = ANY(${scopeIds}::text[])
+           or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+         )
           and coalesce(b.bill_total_amount, 0) > 0
         group by coalesce(nullif(b.vendor_id, ''), 'unknown')
       )
@@ -7847,40 +7934,45 @@ app.get(['/api/local/v2/billing/vendor-spend', '/api/local/v2/billing/vendor-spe
     await ensureBillsTable();
     await ensureVendorDirectoryTable();
     const scopeIds = getPropertyGroupFilters(req);
-    if (!scopeIds.length) {
-      res.status(400).json({ ok: false, error: 'property_group_id is required' });
-      return;
-    }
 
     const timeframe = parseBillingSpendTimeframe(req.query as Record<string, unknown>);
+    const scopeSql = scopeIds.length
+      ? `(
+          p.property_group_id = ANY($1::text[])
+          or p.raw_json->'PropertyGroupIds' ?| ($1::text[])
+        )`
+      : 'true';
+    const sinceParam = scopeIds.length ? '$2' : '$1';
+    const queryParams = scopeIds.length ? [scopeIds, timeframe.sinceIso] : [timeframe.sinceIso];
 
-    // Bills only carry a work order via raw_json.WorkOrderId — normalized rows never persisted this reference.
-    const rows = await queryClient`
+    // Vendor spend is based on positive bills, not only rows that happen to
+    // retain a raw work-order reference. The normalized bill cache does not
+    // persist that reference consistently.
+    const rows = await queryClient.unsafe(`
       with scoped_bills as (
         select
           coalesce(nullif(b.vendor_id, ''), 'unknown') as vendor_id,
           coalesce(nullif(b.vendor_name, ''), 'Unknown vendor') as vendor_name,
           coalesce(nullif(vd.trade_category, ''), nullif(vd.category, ''), '') as trade_category,
           b.bill_total_amount
-        from appfolio_bills b
-        join appfolio_properties p on p.id = b.property_id
-        left join vendor_directory vd
-          on vd.vendor_key = coalesce(nullif(b.vendor_id, ''), 'name:' || lower(coalesce(b.vendor_name, '')))
-        where p.property_group_id = ANY(${scopeIds}::text[])
-          and coalesce(b.bill_total_amount, 0) > 0
-          and coalesce(b.invoice_date, b.updated_at, b.cached_at) >= ${timeframe.sinceIso}::timestamptz
-          and coalesce(nullif(b.raw_json->>'WorkOrderId', ''), nullif(b.raw_json->>'work_order_id', '')) is not null
-      )
-      select
+         from appfolio_bills b
+         join appfolio_properties p on p.id = b.property_id
+         left join vendor_directory vd
+           on vd.vendor_key = coalesce(nullif(b.vendor_id, ''), 'name:' || lower(coalesce(b.vendor_name, '')))
+         where ${scopeSql}
+           and coalesce(b.bill_total_amount, 0) > 0
+           and coalesce(b.invoice_date, b.updated_at, b.cached_at) >= ${sinceParam}::timestamptz
+       )
+       select
         vendor_id,
         max(vendor_name) as vendor_name,
         max(trade_category) as trade_category,
         sum(bill_total_amount)::float8 as total_spend,
         count(*)::int as bill_count
-      from scoped_bills
-      group by vendor_id
-      order by total_spend desc
-    `;
+       from scoped_bills
+       group by vendor_id
+       order by total_spend desc
+    `, queryParams);
 
     let inHouseTotal = 0;
     let inHouseCount = 0;

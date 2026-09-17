@@ -67,6 +67,44 @@ export const PROPERTY_IDENTITY_MATCH_FILTER = `(
   ) = source_property_id
 )`;
 
+/**
+ * Property-group membership is stored in two places during the AppFolio
+ * migration: the normalized property_group_id column and the raw
+ * PropertyGroupIds bridge. Keep the predicate in one place so lists,
+ * aggregates, and charts cannot silently disagree about scope.
+ */
+export function buildPropertyGroupMembershipSql(
+  propertyAlias = 'p',
+  scopeParam = '$1',
+): string {
+  return `(
+    ${propertyAlias}.property_group_id = ANY(${scopeParam}::text[])
+    or ${propertyAlias}.raw_json->'PropertyGroupIds' ?| (${scopeParam}::text[])
+  )`;
+}
+
+/** Scope a work-order row through its direct group or its property's group bridge. */
+export function buildWorkOrderPropertyGroupScopeSql(
+  workOrderAlias = 'wo',
+  scopeParam = '$1',
+): string {
+  return `(
+    ${workOrderAlias}.property_group_id = ANY(${scopeParam}::text[])
+    or exists (
+      select 1
+      from appfolio_properties scope_property
+      where scope_property.id = ${workOrderAlias}.property_id
+        and scope_property.raw_json->'PropertyGroupIds' ?| (${scopeParam}::text[])
+    )
+    or exists (
+      select 1
+      from appfolio_properties scope_property
+      where scope_property.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || ${workOrderAlias}.property_id
+        and scope_property.raw_json->'PropertyGroupIds' ?| (${scopeParam}::text[])
+    )
+  )`;
+}
+
 export function propertyIdentityMatch(sourceExpression: string, propertyAlias = 'p'): string {
   return PROPERTY_IDENTITY_MATCH_FILTER
     .replaceAll('p.', `${propertyAlias}.`)

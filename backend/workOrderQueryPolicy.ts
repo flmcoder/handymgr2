@@ -40,6 +40,18 @@ export function resolveWorkOrderLookupSearch(value: unknown, minimumLength = 3, 
   return search.length >= Math.max(1, minimumLength) ? search : '';
 }
 
+/**
+ * Cross-portfolio PM lookup is intentionally narrow: only a work-order
+ * number/reference may escape the normal property-group scope. Free-text
+ * searches remain scoped and cannot enumerate another portfolio.
+ */
+export function resolveExactWorkOrderReference(value: unknown): string {
+  const raw = String(value ?? '').trim().replace(/^#/, '');
+  if (!raw) return '';
+  if (/^(?:wo[-_\s]*)?\d+$/i.test(raw)) return raw;
+  return '';
+}
+
 export function resolveWorkOrderHistoryDays(value: unknown, maximumDays = 3_650): number | null {
   if (value === undefined || value === null || String(value).trim() === '') return null;
   const parsed = Number.parseInt(String(value), 10);

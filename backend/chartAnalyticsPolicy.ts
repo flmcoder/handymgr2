@@ -7,6 +7,7 @@
  */
 import {
   ACTIVE_INSPECTION_RESIDENT_FILTER,
+  buildWorkOrderPropertyGroupScopeSql,
   OPEN_WORK_ORDER_STATUS_FILTER,
   WORK_ORDER_CREATED_AT_EXPR,
 } from './badgeCountsPolicy.ts';
@@ -22,7 +23,7 @@ export const WO_STATUS_EXPR = `coalesce(nullif(wo.status, ''), 'Unknown')`;
 export const WO_PROPERTY_EXPR = `coalesce(nullif(p.name, ''), nullif(wo.raw_json->>'property_name', ''), 'Unknown')`;
 
 const WO_BASE_WHERE = (scoped: boolean): string => scoped
-  ? `${OPEN_WORK_ORDER_STATUS_FILTER} and wo.property_group_id = ANY($1::text[])`
+  ? `${OPEN_WORK_ORDER_STATUS_FILTER} and ${buildWorkOrderPropertyGroupScopeSql('wo', '$1')}`
   : OPEN_WORK_ORDER_STATUS_FILTER;
 
 const WO_AGE = WORK_ORDER_CREATED_AT_EXPR;

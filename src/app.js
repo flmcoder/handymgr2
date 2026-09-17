@@ -360,10 +360,6 @@ var DEFAULT_PROXY_URL = API_BASE_URL;
 var SERVER_VERSION = '';
 var VERSION_MISMATCH_TIMER = null;
 var VERSION_MISMATCH_POLL_MS = 60 * 1000;
-var DASHBOARD_KPI_HISTORY = [];
-var DASHBOARD_KPI_HISTORY_MAX = 16;
-var DASHBOARD_KPI_CHART_MODE = false;
-var DASHBOARD_KPI_ROTATE_TIMER = null;
 var FORCE_REFRESH_DEFAULT_MS = 4 * 60 * 60 * 1000; // 4h
 var FORCE_REFRESH_MIN_MS = 5 * 60 * 1000; // 5m safety floor
 var FORCE_REFRESH_LAST_AT_KEY = 'hm_force_refresh_last_at';
@@ -964,8 +960,8 @@ async function resumeFromPendingSession() {
   API_VHOST = vhost;
   API_CREDS = { p: token };
   _accessRole = normalizeAccessRole(freshSession.role || prevRole);
-  if (freshSession.property_group_uuid || freshSession.scope_uuids) {
-    setForcedScopeUuids(freshSession.scope_uuids || freshSession.property_group_uuid);
+  if (freshSession.property_group_uuid || freshSession.property_group_uuids || freshSession.scope_uuids) {
+    setForcedScopeUuids(freshSession.property_group_uuids || freshSession.scope_uuids || freshSession.property_group_uuid);
   }
   if (freshSession.login_email) {
     _pmScopeEmail = String(freshSession.login_email);
@@ -1175,6 +1171,20 @@ function isInPropertyGroup(propertyId, propertyName, groupName) {
   if (normalizedGroup.charAt(0) === '*' && normalizedGroupLower.indexOf('all properties') !== -1) return true;
 
   groupName = normalizedGroup;
+  var groupNames = [groupName];
+  // A PM session is enforced as a union on the server. Mirror that union in
+  // client-side fallback filters so secondary assigned portfolios do not
+  // disappear after the server has correctly returned them.
+  if (_accessRole === 'pm_readonly' && forcedPropertyGroupUuids.length) {
+    forcedPropertyGroupUuids.forEach(function(scopeUuid) {
+      var scopeName = resolveGroupNameFromUuid(scopeUuid);
+      if (scopeName && groupNames.indexOf(scopeName) === -1) groupNames.push(scopeName);
+    });
+  }
+  var matchesGroupName = function(value) {
+    var candidate = String(value || '').trim().toLowerCase();
+    return groupNames.some(function(name) { return String(name || '').trim().toLowerCase() === candidate; });
+  };
 
   // If the selected group is a UUID, compare directly against UUID mappings.
   if (/^[0-9a-fA-F-]{20,}$/.test(groupName)) {
@@ -1186,19 +1196,19 @@ function isInPropertyGroup(propertyId, propertyName, groupName) {
   // 1. Fast lookup by property name (covers both Reports API and DB API names)
   if (propertyName) {
     var groups = groupsByPropertyName(propertyName);
-    if (groups && groups.indexOf(groupName) !== -1) return true;
+    if (groups && groups.some(matchesGroupName)) return true;
   }
 
   // 2. Fast lookup by Reports API property_id
   if (propertyId) {
     var idGroups = _idToGroups[String(propertyId)];
-    if (idGroups && idGroups.indexOf(groupName) !== -1) return true;
+    if (idGroups && idGroups.some(matchesGroupName)) return true;
   }
 
   // 2.5. Lookup by DB API UUID (handles unit-turn and DB-sourced items with UUID propertyId)
   if (propertyId) {
     var uuidGroups = _uuidToGroups[String(propertyId).trim()];
-    if (uuidGroups && uuidGroups.indexOf(groupName) !== -1) return true;
+    if (uuidGroups && uuidGroups.some(matchesGroupName)) return true;
   }
 
   // 3. Portfolio fallback — check if property's portfolio matches the group name
@@ -1209,7 +1219,7 @@ function isInPropertyGroup(propertyId, propertyName, groupName) {
       return false;
     });
     if (prop && prop.portfolio) {
-      if (prop.portfolio.trim() === groupName.trim() || prop.portfolio.trim().toLowerCase() === groupName.trim().toLowerCase()) return true;
+      if (matchesGroupName(prop.portfolio)) return true;
     }
   }
 
@@ -1403,91 +1413,6 @@ function setMetricVisualState(valueId, subId, config) {
   }
 }
 
-function normalizeKpiNumber(value) {
-  var num = Number(value);
-  if (!isFinite(num)) return 0;
-  return num;
-}
-
-function pushDashboardKpiSnapshot(snapshot) {
-  if (!snapshot || typeof snapshot !== 'object') return;
-  var rec = {
-    ts: Date.now(),
-    open: normalizeKpiNumber(snapshot.open),
-    urgent: normalizeKpiNumber(snapshot.urgent),
-    turns: normalizeKpiNumber(snapshot.turns),
-    moveouts: normalizeKpiNumber(snapshot.moveouts),
-    flagged: normalizeKpiNumber(snapshot.flagged),
-    pendingBills: normalizeKpiNumber(snapshot.pendingBills),
-    avgTurnCompletion: normalizeKpiNumber(snapshot.avgTurnCompletion),
-    avgInspectionAge: normalizeKpiNumber(snapshot.avgInspectionAge),
-    avgWOCompletion: normalizeKpiNumber(snapshot.avgWOCompletion),
-    completedTurns: normalizeKpiNumber(snapshot.completedTurns),
-    vacancies: normalizeKpiNumber(snapshot.vacancies)
-  };
-  DASHBOARD_KPI_HISTORY.push(rec);
-  if (DASHBOARD_KPI_HISTORY.length > DASHBOARD_KPI_HISTORY_MAX) {
-    DASHBOARD_KPI_HISTORY = DASHBOARD_KPI_HISTORY.slice(-DASHBOARD_KPI_HISTORY_MAX);
-  }
-}
-
-function ensureDashboardKpiTrendHost(valueId) {
-  var valueEl = document.getElementById(valueId);
-  if (!valueEl) return null;
-  var card = valueEl.closest('.kpi-card');
-  if (!card) return null;
-  card.classList.add('kpi-card--dynamic');
-  var host = card.querySelector('.kpi-trend-wrap');
-  if (!host) {
-    host = document.createElement('div');
-    host.className = 'kpi-trend-wrap';
-    card.appendChild(host);
-  }
-  return host;
-}
-
-function renderDashboardKpiTrends() {
-  if (!Array.isArray(DASHBOARD_KPI_HISTORY) || DASHBOARD_KPI_HISTORY.length < 2) return;
-  var keyByValueId = {
-    kpiOpen: 'open',
-    kpiUrgent: 'urgent',
-    kpiTurns: 'turns',
-    kpiMoveOuts: 'moveouts',
-    kpiFlagged: 'flagged',
-    kpiPendingBills: 'pendingBills',
-    kpiMgrAvgTurnCompletion: 'avgTurnCompletion',
-    kpiMgrAvgInspectionAge: 'avgInspectionAge',
-    kpiMgrAvgWOCompletion: 'avgWOCompletion',
-    kpiMgrCompletedTurns: 'completedTurns',
-    kpiVacancyGroups: 'vacancies'
-  };
-
-  Object.keys(keyByValueId).forEach(function(valueId) {
-    var key = keyByValueId[valueId];
-    var host = ensureDashboardKpiTrendHost(valueId);
-    if (!host) return;
-    var points = DASHBOARD_KPI_HISTORY.map(function(row) { return normalizeKpiNumber(row[key]); });
-    var max = Math.max.apply(null, points.concat([1]));
-    host.innerHTML = points.map(function(v) {
-      var h = Math.max(7, Math.round((v / max) * 42));
-      return '<span class="kpi-trend-bar" style="height:' + h + 'px" title="' + escapeHtml(String(v)) + '"></span>';
-    }).join('');
-  });
-}
-
-function setDashboardKpiMode(chartMode) {
-  DASHBOARD_KPI_CHART_MODE = !!chartMode;
-  var sec = document.getElementById('sec-dashboard');
-  if (!sec) return;
-  sec.classList.toggle('kpi-mode-chart', DASHBOARD_KPI_CHART_MODE);
-}
-
-function ensureDashboardKpiModeRotation() {
-  if (DASHBOARD_KPI_ROTATE_TIMER) return;
-  DASHBOARD_KPI_ROTATE_TIMER = setInterval(function() {
-    setDashboardKpiMode(!DASHBOARD_KPI_CHART_MODE);
-  }, 9000);
-}
 function parseWebhookTs(dateStr) {
   var s = String(dateStr || '').trim();
   if (!s) return null;
@@ -3667,7 +3592,7 @@ function renderDashboardFollowupQueue() {
     var conf = String(ev.confidence || 'medium').toLowerCase();
     var tone = conf === 'high' ? 'critical' : (conf === 'medium' ? 'warning' : 'info');
     var icon = conf === 'high' ? 'fa-exclamation-triangle' : (conf === 'medium' ? 'fa-route' : 'fa-info-circle');
-    var title = 'WO #' + escapeHtml(ev.wo_number || ev.wo_uuid || '—') + ' — ' + escapeHtml(ev.matched_trade || 'Routing Flag');
+    var title = 'WO #' + escapeHtml(ev.wo_number || '—') + ' — ' + escapeHtml(ev.matched_trade || 'Routing Flag');
     var msg = escapeHtml(ev.property_name || '') +
       (ev.unit_name ? ' Unit ' + escapeHtml(ev.unit_name) : '') +
       ' · PM: ' + escapeHtml(ev.pm_name || 'Unmapped') +
@@ -4744,10 +4669,10 @@ function getBillStatusKey(recordLike) {
   var b = (recordLike && typeof recordLike === 'object') ? recordLike : {};
   var raw = (b.raw && typeof b.raw === 'object') ? b.raw : b;
   var candidates = [
-    b.status,
-    b.statusLabel,
     b.approval_status,
     b.approvalStatus,
+    b.status,
+    b.statusLabel,
     b.bill_status,
     b.billStatus,
     raw.ApprovalStatus,
@@ -4766,6 +4691,11 @@ function getBillStatusKey(recordLike) {
     if (normalized) return normalized;
   }
   return '';
+}
+
+function isBillApprovalBacklog(recordLike) {
+  var status = getBillStatusKey(recordLike);
+  return status === 'pending_approval' || status === 'on_hold';
 }
 
 function extractBillPropertyId(rawBill, normalizedLineItems) {
@@ -5021,6 +4951,13 @@ function getEffectiveGroupUuid(groupName) {  // PM sessions carry the whole assi
   return resolveGroupUuidFromName(normalizedName);
 }
 
+function getScopedActionParams(params) {
+  var next = Object.assign({}, params || {});
+  var scope = getEffectiveGroupUuid();
+  if (scope) next.property_group_id = scope;
+  return next;
+}
+
 /* =================================================================
    CONFIG — Consolidated thresholds (edit here, not scattered in code)
    ================================================================= */
@@ -5255,6 +5192,7 @@ function resetInMemoryDataForSessionTransition() {
   window._billingPageRows = [];
   window._billingListCacheRows = [];
   _billingListCacheRows = [];
+  BILLING_KPI_STATS = null;
   window.WORK_ORDERS = [];
   if (window.AppDB) {
     if (window.AppDB.vendors && typeof window.AppDB.vendors.clear === 'function') window.AppDB.vendors.clear();
@@ -6410,13 +6348,16 @@ async function fetchWorkOrders(options) {
     var scopedGroupUuid = getEffectiveGroupUuid();
     var requestGeneration = _scopeRequestGeneration;
     var scopeQuery = scopedGroupUuid ? ('&property_group_id=' + encodeURIComponent(scopedGroupUuid)) : '';
+    var statusQuery = currentWOTab === 'active' && currentWOFilter && currentWOFilter !== 'all' && currentWOFilter !== 'flagged'
+      ? ('&status_filter=' + encodeURIComponent(currentWOFilter))
+      : '';
     var token = getProxyAccessToken();
     var localHeaders = { 'Accept': 'application/json' };
     if (token) localHeaders['Authorization'] = 'Bearer ' + token;
     
     // Active volume is bounded by status, so do not impose an artificial date window.
     var loadWOPage = async function(limit, offset) {
-      var pageUrl = localBase + '/api/local/work_orders?limit=' + limit + (offset > 0 ? ('&offset=' + offset) : '') + scopeQuery;
+      var pageUrl = localBase + '/api/local/work_orders?limit=' + limit + (offset > 0 ? ('&offset=' + offset) : '') + scopeQuery + statusQuery;
       var pageRes = await fetchWithTimeout(pageUrl, { headers: localHeaders }, 45000);
       var pageData = {};
       try { pageData = await pageRes.json(); } catch (e) { pageData = {}; }
@@ -6436,7 +6377,9 @@ async function fetchWorkOrders(options) {
      WORK_ORDERS_ACTIVE = activeResults.map(normalizeLocalWorkOrder);
      WORK_ORDERS = WORK_ORDERS_ACTIVE; // backward compat
      window.WORK_ORDERS = WORK_ORDERS;
-     WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, Math.min(requestedOffset, Math.max(0, WORK_ORDERS_ACTIVE.length - 1)));
+      WORK_ORDERS_ACTIVE_OFFSET = serverTotal > 0
+        ? Math.min(requestedOffset, Math.max(0, serverTotal - 1))
+        : 0;
      WORK_ORDERS_ACTIVE_TOTAL = serverTotal || WORK_ORDERS_ACTIVE.length;
      WORK_ORDERS_ACTIVE_HAS_NEXT = (WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE_PAGE_SIZE) < WORK_ORDERS_ACTIVE_TOTAL;
     
@@ -6787,12 +6730,10 @@ function resolveLineItemUuidTarget(lineItem) {
 
 async function showV0UuidDetailModal(target, lineItem) {
   if (!target || !target.resource || !target.uuid) return;
-  var title = 'v0 UUID Detail — ' + target.label;
+  var title = 'Record Detail — ' + target.label;
   var path = '/api/v0/' + target.resource + '/' + encodeURIComponent(String(target.uuid));
   showItemDetail(title, [
     { label: 'Resource', value: target.resource },
-    { label: 'UUID', value: target.uuid },
-    { label: 'Path', value: path },
     { section: 'Loading', icon: 'fa-spinner' },
     { label: 'Status', value: 'Fetching details…' }
   ], '');
@@ -6801,23 +6742,32 @@ async function showV0UuidDetailModal(target, lineItem) {
     var payload = await apiFetch(path);
     var bodyEl = document.getElementById('itemDetailBody');
     if (!bodyEl) return;
+    var redactTechnicalIds = function(value) {
+      if (Array.isArray(value)) return value.map(redactTechnicalIds);
+      if (!value || typeof value !== 'object') {
+        return isUuidString(value) ? '[technical identifier hidden]' : value;
+      }
+      var result = {};
+      Object.keys(value).forEach(function(key) {
+        if (/uuid|work_order_id|property_id|unit_id|vendor_id|payee_id/i.test(key)) return;
+        result[key] = redactTechnicalIds(value[key]);
+      });
+      return result;
+    };
     var pretty = '';
-    try { pretty = JSON.stringify(payload || {}, null, 2); } catch (e) { pretty = String(payload || ''); }
+    try { pretty = JSON.stringify(redactTechnicalIds(payload || {}), null, 2); } catch (e) { pretty = 'Readable record details unavailable.'; }
     bodyEl.innerHTML =
       '<div class="detail-section">' +
         '<div class="detail-section-title"><i class="fas fa-code"></i> API v0 Response</div>' +
         '<div class="detail-grid">' +
           '<div class="detail-row"><div class="detail-row-label">Resource</div><div class="detail-row-value">' + escapeHtml(target.resource) + '</div></div>' +
-          '<div class="detail-row"><div class="detail-row-label">UUID</div><div class="detail-row-value" style="font-family:var(--font-mono)">' + escapeHtml(target.uuid) + '</div></div>' +
-          '<div class="detail-row"><div class="detail-row-label">Path</div><div class="detail-row-value" style="font-family:var(--font-mono)">' + escapeHtml(path) + '</div></div>' +
+          '<div class="detail-row"><div class="detail-row-label">Status</div><div class="detail-row-value">Readable record details loaded</div></div>' +
         '</div>' +
       '</div>' +
       '<pre style="max-height:360px;overflow:auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;line-height:1.45;font-family:var(--font-mono)">' + escapeHtml(pretty || '{}') + '</pre>';
   } catch (err) {
     showItemDetail(title, [
       { label: 'Resource', value: target.resource },
-      { label: 'UUID', value: target.uuid },
-      { label: 'Path', value: path },
       { section: 'Error', icon: 'fa-triangle-exclamation' },
       { label: 'Message', value: String((err && err.message) || err || 'Failed to fetch v0 details') }
     ], '');
@@ -8026,9 +7976,12 @@ async function resolvePropertyGroupNames() {
 
 // Recent Tasks: Proxy ?action=recent_tasks — server-side pagination via DB API v0
 async function fetchRecentTasks() {
+  var requestGeneration = _scopeRequestGeneration;
+  var requestScope = getEffectiveGroupUuid();
   try {
     setApiStatus('loading', 'Loading recent tasks\u2026');
-    var data = await proxyAction('recent_tasks');
+    var data = await proxyAction('recent_tasks', getScopedActionParams());
+    if (requestGeneration !== _scopeRequestGeneration || String(requestScope || '') !== String(getEffectiveGroupUuid() || '')) return false;
     var results = data.results || data.data || [];
     RECENT_TASKS = results.map(function(t) {
       return {
@@ -8063,8 +8016,11 @@ async function fetchRecentTasks() {
 
 // Vacancies: local Postgres read (v2 unit_vacancy normalized table)
 async function fetchVacancyV2() {
+  var requestGeneration = _scopeRequestGeneration;
+  var requestScope = getEffectiveGroupUuid();
   try {
-    var data = await proxyAction('vacancies', {});
+    var data = await proxyAction('vacancies', getScopedActionParams());
+    if (requestGeneration !== _scopeRequestGeneration || String(requestScope || '') !== String(getEffectiveGroupUuid() || '')) return false;
     var rows = data.results || data.data || [];
     VACANCY_V2_UNITS = rows.map(function(r) {
       return {
@@ -8098,9 +8054,12 @@ function getVacancyV2InScope() {
 // Upcoming Move-Outs — local Postgres read (v2 tenant_directory normalized table)
 async function fetchUpcomingMoveouts() {
   setDataSourceState('upcoming_moveouts', 'loading', { error: '' });
+  var requestGeneration = _scopeRequestGeneration;
+  var requestScope = getEffectiveGroupUuid();
   try {
     setApiStatus('loading', 'Loading upcoming move-outs…');
-    var data = await proxyAction('upcoming_moveouts', { days: 60, limit: 100 });
+    var data = await proxyAction('upcoming_moveouts', getScopedActionParams({ days: 60, limit: 100 }));
+    if (requestGeneration !== _scopeRequestGeneration || String(requestScope || '') !== String(getEffectiveGroupUuid() || '')) return false;
     var results = data.results || data.data || [];
 
     UPCOMING_MOVEOUTS = results.map(function(t) {
@@ -8135,9 +8094,12 @@ async function fetchUpcomingMoveouts() {
 // Turn Work Orders: Proxy ?action=turn_work_orders — DB API v0
 // Real-time WO status for unit turn WOs (more current than Reports API)
 async function fetchTurnWorkOrders() {
+  var requestGeneration = _scopeRequestGeneration;
+  var requestScope = getEffectiveGroupUuid();
   try {
     setApiStatus('loading', 'Loading turn work orders\u2026');
-    var data = await proxyAction('turn_work_orders', { days: 90, limit: 100 });
+    var data = await proxyAction('turn_work_orders', getScopedActionParams({ days: 90, limit: 100 }));
+    if (requestGeneration !== _scopeRequestGeneration || String(requestScope || '') !== String(getEffectiveGroupUuid() || '')) return false;
     var results = data.results || data.data || [];
     TURN_WORK_ORDERS = results.map(function(wo) {
       return {
@@ -8171,9 +8133,12 @@ async function fetchTurnWorkOrders() {
 // Unit Turns (SQL tracker): Proxy ?action=unit_turns
 // Stores inferred + manual turn tracking records synced from the pipeline.
 async function fetchUnitTurnsDB() {
+  var requestGeneration = _scopeRequestGeneration;
+  var requestScope = getEffectiveGroupUuid();
   try {
     setApiStatus('loading', 'Loading unit turn tracker…');
-    var data = await proxyAction('unit_turns', { days: '365', limit: 1000 });
+    var data = await proxyAction('unit_turns', getScopedActionParams({ days: '365', limit: 1000 }));
+    if (requestGeneration !== _scopeRequestGeneration || String(requestScope || '') !== String(getEffectiveGroupUuid() || '')) return false;
     var results = data.results || data.data || [];
     UNIT_TURN_TRACKER_BY_KEY = {};
     UNIT_TURNS_DB = results.map(function(t) {
@@ -8520,7 +8485,7 @@ function resolveWebhookResourceName(resourceType, resourceId) {
 
   if (rtype === 'work_order') {
     var wo = WORK_ORDERS.find(function(w) { return String(w.uuid) === rid || String(w.id) === rid; });
-    if (wo) return 'WO#' + (wo.id || rid.slice(0, 8)) + (wo.propertyName ? ' - ' + wo.propertyName : '');
+    if (wo) return 'WO#' + (wo.id || 'Work Order') + (wo.propertyName ? ' - ' + wo.propertyName : '');
   }
   if (rtype === 'property') {
     var prop = PROPERTIES.find(function(p) { return String(p._dbUuid) === rid || String(p.id) === rid; });
@@ -8537,7 +8502,7 @@ function resolveWebhookResourceName(resourceType, resourceId) {
   }
   if (rtype === 'unit_turn') {
     var turn = TURNS.find(function(t) { return String(t.unitTurnId) === rid || String(t.unitId) === rid; });
-    if (turn) return (turn.unit || rid.slice(0, 8)) + (turn.property ? ' - ' + turn.property : '');
+    if (turn) return (turn.unit || 'Unit Turn') + (turn.property ? ' - ' + turn.property : '');
   }
   if (rtype === 'inspection' || rtype === 'unit_inspection') {
     var insp = (typeof INSPECTIONS !== 'undefined' ? INSPECTIONS : []).find(function(i) {
@@ -10917,8 +10882,12 @@ function getPreferredBillingAmount(row) {
 function aggregateBillingV2Kpis(results) {
   if (!Array.isArray(results)) {
     return {
+      approval_backlog_count: 0,
+      approval_backlog_amount: 0,
       pending_approval_count: 0,
       pending_approval_amount: 0,
+      on_hold_count: 0,
+      on_hold_amount: 0,
       total_outstanding: 0,
       paid_this_period_amount: 0,
       paid_this_period_count: 0,
@@ -10927,8 +10896,12 @@ function aggregateBillingV2Kpis(results) {
   }
   
   var kpis = {
+    approval_backlog_count: 0,
+    approval_backlog_amount: 0,
     pending_approval_count: 0,
     pending_approval_amount: 0,
+    on_hold_count: 0,
+    on_hold_amount: 0,
     total_outstanding: 0,
     paid_this_period_amount: 0,
     paid_this_period_count: 0,
@@ -10943,19 +10916,34 @@ function aggregateBillingV2Kpis(results) {
     var vendor = row.vendor || {};
 
     var amount = Number(getPreferredBillingAmount(row) || 0);
-    var status = String(wo.status || '').toLowerCase();
+    var approvalRecord = {
+      approval_status: row.approval_status || row.approvalStatus,
+      status: row.status || wo.status,
+      raw: row.raw || row,
+    };
+    var status = getBillStatusKey(approvalRecord);
+    var unpaid = Number(row.unpaid != null ? row.unpaid : fin.vendor_charge_amount || 0) || 0;
+    var paid = Number(row.paid != null ? row.paid : 0) || 0;
     
     // Count vendors with bills
     if (vendor.vendor_id) kpis.vendors_with_open_bills.add(vendor.vendor_id);
     
-    // Categorize by work order status
-    if (status === 'pending' || status === 'pending approval') {
+    // Approval backlog is intentionally explicit: pending approval and on
+    // hold are actionable AP states, while the chart keeps them distinguishable.
+    if (status === 'pending_approval') {
       kpis.pending_approval_count++;
-      kpis.pending_approval_amount += amount;
-    } else if (status === 'approved' && String(fin.vendor_charge_amount || '') === '') {
-      kpis.total_outstanding += amount;
-    } else if (status === 'completed' || status === 'billed') {
-      kpis.paid_this_period_amount += amount;
+      kpis.pending_approval_amount += unpaid || amount;
+      kpis.approval_backlog_count++;
+      kpis.approval_backlog_amount += unpaid || amount;
+    } else if (status === 'on_hold') {
+      kpis.on_hold_count++;
+      kpis.on_hold_amount += unpaid || amount;
+      kpis.approval_backlog_count++;
+      kpis.approval_backlog_amount += unpaid || amount;
+    } else if (status === 'approved') {
+      kpis.total_outstanding += unpaid || Math.max(0, amount - paid);
+    } else if (status === 'paid' || status === 'completed' || status === 'billed') {
+      kpis.paid_this_period_amount += paid || amount;
       kpis.paid_this_period_count++;
     }
   }
@@ -11913,7 +11901,7 @@ function wireBillingFilters() {
   var PLACEHOLDERS = {
     bills_by_vendor: 'Vendor ID (UUID)…',
     bills_by_property: 'Property ID (UUID)…',
-    bills_by_wo: 'Work Order UUID or Number…',
+    bills_by_wo: 'Work order number or reference…',
     bills_by_wo_number: 'Work Order Number…',
     bills_by_invoice: 'Invoice Number…'
   };
@@ -12115,8 +12103,10 @@ function wireBillingFilters() {
   // reload inspections data when the scope changes.
   document.addEventListener('groupFilterChanged', function() {
     clearChartAnalyticsCache();
+    clearDashboardStatsCache();
     _geocodedCache = null;
     _geocodedCacheScope = '';
+    _sunburstRenderedKey = '';
     fetchInspections().then(function() {
       var activeTab = document.querySelector('.nav-tab.active');
       if (activeTab && activeTab.getAttribute('data-tab') === 'inspections') {
@@ -12125,9 +12115,34 @@ function wireBillingFilters() {
     });
   });
 
+  // Turn and occupancy datasets are also scope-sensitive. The previous
+  // implementation only re-rendered the existing turn rows, which left the
+  // board and dashboard on the prior group's data until a manual refresh.
+  document.addEventListener('groupFilterChanged', function() {
+    var refreshGeneration = _scopeRequestGeneration;
+    Promise.all([
+      fetchTurns(),
+      fetchUpcomingMoveouts(),
+      fetchTurnWorkOrders(),
+      fetchUnitTurnsDB(),
+      fetchVacancyV2(),
+    ]).then(function() {
+      if (refreshGeneration !== _scopeRequestGeneration) return;
+      renderTurnBoard();
+      renderDashboardKPIs();
+      renderActivityFeed();
+    }).catch(function() {
+      if (refreshGeneration !== _scopeRequestGeneration) return;
+      renderTurnBoard();
+      renderDashboardKPIs();
+    });
+  });
+
   document.addEventListener('groupFilterChanged', function() {
     window._currentBillsCache = [];
     _billsPage = 0;
+    BILLING_VENDOR_SPEND_CACHE = { key: '', payload: null };
+    BILLING_KPI_STATS = null;
     _billingKpisLoadedGroup = null; // invalidate KPI cache on group change
     loadBillingKpis({ forceRefresh: true });
     if (currentBillingSubtab === 'main') {
@@ -12269,7 +12284,7 @@ function buildBillLineItemsHtml(lineItems) {
     var target = resolveLineItemUuidTarget(li);
     var attrs = '';
     if (target) {
-      attrs = ' class="clickable-row bill-lineitem-row" data-li-resource="' + escapeHtml(target.resource) + '" data-li-label="' + escapeHtml(target.label) + '" data-li-uuid="' + escapeHtml(target.uuid) + '" tabindex="0" role="button" aria-label="Open ' + escapeHtml(target.label) + ' UUID detail"';
+      attrs = ' class="clickable-row bill-lineitem-row" data-li-resource="' + escapeHtml(target.resource) + '" data-li-label="' + escapeHtml(target.label) + '" data-li-uuid="' + escapeHtml(target.uuid) + '" tabindex="0" role="button" aria-label="Open ' + escapeHtml(target.label) + ' record detail"';
     }
     return '<tr' + attrs + '>' +
       '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + escapeHtml(String(desc)) + '</td>' +
@@ -12880,11 +12895,18 @@ function renderDashboardKPIs() {
   });
 
   var moveOuts = getUpcomingMoveOuts();
-  var flaggedCount = Object.keys(WO_FLAGS).length;
+  var flaggedCount = Object.keys(WO_FLAGS).filter(function(woId) {
+    var flaggedWO = WORK_ORDERS.find(function(row) { return String(row.id || '') === String(woId); });
+    return flaggedWO ? isInPropertyGroup(flaggedWO.propertyId, flaggedWO.propertyName, currentPropertyGroup) : false;
+  }).length;
   var pendingBillApprovals = (BILLS || []).filter(function(b) {
     if (!isInPropertyGroup(b.propertyId, b.propertyName, currentPropertyGroup)) return false;
-    return getBillStatusKey(b) === 'pending_approval';
+    return isBillApprovalBacklog(b);
   });
+  if (BILLING_KPI_STATS && NAV_BADGE_TOTALS_LOADED) {
+    var authoritativeBacklog = Number(BILLING_KPI_STATS.approval_backlog_count);
+    if (isFinite(authoritativeBacklog)) pendingBillApprovals = new Array(Math.max(0, authoritativeBacklog));
+  }
 
   var completedTurns = TURNS.filter(function(t) {
     var endDate = t.turnEnd || t.moveIn;
@@ -13128,9 +13150,9 @@ function renderDashboardKPIs() {
     setMetricVisualState('kpiPendingBills', 'kpiPendingBillsSub', {
       state: 'ok',
       value: String(pendingBillApprovals.length),
-      subText: pendingBillApprovals.length > 0
-        ? pendingBillApprovals.length + ' bill(s) awaiting approval'
-        : (BILLS.length > 0 ? 'No pending approvals in scope' : 'AP bills not loaded yet')
+       subText: pendingBillApprovals.length > 0
+         ? pendingBillApprovals.length + ' pending approval or on hold'
+         : (BILLS.length > 0 ? 'No approval backlog in scope' : 'AP bills not loaded yet')
     });
   }
 
@@ -13216,21 +13238,6 @@ function renderDashboardKPIs() {
     vacancyCard.onkeydown = openVacancies;
   }
 
-  pushDashboardKpiSnapshot({
-    open: openWOs.length,
-    urgent: urgentWOs.length,
-    turns: activeTurns.length,
-    moveouts: moveOuts.length,
-    flagged: flaggedCount,
-    pendingBills: pendingBillApprovals.length,
-    avgTurnCompletion: avgTurnCompletion !== null ? avgTurnCompletion : 0,
-    avgInspectionAge: avgInspectionAge !== null ? avgInspectionAge : 0,
-    avgWOCompletion: avgWOCompletion !== null ? avgWOCompletion : 0,
-    completedTurns: completedTurns.length,
-    vacancies: vacancyTotal
-  });
-  renderDashboardKpiTrends();
-  ensureDashboardKpiModeRotation();
   renderDashboardInsightCharts(openWOs, urgentWOs);
   renderDashboardGeoCharts();
   fetchAndRenderPortfolioSunburst();
@@ -13249,7 +13256,7 @@ function renderDashboardKPIs() {
       fiEl.className = 'filter-indicator';
       fiEl.innerHTML = '<i class="fas fa-filter"></i> Filtering: <strong>' + escapeHtml(currentPropertyGroup) +
         '</strong> (' + propsInGroup + ' properties) &mdash; ' + openWOs.length + ' WOs, ' + activeTurns.length + ' turns' +
-        ' <button class="fi-clear" id="fiClearBtn">Clear Filter</button>';
+        (_accessRole === 'pm_readonly' ? '' : ' <button class="fi-clear" id="fiClearBtn">Clear Filter</button>');
       var clearBtn = document.getElementById('fiClearBtn');
       if (clearBtn) {
         clearBtn.onclick = function() {
@@ -13273,13 +13280,26 @@ var _dashboardInsightsResizeWired = false;
 var _dashboardChartModalChart = null;
 var _dashboardChartModalFilter = '';
 
-function filterWorkOrdersFromDashboard(label) {
+function filterWorkOrdersFromDashboard(label, filterKind) {
   var query = String(label || '').trim();
   if (!query) return;
   closeModal('dashboardChartModal');
   var workordersTab = document.querySelector('.nav-tab[data-tab="workorders"]');
   if (workordersTab) workordersTab.click();
   setTimeout(function() {
+    if (filterKind === 'status') {
+      currentWOTab = 'active';
+      currentWOSubtab = 'active';
+      currentWOFilter = query;
+      clearWorkOrderLookup();
+      var searchForStatus = document.getElementById('woSearch');
+      if (searchForStatus) searchForStatus.value = '';
+      $$('[data-filter]').forEach(function(button) {
+        button.classList.toggle('active', button.getAttribute('data-filter') === query);
+      });
+      fetchWorkOrders({ offset: 0 }).then(function() { renderWorkOrders(); });
+      return;
+    }
     var search = document.getElementById('woSearch');
     if (!search) return;
     search.value = query;
@@ -13358,6 +13378,16 @@ function destroyDashboardInsightChart(elId) {
     try { chart.dispose(); } catch (e) { /* noop */ }
   }
   delete _dashboardInsightCharts[elId];
+}
+
+function markDashboardChartHydrated(element) {
+  if (!element) return;
+  element.classList.remove('chart-hydrating');
+  // Restart a short, subtle hydration pulse without leaving a loading bar in
+  // the chart surface.
+  void element.offsetWidth;
+  element.classList.add('chart-hydrated');
+  setTimeout(function() { element.classList.remove('chart-hydrated'); }, 700);
 }
 
 function renderDashboardInsightChart(elId, rows, title) {
@@ -13484,8 +13514,14 @@ function renderDashboardInsightChart(elId, rows, title) {
   });
   chart.off('click');
   chart.on('click', function(params) {
-    openDashboardChartModal(title, rows, params && params.name);
+    var clickedLabel = String(params && params.name || '').trim();
+    if (/status mix/i.test(String(title || ''))) {
+      filterWorkOrdersFromDashboard(clickedLabel, 'status');
+      return;
+    }
+    openDashboardChartModal(title, rows, clickedLabel);
   });
+  markDashboardChartHydrated(el);
 
   var card = el.closest('.wo-chart-card, .chart-card, article');
   if (card) card.classList.add('dashboard-chart-interactive');
@@ -13587,9 +13623,52 @@ async function fetchChartAnalytics(kind) {
   return request;
 }
 
+var _dashboardStatsCache = {};
+var _dashboardStatsInflight = {};
+var _dashboardStatsGeneration = 0;
+
+function clearDashboardStatsCache() {
+  _dashboardStatsCache = {};
+  _dashboardStatsInflight = {};
+  _dashboardStatsGeneration++;
+}
+
+async function fetchDashboardStats() {
+  var scope = getEffectiveGroupUuid() || '__all__';
+  var key = 'dashboard_stats|' + scope;
+  if (_dashboardStatsCache[key]) return _dashboardStatsCache[key];
+  if (_dashboardStatsInflight[key]) return _dashboardStatsInflight[key];
+  var generation = _dashboardStatsGeneration;
+  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  var token = getProxyAccessToken();
+  var url = localBase + '/api/local/dashboard_stats' + (scope !== '__all__' ? ('?property_group_id=' + encodeURIComponent(scope)) : '');
+  var headers = { 'Accept': 'application/json' };
+  if (token) headers.Authorization = 'Bearer ' + token;
+  var request = (async function() {
+    try {
+      var response = await fetchWithTimeout(url, { headers: headers }, 45000);
+      var data = {};
+      try { data = await response.json(); } catch (_) { data = {}; }
+      if (!response.ok || data.ok === false) {
+        throw new Error(String(data.error || data.message || ('Dashboard stats failed: HTTP ' + response.status)));
+      }
+      if (generation !== _dashboardStatsGeneration || scope !== String(getEffectiveGroupUuid() || '__all__')) return null;
+      _dashboardStatsCache[key] = data;
+      return data;
+    } catch (error) {
+      console.error('[dashboard-stats] failed', error);
+      return null;
+    } finally {
+      if (_dashboardStatsInflight[key] === request) delete _dashboardStatsInflight[key];
+    }
+  })();
+  _dashboardStatsInflight[key] = request;
+  return request;
+}
+
 async function renderDashboardInsightCharts(openWOs, urgentWOs) {
-  var openList = Array.isArray(openWOs) ? openWOs : [];
-  var urgentList = Array.isArray(urgentWOs) ? urgentWOs : [];
+  void openWOs;
+  void urgentWOs;
   var pmMeta = $('#dashPmLoadMeta');
   var woTypeMeta = $('#dashWoTypeMeta');
   var urgMeta = $('#dashUrgencyMeta');
@@ -13604,18 +13683,18 @@ async function renderDashboardInsightCharts(openWOs, urgentWOs) {
     );
   } else {
     setDashboardInsightCardText(
-      'PM Workload Comparison',
-      'PM Aging Pressure',
-      'Urgent Pressure by PM',
-      'Comparative PM snapshots from indexed work order and turn data.'
+      'Open WO Load by Owner',
+      'Open WO Type Mix',
+      'Open WO Priority Mix',
+      'Scope-complete operational counts from PostgreSQL.'
     );
   }
 
-  // Counts come from the scope-exact server aggregate so cards reconcile with
-  // badges; urgent + avg-days use the complete loaded arrays (same scope).
-  var generation = _chartAnalyticsGeneration;
-  var data = await fetchChartAnalytics('work-orders').catch(function() { return null; });
-  if (generation !== _chartAnalyticsGeneration) return;
+  // Every dashboard chart reads this scope-exact endpoint. No chart uses the
+  // 100-row work-order page as an aggregate source.
+  var generation = _dashboardStatsGeneration;
+  var data = await fetchDashboardStats().catch(function() { return null; });
+  if (generation !== _dashboardStatsGeneration) return;
   if (!data || !Number(data.total || 0)) {
     if (pmMeta) pmMeta.textContent = 'No open workload';
     if (woTypeMeta) woTypeMeta.textContent = 'No open WO types';
@@ -13633,36 +13712,9 @@ async function renderDashboardInsightCharts(openWOs, urgentWOs) {
   var propertyRows = (data.by_property || []).slice(0, 6);
   var statusRows = (data.by_status || []).slice(0, 6);
   var woTypeRows = (data.by_type || []).slice(0, 6);
-
-  var urgentPmAgg = {};
-  var pmAgeAgg = {};
-
-  openList.forEach(function(wo) {
-    var pm = String(wo.pmName || wo.pm_name || wo.propertyManager || wo.property_manager || 'Unassigned PM').trim() || 'Unassigned PM';
-    var createdRaw = wo.created || wo.createdAt || wo.created_at || wo.statusDate || wo.updatedAt || '';
-    var createdMs = Date.parse(String(createdRaw || ''));
-    var ageDays = Number.isFinite(createdMs)
-      ? Math.max(0, Math.round((Date.now() - createdMs) / 86400000))
-      : 0;
-    if (!pmAgeAgg[pm]) pmAgeAgg[pm] = { count: 0, totalDays: 0 };
-    pmAgeAgg[pm].count += 1;
-    pmAgeAgg[pm].totalDays += ageDays;
-  });
-
-  urgentList.forEach(function(wo) {
-    var pm = String(wo.pmName || wo.pm_name || wo.propertyManager || wo.property_manager || 'Unassigned PM').trim() || 'Unassigned PM';
-    urgentPmAgg[pm] = (urgentPmAgg[pm] || 0) + 1;
-  });
-
-  var pmAgingRows = Object.keys(pmAgeAgg).map(function(key) {
-    var bucket = pmAgeAgg[key] || { count: 0, totalDays: 0 };
-    var avgDays = bucket.count ? (bucket.totalDays / bucket.count) : 0;
-    return { label: key, value: Number(avgDays.toFixed(1)) };
-  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
-
-  var urgentRows = Object.keys(urgentPmAgg).map(function(key) {
-    return { label: key, value: urgentPmAgg[key] };
-  }).sort(function(a, b) { return b.value - a.value; }).slice(0, 6);
+  var priorityRows = (data.by_priority || []).slice(0, 6);
+  var totalOpen = Number(data.total || 0);
+  var totalUrgent = Number(data.urgent || 0);
 
   if (pmMeta) {
     if (isPmScoped) {
@@ -13678,23 +13730,22 @@ async function renderDashboardInsightCharts(openWOs, urgentWOs) {
       var topProperty = propertyRows[0];
       woTypeMeta.textContent = topProperty ? (topProperty.label + ': ' + topProperty.value + ' open') : 'No property load data';
     } else {
-      var topAging = pmAgingRows[0];
-      woTypeMeta.textContent = topAging ? (topAging.label + ': ' + topAging.value + ' avg days open') : 'No PM aging data';
+      var topType = woTypeRows[0];
+      woTypeMeta.textContent = topType ? (topType.label + ': ' + topType.value + ' open') : 'No type data';
     }
   }
   if (urgMeta) {
-    var totalUrgent = urgentRows.reduce(function(sum, row) { return sum + Number(row.value || 0); }, 0);
     urgMeta.textContent = totalUrgent > 0 ? (totalUrgent + ' urgent open WOs') : 'No urgent WOs';
   }
 
   var card1Rows = isPmScoped ? statusRows : pmRows;
-  var card2Rows = isPmScoped ? propertyRows : pmAgingRows;
+  var card2Rows = isPmScoped ? propertyRows : woTypeRows;
   var card3Rows = isPmScoped
     ? [
-      { label: 'Urgent', value: urgentList.length },
-      { label: 'Not Urgent', value: Math.max(0, openList.length - urgentList.length) },
+      { label: 'Urgent', value: totalUrgent },
+      { label: 'Not Urgent', value: Math.max(0, totalOpen - totalUrgent) },
     ]
-    : urgentRows;
+    : priorityRows;
 
   if (!renderDashboardInsightChart('dashPmLoadChart', card1Rows, isPmScoped ? 'Your Open WO Status Mix' : 'Open WO Load by PM')) {
     renderKpiMiniChart('dashPmLoadChart', card1Rows, {
@@ -13775,10 +13826,11 @@ function renderDashboardGeoCharts(force) {
       if (!params || !params.value) return;
       var propertyId = params.value[3];
       if (propertyId) {
-        showTab('properties');
-        setPropertiesSubtab('inspections');
+        var propertiesTab = document.querySelector('.nav-tab[data-tab="properties"]');
+        if (propertiesTab) propertiesTab.click();
+        setPropertiesSubtab('directory');
         setTimeout(function() {
-          var fInput = document.getElementById('inspectionSearchInput');
+          var fInput = document.getElementById('propertySearch');
           if (fInput) { fInput.value = String(params.name || ''); fInput.dispatchEvent(new Event('input')); }
         }, 300);
       }
@@ -13834,6 +13886,7 @@ function renderDashboardGeoCharts(force) {
 // Click: Property ring → navigate to Properties tab filtered by name.
 // ---------------------------------------------------------------------------
 var _sunburstRenderedKey = '';
+var _dashboardUnitsLoadPromise = null;
 
 function fetchAndRenderPortfolioSunburst(force) {
   var buildSunburst = window.buildPortfolioSunburstOption;
@@ -13851,6 +13904,14 @@ function fetchAndRenderPortfolioSunburst(force) {
   if (!force && _sunburstRenderedKey === cacheKey) return;
 
   var properties = (PROPERTIES || []).slice();
+  if (!UNITS.length && properties.length) {
+    if (!_dashboardUnitsLoadPromise) {
+      _dashboardUnitsLoadPromise = fetchUnits().finally(function() { _dashboardUnitsLoadPromise = null; });
+    }
+    _dashboardUnitsLoadPromise.then(function() { fetchAndRenderPortfolioSunburst(true); });
+    if (meta) meta.textContent = 'Loading unit data…';
+    return;
+  }
   var data = properties.map(function(property) {
     var propertyUnits = (_unitsByPropertyId[String(property.id || '')] || []);
     var statuses = {};
@@ -13901,7 +13962,7 @@ function fetchAndRenderPortfolioSunburst(force) {
     if (!propName) return;
     if (typeof showTab === 'function') showTab('properties');
     setTimeout(function() {
-      var search = document.getElementById('propSearch') || document.getElementById('propertySearchInput');
+      var search = document.getElementById('propertySearch');
       if (search) {
         search.value = propName;
         search.dispatchEvent(new Event('input'));
@@ -13925,41 +13986,52 @@ function renderWoSankey() {
   var el = document.getElementById('dashSankeyChart');
   var meta = document.getElementById('dashSankeyMeta');
   if (!el) return;
+  var generation = _dashboardStatsGeneration;
+  fetchDashboardStats().then(function(data) {
+    if (generation !== _dashboardStatsGeneration) return;
+    var rows = data && Array.isArray(data.by_status_owner) ? data.by_status_owner.map(function(row) {
+      return {
+        property_group: currentPropertyGroup || 'Selected portfolio',
+        wo_type: 'Open work orders',
+        status: row.status || 'Unknown',
+        assigned_user: row.owner || 'Unassigned',
+        count: Number(row.value || 0),
+      };
+    }).filter(function(row) { return row.count > 0; }) : [];
+    if (!rows.length) {
+      if (meta) meta.textContent = 'No work orders';
+      var existingEmpty = echartsCore.getInstanceByDom(el);
+      if (existingEmpty) existingEmpty.clear();
+      return;
+    }
 
-  var wos = Array.isArray(WORK_ORDERS_ACTIVE) && WORK_ORDERS_ACTIVE.length > 0
-    ? WORK_ORDERS_ACTIVE.slice()
-    : (Array.isArray(WORK_ORDERS) ? WORK_ORDERS.slice() : []);
-
-  if (!wos.length) {
-    if (meta) meta.textContent = 'No work orders';
-    var existingEmpty = echartsCore.getInstanceByDom(el);
-    if (existingEmpty) existingEmpty.clear();
-    return;
-  }
-
-  var existing = echartsCore.getInstanceByDom(el);
-  if (existing) existing.dispose();
-  var chart = echartsCore.init(el, null, { renderer: 'canvas' });
-  chart.setOption(buildSankey(wos));
-  chart.off('click');
-  chart.on('click', function(params) {
-    var query = String(params && params.name || '').replace(/^[^\s]+\s+/, '').trim();
-    if (!query) return;
-    var workordersTab = document.querySelector('.nav-tab[data-tab="workorders"]');
-    if (workordersTab) workordersTab.click();
-    setTimeout(function() {
-      var search = document.getElementById('woSearch');
-      if (!search) return;
-      search.value = query;
-      search.dispatchEvent(new Event('input', { bubbles: true }));
-      search.focus();
-    }, 200);
+    var existing = echartsCore.getInstanceByDom(el);
+    if (existing) existing.dispose();
+    var chart = echartsCore.init(el, null, { renderer: 'canvas' });
+    chart.setOption(buildSankey(rows));
+    chart.off('click');
+    chart.on('click', function(params) {
+      var query = String(params && params.name || '').replace(/^[^\s]+\s+/, '').trim();
+      if (!query || query === 'Open work orders') return;
+      var workordersTab = document.querySelector('.nav-tab[data-tab="workorders"]');
+      if (workordersTab) workordersTab.click();
+      setTimeout(function() {
+        var search = document.getElementById('woSearch');
+        if (!search) return;
+        search.value = query;
+        search.dispatchEvent(new Event('input', { bubbles: true }));
+        search.focus();
+      }, 200);
+    });
+    el.style.cursor = 'pointer';
+    el.setAttribute('title', 'Click a flow node to filter Work Orders');
+    if (meta) meta.textContent = Number(data.total || 0).toLocaleString() + ' scoped work orders';
+    markDashboardChartHydrated(el);
+    if (!el._sankeyResizeWired) {
+      el._sankeyResizeWired = true;
+      window.addEventListener('resize', function() { chart.resize(); });
+    }
   });
-  el.style.cursor = 'pointer';
-  el.setAttribute('title', 'Click a flow node to filter Work Orders');
-  if (meta) meta.textContent = wos.length + ' work orders';
-
-  window.addEventListener('resize', function() { chart.resize(); });
 }
 
 function renderActivityFeed() {
@@ -14186,6 +14258,9 @@ var WO_VENDOR_SPEND_CACHE = { key: '', rows: [] };
 var BILLING_VENDOR_SPEND_CACHE = { key: '', payload: null };
 var BILLING_VENDOR_SPEND_CHART = null;
 var INSP_CHARTS = { mix: null, age: null, link: null };
+var MINI_CHARTS = {};
+var MINI_CHART_RESIZE_WIRED = false;
+var BILLING_KPI_STATS = null;
 var currentBillingSubtab = 'main'; // main | payables | charge-detail | bill-detail
 var _billingKpisLoading = false;
 var _billingKpisLoadedGroup = null; // group key for which KPIs were last loaded
@@ -14194,8 +14269,12 @@ var _billingDeepSearchPendingSource = 'billing-main';
 function aggregateBillingKpisFromRows(rows) {
   var list = Array.isArray(rows) ? rows : [];
   var cutoff = Date.now() - 30 * 86400000;
+  var backlogCount = 0;
+  var backlogAmount = 0;
   var pendingCount = 0;
   var pendingAmount = 0;
+  var onHoldCount = 0;
+  var onHoldAmount = 0;
   var outstandingAmount = 0;
   var paidAmount = 0;
   var paidCount = 0;
@@ -14218,10 +14297,20 @@ function aggregateBillingKpisFromRows(rows) {
     if (st === 'pending_approval') {
       pendingCount += 1;
       pendingAmount += (dueAmt || totalAmt || 0);
+      backlogCount += 1;
+      backlogAmount += (dueAmt || totalAmt || 0);
       if (vendorId) vendors.add(vendorId);
       return;
     }
-    if (st === 'approved' || st === 'on_hold') {
+    if (st === 'on_hold') {
+      onHoldCount += 1;
+      onHoldAmount += (dueAmt || totalAmt || 0);
+      backlogCount += 1;
+      backlogAmount += (dueAmt || totalAmt || 0);
+      if (vendorId) vendors.add(vendorId);
+      return;
+    }
+    if (st === 'approved') {
       outstandingAmount += (dueAmt || totalAmt || 0);
       if (vendorId) vendors.add(vendorId);
       return;
@@ -14235,8 +14324,12 @@ function aggregateBillingKpisFromRows(rows) {
   });
 
   return {
+    approval_backlog_count: backlogCount,
+    approval_backlog_amount: backlogAmount,
     pending_approval_count: pendingCount,
     pending_approval_amount: pendingAmount,
+    on_hold_count: onHoldCount,
+    on_hold_amount: onHoldAmount,
     approved_not_paid_count: 0,
     total_outstanding: outstandingAmount,
     paid_this_period_count: paidCount,
@@ -14252,8 +14345,8 @@ function renderBillingKpisFromRows(rows) {
   };
   setMetricVisualState('billKpiPending', 'billKpiPendingSub', {
     state: 'ok',
-    value: String(stats.pending_approval_count || 0),
-    subText: formatCurrency(stats.pending_approval_amount || 0) + ' pending approval'
+    value: String(stats.approval_backlog_count || stats.pending_approval_count || 0),
+    subText: String(stats.pending_approval_count || 0) + ' pending approval · ' + String(stats.on_hold_count || 0) + ' on hold'
   });
   setMetricVisualState('billKpiTotal', 'billKpiTotalSub', {
     state: 'ok',
@@ -14272,8 +14365,8 @@ function renderBillingKpisFromRows(rows) {
   });
   var badge = $('#billingBadge');
   if (badge) {
-    badge.textContent = String(stats.pending_approval_count || 0);
-    badge.style.display = stats.pending_approval_count > 0 ? '' : 'none';
+    badge.textContent = String(stats.approval_backlog_count || stats.pending_approval_count || 0);
+    badge.style.display = (stats.approval_backlog_count || stats.pending_approval_count) > 0 ? '' : 'none';
   }
 }
 
@@ -14337,7 +14430,7 @@ async function loadBillingKpis(opts) {
           var billsPayload = await proxyAction('bills', Object.assign({ page: 1, per_page: 200, max: 2000 }, params));
           var fallbackRows = Array.isArray(billsPayload && billsPayload.results) ? billsPayload.results : [];
           var fallbackStats = aggregateBillingKpisFromRows(fallbackRows);
-          if (fallbackStats.total_outstanding > 0 || fallbackStats.pending_approval_count > 0 || fallbackStats.paid_this_period_amount > 0) {
+          if (fallbackStats.total_outstanding > 0 || fallbackStats.approval_backlog_count > 0 || fallbackStats.paid_this_period_amount > 0) {
             stats = Object.assign({}, stats, fallbackStats, { derived_from_rows: true });
           }
         } catch (_) {
@@ -14346,19 +14439,28 @@ async function loadBillingKpis(opts) {
       }
     }
 
+    var backlogCount    = Number(stats.approval_backlog_count != null ? stats.approval_backlog_count : stats.pending_approval_count || 0);
     var pendingCount    = Number(stats.pending_approval_count || 0);
+    var onHoldCount     = Number(stats.on_hold_count || 0);
     var pendingAmt      = Number(stats.pending_approval_amount || 0);
     var outstandingAmt  = Number(stats.total_outstanding || 0);
     var paidAmt         = Number(stats.paid_this_period_amount || 0);
     var paidCount       = Number(stats.paid_this_period_count || 0);
     var vendorCount     = Number(stats.vendors_with_open_bills || 0);
+    BILLING_KPI_STATS = Object.assign({}, stats, {
+      approval_backlog_count: backlogCount,
+      pending_approval_count: pendingCount,
+      on_hold_count: onHoldCount,
+    });
 
     var fmt = function(n) { return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
 
     setMetricVisualState('billKpiPending', 'billKpiPendingSub', {
       state: 'ok',
-      value: String(pendingCount),
-      subText: pendingCount === 1 ? '1 invoice pending approval' : pendingCount + ' invoices pending approval'
+       value: String(backlogCount),
+       subText: backlogCount > 0
+         ? (pendingCount + ' pending approval · ' + onHoldCount + ' on hold')
+         : 'No approval backlog'
     });
     setMetricVisualState('billKpiTotal', 'billKpiTotalSub', {
       state: 'ok',
@@ -14379,8 +14481,8 @@ async function loadBillingKpis(opts) {
     // Update nav badge with pending count
     var badge = $('#billingBadge');
     if (badge) {
-      badge.textContent = String(pendingCount);
-      badge.style.display = pendingCount > 0 ? '' : 'none';
+       badge.textContent = String(backlogCount);
+       badge.style.display = backlogCount > 0 ? '' : 'none';
     }
 
     _billingKpisLoadedGroup = grpKey;
@@ -14393,10 +14495,11 @@ async function loadBillingKpis(opts) {
 
     if (fallbackRows.length) {
       var local = aggregateBillingKpisFromRows(fallbackRows);
+      BILLING_KPI_STATS = local;
       var fmtLocal = function(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
       setMetricVisualState('billKpiPending', 'billKpiPendingSub', {
         state: 'degraded',
-        value: String(local.pending_approval_count || 0),
+         value: String(local.approval_backlog_count || local.pending_approval_count || 0),
         subText: '⚠ fallback from visible bill rows'
       });
       setMetricVisualState('billKpiTotal', 'billKpiTotalSub', {
@@ -14523,6 +14626,20 @@ function exposeLegacyInlineHandlers() {
 
 exposeLegacyInlineHandlers();
 
+function syncSubpageTabA11y(selector, attribute, target) {
+  $$(selector).forEach(function(btn) {
+    btn.setAttribute('role', 'tab');
+    var selected = btn.getAttribute(attribute) === target;
+    btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+    var panelId = btn.getAttribute('aria-controls');
+    var panel = panelId ? document.getElementById(panelId) : null;
+    if (panel) {
+      panel.setAttribute('role', 'tabpanel');
+      if (selected && btn.id) panel.setAttribute('aria-labelledby', btn.id);
+    }
+  });
+}
+
 function setWOSubtab(tab) {
   var allowed = { active: true, completed: true, closure: true, followup: true };
   var target = allowed[tab] ? tab : 'active';
@@ -14531,6 +14648,7 @@ function setWOSubtab(tab) {
   $$('[data-wo-subtab]').forEach(function(btn) {
     btn.classList.toggle('active', btn.dataset.woSubtab === target);
   });
+  syncSubpageTabA11y('[data-wo-subtab]', 'data-wo-subtab', target);
 
   $$('.wo-subpanel').forEach(function(panel) {
     panel.classList.remove('active');
@@ -14574,6 +14692,7 @@ function setBillingSubtab(tab) {
   $$('[data-billing-subtab]').forEach(function(btn) {
     btn.classList.toggle('active', btn.getAttribute('data-billing-subtab') === target);
   });
+  syncSubpageTabA11y('[data-billing-subtab]', 'data-billing-subtab', target);
 
   ['main', 'payables', 'charge-detail', 'bill-detail'].forEach(function(name) {
     var panel = $('#billing-subpanel-' + name);
@@ -14593,6 +14712,7 @@ function setBillingSubtab(tab) {
     if (!_billingMainLoading && _billingMainData.length === 0) loadBillingMain();
     else applyBillingMainFilters();
     loadBillingKpis();
+    renderBillingVendorSpendInsights();
     return;
   }
   syncBillingToolbarForSubtab();
@@ -14614,6 +14734,7 @@ function setErrorsSubtab(tab) {
     if (name === 'email-delivery') btn.style.display = canViewEmail ? '' : 'none';
     btn.classList.toggle('active', name === target);
   });
+  syncSubpageTabA11y('[data-errors-subtab]', 'data-errors-subtab', target);
 
   ['log', 'email-delivery'].forEach(function(name) {
     var panel = $('#errors-subpanel-' + name);
@@ -15546,7 +15667,8 @@ function renderBillingSection(opts) {
   if (currentBillingSubtab === 'charge-detail') { renderChargeDetailSection(opts); return; }
   if (currentBillingSubtab === 'bill-detail') { renderBillDetailSection(opts); return; }
   // default: main
-  loadBillingKpis();
+  loadBillingKpis({ forceRefresh: !!(opts && opts.forceRefresh) });
+  if (opts && opts.forceRefresh) BILLING_VENDOR_SPEND_CACHE = { key: '', payload: null };
   renderBillingVendorSpendInsights();
   if (opts && opts.forceRefresh) {
     loadBillingMain();
@@ -15559,7 +15681,7 @@ function renderBillingSection(opts) {
   loadBillingMain();
 }
 
-// In-House vs 3rd-Party horizontal bar fed by /api/local/v2/billing/vendor-spend, cached per property group.
+// External-vendor spend fed by /api/local/v2/billing/vendor-spend, cached per scope.
 async function renderBillingVendorSpendInsights() {
   var chartEl = document.getElementById('billingVendorSpendChart');
   var listEl = document.getElementById('billingVendorTop5List');
@@ -15567,27 +15689,19 @@ async function renderBillingVendorSpendInsights() {
   if (!chartEl) return;
 
   var groupId = getEffectiveGroupUuid() || '';
-  if (!groupId) {
-    destroyChartInstance(BILLING_VENDOR_SPEND_CHART);
-    BILLING_VENDOR_SPEND_CHART = null;
-    chartEl.innerHTML = '';
-    if (meta) meta.textContent = 'Select a property group';
-    if (listEl) listEl.innerHTML = '<li class="billing-vendor-top5-empty">Select a property group to load vendor spend.</li>';
-    return;
-  }
+  var spendScopeKey = groupId || '__all__';
 
   try {
     var payload;
-    if (BILLING_VENDOR_SPEND_CACHE.key === groupId && BILLING_VENDOR_SPEND_CACHE.payload) {
+    if (BILLING_VENDOR_SPEND_CACHE.key === spendScopeKey && BILLING_VENDOR_SPEND_CACHE.payload) {
       payload = BILLING_VENDOR_SPEND_CACHE.payload;
     } else {
-      var path = '/api/local/v2/billing/vendor-spend?property_group_id=' + encodeURIComponent(groupId);
+      var path = '/api/local/v2/billing/vendor-spend' + (groupId ? ('?property_group_id=' + encodeURIComponent(groupId)) : '');
       payload = await apiFetch(path);
-      BILLING_VENDOR_SPEND_CACHE = { key: groupId, payload: payload };
+      BILLING_VENDOR_SPEND_CACHE = { key: spendScopeKey, payload: payload };
     }
 
     var buckets = payload.buckets || {};
-    var inHouseTotal = Number((buckets.in_house && buckets.in_house.total_spend) || 0);
     var thirdPartyTotal = Number((buckets.third_party && buckets.third_party.total_spend) || 0);
     var topVendors = Array.isArray(payload.top_third_party_vendors) ? payload.top_third_party_vendors : [];
 
@@ -15611,23 +15725,20 @@ async function renderBillingVendorSpendInsights() {
       yAxis: {
         type: 'category',
         inverse: true,
-        data: ['In-House', '3rd-Party'],
+         data: ['External vendors'],
         axisLabel: { color: '#5a6378' }
       },
       series: [{
         type: 'bar',
         barMaxWidth: 28,
-        data: [
-          { value: inHouseTotal, itemStyle: { color: '#0f8d91' } },
-          { value: thirdPartyTotal, itemStyle: { color: '#d97706' } }
-        ]
+         data: [{ value: thirdPartyTotal, itemStyle: { color: '#d97706' } }]
       }]
     }, { notMerge: true });
 
     if (meta) {
-      meta.textContent = (inHouseTotal + thirdPartyTotal) > 0
-        ? (formatBillingInsightMoney(inHouseTotal) + ' in-house \u00b7 ' + formatBillingInsightMoney(thirdPartyTotal) + ' 3rd-party')
-        : 'No spend recorded';
+       meta.textContent = thirdPartyTotal > 0
+         ? formatBillingInsightMoney(thirdPartyTotal) + ' external vendor spend'
+         : 'No external vendor spend';
     }
 
     if (listEl) {
@@ -15725,22 +15836,83 @@ function renderKpiMiniChart(containerId, rows, options) {
   if (!el) return;
   var list = Array.isArray(rows) ? rows.filter(function(r) { return Number(r.value || 0) > 0; }) : [];
   if (!list.length) {
+    if (MINI_CHARTS[containerId]) {
+      try { MINI_CHARTS[containerId].dispose(); } catch (_) {}
+      delete MINI_CHARTS[containerId];
+    }
     el.innerHTML = '<div class="billing-mini-empty">No non-zero values for the current scope.</div>';
     return;
   }
   var opts = options || {};
-  var maxValue = list.reduce(function(mx, r) { return Math.max(mx, Number(r.value || 0)); }, 0) || 1;
   var fmtValue = typeof opts.valueFormatter === 'function'
     ? opts.valueFormatter
     : function(v) { return Number(v || 0).toLocaleString(); };
-  el.innerHTML = list.map(function(item) {
-    var pct = Math.max(4, Math.round((Number(item.value || 0) / maxValue) * 100));
-    return '<div class="billing-mini-row">' +
-      '<div class="billing-mini-label" title="' + escHtml(String(item.label || '')) + '">' + escHtml(String(item.label || '—')) + '</div>' +
-      '<div class="billing-mini-bar"><span style="width:' + pct + '%"></span></div>' +
-      '<div class="billing-mini-value">' + escHtml(fmtValue(item.value)) + '</div>' +
-    '</div>';
-  }).join('');
+  if (!(echarts && typeof echarts.init === 'function')) {
+    var maxValue = list.reduce(function(mx, r) { return Math.max(mx, Number(r.value || 0)); }, 0) || 1;
+    el.innerHTML = list.map(function(item) {
+      var pct = Math.max(4, Math.round((Number(item.value || 0) / maxValue) * 100));
+      return '<div class="billing-mini-row">' +
+        '<div class="billing-mini-label" title="' + escHtml(String(item.label || '')) + '">' + escHtml(String(item.label || '—')) + '</div>' +
+        '<div class="billing-mini-bar"><span style="width:' + pct + '%"></span></div>' +
+        '<div class="billing-mini-value">' + escHtml(fmtValue(item.value)) + '</div>' +
+      '</div>';
+    }).join('');
+    return;
+  }
+
+  var chart = MINI_CHARTS[containerId];
+  if (!chart || chart.getDom() !== el) {
+    if (chart && typeof chart.dispose === 'function') chart.dispose();
+    el.innerHTML = '';
+    chart = echarts.init(el, null, { renderer: 'canvas' });
+    MINI_CHARTS[containerId] = chart;
+  }
+  var styles = getComputedStyle(document.documentElement);
+  var text = (styles.getPropertyValue('--text-secondary') || '').trim() || '#475569';
+  var muted = (styles.getPropertyValue('--text-muted') || '').trim() || '#64748b';
+  var border = (styles.getPropertyValue('--border') || '').trim() || '#e2e8f0';
+  chart.setOption({
+    animationDuration: 380,
+    animationEasing: 'cubicOut',
+    grid: { left: 8, right: 16, top: 4, bottom: 4, containLabel: true },
+    xAxis: { type: 'value', splitLine: { lineStyle: { color: border, opacity: .35 } }, axisLabel: { color: muted, fontSize: 10 } },
+    yAxis: {
+      type: 'category',
+      inverse: true,
+      data: list.map(function(item) { return String(item.label || 'Unknown'); }),
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: text, fontSize: 10, width: 115, overflow: 'truncate' }
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: function(items) {
+        var item = items && items[0];
+        return item ? escapeHtml(String(item.name || '')) + ': ' + escapeHtml(fmtValue(item.value)) : '';
+      }
+    },
+    series: [{
+      type: 'bar',
+      barMaxWidth: 18,
+      data: list.map(function(item) { return Number(item.value || 0); }),
+      itemStyle: { color: '#0f8d91', borderRadius: [0, 5, 5, 0] },
+      label: { show: true, position: 'right', color: text, fontSize: 10, formatter: function(p) { return fmtValue(p.value); } }
+    }]
+  }, { notMerge: true });
+  if (typeof opts.onClick === 'function') {
+    chart.off('click');
+    chart.on('click', function(params) { opts.onClick(params); });
+  }
+  markDashboardChartHydrated(el);
+  if (!MINI_CHART_RESIZE_WIRED) {
+    MINI_CHART_RESIZE_WIRED = true;
+    window.addEventListener('resize', function() {
+      Object.keys(MINI_CHARTS).forEach(function(key) {
+        if (MINI_CHARTS[key] && typeof MINI_CHARTS[key].resize === 'function') MINI_CHARTS[key].resize();
+      });
+    });
+  }
 }
 
 function renderBillingMiniChart(containerId, rows, options) {
@@ -15764,7 +15936,7 @@ function renderBillingInsights(rows) {
   var totalAmount = 0;
   var nonZeroAmountRows = 0;
   list.forEach(function(row) {
-    var status = String((row.work_order && row.work_order.status) || row.status || 'Unknown').trim() || 'Unknown';
+    var status = getBillStatusKey(row) || 'unknown';
     statusAgg[status] = (statusAgg[status] || 0) + 1;
     var amt = Number(getPreferredBillingAmount(row) || 0);
     if (!isFinite(amt)) amt = 0;
@@ -15774,7 +15946,7 @@ function renderBillingInsights(rows) {
     }
   });
   var statusRows = Object.keys(statusAgg)
-    .map(function(key) { return { label: key, value: statusAgg[key] }; })
+    .map(function(key) { return { label: key.replace(/_/g, ' '), value: statusAgg[key] }; })
     .sort(function(a, b) { return b.value - a.value; })
     .slice(0, 5);
 
@@ -16492,6 +16664,7 @@ function setPropertiesSubtab(tab) {
   $$('[data-properties-subtab]').forEach(function(btn) {
     btn.classList.toggle('active', btn.getAttribute('data-properties-subtab') === target);
   });
+  syncSubpageTabA11y('[data-properties-subtab]', 'data-properties-subtab', target);
 
   ['directory', 'performance', 'vacancies', 'renewals', 'bulk', 'reports'].forEach(function(name) {
     var panel = $('#properties-subpanel-' + name);
@@ -16761,6 +16934,7 @@ function setOccupancySubtab(tab) {
   $$('[data-occupancy-subtab]').forEach(function(btn) {
     btn.classList.toggle('active', btn.getAttribute('data-occupancy-subtab') === target);
   });
+  syncSubpageTabA11y('[data-occupancy-subtab]', 'data-occupancy-subtab', target);
   tabs.forEach(function(name) {
     var panel = $('#occupancy-subpanel-' + name);
     if (!panel) return;
@@ -17096,7 +17270,7 @@ function getFilteredWOs() {
     ? WORK_ORDER_LOOKUP_RESULTS
     : ((currentWOTab === 'inactive') ? WORK_ORDERS_INACTIVE : WORK_ORDERS_ACTIVE);
   return sourceArray.filter(function(wo) {
-    if (lookupActive && wo.globalSearchResult) return true;
+    if (lookupActive && wo.globalSearchResult && wo.canOpen === false) return true;
     // Status filter (from filter buttons or kanban column click)
     if (currentWOFilter && currentWOFilter !== 'all' && wo.status !== currentWOFilter) return false;
     // Priority dropdown
@@ -17479,6 +17653,11 @@ function mapInspectionSortModel(sortModel) {
 function renderWOChartFilterBadges() {
   var mount = document.getElementById('woChartFilterBadges');
   if (!mount) return;
+  if (_accessRole === 'pm_readonly') {
+    mount.innerHTML = '';
+    mount.style.display = 'none';
+    return;
+  }
   var badges = [];
   if (WO_ANALYTICS_FILTERS.ageBucket) badges.push({ key: 'ageBucket', label: 'Age ' + WO_ANALYTICS_FILTERS.ageBucket });
   if (WO_ANALYTICS_FILTERS.owner) badges.push({ key: 'owner', label: 'Owner ' + WO_ANALYTICS_FILTERS.owner });
@@ -18278,18 +18457,27 @@ function renderWorkOrders() {
     }) || null;
   }
 
-  // Local paging over the full server set: badge, list, grid and pager share
-  // these rows, so the counts always agree.
+  // The active queue is server-paged. Keep local slicing only for inactive
+  // history and the short-lived lookup result set.
   var woPageSize = WORK_ORDERS_ACTIVE_PAGE_SIZE;
-  var woPageCount = filtered.length;
-  var woMaxStart = Math.max(0, Math.floor(Math.max(0, woPageCount - 1) / woPageSize) * woPageSize);
-  WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, Math.min(WORK_ORDERS_ACTIVE_OFFSET, woMaxStart));
-  WORK_ORDERS_ACTIVE_HAS_NEXT = (WORK_ORDERS_ACTIVE_OFFSET + woPageSize) < woPageCount;
-  var woPageRows = filtered.slice(WORK_ORDERS_ACTIVE_OFFSET, WORK_ORDERS_ACTIVE_OFFSET + woPageSize);
+  var hasLocalQueueFilters = lookupActive || currentWOTab === 'inactive' ||
+    (currentWOFilter && currentWOFilter !== 'all') || !!currentWOPriority || !!currentWOType ||
+    !!currentWOVendor || !!currentWOProperty || !!currentWOAgeFilter ||
+    String($('#woSearch') ? $('#woSearch').value || '' : '').trim().length > 0;
+  var serverPagedActive = currentWOTab === 'active' && !hasLocalQueueFilters;
+  var woPageCount = serverPagedActive ? WORK_ORDERS_ACTIVE_TOTAL : filtered.length;
+  var woPageRows = serverPagedActive
+    ? filtered
+    : filtered.slice(WORK_ORDERS_ACTIVE_OFFSET, WORK_ORDERS_ACTIVE_OFFSET + woPageSize);
+  if (!serverPagedActive) {
+    var woMaxStart = Math.max(0, Math.floor(Math.max(0, woPageCount - 1) / woPageSize) * woPageSize);
+    WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, Math.min(WORK_ORDERS_ACTIVE_OFFSET, woMaxStart));
+    WORK_ORDERS_ACTIVE_HAS_NEXT = (WORK_ORDERS_ACTIVE_OFFSET + woPageSize) < woPageCount;
+  }
 
   var activePageStart = woPageCount > 0 ? WORK_ORDERS_ACTIVE_OFFSET + 1 : 0;
   var activePageEnd = Math.min(WORK_ORDERS_ACTIVE_OFFSET + woPageRows.length, woPageCount);
-  var showPager = currentWOView !== 'list' && woPageCount > woPageSize;
+  var showPager = currentWOTab === 'active' && serverPagedActive && woPageCount > woPageSize;
   var activePagerHtml = showPager
     ? '<div class="wo-page-controls" aria-label="Active work order pages">' +
         '<span>Showing ' + activePageStart + '-' + activePageEnd + ' of ' + woPageCount + '</span>' +
@@ -18305,7 +18493,7 @@ function renderWorkOrders() {
 
   // ── List view ──────────────────────────────────────────────────────────────
   if (currentWOView === 'list') {
-    var woGridRowsBase = filtered.map(function(wo) {
+    var woGridRowsBase = woPageRows.map(function(wo) {
       var age = getWOAgeMeta(wo);
       var property = wo.propertyId && window.AppDB && window.AppDB.properties
         ? window.AppDB.properties.get(String(wo.propertyId))
@@ -18367,7 +18555,7 @@ function renderWorkOrders() {
       '<div class="wo-analytics-shell table-wrapper" id="woAnalyticsShell">' +
       '  <div class="wo-command-workspace">' +
       '    <main class="wo-grid-workspace">' +
-      '      <div class="wo-grid-toolbar"><div id="woGridToolbarMount"></div><div class="wo-grid-meta" id="woGridMeta">' + woGridRowsBase.length + ' work orders loaded</div><button class="filter-btn" id="woAnalyticsClearFilters">Clear Chart Filters</button></div>' +
+       '      <div class="wo-grid-toolbar"><div id="woGridToolbarMount"></div><div class="wo-grid-meta" id="woGridMeta">' + woGridRowsBase.length + ' work orders loaded</div>' + (_accessRole === 'pm_readonly' ? '' : '<button class="filter-btn" id="woAnalyticsClearFilters">Clear Chart Filters</button>') + '</div>' +
       '      <div id="woGridHost" class="ag-theme-quartz hm-ag-theme hm-ag-theme--wo"></div>' +
       '    </main>' +
       '    <aside class="wo-context-panel" id="woContextPanel" aria-live="polite"></aside>' +
@@ -18501,7 +18689,7 @@ function renderWorkOrders() {
   });
 
   // Also show any WOs with statuses not in KANBAN_STATUSES
-  var otherWos = filtered.filter(function(wo) { return !KANBAN_STATUSES.some(function(s) { return s.key === wo.status; }); });
+  var otherWos = woPageRows.filter(function(wo) { return !KANBAN_STATUSES.some(function(s) { return s.key === wo.status; }); });
   if (otherWos.length > 0) {
     var otherExpanded = expandedWOColumn === 'Other';
     html += '<div class="kanban-col' + (otherExpanded ? ' column--expanded' : '') + '" data-column="Other"><div class="kanban-col-head" data-column="Other"><span class="kanban-col-title">Other</span><div style="display:flex;align-items:center;gap:8px"><span class="kanban-col-count">' + otherWos.length + '</span><span class="kanban-col-toggle">' + (otherExpanded ? '▼' : '▶') + '</span></div></div><div class="kanban-col-body">';
@@ -18539,13 +18727,23 @@ function bindWorkOrderPaginationControls() {
   var nextButton = document.getElementById('woPageNext');
   if (previousButton) previousButton.onclick = function() {
     if (_workOrdersActivePageLoading) return;
-    WORK_ORDERS_ACTIVE_OFFSET = Math.max(0, WORK_ORDERS_ACTIVE_OFFSET - WORK_ORDERS_ACTIVE_PAGE_SIZE);
-    renderWorkOrders();
+    var nextOffset = Math.max(0, WORK_ORDERS_ACTIVE_OFFSET - WORK_ORDERS_ACTIVE_PAGE_SIZE);
+    if (currentWOTab === 'active') {
+      fetchWorkOrders({ offset: nextOffset }).then(function() { renderWorkOrders(); });
+    } else {
+      WORK_ORDERS_ACTIVE_OFFSET = nextOffset;
+      renderWorkOrders();
+    }
   };
   if (nextButton) nextButton.onclick = function() {
     if (_workOrdersActivePageLoading || !WORK_ORDERS_ACTIVE_HAS_NEXT) return;
-    WORK_ORDERS_ACTIVE_OFFSET = WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE_PAGE_SIZE;
-    renderWorkOrders();
+    var nextOffset = WORK_ORDERS_ACTIVE_OFFSET + WORK_ORDERS_ACTIVE_PAGE_SIZE;
+    if (currentWOTab === 'active') {
+      fetchWorkOrders({ offset: nextOffset }).then(function() { renderWorkOrders(); });
+    } else {
+      WORK_ORDERS_ACTIVE_OFFSET = nextOffset;
+      renderWorkOrders();
+    }
   };
 }
 
@@ -23867,7 +24065,9 @@ function wireUpUI() {
 
   // Billing: Refresh button
   var btnRefreshBilling = $('#btnRefreshBilling');
-  if (btnRefreshBilling) btnRefreshBilling.addEventListener('click', function() { loadBillingMain(); });
+  if (btnRefreshBilling) btnRefreshBilling.addEventListener('click', function() {
+    renderBillingSection({ forceRefresh: true });
+  });
 
   // Billing: Main panel controls
   var billingMainSearch = $('#billingMainSearch');
@@ -25876,10 +26076,19 @@ function renderAttentionPanel() {
     });
     var pendingOnly = pendingBills.filter(function(b){ return getBillStatusKey(b) === 'pending_approval'; });
     var onHoldOnly = pendingBills.filter(function(b){ return getBillStatusKey(b) === 'on_hold'; });
-    if (!pendingBills.length) {
+    var backlogCount = BILLING_KPI_STATS && Number.isFinite(Number(BILLING_KPI_STATS.approval_backlog_count))
+      ? Number(BILLING_KPI_STATS.approval_backlog_count)
+      : pendingBills.length;
+    var backlogPendingCount = BILLING_KPI_STATS && Number.isFinite(Number(BILLING_KPI_STATS.pending_approval_count))
+      ? Number(BILLING_KPI_STATS.pending_approval_count)
+      : pendingOnly.length;
+    var backlogHoldCount = BILLING_KPI_STATS && Number.isFinite(Number(BILLING_KPI_STATS.on_hold_count))
+      ? Number(BILLING_KPI_STATS.on_hold_count)
+      : onHoldOnly.length;
+    if (!backlogCount) {
       pendingBillsEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> No pending invoices</div>';
     } else {
-      var pbHtml = '<div class="attn-count">' + pendingBills.length + ' pending (' + pendingOnly.length + ' approval, ' + onHoldOnly.length + ' on hold)</div>';
+      var pbHtml = '<div class="attn-count">' + backlogCount + ' backlog (' + backlogPendingCount + ' approval, ' + backlogHoldCount + ' on hold)</div>';
       pendingBills.slice(0, 5).forEach(function(b) {
         var k = getBillStatusKey(b);
         var badge = k === 'on_hold' ? ' <span class="u-warning" style="font-size:10px">ON HOLD</span>' : '';
@@ -25887,7 +26096,7 @@ function renderAttentionPanel() {
           escapeHtml(String(b.propertyName || 'Unknown')) + badge + '</span><span class="attn-value">' +
           escapeHtml(currency(b.amount || 0)) + '</span></div>';
       });
-      if (pendingBills.length > 5) pbHtml += '<div class="attn-more">+' + (pendingBills.length - 5) + ' more</div>';
+      if (backlogCount > 5) pbHtml += '<div class="attn-more">+' + (backlogCount - 5) + ' more</div>';
       pendingBillsEl.innerHTML = pbHtml;
     }
   }
@@ -26133,7 +26342,7 @@ renderDashboardKPIs = function() {
         return '<td title="' + safe + '"><button class="dbadmin-cell-link" data-db-link-kind="wo" data-db-link-ref="' + encoded + '">' + safe + '</button></td>';
       }
       if (looksLikeUuid(raw)) {
-        return '<td title="' + safe + '"><button class="dbadmin-cell-link" data-db-link-kind="uuid" data-db-link-ref="' + encoded + '">' + safe + '</button></td>';
+        return '<td title="Technical identifier"><button class="dbadmin-cell-link" data-db-link-kind="uuid" data-db-link-ref="' + encoded + '">Open record</button></td>';
       }
       return '<td title="' + safe + '">' + safe + '</td>';
     }

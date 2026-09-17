@@ -11,9 +11,9 @@
 <link rel="apple-touch-icon" href="assets/logo.png">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=Karla:wght@400;500;600;700&family=Inconsolata:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-<link rel="stylesheet" href="css/app.css?v=20260503a">
-  <script type="module" crossorigin src="/assets/index-Dk8syZS8.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-D2yB_Gpx.css">
+<link rel="stylesheet" href="css/app.css?v=20260916a">
+  <script type="module" crossorigin src="/assets/index-uX0C_Xlg.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-dByTayDa.css">
 </head>
 <body class="theme-neo dashboard-skin-neo-on">
 
@@ -103,7 +103,7 @@
       <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.8.44</span></div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.8.59</span></div>
   </div>
 </div>
 
@@ -115,7 +115,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.8.44</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.8.59</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -143,7 +143,7 @@
     <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
     <div>
       <div class="sidebar-brand-text">HandyMgr</div>
-      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.8.44</div>
+      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.8.59</div>
     </div>
   </div>
 
@@ -207,7 +207,7 @@
     <div class="kpi-card kpi-card--neo kpi-card--info blue kpi-clickable" data-kpi="turns"><div class="kpi-label">Active Turns</div><div class="kpi-value" id="kpiTurns">—</div><div class="kpi-sub" id="kpiTurnsSub">Loading…</div></div>
     <div class="kpi-card kpi-card--neo kpi-card--healthy green kpi-clickable" data-kpi="moveouts"><div class="kpi-label">Upcoming Move-Outs</div><div class="kpi-value" id="kpiMoveOuts">—</div><div class="kpi-sub" id="kpiMoveOutsSub">Loading…</div></div>
     <div class="kpi-card kpi-card--neo kpi-card--info purple kpi-clickable" data-kpi="flagged"><div class="kpi-label">Flagged for Follow-Up</div><div class="kpi-value" id="kpiFlagged">—</div><div class="kpi-sub" id="kpiFlaggedSub">Loading…</div></div>
-    <div class="kpi-card kpi-card--neo kpi-card--warning amber"><div class="kpi-label">Pending Bill Approvals</div><div class="kpi-value" id="kpiPendingBills">—</div><div class="kpi-sub" id="kpiPendingBillsSub">Loading…</div></div>
+    <div class="kpi-card kpi-card--neo kpi-card--warning amber"><div class="kpi-label">Approval Backlog</div><div class="kpi-value" id="kpiPendingBills">—</div><div class="kpi-sub" id="kpiPendingBillsSub">Pending approval + on hold</div></div>
   </div>
 
   <div class="table-wrapper neo-surface-raised dashboard-overview-shell" style="margin-bottom:20px" id="managerOverviewSection">
@@ -351,6 +351,18 @@
         <div class="attention-card-title"><i class="fas fa-file-invoice-dollar" style="color:var(--warning)"></i> Pending Bill Approvals</div>
         <div id="attentionBillsBody" class="attention-card__body">Loading…</div>
       </div>
+      <div id="attentionPriority" class="attention-card attention-card--danger">
+        <div class="attention-card-title"><i class="fas fa-fire" style="color:var(--danger)"></i> Priority Attention (6mo+ / 180d+ / 90d+)</div>
+        <div id="attentionPriorityBody" class="attention-card__body">Loading…</div>
+      </div>
+      <div id="attentionLeasing" class="attention-card attention-card--info">
+        <div class="attention-card-title"><i class="fas fa-user-clock" style="color:var(--info)"></i> Neglected Leasing</div>
+        <div id="attentionLeasingBody" class="attention-card__body">Loading…</div>
+      </div>
+      <div id="attentionRenewals" class="attention-card attention-card--warning">
+        <div class="attention-card-title"><i class="fas fa-sync-alt" style="color:var(--warning)"></i> Renewals & Vacancy</div>
+        <div id="attentionRenewalsBody" class="attention-card__body">Loading…</div>
+      </div>
     </div>
   </div>
 
@@ -395,11 +407,11 @@
     <div class="wo-kpi-strip" id="woKpiStrip"></div>
   </div>
   <div class="chart-filter-badge-row" id="woChartFilterBadges" style="display:none"></div>
-  <div class="wo-subtabs" id="woSubtabs">
-    <button class="wo-subtab active" data-wo-subtab="active"><i class="fas fa-wrench"></i> Open (Active)</button>
-    <button class="wo-subtab" data-wo-subtab="completed"><i class="fas fa-check-circle"></i> Completed / Inactive</button>
-    <button class="wo-subtab" data-wo-subtab="closure"><i class="fas fa-clipboard-check"></i> WO Closure Assistant</button>
-    <button class="wo-subtab" data-wo-subtab="followup"><i class="fas fa-flag"></i> WO Follow-Up Queue</button>
+  <div class="wo-subtabs subpage-tabs" id="woSubtabs" role="tablist" aria-label="Work order pages">
+    <button type="button" id="wo-tab-active" role="tab" aria-selected="true" aria-controls="wo-subpanel-active" class="wo-subtab subpage-tab active" data-wo-subtab="active"><i class="fas fa-wrench"></i> Open (Active)</button>
+    <button type="button" id="wo-tab-completed" role="tab" aria-selected="false" aria-controls="wo-subpanel-active" class="wo-subtab subpage-tab" data-wo-subtab="completed"><i class="fas fa-check-circle"></i> Completed / Inactive</button>
+    <button type="button" id="wo-tab-closure" role="tab" aria-selected="false" aria-controls="wo-subpanel-closure" class="wo-subtab subpage-tab" data-wo-subtab="closure"><i class="fas fa-clipboard-check"></i> WO Closure Assistant</button>
+    <button type="button" id="wo-tab-followup" role="tab" aria-selected="false" aria-controls="wo-subpanel-followup" class="wo-subtab subpage-tab" data-wo-subtab="followup"><i class="fas fa-flag"></i> WO Follow-Up Queue</button>
   </div>
 
   <div class="wo-subpanel" id="wo-subpanel-active">
@@ -654,14 +666,14 @@
       <button class="action-btn" id="btnRefreshBilling"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
-  <div class="section-subtabs report-subtabs" id="billingSubtabs" aria-label="Billing reports">
-    <button class="section-subtab active" data-billing-subtab="main"><i class="fas fa-table-list"></i> Bills Home</button>
-    <button class="section-subtab" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
-    <button class="section-subtab" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
-    <button class="section-subtab" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
+  <div class="section-subtabs report-subtabs subpage-tabs" id="billingSubtabs" role="tablist" aria-label="Billing reports">
+    <button type="button" id="billing-tab-main" role="tab" aria-selected="true" aria-controls="billing-subpanel-main" class="section-subtab subpage-tab active" data-billing-subtab="main"><i class="fas fa-table-list"></i> Bills Home</button>
+    <button type="button" id="billing-tab-payables" role="tab" aria-selected="false" aria-controls="billing-subpanel-payables" class="section-subtab subpage-tab" data-billing-subtab="payables"><i class="fas fa-file-invoice"></i> Payables</button>
+    <button type="button" id="billing-tab-charge-detail" role="tab" aria-selected="false" aria-controls="billing-subpanel-charge-detail" class="section-subtab subpage-tab" data-billing-subtab="charge-detail"><i class="fas fa-receipt"></i> Charge Detail</button>
+    <button type="button" id="billing-tab-bill-detail" role="tab" aria-selected="false" aria-controls="billing-subpanel-bill-detail" class="section-subtab subpage-tab" data-billing-subtab="bill-detail"><i class="fas fa-file-lines"></i> Bill Detail</button>
   </div>
   <div class="kpi-grid stagger billing-kpi-grid" id="billingKpiGrid">
-    <div class="kpi-card amber"><div class="kpi-label">Pending Approval</div><div class="kpi-value" id="billKpiPending">—</div><div class="kpi-sub" id="billKpiPendingSub">invoices awaiting approval</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">Pending / On Hold</div><div class="kpi-value" id="billKpiPending">—</div><div class="kpi-sub" id="billKpiPendingSub">pending approval + on hold</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Outstanding ($)</div><div class="kpi-value" id="billKpiTotal">—</div><div class="kpi-sub" id="billKpiTotalSub">approved, not yet paid</div></div>
     <div class="kpi-card green"><div class="kpi-label">Paid This Period</div><div class="kpi-value" id="billKpiPaid">—</div><div class="kpi-sub" id="billKpiPaidSub">amount paid recently</div></div>
     <div class="kpi-card purple" id="billKpiVendorsCard"><div class="kpi-label">Vendors (Open Bills)</div><div class="kpi-value" id="billKpiVendors">—</div><div class="kpi-sub" id="billKpiVendorsSub">with pending/approved bills</div></div>
@@ -669,7 +681,7 @@
   <div class="billing-insights-grid" id="billingInsightsGrid">
     <article class="billing-insight-card" id="billingStatusCard">
       <header>
-        <h4>WO Status Mix</h4>
+        <h4>Approval Status Mix</h4>
         <span id="billingStatusMeta">—</span>
       </header>
       <div class="billing-mini-chart" id="billingStatusChart"></div>
@@ -958,13 +970,13 @@
         <button id="btnBulkNoteOpen" onclick="openBulkNoteModal()" class="action-btn"><i class="fas fa-pen-to-square"></i> Bulk Update Notes</button>
       </div>
     </div>
-    <div class="section-subtabs report-subtabs" id="propertiesSubtabs" aria-label="Property reports">
-      <button class="section-subtab active" data-properties-subtab="directory"><i class="fas fa-table"></i> Directory</button>
-      <button class="section-subtab" data-properties-subtab="performance"><i class="fas fa-chart-line"></i> Performance</button>
-      <button class="section-subtab" data-properties-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
-      <button class="section-subtab" data-properties-subtab="renewals"><i class="fas fa-file-signature"></i> Renewals</button>
-      <button class="section-subtab" data-properties-subtab="reports"><i class="fas fa-landmark"></i> Owner Reports</button>
-      <button class="section-subtab" data-properties-subtab="bulk"><i class="fas fa-pen-to-square"></i> Bulk Notes</button>
+    <div class="section-subtabs report-subtabs subpage-tabs" id="propertiesSubtabs" role="tablist" aria-label="Property reports">
+      <button type="button" id="properties-tab-directory" role="tab" aria-selected="true" aria-controls="properties-subpanel-directory" class="section-subtab subpage-tab active" data-properties-subtab="directory"><i class="fas fa-table"></i> Directory</button>
+      <button type="button" id="properties-tab-performance" role="tab" aria-selected="false" aria-controls="properties-subpanel-performance" class="section-subtab subpage-tab" data-properties-subtab="performance"><i class="fas fa-chart-line"></i> Performance</button>
+      <button type="button" id="properties-tab-vacancies" role="tab" aria-selected="false" aria-controls="properties-subpanel-vacancies" class="section-subtab subpage-tab" data-properties-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
+      <button type="button" id="properties-tab-renewals" role="tab" aria-selected="false" aria-controls="properties-subpanel-renewals" class="section-subtab subpage-tab" data-properties-subtab="renewals"><i class="fas fa-file-signature"></i> Renewals</button>
+      <button type="button" id="properties-tab-reports" role="tab" aria-selected="false" aria-controls="properties-subpanel-reports" class="section-subtab subpage-tab" data-properties-subtab="reports"><i class="fas fa-landmark"></i> Owner Reports</button>
+      <button type="button" id="properties-tab-bulk" role="tab" aria-selected="false" aria-controls="properties-subpanel-bulk" class="section-subtab subpage-tab" data-properties-subtab="bulk"><i class="fas fa-pen-to-square"></i> Bulk Notes</button>
     </div>
     <div class="section-subpanel active" id="properties-subpanel-directory">
     <div class="table-scroll">
@@ -1281,15 +1293,15 @@
       <button class="action-btn" id="btnRefreshOccupancy"><i class="fas fa-sync-alt"></i> Refresh</button>
     </div>
   </div>
-  <div class="section-subtabs report-subtabs" id="occupancySubtabs" aria-label="Occupancy reports">
-    <button class="section-subtab active" data-occupancy-subtab="tenant-transactions"><i class="fas fa-receipt"></i> Transactions</button>
-    <button class="section-subtab" data-occupancy-subtab="tenant-directory"><i class="fas fa-users"></i> Tenant Directory</button>
-    <button class="section-subtab" data-occupancy-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
-    <button class="section-subtab" data-occupancy-subtab="move-outs"><i class="fas fa-calendar-minus"></i> Move-Outs</button>
-    <button class="section-subtab" data-occupancy-subtab="delinquency"><i class="fas fa-exclamation-circle"></i> Delinquency</button>
-    <button class="section-subtab" data-occupancy-subtab="applications"><i class="fas fa-file-alt"></i> Applications</button>
-    <button class="section-subtab" data-occupancy-subtab="showings"><i class="fas fa-calendar-check"></i> Showings</button>
-    <button class="section-subtab" data-occupancy-subtab="guest-cards"><i class="fas fa-id-card"></i> Guest Cards</button>
+  <div class="section-subtabs report-subtabs subpage-tabs" id="occupancySubtabs" role="tablist" aria-label="Occupancy reports">
+    <button type="button" id="occupancy-tab-tenant-transactions" role="tab" aria-selected="true" aria-controls="occupancy-subpanel-tenant-transactions" class="section-subtab subpage-tab active" data-occupancy-subtab="tenant-transactions"><i class="fas fa-receipt"></i> Transactions</button>
+    <button type="button" id="occupancy-tab-tenant-directory" role="tab" aria-selected="false" aria-controls="occupancy-subpanel-tenant-directory" class="section-subtab subpage-tab" data-occupancy-subtab="tenant-directory"><i class="fas fa-users"></i> Tenant Directory</button>
+    <button type="button" id="occupancy-tab-vacancies" role="tab" aria-selected="false" aria-controls="occupancy-subpanel-vacancies" class="section-subtab subpage-tab" data-occupancy-subtab="vacancies"><i class="fas fa-door-open"></i> Vacancies</button>
+    <button type="button" id="occupancy-tab-move-outs" role="tab" aria-selected="false" aria-controls="occupancy-subpanel-move-outs" class="section-subtab subpage-tab" data-occupancy-subtab="move-outs"><i class="fas fa-calendar-minus"></i> Move-Outs</button>
+    <button type="button" id="occupancy-tab-delinquency" role="tab" aria-selected="false" aria-controls="occupancy-subpanel-delinquency" class="section-subtab subpage-tab" data-occupancy-subtab="delinquency"><i class="fas fa-exclamation-circle"></i> Delinquency</button>
+    <button type="button" id="occupancy-tab-applications" role="tab" aria-selected="false" aria-controls="occupancy-subpanel-applications" class="section-subtab subpage-tab" data-occupancy-subtab="applications"><i class="fas fa-file-alt"></i> Applications</button>
+    <button type="button" id="occupancy-tab-showings" role="tab" aria-selected="false" aria-controls="occupancy-subpanel-showings" class="section-subtab subpage-tab" data-occupancy-subtab="showings"><i class="fas fa-calendar-check"></i> Showings</button>
+    <button type="button" id="occupancy-tab-guest-cards" role="tab" aria-selected="false" aria-controls="occupancy-subpanel-guest-cards" class="section-subtab subpage-tab" data-occupancy-subtab="guest-cards"><i class="fas fa-id-card"></i> Guest Cards</button>
   </div>
 
   <div class="section-subpanel active" id="occupancy-subpanel-tenant-transactions">
@@ -1714,7 +1726,7 @@
       <span class="dispatch-panel-hint">Magic-link tenant SMS plus warning and blast dispatch message history.</span>
     </div>
     <div class="dispatch-test-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));align-items:start">
-      <input type="text" id="dispatchLiveWoId" placeholder="WO UUID">
+      <input type="text" id="dispatchLiveWoId" placeholder="Work order reference">
       <input type="text" id="dispatchLiveWoNumber" placeholder="WO # (optional)">
       <input type="text" id="dispatchLiveTechId" placeholder="Tech UUID">
       <input type="text" id="dispatchLiveTechName" placeholder="Tech name">
@@ -1745,9 +1757,9 @@
       <button class="action-btn" id="btnClearErrors"><i class="fas fa-trash"></i> Clear Resolved</button>
     </div>
   </div>
-  <div class="section-subtabs report-subtabs" id="errorsSubtabs" aria-label="Error reports">
-    <button class="section-subtab active" data-errors-subtab="log"><i class="fas fa-triangle-exclamation"></i> API Log</button>
-    <button class="section-subtab" data-errors-subtab="email-delivery" id="errorsEmailDeliveryTab"><i class="fas fa-envelope-circle-check"></i> Email Delivery</button>
+  <div class="section-subtabs report-subtabs subpage-tabs" id="errorsSubtabs" role="tablist" aria-label="Error reports">
+    <button type="button" id="errors-tab-log" role="tab" aria-selected="true" aria-controls="errors-subpanel-log" class="section-subtab subpage-tab active" data-errors-subtab="log"><i class="fas fa-triangle-exclamation"></i> API Log</button>
+    <button type="button" id="errorsEmailDeliveryTab" role="tab" aria-selected="false" aria-controls="errors-subpanel-email-delivery" class="section-subtab subpage-tab" data-errors-subtab="email-delivery"><i class="fas fa-envelope-circle-check"></i> Email Delivery</button>
   </div>
   <div class="section-subpanel active" id="errors-subpanel-log">
     <div class="systems-health-panel" id="systemsHealthPanel" style="display:none">
