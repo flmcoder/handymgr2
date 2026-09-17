@@ -2258,6 +2258,7 @@ async function probeProxySessionStillValid() {
 function forceProxySessionExpiryLockout(contextLabel) {
   if (_sessionExpiryHandled) return;
   _sessionExpiryHandled = true;
+  debugLogEvent('warning', 'auth_session_expired', 'Proxy session expired' + (contextLabel ? ' (' + contextLabel + ')' : ''), { context: String(contextLabel || '') });
 
   stopAutoSync();
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
@@ -5749,6 +5750,7 @@ if ($('#btnVerifyOtp')) {
       if (verifyData.role) {
         _accessRole = normalizeAccessRole(verifyData.role);
         persistAccessRole(_accessRole);
+        debugLogEvent('success', 'auth_role_set', 'Role set to ' + _accessRole + ' after device verification', { role: _accessRole });
       }
       if (verifyData.property_group_uuid || verifyData.scope_uuids) {
         setForcedScopeUuids(verifyData.scope_uuids || verifyData.property_group_uuid);
@@ -5764,12 +5766,13 @@ if ($('#btnVerifyOtp')) {
       btn.textContent = 'Signing in...';
       try { localStorage.setItem('hm_proxy_url', API_PROXY); } catch (eProxySave) { /* */ }
       await unlockWithDeviceToken(token, vhost, API_PROXY);
-    } catch (err) {
-      var msg = (err && (err.message || String(err))) || 'OTP verification failed';
-      setVaultFeedback(msg, '');
-      showToast(msg, { kind: 'danger' });
-      stopOtpCountdown();
-    } finally {
+  } catch (err) {
+    var msg = (err && (err.message || String(err))) || 'OTP verification failed';
+    setVaultFeedback(msg, '');
+    showToast(msg, { kind: 'danger' });
+    debugLogEvent('error', 'auth_otp_failed', 'OTP verification failed: ' + msg, { error: String(err && err.message || err || '') });
+    stopOtpCountdown();
+  } finally {
       btn.disabled = false;
       btn.textContent = 'Verify OTP';
     }
@@ -5808,6 +5811,11 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
         try { localStorage.setItem('hm_scope_email', _pmScopeEmail); } catch (scopeEmailErr) { /* */ }
       }
       markProxySessionHealthy();
+      debugLogEvent('success', 'auth_login_success', 'User authenticated successfully', {
+        role: _accessRole,
+        email: String(sess.session.login_email || ''),
+        session_type: String(sess.session.type || 'device'),
+      });
     }
   } catch (sessErr) { /* non-fatal — use stored role */ }
   showUnlockedAppShell();
@@ -6988,6 +6996,7 @@ async function showV0UuidDetailModal(target, lineItem) {
 }
 
 async function fetchBills(days, opts) {
+  debugLogEvent('info', 'billing_data_fetch', 'Fetching billing data', { days: days, opts: opts || {} });
   if (_billsFetchInFlight) {
     console.log('fetchBills wait: previous request still in flight');
     var waitMs = 0;
@@ -11235,6 +11244,7 @@ function aggregateBillingV2Kpis(results) {
 }
 
 async function loadBillingPage(opts) {
+  debugLogEvent('info', 'billing_page_load', 'Loading billing page', { opts: opts || {} });
   if (_billingLoadPromise) {
     var incoming = opts || {};
     // Ignore duplicate manual refresh taps while a request is active.
@@ -13876,6 +13886,7 @@ async function fetchChartAnalytics(kind) {
   var key = kind + '|' + scope;
   if (_chartAnalyticsCache[key]) return _chartAnalyticsCache[key];
   if (_chartAnalyticsInflight[key]) return _chartAnalyticsInflight[key];
+  debugLogEvent('info', 'chart_analytics_fetch', 'Fetching chart analytics: ' + kind, { kind: kind, scope: scope });
   var generation = _chartAnalyticsGeneration;
   var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
   var token = getProxyAccessToken();
@@ -21388,6 +21399,10 @@ function executeBulkNoteUpdate() {
 }
 
 function renderTurnBoard() {
+  debugLogEvent('info', 'turn_pipeline_rebuild', 'Turn pipeline rebuild started', {
+    turns_count: TURNS.length,
+    unit_turns_count: UNIT_TURNS_DB.length,
+  });
   try {
     buildTurnPipeline();
   } catch (e) {
@@ -24194,6 +24209,7 @@ function wireUpUI() {
     tab.addEventListener('click', async function() {
       var tabName = tab.getAttribute('data-tab');
       if (!isTabAllowedForRole(tabName)) return;
+      debugLogEvent('info', 'nav_tab_change', 'Navigated to tab: ' + tabName, { tab: tabName, role: _accessRole });
       $$('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
       closeMobileNav();
@@ -25512,6 +25528,11 @@ function wireUpUI() {
     renderDashboardKPIs: renderDashboardKPIs,
     updateGlobalGroupIndicator: updateGlobalGroupIndicator,
     emitGroupFilterChanged: function(detail) {
+      debugLogEvent('info', 'group_filter_change', 'Property group filter changed', {
+        group_name: String(detail && detail.groupName || ''),
+        forced_uuid: String(detail && detail.forcedGroupUuid || ''),
+        role: _accessRole,
+      });
       document.dispatchEvent(new CustomEvent('groupFilterChanged', { detail: detail }));
     },
     refreshNavBadgeTotals: function() { fetchNavBadgeTotals(true); },
@@ -25742,6 +25763,7 @@ async function sectionRefresh(section, btn) {
   if (btn.disabled) return;
   btn.disabled = true;
   btn.classList.add('spinning');
+  debugLogEvent('info', 'manual_refresh', 'Manual section refresh started: ' + section, { section: section, role: _accessRole });
   try {
     if (section === 'workorders' || section === 'dashboard') {
       showToast('Refreshing open work orders\u2026');
@@ -26282,6 +26304,7 @@ async function refreshData() {
   btn.disabled = true;
   btn.classList.add('spinning');
   btn.innerHTML = '<i class="fas fa-sync-alt"></i> Syncing…';
+  debugLogEvent('info', 'manual_refresh_all', 'Full data sync started', { role: _accessRole });
 
   try {
     showToast('Syncing AppFolio to local database…');
