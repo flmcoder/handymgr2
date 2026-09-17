@@ -29,8 +29,8 @@
     "ag-grid-community": "^36.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
-    "drizzle-orm": "^0.44.2",
-    "echarts": "^6.0.0",
+    "drizzle-orm": "^0.45.2",
+    "echarts": "^6.1.0",
     "express": "^5.1.0",
     "jose": "^6.2.3",
     "postgres": "^3.4.7"
