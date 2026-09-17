@@ -6424,8 +6424,10 @@ function refreshScopedOperationalDataAfterGroupChange() {
     if (refreshGeneration !== _scopedOperationalRefreshGeneration) return;
     var activeTab = document.querySelector('.nav-tab.active');
     var activeName = activeTab && activeTab.getAttribute('data-tab');
+    // Rebuild the pipeline even while Dashboard is active so a later Turn
+    // Board navigation cannot reuse derived rows from the previous scope.
+    renderTurnBoard();
     if (activeName === 'workorders') renderWorkOrders();
-    if (activeName === 'turnboard') renderTurnBoard();
     if (activeName === 'inspections') renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
     renderDashboardKPIs();
     renderActivityFeed();
