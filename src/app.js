@@ -6459,6 +6459,9 @@ function refreshScopedOperationalDataAfterGroupChange() {
     renderActivityFeed();
   }).catch(function() {
     if (refreshGeneration !== _scopedOperationalRefreshGeneration) return;
+    // Auxiliary data is best-effort; do not leave the prior scope's derived
+    // turn rows visible when one supplementary request fails.
+    renderTurnBoard();
     renderDashboardKPIs();
   });
 }
