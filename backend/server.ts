@@ -57,6 +57,7 @@ import { parseVendorDirectoryQuery, evaluateVendorCompliance } from './vendorDir
 import { parseTenantCommsQuery } from './tenantCommsPolicy';
 import { parseInspectionPage } from './inspectionPolicy';
 import { classifyBillingVendorBucket, parseBillingSpendTimeframe } from './billingVendorSpendPolicy';
+import { normalizeDebugEvent, resolveDebugRetentionDays } from './debugEventsPolicy';
 import { setStaticCacheHeaders } from './staticCache';
 
 const require = createRequire(import.meta.url);
@@ -1406,11 +1407,53 @@ type JwkKey = {
 };
 
 let webhookTableEnsured = false;
+let debugEventsTableEnsured = false;
+let userLastAccessTableEnsured = false;
 let webhookJwksCache: { keys: JwkKey[]; fetchedAt: number } = { keys: [], fetchedAt: 0 };
 
 const WEBHOOK_JWKS_URL = 'https://api.appfolio.com/.well-known/jwks.json';
 const WEBHOOK_JWKS_TTL_MS = Math.max(60_000, Number(process.env.WEBHOOK_JWKS_TTL_MS || String(6 * 60 * 60 * 1000)) || (6 * 60 * 60 * 1000));
 const WEBHOOK_VERIFY_SIGNATURE = !/^(0|false|no|off)$/i.test(String(process.env.WEBHOOK_VERIFY_SIGNATURE || 'true').trim());
+
+async function ensureDebugEventsTable(): Promise<void> {
+  if (debugEventsTableEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS app_debug_events (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      client_ts TIMESTAMPTZ,
+      session_id TEXT,
+      user_name TEXT,
+      login_email TEXT,
+      role TEXT,
+      property_group_id TEXT,
+      level TEXT NOT NULL DEFAULT 'info',
+      event_type TEXT NOT NULL DEFAULT 'runtime',
+      source TEXT NOT NULL DEFAULT 'frontend',
+      action TEXT,
+      message TEXT NOT NULL,
+      details JSONB NOT NULL DEFAULT '{}'::jsonb
+    )
+  `);
+  await queryClient.unsafe(`ALTER TABLE app_debug_events ADD COLUMN IF NOT EXISTS property_group_id TEXT`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS app_debug_events_created_idx ON app_debug_events(created_at DESC)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS app_debug_events_session_idx ON app_debug_events(session_id, created_at DESC)`);
+  debugEventsTableEnsured = true;
+}
+
+async function ensureUserLastAccessTable(): Promise<void> {
+  if (userLastAccessTableEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS user_last_access (
+      user_id TEXT PRIMARY KEY,
+      last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      session_info JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS user_last_access_last_accessed_idx ON user_last_access(last_accessed_at DESC)`);
+  userLastAccessTableEnsured = true;
+}
 
 function bufferToBase64Url(input: Buffer): string {
   return input.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
@@ -5172,6 +5215,218 @@ app.get('/api/local/system_health', async (_req: Request, res: Response) => {
 
 // Enforce PM scoped property-group filtering on all local data endpoints.
 app.use('/api/local', pmScopeMiddleware);
+
+function debugSessionId(session: any): string {
+  const token = String(session?.device_token || '');
+  return token ? createHash('sha256').update(token).digest('hex').slice(0, 32) : '';
+}
+
+function canViewDebugHistory(session: any): boolean {
+  const role = String(session?.role || '').toLowerCase();
+  return role === 'full' || role === 'manager';
+}
+
+app.post('/api/local/debug/events', async (req: Request, res: Response) => {
+  try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    await ensureDebugEventsTable();
+    const input = Array.isArray(req.body?.events) ? req.body.events.slice(0, 100) : [req.body || {}];
+    const events = input.map(normalizeDebugEvent).filter(Boolean) as ReturnType<typeof normalizeDebugEvent>[];
+    const sessionId = debugSessionId(session);
+    const scope = getPropertyGroupFilters(req).join(',');
+    for (const event of events) {
+      if (!event) continue;
+      await queryClient`
+        insert into app_debug_events (
+          client_ts, session_id, user_name, login_email, role, property_group_id,
+          level, event_type, source, action, message, details
+        ) values (
+          ${event.client_ts}::timestamptz,
+          ${sessionId},
+          ${String(session?.user_name || '')},
+          ${String(session?.login_email || '')},
+          ${String(session?.role || '')},
+          ${scope},
+          ${event.level},
+          ${event.event_type},
+          ${event.source},
+          ${event.action},
+          ${event.message},
+          ${JSON.stringify(event.details)}::jsonb
+        )
+      `;
+    }
+    const retentionDays = resolveDebugRetentionDays(process.env.DEBUG_EVENT_RETENTION_DAYS, 30);
+    await queryClient.unsafe(
+      `delete from app_debug_events where created_at < now() - ($1::int * interval '1 day')`,
+      [retentionDays],
+    );
+    res.json({ ok: true, accepted: events.length, retention_days: retentionDays });
+  } catch (error) {
+    logTunnelError(error, '/api/local/debug/events');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Debug event write failed') });
+  }
+});
+
+app.get('/api/local/debug/events', async (req: Request, res: Response) => {
+  try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    if (!canViewDebugHistory(session)) {
+      res.status(403).json({ ok: false, error: 'Debug history requires manager or admin access' });
+      return;
+    }
+    await ensureDebugEventsTable();
+    const limit = parseLimit(req.query.limit, 200, 1000);
+    const days = resolveDebugRetentionDays(req.query.days, 30);
+    const params: any[] = [days];
+    const filters: string[] = [`created_at >= now() - ($1::int * interval '1 day')`];
+    const bind = (value: unknown): string => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+    const level = String(req.query.level || '').trim().toLowerCase();
+    const eventType = String(req.query.event_type || '').trim();
+    if (level) filters.push(`level = ${bind(level)}`);
+    if (eventType) filters.push(`event_type = ${bind(eventType)}`);
+    const limitParam = bind(limit);
+    const rows = await queryClient.unsafe(`
+      select id, created_at, client_ts, session_id, user_name, login_email, role,
+             property_group_id, level, event_type, source, action, message, details
+      from app_debug_events
+      where ${filters.join(' and ')}
+      order by created_at desc
+      limit ${limitParam}
+    `, params);
+    res.json({
+      ok: true,
+      retention_days: days,
+      results: (rows as any[]).map((row) => ({
+        id: Number(row.id || 0),
+        created_at: asIso(row.created_at),
+        client_ts: asIso(row.client_ts),
+        user_name: String(row.user_name || ''),
+        login_email: String(row.login_email || ''),
+        role: String(row.role || ''),
+        property_group_id: String(row.property_group_id || ''),
+        level: String(row.level || 'info'),
+        event_type: String(row.event_type || 'runtime'),
+        source: String(row.source || ''),
+        action: String(row.action || ''),
+        message: String(row.message || ''),
+        details: row.details && typeof row.details === 'object' ? row.details : {},
+      })),
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/debug/events:get');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Debug history query failed') });
+  }
+});
+
+app.get('/api/local/debug/report', async (req: Request, res: Response) => {
+  try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    if (!canViewDebugHistory(session)) {
+      res.status(403).json({ ok: false, error: 'Debug reports require manager or admin access' });
+      return;
+    }
+    await ensureDebugEventsTable();
+    const days = resolveDebugRetentionDays(req.query.days, 30);
+    const rows = await queryClient.unsafe(`
+      select created_at, user_name, login_email, role, property_group_id,
+             level, event_type, source, action, message, details
+      from app_debug_events
+      where created_at >= now() - ($1::int * interval '1 day')
+      order by created_at desc
+      limit 2000
+    `, [days]);
+    const lines = (rows as any[]).map((row) => [
+      asIso(row.created_at),
+      String(row.level || 'info').toUpperCase(),
+      String(row.event_type || 'runtime'),
+      String(row.source || ''),
+      String(row.message || '').replace(/[\r\n]+/g, ' '),
+      JSON.stringify(row.details || {}),
+    ].join(' | '));
+    const subject = `[HandyManager] Debugging report (${rows.length} events)`;
+    const body = [
+      'HandyManager debugging report',
+      `Generated: ${new Date().toISOString()}`,
+      `Window: ${days} days`,
+      `User: ${String(session?.user_name || '')}`,
+      '',
+      ...lines,
+    ].join('\n');
+    res.json({ ok: true, to: 'aaron@flraz.com', subject, body, event_count: rows.length, retention_days: days });
+  } catch (error) {
+    logTunnelError(error, '/api/local/debug/report');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Debug report failed') });
+  }
+});
+
+app.post('/api/local/debug/access', async (req: Request, res: Response) => {
+  try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    await ensureUserLastAccessTable();
+    const userId = String(session?.login_email || session?.user_name || session?.device_token || '').trim();
+    if (!userId) {
+      res.status(400).json({ ok: false, error: 'Missing user identity' });
+      return;
+    }
+    const sessionInfo = {
+      user_name: String(session?.user_name || ''),
+      login_email: String(session?.login_email || ''),
+      role: String(session?.role || ''),
+      property_group_uuids: Array.isArray(session?.property_group_uuids) ? session.property_group_uuids : [],
+      ip: String(req.ip || req.headers['x-forwarded-for'] || ''),
+      user_agent: String(req.headers['user-agent'] || ''),
+    };
+    await queryClient.unsafe(`
+      INSERT INTO user_last_access (user_id, last_accessed_at, session_info)
+      VALUES ($1, NOW(), $2::jsonb)
+      ON CONFLICT (user_id) DO UPDATE
+      SET last_accessed_at = NOW(), session_info = $2::jsonb
+    `, [userId, JSON.stringify(sessionInfo)]);
+    res.json({ ok: true, user_id: userId });
+  } catch (error) {
+    logTunnelError(error, '/api/local/debug/access');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Access tracking failed') });
+  }
+});
+
+app.get('/api/local/debug/access', async (req: Request, res: Response) => {
+  try {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    if (!canViewDebugHistory(session)) {
+      res.status(403).json({ ok: false, error: 'Access tracking requires manager or admin access' });
+      return;
+    }
+    await ensureUserLastAccessTable();
+    const limit = parseLimit(req.query.limit, 100, 1000);
+    const rows = await queryClient.unsafe(`
+      SELECT user_id, last_accessed_at, session_info, created_at
+      FROM user_last_access
+      ORDER BY last_accessed_at DESC
+      LIMIT $1
+    `, [limit]);
+    res.json({
+      ok: true,
+      results: (rows as any[]).map((row) => ({
+        user_id: String(row.user_id || ''),
+        last_accessed_at: asIso(row.last_accessed_at),
+        created_at: asIso(row.created_at),
+        session_info: row.session_info && typeof row.session_info === 'object' ? row.session_info : {},
+      })),
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/debug/access:get');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Access tracking query failed') });
+  }
+});
 
 app.get('/api/local/work_orders', async (req: Request, res: Response) => {
   try {

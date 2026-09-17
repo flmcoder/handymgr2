@@ -12,8 +12,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=Karla:wght@400;500;600;700&family=Inconsolata:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="stylesheet" href="css/app.css?v=20260916a">
-  <script type="module" crossorigin src="/assets/index-CLZ83mPF.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-dByTayDa.css">
+  <script type="module" crossorigin src="/assets/index-DsnhnO13.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Decwi4Gk.css">
 </head>
 <body class="theme-neo dashboard-skin-neo-on">
 
@@ -173,7 +173,7 @@
     <div class="nav-section nav-section-system" id="navGroupSystem">
       <div class="nav-section-label">System</div>
       <button class="nav-tab nav-role-gm nav-role-admin" data-tab="dbadmin"><i class="fas fa-database"></i> Database</button>
-      <button class="nav-tab" data-tab="errors"><i class="fas fa-exclamation-triangle"></i> Error Log</button>
+      <button class="nav-tab" data-tab="errors"><i class="fas fa-bug"></i> Debugging</button>
     </div>
 
     <!-- Subtab dock — lives here, populated by syncSubtabDock() -->
@@ -1751,14 +1751,16 @@
 
 <section class="section" id="sec-errors">
   <div class="section-header">
-    <div><div class="section-title"><i class="fas fa-exclamation-triangle" style="color:var(--accent)"></i> API Error Log &amp; Retry Queue</div><div class="section-subtitle">Exponential backoff for 533 &bull; Retry-After for 429 &bull; Semantic validation for 422</div></div>
+      <div><div class="section-title"><i class="fas fa-bug" style="color:var(--accent)"></i> Debugging</div><div class="section-subtitle">Authenticated runtime events, data loads, retries, failures, and persisted diagnostics</div></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <button class="action-btn" id="btnWebhookConfig" title="Configure HTTP POST webhook"><i class="fas fa-plug"></i> Webhook</button>
       <button class="action-btn" id="btnClearErrors"><i class="fas fa-trash"></i> Clear Resolved</button>
     </div>
   </div>
-  <div class="section-subtabs report-subtabs subpage-tabs" id="errorsSubtabs" role="tablist" aria-label="Error reports">
-    <button type="button" id="errors-tab-log" role="tab" aria-selected="true" aria-controls="errors-subpanel-log" class="section-subtab subpage-tab active" data-errors-subtab="log"><i class="fas fa-triangle-exclamation"></i> API Log</button>
+  <div class="section-subtabs report-subtabs subpage-tabs" id="errorsSubtabs" role="tablist" aria-label="Debugging pages">
+    <button type="button" id="errors-tab-log" role="tab" aria-selected="true" aria-controls="errors-subpanel-log" class="section-subtab subpage-tab active" data-errors-subtab="log"><i class="fas fa-satellite-dish"></i> Live Stream</button>
+    <button type="button" id="errors-tab-history" role="tab" aria-selected="false" aria-controls="errors-subpanel-history" class="section-subtab subpage-tab" data-errors-subtab="history"><i class="fas fa-clock-rotate-left"></i> History</button>
+    <button type="button" id="errors-tab-user-access" role="tab" aria-selected="false" aria-controls="errors-subpanel-user-access" class="section-subtab subpage-tab" data-errors-subtab="user-access"><i class="fas fa-users"></i> User Access</button>
     <button type="button" id="errorsEmailDeliveryTab" role="tab" aria-selected="false" aria-controls="errors-subpanel-email-delivery" class="section-subtab subpage-tab" data-errors-subtab="email-delivery"><i class="fas fa-envelope-circle-check"></i> Email Delivery</button>
   </div>
   <div class="section-subpanel active" id="errors-subpanel-log">
@@ -1813,7 +1815,73 @@
         </table>
       </div>
     </div>
-    <div class="error-log stagger" id="errorLog"></div>
+    <div class="table-wrapper" id="dataSourceFreshnessWrapper" style="margin-top:12px">
+      <div class="table-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <div class="table-title"><i class="fas fa-database" style="color:var(--accent)"></i> Data Source Freshness</div>
+          <div class="section-subtitle">Row counts and last-updated timestamps for each dataset</div>
+        </div>
+      </div>
+      <div id="dataSourceFreshnessPanel" style="padding:12px">
+        <div class="debug-empty-state"><i class="fas fa-database"></i><span>No data sources loaded yet.</span></div>
+      </div>
+    </div>
+    <div class="debug-live-toolbar">
+      <span id="debugLiveSummary">Waiting for runtime events</span>
+      <button class="action-btn" id="debugReportBtn"><i class="fas fa-paper-plane"></i> Report Issues</button>
+    </div>
+    <div class="error-log stagger" id="debugLiveStream"></div>
+  </div>
+  <div class="section-subpanel" id="errors-subpanel-history" style="display:none">
+    <div class="table-wrapper" style="margin-top:12px">
+      <div class="table-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <div class="table-title"><i class="fas fa-clock-rotate-left" style="color:var(--accent)"></i> Debugging History</div>
+          <div class="section-subtitle">Persisted runtime events retained according to the server debug-event retention setting.</div>
+        </div>
+        <div class="u-toolbar-row">
+          <select id="debugHistoryDays" class="filter-select u-toolbar-select-sm" aria-label="Debug history window">
+            <option value="1">Last 24 hours</option>
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button class="action-btn" id="debugHistoryRefresh"><i class="fas fa-rotate"></i> Refresh</button>
+        </div>
+      </div>
+      <div class="debug-history-meta" id="debugHistoryMeta">Open History to load persisted events.</div>
+      <div class="debug-history-list" id="debugHistoryBody"></div>
+    </div>
+  </div>
+  <div class="section-subpanel" id="errors-subpanel-user-access" style="display:none">
+    <div class="table-wrapper" style="margin-top:12px">
+      <div class="table-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <div class="table-title"><i class="fas fa-users" style="color:var(--accent)"></i> User Last Access</div>
+          <div class="section-subtitle">Tracks when each authenticated user last accessed the application.</div>
+        </div>
+        <div class="u-toolbar-row">
+          <button class="action-btn" id="userAccessRefresh"><i class="fas fa-rotate"></i> Refresh</button>
+        </div>
+      </div>
+      <div class="debug-history-meta" id="userAccessMeta">Click Refresh to load user access data.</div>
+      <div class="table-scroll">
+        <table class="data-table" id="userAccessTable">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Last Accessed</th>
+              <th>First Seen</th>
+            </tr>
+          </thead>
+          <tbody id="userAccessBody">
+            <tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">Click Refresh to load user access data.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
   <div class="section-subpanel" id="errors-subpanel-email-delivery" style="display:none">
     <div class="table-wrapper" style="margin-top:12px">

@@ -3936,22 +3936,49 @@ function setApiStatus(state, text) {
   var textEl = $('#apiStatusText');
   if (el) el.className = 'topbar-status ' + state;
   if (textEl) textEl.textContent = text;
+  var nextState = String(state || '');
+  var nextText = String(text || '');
+  if (nextState !== setApiStatus._lastState || nextText !== setApiStatus._lastText) {
+    setApiStatus._lastState = nextState;
+    setApiStatus._lastText = nextText;
+    debugLogEvent(nextState === 'error' ? 'error' : nextState === 'loading' ? 'info' : 'success', 'api_status', nextText || 'API status changed', { state: nextState });
+  }
+}
+
+var _sectionBusyTimers = {};
+
+function _formatElapsed(ms) {
+  var totalSec = Math.max(0, Math.floor(ms / 1000));
+  var m = Math.floor(totalSec / 60);
+  var s = totalSec % 60;
+  return m + ':' + (s < 10 ? '0' : '') + s;
 }
 
 function setSectionBusy(sectionId, busy, message) {
   var section = document.getElementById(sectionId);
   if (!section) return;
+  var sectionLabel = String(message || '').replace(/[.…]+$/, '').replace(/^Loading\s+/i, '').replace(/^Refreshing\s+/i, '');
+  if (!sectionLabel) sectionLabel = sectionId.replace(/^sec-/, '').replace(/[-_]/g, ' ');
 
-  var overlay = section.querySelector('.section-loading-overlay');
   if (!busy) {
+    var startedAt = _sectionBusyTimers[sectionId];
+    var elapsed = startedAt ? _formatElapsed(Date.now() - startedAt) : '';
+    delete _sectionBusyTimers[sectionId];
+    var doneMsg = elapsed ? (sectionLabel + ': loaded in ' + elapsed) : (sectionLabel + ': loaded');
+    debugLogEvent('success', 'load_complete', doneMsg, { section: sectionId, elapsed_ms: startedAt ? Date.now() - startedAt : 0 });
     section.classList.remove('section-busy');
     section.removeAttribute('aria-busy');
+    var overlay = section.querySelector('.section-loading-overlay');
     if (overlay) overlay.remove();
     return;
   }
 
+  _sectionBusyTimers[sectionId] = Date.now();
+  debugLogEvent('info', 'load_start', sectionLabel + ' loading...', { section: sectionId });
+
   section.classList.add('section-busy');
   section.setAttribute('aria-busy', 'true');
+  var overlay = section.querySelector('.section-loading-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
     overlay.className = 'section-loading-overlay';
@@ -3963,7 +3990,7 @@ function setSectionBusy(sectionId, busy, message) {
     section.appendChild(overlay);
   }
   var textEl = overlay.querySelector('.section-loading-text');
-  if (textEl) textEl.textContent = String(message || 'Loading…');
+  if (textEl) textEl.textContent = sectionLabel + ' loading...';
 }
 
 function applyProxySchemaHealth(pingData) {
@@ -4023,6 +4050,90 @@ var _emailDeliveryErrorsLastError = '';
 var _emailDeliveryErrorsLoadedKey = '';
 var _emailDeliveryErrorsPage = 0;
 var _emailDeliveryErrorsPageSize = 25;
+var DEBUG_EVENTS_LIVE = [];
+var DEBUG_EVENT_QUEUE = [];
+var _debugEventFlushTimer = null;
+var _debugEventFlushInFlight = false;
+var _debugLastEventKey = '';
+var _debugLastEventAt = 0;
+var DEBUG_HISTORY_ROWS = [];
+var DEBUG_HISTORY_LOADING = false;
+var DEBUG_HISTORY_ERROR = '';
+
+function renderDebugLiveStream() {
+  var container = document.getElementById('debugLiveStream');
+  var summary = document.getElementById('debugLiveSummary');
+  if (!container) return;
+  var rows = DEBUG_EVENTS_LIVE.slice(0, 150);
+  if (summary) summary.textContent = rows.length ? rows.length + ' events in this session' : 'Waiting for runtime events';
+  if (!rows.length) {
+    container.innerHTML = '<div class="debug-empty-state"><i class="fas fa-satellite-dish"></i><span>No runtime events recorded yet.</span></div>';
+    return;
+  }
+  container.innerHTML = rows.map(function(event) {
+    var level = String(event.level || 'info');
+    var ts = String(event.created_at || event.client_ts || event.ts || '').replace('T', ' ').replace(/\.\d{3}Z$/, 'Z');
+    var detail = event.details && Object.keys(event.details).length ? ' ' + escapeHtml(JSON.stringify(event.details)) : '';
+    return '<div class="debug-event-row debug-event-row--' + escapeHtml(level) + '">' +
+      '<span class="debug-event-level">' + escapeHtml(level.toUpperCase()) + '</span>' +
+      '<span class="debug-event-time">' + escapeHtml(ts) + '</span>' +
+      '<span class="debug-event-type">' + escapeHtml(event.event_type || 'runtime') + '</span>' +
+      '<span class="debug-event-message">' + escapeHtml(event.message || '') + detail + '</span>' +
+      '</div>';
+  }).join('');
+}
+
+function scheduleDebugEventFlush() {
+  if (_debugEventFlushTimer || _debugEventFlushInFlight) return;
+  _debugEventFlushTimer = setTimeout(function() {
+    _debugEventFlushTimer = null;
+    flushDebugEventQueue();
+  }, 700);
+}
+
+async function flushDebugEventQueue() {
+  if (_debugEventFlushInFlight || !DEBUG_EVENT_QUEUE.length) return;
+  var token = getProxyAccessToken();
+  if (!token) return;
+  _debugEventFlushInFlight = true;
+  var batch = DEBUG_EVENT_QUEUE.splice(0, 50);
+  try {
+    var base = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var response = await fetchWithTimeout(base + '/api/local/debug/events', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ events: batch }),
+    }, 15000);
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+  } catch (_) {
+    DEBUG_EVENT_QUEUE = batch.concat(DEBUG_EVENT_QUEUE).slice(-200);
+  } finally {
+    _debugEventFlushInFlight = false;
+    if (DEBUG_EVENT_QUEUE.length) scheduleDebugEventFlush();
+  }
+}
+
+function debugLogEvent(level, eventType, message, details) {
+  var event = {
+    level: String(level || 'info'),
+    event_type: String(eventType || 'runtime'),
+    source: 'frontend',
+    action: String((details && details.action) || ''),
+    message: String(message || 'Runtime event'),
+    details: details && typeof details === 'object' ? details : {},
+    client_ts: new Date().toISOString(),
+  };
+  var key = event.level + '|' + event.event_type + '|' + event.message;
+  if (key === _debugLastEventKey && Date.now() - _debugLastEventAt < 1500) return;
+  _debugLastEventKey = key;
+  _debugLastEventAt = Date.now();
+  DEBUG_EVENTS_LIVE.unshift(event);
+  if (DEBUG_EVENTS_LIVE.length > 150) DEBUG_EVENTS_LIVE.length = 150;
+  DEBUG_EVENT_QUEUE.push(event);
+  if (DEBUG_EVENT_QUEUE.length > 200) DEBUG_EVENT_QUEUE.shift();
+  renderDebugLiveStream();
+  scheduleDebugEventFlush();
+}
 
 function logApiError(code, msg, action) {
   var now = new Date();
@@ -4030,6 +4141,22 @@ function logApiError(code, msg, action) {
   API_ERRORS.unshift({ code: code, ts: ts, msg: msg, action: action });
   if (API_ERRORS.length > 100) API_ERRORS.length = 100;
   renderErrorLog();
+  debugLogEvent('error', 'api_error', String(msg || 'API error'), { code: Number(code || 0), action: String(action || '') });
+}
+
+var _lastAccessTrackAt = 0;
+function _trackUserAccess() {
+  var now = Date.now();
+  if (now - _lastAccessTrackAt < 60000) return;
+  _lastAccessTrackAt = now;
+  var token = getProxyAccessToken();
+  if (!token) return;
+  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  fetchWithTimeout(localBase + '/api/local/debug/access', {
+    method: 'POST',
+    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ ts: new Date().toISOString() }),
+  }, 10000).catch(function() {});
 }
 
 function canRunSystemHealthChecker() {
@@ -6487,6 +6614,7 @@ async function fetchWorkOrderLookup(searchTerm) {
   var scopeGeneration = _scopeRequestGeneration;
   var scopedGroupUuid = getEffectiveGroupUuid();
   _workOrderLookupLoading = true;
+  var _woSearchStart = Date.now();
   try {
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var url = localBase + '/api/local/work_orders?limit=100&offset=0&search=' + encodeURIComponent(searchQuery);
@@ -6506,13 +6634,27 @@ async function fetchWorkOrderLookup(searchTerm) {
     WORK_ORDER_LOOKUP_RESULTS = (data.results || data.data || []).map(normalizeLocalWorkOrder);
     _workOrderLookupTotal = Math.max(0, Number(data.total) || WORK_ORDER_LOOKUP_RESULTS.length);
     _activeWorkOrderSearch = searchQuery;
+    var _woSearchDuration = Date.now() - _woSearchStart;
+    debugLogEvent('info', 'wo_search', 'Work order search: "' + searchQuery + '"', {
+      search_term: searchQuery,
+      results_count: _workOrderLookupTotal,
+      returned: WORK_ORDER_LOOKUP_RESULTS.length,
+      duration_ms: _woSearchDuration,
+    });
     return true;
   } catch (error) {
+    var _woSearchDuration = Date.now() - _woSearchStart;
     var latestSearch = $('#woSearch') ? String($('#woSearch').value || '').trim() : '';
     if (requestId === _workOrderLookupRequestGeneration && latestSearch === searchQuery) {
       WORK_ORDER_LOOKUP_RESULTS = [];
       _workOrderLookupTotal = 0;
       _activeWorkOrderSearch = searchQuery;
+      debugLogEvent('error', 'wo_search', 'Work order search failed: "' + searchQuery + '"', {
+        search_term: searchQuery,
+        results_count: 0,
+        duration_ms: _woSearchDuration,
+        error: String((error && error.message) || error || 'unknown'),
+      });
       showToast(String((error && error.message) || error || 'Work order lookup failed'), { kind: 'error' });
     }
     return false;
@@ -7466,27 +7608,96 @@ async function fetchTurns() {
 var INSPECTIONS = [];
 var INSPECTION_LOOKBACK_DAYS = 180;
 var DATA_SOURCE_STATE = {
-  work_orders: { status: 'idle', count: null, error: '' },
-  turns: { status: 'idle', count: null, error: '' },
-  inspections: { status: 'idle', count: null, error: '' },
-  upcoming_moveouts: { status: 'idle', count: null, error: '' },
-  bills: { status: 'idle', count: null, error: '' },
-  billing_kpis: { status: 'idle', count: null, error: '' }
+  work_orders: { status: 'idle', count: null, error: '', last_updated_at: '' },
+  turns: { status: 'idle', count: null, error: '', last_updated_at: '' },
+  inspections: { status: 'idle', count: null, error: '', last_updated_at: '' },
+  upcoming_moveouts: { status: 'idle', count: null, error: '', last_updated_at: '' },
+  bills: { status: 'idle', count: null, error: '', last_updated_at: '' },
+  billing_kpis: { status: 'idle', count: null, error: '', last_updated_at: '' }
 };
 
 function setDataSourceState(name, status, meta) {
   if (!name) return;
-  var current = DATA_SOURCE_STATE[name] || { status: 'idle', count: null, error: '' };
+  var current = DATA_SOURCE_STATE[name] || { status: 'idle', count: null, error: '', last_updated_at: '' };
+  var nextStatus = status || 'idle';
   var next = Object.assign({}, current, {
-    status: status || 'idle',
+    status: nextStatus,
     count: meta && meta.count != null ? Number(meta.count) : current.count,
-    error: meta && meta.error ? String(meta.error) : ''
+    error: meta && meta.error ? String(meta.error) : '',
+    last_updated_at: nextStatus === 'ok' ? new Date().toISOString() : current.last_updated_at
   });
   DATA_SOURCE_STATE[name] = next;
+  if (current.status !== next.status || current.error !== next.error || (meta && meta.count != null && current.count !== next.count)) {
+    debugLogEvent(nextStatus === 'no_response' || nextStatus === 'error' ? 'error' : nextStatus === 'ok' ? 'success' : 'info', 'data_source', name + ': ' + nextStatus, {
+      dataset: name,
+      status: nextStatus,
+      count: next.count,
+      error: next.error,
+      last_updated_at: next.last_updated_at,
+    });
+  }
+  renderDataSourceFreshness();
 }
 
 function getDataSourceState(name) {
-  return DATA_SOURCE_STATE[name] || { status: 'idle', count: null, error: '' };
+  return DATA_SOURCE_STATE[name] || { status: 'idle', count: null, error: '', last_updated_at: '' };
+}
+
+var _DATA_SOURCE_LABELS = {
+  work_orders: 'Work orders',
+  turns: 'Turns',
+  inspections: 'Inspections',
+  upcoming_moveouts: 'Upcoming move-outs',
+  bills: 'Bills',
+  billing_kpis: 'Billing KPIs'
+};
+
+function _formatFreshnessAgo(isoTimestamp) {
+  if (!isoTimestamp) return '';
+  var then = new Date(isoTimestamp).getTime();
+  if (isNaN(then)) return '';
+  var diffMs = Date.now() - then;
+  if (diffMs < 0) return 'just now';
+  var secs = Math.floor(diffMs / 1000);
+  if (secs < 5) return 'just now';
+  if (secs < 60) return secs + 's ago';
+  var mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  var hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  var days = Math.floor(hrs / 24);
+  return days + 'd ago';
+}
+
+function renderDataSourceFreshness() {
+  var container = document.getElementById('dataSourceFreshnessPanel');
+  if (!container) return;
+  var keys = Object.keys(DATA_SOURCE_STATE);
+  var anyOk = keys.some(function(k) { return DATA_SOURCE_STATE[k].status === 'ok'; });
+  if (!anyOk) {
+    container.innerHTML = '<div class="debug-empty-state"><i class="fas fa-database"></i><span>No data sources loaded yet.</span></div>';
+    return;
+  }
+  var html = '<div class="data-source-freshness-grid">';
+  keys.forEach(function(key) {
+    var state = DATA_SOURCE_STATE[key];
+    var label = _DATA_SOURCE_LABELS[key] || key;
+    var statusClass = state.status === 'ok' ? 'ok' : state.status === 'loading' ? 'loading' : 'error';
+    var countText = state.count != null ? Number(state.count).toLocaleString() + ' rows' : '—';
+    var freshText = state.last_updated_at ? _formatFreshnessAgo(state.last_updated_at) : '';
+    html += '<div class="data-source-freshness-card data-source-freshness--' + statusClass + '">';
+    html += '<div class="data-source-freshness-label">' + escapeHtml(label) + '</div>';
+    html += '<div class="data-source-freshness-value">' + escapeHtml(countText) + '</div>';
+    if (freshText) {
+      html += '<div class="data-source-freshness-time">updated ' + escapeHtml(freshText) + '</div>';
+    }
+    if (state.error) {
+      html += '<div class="data-source-freshness-error">' + escapeHtml(state.error) + '</div>';
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+  container.innerHTML = html;
 }
 
 function getCurrentYearStartDate(nowRef) {
@@ -14793,20 +15004,23 @@ function setBillingSubtab(tab) {
 }
 
 function setErrorsSubtab(tab) {
-  var allowed = { log: true, 'email-delivery': true };
+  var allowed = { log: true, history: true, 'user-access': true, 'email-delivery': true };
   var canViewEmail = canViewEmailDeliveryErrors();
+  var canViewAccess = _accessRole === 'full' || _accessRole === 'manager';
   var target = allowed[tab] ? tab : 'log';
   if (target === 'email-delivery' && !canViewEmail) target = 'log';
+  if (target === 'user-access' && !canViewAccess) target = 'log';
   currentErrorsSubtab = target;
 
   $$('[data-errors-subtab]').forEach(function(btn) {
     var name = btn.getAttribute('data-errors-subtab');
     if (name === 'email-delivery') btn.style.display = canViewEmail ? '' : 'none';
+    if (name === 'user-access') btn.style.display = canViewAccess ? '' : 'none';
     btn.classList.toggle('active', name === target);
   });
   syncSubpageTabA11y('[data-errors-subtab]', 'data-errors-subtab', target);
 
-  ['log', 'email-delivery'].forEach(function(name) {
+  ['log', 'history', 'user-access', 'email-delivery'].forEach(function(name) {
     var panel = $('#errors-subpanel-' + name);
     if (!panel) return;
     var isActive = name === target;
@@ -14814,6 +15028,7 @@ function setErrorsSubtab(tab) {
     panel.style.display = isActive ? '' : 'none';
   });
 
+  if (target === 'user-access') fetchUserAccess();
   renderErrorsSection();
   syncSubtabDock();
 }
@@ -23278,20 +23493,127 @@ function renderTemplates() {
 }
 
 function renderErrorLog() {
-  var container = $('#errorLog');
   renderSystemHealthPanel();
-  if (API_ERRORS.length === 0) {
-    container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:12px"><i class="fas fa-check-circle" style="color:var(--success);margin-right:6px"></i> No API errors recorded this session</div>';
+  renderDebugLiveStream();
+}
+
+async function fetchDebugHistory(force) {
+  var body = document.getElementById('debugHistoryBody');
+  var meta = document.getElementById('debugHistoryMeta');
+  if (!body) return;
+  var daysEl = document.getElementById('debugHistoryDays');
+  var days = Math.max(1, Number(daysEl ? daysEl.value : 30) || 30);
+  if (DEBUG_HISTORY_LOADING && !force) return;
+  DEBUG_HISTORY_LOADING = true;
+  DEBUG_HISTORY_ERROR = '';
+  body.innerHTML = '<div class="debug-empty-state"><i class="fas fa-spinner fa-spin"></i><span>Loading persisted debugging events…</span></div>';
+  try {
+    var token = getProxyAccessToken();
+    var base = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var response = await fetchWithTimeout(base + '/api/local/debug/events?days=' + encodeURIComponent(days) + '&limit=500', {
+      headers: { Accept: 'application/json', Authorization: token ? 'Bearer ' + token : '' },
+    }, 30000);
+    var data = await response.json();
+    if (!response.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + response.status));
+    DEBUG_HISTORY_ROWS = Array.isArray(data.results) ? data.results : [];
+    if (meta) meta.textContent = DEBUG_HISTORY_ROWS.length + ' persisted events · ' + days + '-day window';
+  } catch (error) {
+    DEBUG_HISTORY_ROWS = [];
+    DEBUG_HISTORY_ERROR = String((error && error.message) || error || 'Debug history unavailable');
+    if (meta) meta.textContent = DEBUG_HISTORY_ERROR;
+  } finally {
+    DEBUG_HISTORY_LOADING = false;
+    renderDebugHistory();
+  }
+}
+
+function renderDebugHistory() {
+  var body = document.getElementById('debugHistoryBody');
+  if (!body) return;
+  if (DEBUG_HISTORY_ERROR) {
+    body.innerHTML = '<div class="debug-empty-state debug-empty-state--error"><i class="fas fa-triangle-exclamation"></i><span>' + escapeHtml(DEBUG_HISTORY_ERROR) + '</span></div>';
     return;
   }
-  var html = '';
-  API_ERRORS.forEach(function(e) {
-    var codeLabel = e.code === 0 ? 'CORS' : String(e.code);
-    html += '<div class="error-row"><span class="error-code c' + e.code + '">' + codeLabel + '</span>';
-    html += '<span class="error-ts">' + escapeHtml(e.ts) + '</span><span class="error-msg">' + escapeHtml(e.msg) + '</span>';
-    html += '<span class="error-action ' + e.action + '">' + (e.action === 'retry' ? 'RETRY' : e.action === 'resolved' ? 'RESOLVED' : 'QUEUED') + '</span></div>';
-  });
-  container.innerHTML = html;
+  if (!DEBUG_HISTORY_ROWS.length) {
+    body.innerHTML = '<div class="debug-empty-state"><i class="fas fa-check-circle"></i><span>No persisted events in this window.</span></div>';
+    return;
+  }
+  body.innerHTML = DEBUG_HISTORY_ROWS.map(function(event) {
+    var detail = event.details && Object.keys(event.details).length ? ' ' + escapeHtml(JSON.stringify(event.details)) : '';
+    return '<div class="debug-event-row debug-event-row--' + escapeHtml(event.level || 'info') + '">' +
+      '<span class="debug-event-level">' + escapeHtml(String(event.level || 'INFO').toUpperCase()) + '</span>' +
+      '<span class="debug-event-time">' + escapeHtml(String(event.created_at || event.client_ts || '')) + '</span>' +
+      '<span class="debug-event-type">' + escapeHtml(event.event_type || 'runtime') + '</span>' +
+      '<span class="debug-event-message">' + escapeHtml(event.message || '') + detail + '</span>' +
+      '</div>';
+  }).join('');
+}
+
+async function sendDebugReportEmail() {
+  try {
+    var token = getProxyAccessToken();
+    var base = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var response = await fetchWithTimeout(base + '/api/local/debug/report?days=30', {
+      headers: { Accept: 'application/json', Authorization: token ? 'Bearer ' + token : '' },
+    }, 30000);
+    var data = await response.json();
+    if (!response.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + response.status));
+    var mailto = 'mailto:' + encodeURIComponent(data.to || 'aaron@flraz.com') +
+      '?subject=' + encodeURIComponent(data.subject || '[HandyManager] Debugging report') +
+      '&body=' + encodeURIComponent(data.body || 'No debugging events were returned.');
+    window.location.href = mailto;
+  } catch (error) {
+    showToast('Debug report failed: ' + String((error && error.message) || error), { kind: 'danger' });
+  }
+}
+
+var _userAccessRows = [];
+var _userAccessLoading = false;
+
+async function fetchUserAccess() {
+  if (_userAccessLoading) return;
+  var meta = document.getElementById('userAccessMeta');
+  var body = document.getElementById('userAccessBody');
+  if (!body) return;
+  _userAccessLoading = true;
+  if (meta) meta.textContent = 'Loading user access data...';
+  body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>';
+  try {
+    var token = getProxyAccessToken();
+    var base = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var response = await fetchWithTimeout(base + '/api/local/debug/access?limit=200', {
+      headers: { Accept: 'application/json', Authorization: token ? 'Bearer ' + token : '' },
+    }, 15000);
+    var data = await response.json();
+    if (!response.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + response.status));
+    _userAccessRows = Array.isArray(data.results) ? data.results : [];
+    if (meta) meta.textContent = _userAccessRows.length + ' users tracked';
+    renderUserAccess();
+  } catch (error) {
+    _userAccessRows = [];
+    if (meta) meta.textContent = 'Failed to load: ' + String((error && error.message) || error);
+    body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--danger)">Failed to load user access data.</td></tr>';
+  } finally {
+    _userAccessLoading = false;
+  }
+}
+
+function renderUserAccess() {
+  var body = document.getElementById('userAccessBody');
+  if (!body) return;
+  if (!_userAccessRows.length) {
+    body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">No user access records found.</td></tr>';
+    return;
+  }
+  body.innerHTML = _userAccessRows.map(function(row) {
+    var info = row.session_info || {};
+    var userName = escapeHtml(String(info.user_name || row.user_id || ''));
+    var email = escapeHtml(String(info.login_email || ''));
+    var role = escapeHtml(String(info.role || ''));
+    var lastAccess = escapeHtml(String(row.last_accessed_at || '').replace('T', ' ').replace(/\.\d{3}Z$/, 'Z'));
+    var firstSeen = escapeHtml(String(row.created_at || '').replace('T', ' ').replace(/\.\d{3}Z$/, 'Z'));
+    return '<tr><td>' + userName + '</td><td>' + email + '</td><td>' + role + '</td><td>' + lastAccess + '</td><td>' + firstSeen + '</td></tr>';
+  }).join('');
 }
 
 function canViewEmailDeliveryErrors() {
@@ -23607,6 +23929,11 @@ function renderErrorsSection(opts) {
   }
   if (currentErrorsSubtab === 'email-delivery') {
     renderEmailDeliveryErrorsSection(opts);
+    return;
+  }
+  if (currentErrorsSubtab === 'history') {
+    if (!DEBUG_HISTORY_ROWS.length || (opts && opts.forceRefresh)) fetchDebugHistory(!!(opts && opts.forceRefresh));
+    else renderDebugHistory();
     return;
   }
   renderErrorLog();
@@ -24619,6 +24946,18 @@ function wireUpUI() {
     renderErrorLog();
     showToast('Cleared resolved errors');
   });
+  if ($('#debugReportBtn')) {
+    $('#debugReportBtn').addEventListener('click', function() { sendDebugReportEmail(); });
+  }
+  if ($('#debugHistoryRefresh')) {
+    $('#debugHistoryRefresh').addEventListener('click', function() { fetchDebugHistory(true); });
+  }
+  if ($('#debugHistoryDays')) {
+    $('#debugHistoryDays').addEventListener('change', function() { fetchDebugHistory(true); });
+  }
+  if ($('#userAccessRefresh')) {
+    $('#userAccessRefresh').addEventListener('click', function() { fetchUserAccess(); });
+  }
   if ($('#btnRunSystemHealth')) {
     $('#btnRunSystemHealth').addEventListener('click', function() {
       runSystemHealthCheck();
@@ -25453,6 +25792,9 @@ async function sectionRefresh(section, btn) {
 async function initApp() {
   if (appInitialized) return;
   appInitialized = true;
+  debugLogEvent('info', 'auth_init', 'Authenticated application initialization started', { role: _accessRole || 'unknown' });
+  scheduleDebugEventFlush();
+  _trackUserAccess();
 
   // ================================================================
   // VENDOR-ONLY MODE: streamlined init — only load vendor data
@@ -25699,21 +26041,24 @@ async function fetchAllLive() {
   updateCacheBadge('loading');
   var steps = ['Work Orders', 'Properties', 'Groups'];
   showProgress('Loading workspace from PostgreSQL', steps);
+  var _bootStart = Date.now();
 
   try {
     updateProgress(0, 'active', 'Reading PostgreSQL\u2026');
     updateProgress(1, 'active');
     updateProgress(2, 'active');
+    var _coreStart = Date.now();
     var coreResults = await Promise.all([
       withStepTimeout(fetchWorkOrders, 60000),
       withStepTimeout(fetchProperties, 60000),
       withStepTimeout(fetchPropertyGroups, 45000)
     ]);
+    var _coreElapsed = _formatElapsed(Date.now() - _coreStart);
     var woOk = coreResults[0];
     var propOk = coreResults[1];
     var grpOk = coreResults[2];
 
-    updateProgress(0, woOk ? 'done' : 'error', woOk ? WORK_ORDERS.length + ' open work orders' : 'Work orders failed');
+    updateProgress(0, woOk ? 'done' : 'error', woOk ? 'Work orders: ' + WORK_ORDERS.length + ' rows in ' + _coreElapsed : 'Work orders failed');
     if (woOk) {
       anySuccess = true;
       renderWorkOrders();
@@ -25721,7 +26066,7 @@ async function fetchAllLive() {
       renderActivityFeed();
     }
 
-    updateProgress(1, propOk ? 'done' : 'error', propOk ? PROPERTIES.length + ' properties' : 'Properties failed');
+    updateProgress(1, propOk ? 'done' : 'error', propOk ? 'Properties: ' + PROPERTIES.length + ' rows in ' + _coreElapsed : 'Properties failed');
     if (propOk) {
       anySuccess = true;
       populateDropdowns();
@@ -25729,7 +26074,7 @@ async function fetchAllLive() {
     }
 
     var grpMsg = grpOk
-      ? PROPERTY_GROUPS.length + ' groups, ' + Object.keys(_idToGroups).length + ' ID maps'
+      ? 'Groups: ' + PROPERTY_GROUPS.length + ' rows in ' + _coreElapsed
       : 'Groups skipped';
     updateProgress(2, grpOk ? 'done' : 'error', grpMsg);
     if (grpOk) { populateDropdowns(); renderWorkOrders(); }
@@ -25745,15 +26090,23 @@ async function fetchAllLive() {
       $('#apiStatus').className = 'topbar-status';
       await saveAllToCache();
       hideProgress();
+      debugLogEvent('success', 'boot_complete', 'Workspace loaded in ' + _formatElapsed(Date.now() - _bootStart), {
+        work_orders: WORK_ORDERS.length,
+        properties: PROPERTIES.length,
+        groups: PROPERTY_GROUPS.length,
+        duration_ms: Date.now() - _bootStart,
+      });
       void startDeferredLiveHydration();
       return;
     }
 
     // Step 3: Turns — In Progress only, 60-day window (proxy action — Reports API)
     // Short timeout (20s) — turns are supplementary; pipeline works from WOs + move-outs too
-    updateProgress(3, 'active', 'Fetching in-progress turns\u2026');
+    updateProgress(3, 'active', 'Turns loading...');
+    var _turnStart = Date.now();
     var turnOk = await withStepTimeout(function() { return fetchTurns(); }, 20000);
-    updateProgress(3, turnOk ? 'done' : 'error', turnOk ? TURNS.length + ' turns' : 'Turns skipped (timeout)');
+    var _turnElapsed = _formatElapsed(Date.now() - _turnStart);
+    updateProgress(3, turnOk ? 'done' : 'error', turnOk ? 'Turns: ' + TURNS.length + ' rows in ' + _turnElapsed : 'Turns skipped (timeout)');
     if (turnOk) {
       anySuccess = true;
       renderTurnBoard();
@@ -25764,33 +26117,41 @@ async function fetchAllLive() {
     fetchUnitTurnsDB().then(function(ok) { if (ok && turnOk) renderTurnBoard(); }).catch(function(){});
 
     // Step 4: Upcoming Move-Outs — tenant directory, Notice tenants (proxy action — Reports API)
-    updateProgress(4, 'active', 'Fetching upcoming move-outs\u2026');
+    updateProgress(4, 'active', 'Move-outs loading...');
+    var _moStart = Date.now();
     var moOk = await withStepTimeout(fetchUpcomingMoveouts, 45000);
-    updateProgress(4, moOk ? 'done' : 'error', moOk ? UPCOMING_MOVEOUTS.length + ' upcoming' : 'Move-outs skipped');
+    var _moElapsed = _formatElapsed(Date.now() - _moStart);
+    updateProgress(4, moOk ? 'done' : 'error', moOk ? 'Move-outs: ' + UPCOMING_MOVEOUTS.length + ' rows in ' + _moElapsed : 'Move-outs skipped');
     if (moOk) { renderTurnBoard(); renderDashboardKPIs(); }
 
     // Step 4b: Vacancy snapshot (v2 unit_vacancy report — same as Occupancy > Vacancies tab)
     fetchVacancyV2().then(function() { renderDashboardKPIs(); }).catch(function(){});
 
     // Step 5: Turn Work Orders — DB API v0, Unit Turn type only (real-time status)
-    updateProgress(5, 'active', 'Fetching turn work orders\u2026');
+    updateProgress(5, 'active', 'Turn WOs loading...');
+    var _twoStart = Date.now();
     var twoOk = await withStepTimeout(fetchTurnWorkOrders, 20000);
-    updateProgress(5, twoOk ? 'done' : 'error', twoOk ? TURN_WORK_ORDERS.length + ' turn WOs' : 'Turn WOs skipped');
+    var _twoElapsed = _formatElapsed(Date.now() - _twoStart);
+    updateProgress(5, twoOk ? 'done' : 'error', twoOk ? 'Turn WOs: ' + TURN_WORK_ORDERS.length + ' rows in ' + _twoElapsed : 'Turn WOs skipped');
     if (twoOk) { renderTurnBoard(); }
 
     // Step 6: Recent Tasks (proxy action — DB API v0)
-    updateProgress(6, 'active', 'Fetching recent tasks\u2026');
+    updateProgress(6, 'active', 'Tasks loading...');
+    var _taskStart = Date.now();
     var taskOk = await withStepTimeout(fetchRecentTasks, 45000);
-    updateProgress(6, taskOk ? 'done' : 'error', taskOk ? RECENT_TASKS.length + ' tasks' : 'Tasks skipped');
+    var _taskElapsed = _formatElapsed(Date.now() - _taskStart);
+    updateProgress(6, taskOk ? 'done' : 'error', taskOk ? 'Tasks: ' + RECENT_TASKS.length + ' rows in ' + _taskElapsed : 'Tasks skipped');
     if (taskOk) { renderActivityFeed(); }
 
     // Step 7: Turn Tracker records (proxy blob — persisted stage overrides)
-    updateProgress(7, 'active', 'Loading turn tracker\u2026');
+    updateProgress(7, 'active', 'Turn tracker loading...');
+    var _trkStart = Date.now();
     var trkOk = await withStepTimeout(function() {
       return fetchTurnRecords().then(function() { return true; });
     }, 30000);
+    var _trkElapsed = _formatElapsed(Date.now() - _trkStart);
     var trkMsg = 'Tracker skipped';
-    if (trkOk) trkMsg = TURN_RECORDS.length > 0 ? (TURN_RECORDS.length + ' tracked') : 'Tracker ready';
+    if (trkOk) trkMsg = TURN_RECORDS.length > 0 ? ('Turn tracker: ' + TURN_RECORDS.length + ' rows in ' + _trkElapsed) : 'Tracker ready in ' + _trkElapsed;
     updateProgress(7, trkOk ? 'done' : 'error', trkMsg);
     // Load closed turns (non-blocking, best-effort)
     loadClosedTurns().catch(function() {});
