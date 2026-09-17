@@ -5335,6 +5335,7 @@ function detailCacheClear() {
 }
 
 function resetInMemoryDataForSessionTransition() {
+  stopDataSourceFreshnessMonitor();
   _scopeRequestGeneration++;
   _workOrdersRequestGeneration++;
   clearWorkOrderLookup();
@@ -7661,6 +7662,11 @@ var _DATA_SOURCE_LABELS = {
   billing_kpis: 'Billing KPIs'
 };
 
+var _DATA_FRESHNESS_THRESHOLDS = {
+  warn_ms: 5 * 60 * 1000,
+  critical_ms: 30 * 60 * 1000
+};
+
 function _formatFreshnessAgo(isoTimestamp) {
   if (!isoTimestamp) return '';
   var then = new Date(isoTimestamp).getTime();
@@ -7678,6 +7684,21 @@ function _formatFreshnessAgo(isoTimestamp) {
   return days + 'd ago';
 }
 
+function _getFreshnessAgeMs(isoTimestamp) {
+  if (!isoTimestamp) return Infinity;
+  var then = new Date(isoTimestamp).getTime();
+  if (isNaN(then)) return Infinity;
+  return Date.now() - then;
+}
+
+function _getFreshnessSeverity(state) {
+  if (state.status !== 'ok' || !state.last_updated_at) return 'error';
+  var ageMs = _getFreshnessAgeMs(state.last_updated_at);
+  if (ageMs >= _DATA_FRESHNESS_THRESHOLDS.critical_ms) return 'critical';
+  if (ageMs >= _DATA_FRESHNESS_THRESHOLDS.warn_ms) return 'warn';
+  return 'ok';
+}
+
 function renderDataSourceFreshness() {
   var container = document.getElementById('dataSourceFreshnessPanel');
   if (!container) return;
@@ -7687,18 +7708,47 @@ function renderDataSourceFreshness() {
     container.innerHTML = '<div class="debug-empty-state"><i class="fas fa-database"></i><span>No data sources loaded yet.</span></div>';
     return;
   }
-  var html = '<div class="data-source-freshness-grid">';
+  
+  var worstSeverity = 'ok';
+  var staleCount = 0;
+  var criticalCount = 0;
+  keys.forEach(function(key) {
+    var severity = _getFreshnessSeverity(DATA_SOURCE_STATE[key]);
+    if (severity === 'warn') {
+      staleCount++;
+      if (worstSeverity === 'ok') worstSeverity = 'warn';
+    } else if (severity === 'critical') {
+      criticalCount++;
+      worstSeverity = 'critical';
+    }
+  });
+  
+  var html = '';
+  if (worstSeverity !== 'ok') {
+    var summaryIcon = worstSeverity === 'critical' ? 'fa-exclamation-triangle' : 'fa-clock';
+    var summaryText = worstSeverity === 'critical'
+      ? criticalCount + ' data source' + (criticalCount !== 1 ? 's' : '') + ' critically stale'
+      : staleCount + ' data source' + (staleCount !== 1 ? 's' : '') + ' stale';
+    html += '<div class="data-source-freshness-summary data-source-freshness-summary--' + worstSeverity + '">';
+    html += '<i class="fas ' + summaryIcon + '"></i>';
+    html += '<span>' + escapeHtml(summaryText) + ' — consider refreshing</span>';
+    html += '</div>';
+  }
+  
+  html += '<div class="data-source-freshness-grid">';
   keys.forEach(function(key) {
     var state = DATA_SOURCE_STATE[key];
     var label = _DATA_SOURCE_LABELS[key] || key;
-    var statusClass = state.status === 'ok' ? 'ok' : state.status === 'loading' ? 'loading' : 'error';
+    var severity = _getFreshnessSeverity(state);
+    var statusClass = state.status === 'loading' ? 'loading' : severity;
     var countText = state.count != null ? Number(state.count).toLocaleString() + ' rows' : '—';
     var freshText = state.last_updated_at ? _formatFreshnessAgo(state.last_updated_at) : '';
     html += '<div class="data-source-freshness-card data-source-freshness--' + statusClass + '">';
     html += '<div class="data-source-freshness-label">' + escapeHtml(label) + '</div>';
     html += '<div class="data-source-freshness-value">' + escapeHtml(countText) + '</div>';
     if (freshText) {
-      html += '<div class="data-source-freshness-time">updated ' + escapeHtml(freshText) + '</div>';
+      var warnIcon = severity === 'critical' ? '<i class="fas fa-exclamation-triangle"></i> ' : severity === 'warn' ? '<i class="fas fa-clock"></i> ' : '';
+      html += '<div class="data-source-freshness-time">' + warnIcon + 'updated ' + escapeHtml(freshText) + '</div>';
     }
     if (state.error) {
       html += '<div class="data-source-freshness-error">' + escapeHtml(state.error) + '</div>';
@@ -7707,6 +7757,48 @@ function renderDataSourceFreshness() {
   });
   html += '</div>';
   container.innerHTML = html;
+}
+
+var _dataSourceFreshnessTimer = null;
+var _lastStaleWarningAt = {};
+
+function checkDataSourceFreshness() {
+  var keys = Object.keys(DATA_SOURCE_STATE);
+  var now = Date.now();
+  keys.forEach(function(key) {
+    var state = DATA_SOURCE_STATE[key];
+    if (state.status !== 'ok' || !state.last_updated_at) return;
+    
+    var severity = _getFreshnessSeverity(state);
+    var lastWarned = _lastStaleWarningAt[key] || 0;
+    var warnIntervalMs = severity === 'critical' ? 10 * 60 * 1000 : 30 * 60 * 1000;
+    
+    if (severity !== 'ok' && now - lastWarned > warnIntervalMs) {
+      _lastStaleWarningAt[key] = now;
+      var label = _DATA_SOURCE_LABELS[key] || key;
+      var ageText = _formatFreshnessAgo(state.last_updated_at);
+      debugLogEvent(
+        severity === 'critical' ? 'error' : 'warning',
+        'data_stale',
+        label + ' data is stale (updated ' + ageText + ')',
+        { dataset: key, severity: severity, age_ms: _getFreshnessAgeMs(state.last_updated_at) }
+      );
+    }
+  });
+  renderDataSourceFreshness();
+}
+
+function startDataSourceFreshnessMonitor() {
+  if (_dataSourceFreshnessTimer) return;
+  _dataSourceFreshnessTimer = setInterval(checkDataSourceFreshness, 60000);
+  checkDataSourceFreshness();
+}
+
+function stopDataSourceFreshnessMonitor() {
+  if (_dataSourceFreshnessTimer) {
+    clearInterval(_dataSourceFreshnessTimer);
+    _dataSourceFreshnessTimer = null;
+  }
 }
 
 function getCurrentYearStartDate(nowRef) {
@@ -25817,6 +25909,7 @@ async function initApp() {
   debugLogEvent('info', 'auth_init', 'Authenticated application initialization started', { role: _accessRole || 'unknown' });
   scheduleDebugEventFlush();
   _trackUserAccess();
+  startDataSourceFreshnessMonitor();
 
   // ================================================================
   // VENDOR-ONLY MODE: streamlined init — only load vendor data

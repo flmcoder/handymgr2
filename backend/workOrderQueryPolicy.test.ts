@@ -143,7 +143,7 @@ test('frontend sends debounced lookup terms and blocks opening restricted rows',
 
 test('session transitions invalidate scoped requests and clear lookup state', async () => {
   const source = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
-  assert.match(source, /function resetInMemoryDataForSessionTransition\(\)\s*\{\s*_scopeRequestGeneration\+\+;\s*_workOrdersRequestGeneration\+\+;\s*clearWorkOrderLookup\(\)/);
+  assert.match(source, /function resetInMemoryDataForSessionTransition\(\)\s*\{\s*(?:stopDataSourceFreshnessMonitor\(\);\s*)?_scopeRequestGeneration\+\+;\s*_workOrdersRequestGeneration\+\+;\s*clearWorkOrderLookup\(\)/);
   assert.match(source, /function forceProxySessionExpiryLockout[\s\S]{0,900}resetInMemoryDataForSessionTransition\(\)/);
   assert.match(source, /_workOrdersRequestGeneration\+\+;/);
   assert.match(source, /window\.WORK_ORDERS = \[\]/);
