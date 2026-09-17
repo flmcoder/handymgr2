@@ -17939,10 +17939,10 @@ async function renderWOVendorSpendChart() {
     card.classList.remove('is-loading');
   }
 }
-
 function getWorkOrderGridColumnDefs(rows) {
   var rowList = Array.isArray(rows) ? rows : [];
   var isMobileQueue = typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 680px)').matches;
+  
   function columnHasData(field) {
     return rowList.some(function(row) {
       var value = row && row[field];
@@ -17952,6 +17952,7 @@ function getWorkOrderGridColumnDefs(rows) {
       return !!text && text !== '-' && text !== '\u2014' && text.toLowerCase() !== 'unknown';
     });
   }
+  
   if (isMobileQueue) {
     return [{
       field: 'id',
@@ -17973,6 +17974,7 @@ function getWorkOrderGridColumnDefs(rows) {
       }
     }];
   }
+  
   return [
     { field: 'id', headerName: 'WO #', minWidth: 96, maxWidth: 120, cellRenderer: function(p){ return '<strong>#' + escapeHtml(String(p.value || '')) + '</strong>'; } },
     { field: 'propertyName', headerName: 'Property', minWidth: 180 },
@@ -17980,7 +17982,19 @@ function getWorkOrderGridColumnDefs(rows) {
     { field: 'propertyManager', headerName: 'Property Manager', minWidth: 160 },
     { field: 'unit', headerName: 'Unit', minWidth: 90, maxWidth: 110 },
     { field: 'description', headerName: 'Description', minWidth: 240, flex: 2 },
-    { field: 'status', headerName: 'Status', minWidth: 150, cellRenderer: function(p) { var value = String(p.value || 'Unknown'); // Don't show "Completed" text in active work orders view — separate tab exists if (currentWOTab === 'active' && value.trim().toLowerCase() === 'completed') return '<span class="wo-status-pill wo-status-pill--' + getWOStatusClass(value) + '"><i class="fas fa-circle" aria-hidden="true"></i></span>'; return '<span class="wo-status-pill wo-status-pill--' + getWOStatusClass(value) + '"><i class="fas fa-circle" aria-hidden="true"></i>' + escapeHtml(value) + '</span>'; } },
+    { 
+      field: 'status', 
+      headerName: 'Status', 
+      minWidth: 150, 
+      cellRenderer: function(p) { 
+        var value = String(p.value || 'Unknown'); 
+        /* Don't show "Completed" text in active work orders view — separate tab exists */ 
+        if (currentWOTab === 'active' && value.trim().toLowerCase() === 'completed') {
+            return '<span class="wo-status-pill wo-status-pill--' + getWOStatusClass(value) + '"><i class="fas fa-circle" aria-hidden="true"></i></span>'; 
+        }
+        return '<span class="wo-status-pill wo-status-pill--' + getWOStatusClass(value) + '"><i class="fas fa-circle" aria-hidden="true"></i>' + escapeHtml(value) + '</span>'; 
+      } 
+    },
     { field: 'priority', headerName: 'Priority', minWidth: 110, maxWidth: 120 },
     { field: 'assignedUser', headerName: 'Assignee', minWidth: 150 },
     { field: 'vendorName', headerName: 'Vendor', minWidth: 160 },
@@ -17990,7 +18004,6 @@ function getWorkOrderGridColumnDefs(rows) {
     return column.field === 'id' || columnHasData(column.field);
   });
 }
-
 function renderWorkOrdersGrid(rows) {
   var host = document.getElementById('woGridHost');
   var searchInput = document.getElementById('woGridQuickSearch');
