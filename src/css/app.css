@@ -1919,7 +1919,7 @@ html.dark .vault-resume-toggle:hover {
 .login-info-tip {
   background: color-mix(in srgb, var(--vault-tooltip-bg) 95%, #ffffff 5%);
   border-color: var(--vault-surface-border);
-  color: #ffffff;
+  color: #ffffff !important;
   transition: background 0.2s ease, color 0.2s ease;
 }
 :root .login-info-tip {
