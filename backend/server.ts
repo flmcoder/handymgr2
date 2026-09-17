@@ -5099,52 +5099,72 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
     const limit = parseLimit(req.query.limit, 100, 20_000);
     const offset = parseOffset(req.query.offset, 0, 500_000);
     const scopeIds = getPropertyGroupFilters(req);
-    let rows: any[] = [];
+    const searchQuery = req.query.search ? String(req.query.search).trim() : '';
+
+    let conditions = [];
+    let params = [];
+    let paramIndex = 1;
+
+
+    if (searchQuery && searchQuery.length >= 3) {
+      // PATH A: UNIVERSAL SEARCH BYPASS
+      // Notice we do NOT use scopeIds here at all. We search globally.
+      params.push(`%${searchQuery}%`);
+      conditions.push(`
+        (appfolio_work_orders.id::text ILIKE $${paramIndex} OR
+         appfolio_work_orders.description ILIKE $${paramIndex} OR
+         appfolio_work_orders.property_name ILIKE $${paramIndex} OR
+         appfolio_work_orders.vendor_name ILIKE $${paramIndex})
+      `);
+      paramIndex++;
+    } else if (scopeIds && scopeIds.length > 0) {
+      // PATH B: DEFAULT PM VIEW
+      // If there is no search (or a search too short), they are locked in their scope.
+      params.push(scopeIds);
+      conditions.push(`
+        (property_group_id = ANY($${paramIndex}::text[]) OR
+         EXISTS (
+           SELECT 1 FROM appfolio_properties p
+           WHERE p.id = appfolio_work_orders.property_id
+           AND p.raw_json->'PropertyGroupIds' ?| $${paramIndex}::text[]
+         ) OR
+         EXISTS (
+           SELECT 1 FROM appfolio_properties p
+           WHERE p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
+           AND p.raw_json->'PropertyGroupIds' ?| $${paramIndex}::text[]
+         )
+        )
+      `);
+      paramIndex++;
+    } else {
+      // PATH C: ADMIN VIEW (No scope, no search)
+      // For users who naturally have no scopeIds (Admins/GM)
+      conditions.push(`true`);
+    }
+
+
+    let query = `select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+                 category, priority, status, assigned_user_id, assigned_user_name,
+                 vendor_id, vendor_name, estimated_amount, total_cost,
+                 created_at, updated_at, raw_json
+                 from appfolio_work_orders`;
+
+
+    if (conditions.length > 0) {
+      query += ` WHERE ` + conditions.join(' AND ');
+    }
+
+
+    query += ` order by coalesce(updated_at, created_at) desc `;
+
+
+    // Add Pagination
+    params.push(limit, offset);
+    query += `LIMIT $${params.length - 1} OFFSET $${params.length}`;
+
+
     try {
-      rows = scopeIds.length
-        ? await queryClient`
-          select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-                 category, priority, status, assigned_user_id, assigned_user_name,
-                 vendor_id, vendor_name, estimated_amount, total_cost,
-                 created_at, updated_at, raw_json
-          from appfolio_work_orders
-          where (
-              property_group_id = ANY(${scopeIds}::text[])
-              or exists (
-                select 1 from appfolio_properties p
-                where p.id = appfolio_work_orders.property_id
-                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
-              )
-              or exists (
-                select 1 from appfolio_properties p
-                where p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
-                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
-              )
-            )
-            and (
-              coalesce(lower(status), '') not like '%completed%'
-              and coalesce(lower(status), '') not like '%cancel%'
-              and coalesce(lower(status), '') not like '%no need to bill%'
-            )
-          order by coalesce(updated_at, created_at) desc
-          limit ${limit}
-            offset ${offset}
-        `
-        : await queryClient`
-          select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-                 category, priority, status, assigned_user_id, assigned_user_name,
-                 vendor_id, vendor_name, estimated_amount, total_cost,
-                 created_at, updated_at, raw_json
-          from appfolio_work_orders
-          where (
-              coalesce(lower(status), '') not like '%completed%'
-              and coalesce(lower(status), '') not like '%cancel%'
-              and coalesce(lower(status), '') not like '%no need to bill%'
-            )
-          order by coalesce(updated_at, created_at) desc
-          limit ${limit}
-            offset ${offset}
-        `;
+      rows = await queryClient.unsafe(query, params);
     } catch (error) {
       const message = String((error as any)?.message || error || '');
       const code = String((error as any)?.code || '');
@@ -5152,50 +5172,16 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
         throw error;
       }
 
-      rows = scopeIds.length
-        ? await queryClient`
-          select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-                 category, priority, status, assigned_user_id, assigned_user_name,
-                 vendor_id, vendor_name, estimated_amount, total_cost,
-                 created_at, updated_at, raw_json
-          from appfolio_work_orders
-          where (
-              property_group_id = ANY(${scopeIds}::text[])
-              or exists (
-                select 1 from appfolio_properties p
-                where p.id = appfolio_work_orders.property_id
-                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
-              )
-              or exists (
-                select 1 from appfolio_properties p
-                where p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
-                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
-              )
-            )
-            and (
-              coalesce(lower(status), '') not like '%completed%'
-              and coalesce(lower(status), '') not like '%cancel%'
-              and coalesce(lower(status), '') not like '%no need to bill%'
-            )
-          order by coalesce(updated_at, created_at) desc
-          limit ${limit}
-            offset ${offset}
-        `
-        : await queryClient`
-          select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-                 category, priority, status, assigned_user_id, assigned_user_name,
-                 vendor_id, vendor_name, estimated_amount, total_cost,
-                 created_at, updated_at, raw_json
-          from appfolio_work_orders
-          where (
-              coalesce(lower(status), '') not like '%completed%'
-              and coalesce(lower(status), '') not like '%cancel%'
-              and coalesce(lower(status), '') not like '%no need to bill%'
-            )
-          order by coalesce(updated_at, created_at) desc
-          limit ${limit}
-            offset ${offset}
-        `;
+      rows = await queryClient`
+        select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
+               category, priority, status, assigned_user_id, assigned_user_name,
+               vendor_id, vendor_name, estimated_amount, total_cost,
+               created_at, updated_at, raw_json
+        from appfolio_work_orders
+        where true
+        order by coalesce(updated_at, created_at) desc
+        LIMIT $${limit} OFFSET $${offset}
+      `;
     }
 
     rows = await hydrateWorkOrderProperties(rows as any[]);

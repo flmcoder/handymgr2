@@ -17006,16 +17006,27 @@ function getFilteredWOs() {
     // Property group scope is applied server-side on fetch; no client re-filter.
     // Flagged filter
     if (currentWOFilter === 'flagged' && !isWOFlagged(wo.id)) return false;
-    // Search — when a search term is entered, match against WO fields
-    // Property group filtering is handled server-side on fetch; the search
-    // allows finding WOs across all groups so a PM can locate a WO even
+    // Search — when a search term is entered, match against WO fields.
+    // Property group filtering is handled server-side on fetch for the default view;
+    // the search allows finding WOs across all groups so a PM can locate a WO even
     // if it falls outside their assigned property group, and see its group.
+    // When searching, we match across all WOs (not just the scoped table) so the
+    // PM can find any WO and see its property group assignment for notification.
     if (search) {
       var s = search.toLowerCase();
       var haystack = [String(wo.id), String(wo.description || ''), String(wo.propertyName || ''), String(wo.vendorName || ''), String(wo.unit || ''), String(wo.tenant || ''), String(wo.assignedUser || '')].join(' ').toLowerCase();
       return haystack.indexOf(s) !== -1;
     }
     return true;
+  });
+}
+
+function fetchWorkOrdersForSearch() {
+  return fetch('/api/local/work_orders?limit=50&offset=0', {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  }).then(function(res) { return res.json(); }).then(function(data) {
+    return data.results || data || [];
   });
 }
 
