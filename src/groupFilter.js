@@ -44,6 +44,9 @@ export function createGroupFilterModule(deps) {
     if (typeof deps.refreshNavBadgeTotals === 'function') {
       deps.refreshNavBadgeTotals();
     }
+    if (typeof deps.refreshScopedOperationalData === 'function') {
+      deps.refreshScopedOperationalData();
+    }
   }
 
   function clearPropertyGroupFilters() {

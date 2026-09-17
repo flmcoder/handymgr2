@@ -6405,6 +6405,36 @@ function clearWorkOrderLookup() {
   WORK_ORDER_LOOKUP_RESULTS = [];
 }
 
+var _scopedOperationalRefreshGeneration = 0;
+function refreshScopedOperationalDataAfterGroupChange() {
+  var refreshGeneration = ++_scopedOperationalRefreshGeneration;
+  clearWorkOrderLookup();
+  WORK_ORDERS_ACTIVE_OFFSET = 0;
+  WORK_ORDERS_ACTIVE_TOTAL = 0;
+  WORK_ORDERS_ACTIVE_HAS_NEXT = false;
+  Promise.all([
+    fetchWorkOrders({ offset: 0 }),
+    fetchTurns(),
+    fetchUpcomingMoveouts(),
+    fetchTurnWorkOrders(),
+    fetchUnitTurnsDB(),
+    fetchVacancyV2(),
+    fetchInspections(),
+  ]).then(function() {
+    if (refreshGeneration !== _scopedOperationalRefreshGeneration) return;
+    var activeTab = document.querySelector('.nav-tab.active');
+    var activeName = activeTab && activeTab.getAttribute('data-tab');
+    if (activeName === 'workorders') renderWorkOrders();
+    if (activeName === 'turnboard') renderTurnBoard();
+    if (activeName === 'inspections') renderInspections($('#inspSearch') ? $('#inspSearch').value : '');
+    renderDashboardKPIs();
+    renderActivityFeed();
+  }).catch(function() {
+    if (refreshGeneration !== _scopedOperationalRefreshGeneration) return;
+    renderDashboardKPIs();
+  });
+}
+
 async function fetchWorkOrderLookup(searchTerm) {
   var searchQuery = String(searchTerm || '').trim();
   if (searchQuery.length < 3) {
@@ -25103,6 +25133,7 @@ function wireUpUI() {
       document.dispatchEvent(new CustomEvent('groupFilterChanged', { detail: detail }));
     },
     refreshNavBadgeTotals: function() { fetchNavBadgeTotals(true); },
+    refreshScopedOperationalData: refreshScopedOperationalDataAfterGroupChange,
     getCurrentPropertyGroup: function() { return currentPropertyGroup || ''; },
     getForcedPropertyGroupUuid: function() { return forcedPropertyGroupUuid || ''; },
     enforceScopedPropertyGroup: enforceScopedPropertyGroup,
