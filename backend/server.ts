@@ -7461,9 +7461,13 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
        where coalesce(tw.removed, false) = false
         and coalesce(tw.created_at, now()) >= now() - (${days}::int * interval '1 day')
         and (${scopeOrNull}::text[] is null or exists (
-          select 1 from appfolio_properties p_scope
-          where p_scope.id = wo.property_id and p_scope.property_group_id = ANY(${scopeOrNull}::text[])
-        ))
+           select 1 from appfolio_properties p_scope
+           where p_scope.id = wo.property_id
+             and (
+               p_scope.property_group_id = ANY(${scopeOrNull}::text[])
+               or p_scope.raw_json->'PropertyGroupIds' ?| (${scopeOrNull}::text[])
+             )
+         ))
       order by coalesce(wo.updated_at, tw.created_at) desc
       limit ${limit}
     `;
@@ -8448,7 +8452,10 @@ app.get('/api/local/tenant_directory', async (req: Request, res: Response) => {
         from appfolio_tenant_directory t
         join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || t.property_id
         left join appfolio_units u on u.unit_id = t.unit_id
-        where p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+         where (
+           p.property_group_id = ANY(${scopeIds}::text[])
+           or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+         )
         order by coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc, t.tenant_name asc
         limit ${limit}
       `
@@ -8509,7 +8516,10 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
         from appfolio_tenant_directory t
         join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || t.property_id
         left join appfolio_units u on u.unit_id = t.unit_id
-        where p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+         where (
+           p.property_group_id = ANY(${scopeIds}::text[])
+           or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+         )
         order by coalesce(t.move_out_date, t.cached_at) asc, coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc
         limit ${limit}
       `
@@ -8551,7 +8561,10 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
             coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id
           from appfolio_units u
           inner join appfolio_properties p on p.id = u.property_id
-          where p.property_group_id = ANY(${scopeIds}::text[])
+           where (
+             p.property_group_id = ANY(${scopeIds}::text[])
+             or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+           )
           order by p.name asc, u.name asc
           limit ${limit}
         `
