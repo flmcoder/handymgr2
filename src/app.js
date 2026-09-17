@@ -1255,6 +1255,7 @@ function isInEffectivePropertyScope(propertyId, propertyName) {
       return scopeIds.indexOf(String(groupId || '').trim().toLowerCase()) !== -1;
     })) return true;
   }
+  if (scopeIds.length && Array.isArray(PROPERTIES) && PROPERTIES.length > 0 && !property) return false;
   return isInPropertyGroup(propertyId, propertyName, getEffectiveGroupId());
 }
 
@@ -6440,6 +6441,7 @@ function refreshScopedOperationalDataAfterGroupChange() {
   WORK_ORDERS_ACTIVE_HAS_NEXT = false;
   Promise.all([
     fetchWorkOrders({ offset: 0 }),
+    fetchProperties(),
     fetchTurns(),
     fetchUpcomingMoveouts(),
     fetchTurnWorkOrders(),
