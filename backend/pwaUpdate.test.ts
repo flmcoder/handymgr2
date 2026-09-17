@@ -72,6 +72,17 @@ test('service worker waits for refresh approval and handles SKIP_WAITING', async
   assert.match(source, /self\.skipWaiting\(\)/);
 });
 
+test('login help tooltip has explicit contrast and a cache-busted stylesheet', async () => {
+  const css = await readFile(new URL('../src/css/app.css', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  const serviceWorker = await readFile(new URL('../public/sw.js', import.meta.url), 'utf8');
+
+  assert.match(css, /\.login-info-tip\s*\{[\s\S]{0,220}background:\s*#020617;[\s\S]{0,120}color:\s*#ffffff;/);
+  assert.match(css, /\.login-info > span:not\(\.login-info-tip\)/);
+  assert.match(html, /css\/app\.css\?v=20260916a/);
+  assert.match(serviceWorker, /HM_CACHE_VERSION = "hm-static-v9"/);
+});
+
 test('version update modal only fires for a genuine newer server version and cannot be dismissed', async () => {
   const source = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
 

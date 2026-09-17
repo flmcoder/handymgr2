@@ -1906,7 +1906,7 @@ html.dark .vault-resume-toggle:hover {
   cursor: help;
 }
 .login-info i { color: var(--vault-accent-strong); font-size: 12px; }
-.login-info span { color: var(--vault-text); }
+.login-info > span:not(.login-info-tip) { color: var(--vault-text); }
 .login-info:hover,
 .login-info:focus-within {
   background: color-mix(in srgb, var(--vault-accent) 16%, var(--vault-surface) 84%);
@@ -1917,17 +1917,17 @@ html.dark .vault-resume-toggle:hover {
   color: var(--vault-accent-strong);
 }
 .login-info-tip {
-  background: color-mix(in srgb, var(--vault-tooltip-bg) 95%, #ffffff 5%);
-  border-color: var(--vault-surface-border);
-  color: #ffffff !important;
+  background: #020617;
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
   transition: background 0.2s ease, color 0.2s ease;
 }
 :root .login-info-tip {
-  color: var(--vault-text);
+  color: #ffffff;
 }
 html.dark .login-info-tip {
-  background: var(--vault-tooltip-bg);
-  color: var(--vault-text);
+  background: #020617;
+  color: #ffffff;
 }
 .login-info-tip {
   position: absolute;
@@ -1949,6 +1949,14 @@ html.dark .login-info-tip {
 .login-info:hover .login-info-tip,
 .login-info:focus-within .login-info-tip {
   opacity: 1;
+}
+
+.wo-row-restricted {
+  opacity: 0.82;
+  cursor: not-allowed;
+}
+.wo-context-restricted b {
+  color: var(--accent);
 }
 
 @media (max-width: 480px) {

@@ -2316,6 +2316,7 @@ function forceProxySessionExpiryLockout(contextLabel) {
   }
   API_CREDS = null;
   appInitialized = false;
+  resetInMemoryDataForSessionTransition();
   _proxySessionStartupGraceUntil = 0;
 
   var vault = $('#vaultScreen');
@@ -2457,6 +2458,7 @@ function handleProxySessionExpired(contextLabel) {
 
 function lockVault() {
   wipeCredentials();
+  resetInMemoryDataForSessionTransition();
   _proxySessionWarmupUntil = 0;
   _proxySessionProbeInFlight = false;
   _proxySessionWarmupFailures = 0;
@@ -2465,10 +2467,6 @@ function lockVault() {
   _proxySessionStartupGraceUntil = 0;
   _proxySessionIssuedAt = 0;
   appInitialized = false;
-  WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
-  CLOSED_TURNS = new Set();
-  _nameToGroups = {}; _idToGroups = {}; _uuidToGroups = {};
-  detailCacheClear();
   _vendorsLazyLoaded = false; _inspLazyLoaded = false;
   if (_webhookPollTimer) { clearInterval(_webhookPollTimer); _webhookPollTimer = null; }
   stopAutoSync();
@@ -4409,6 +4407,12 @@ var WORK_ORDERS_ACTIVE_OFFSET = 0;
 var WORK_ORDERS_ACTIVE_TOTAL = 0;
 var WORK_ORDERS_ACTIVE_HAS_NEXT = false;
 var _workOrdersActivePageLoading = false;
+var _workOrdersRequestGeneration = 0;
+var _activeWorkOrderSearch = '';
+var WORK_ORDER_LOOKUP_RESULTS = [];
+var _workOrderLookupTotal = 0;
+var _workOrderLookupRequestGeneration = 0;
+var _workOrderLookupLoading = false;
 var _inactiveWorkOrdersLoaded = false;
 var _inactiveWorkOrdersLoading = null;
 var _inactiveWorkOrdersScope = '';
@@ -5239,13 +5243,40 @@ function detailCacheClear() {
 }
 
 function resetInMemoryDataForSessionTransition() {
-  WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
+  _scopeRequestGeneration++;
+  _workOrdersRequestGeneration++;
+  clearWorkOrderLookup();
+  WORK_ORDERS_ACTIVE = []; WORK_ORDERS_INACTIVE = []; WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
+  WORK_ORDERS_ACTIVE_TOTAL = 0; WORK_ORDERS_ACTIVE_OFFSET = 0; WORK_ORDERS_ACTIVE_HAS_NEXT = false;
+  _inactiveWorkOrdersLoaded = false; _inactiveWorkOrdersScope = '';
+  currentWOSelection = null;
   CLOSED_TURNS = new Set();
   window._currentBillsCache = [];
   window._billingPageRows = [];
   window._billingListCacheRows = [];
   _billingListCacheRows = [];
+  window.WORK_ORDERS = [];
+  if (window.AppDB) {
+    if (window.AppDB.vendors && typeof window.AppDB.vendors.clear === 'function') window.AppDB.vendors.clear();
+    if (window.AppDB.properties && typeof window.AppDB.properties.clear === 'function') window.AppDB.properties.clear();
+    if (window.AppDB.propertyGroups && typeof window.AppDB.propertyGroups.clear === 'function') window.AppDB.propertyGroups.clear();
+  }
   _nameToGroups = {}; _idToGroups = {}; _uuidToGroups = {};
+  NAV_BADGE_TOTALS_LOADED = false;
+  NAV_BADGE_TOTALS_SCOPE = '';
+  NAV_BADGE_TOTALS = {
+    work_orders: 0,
+    urgent_work_orders: 0,
+    work_order_aging: { age_0_7: 0, age_8_30: 0, age_31_60: 0, age_61_plus: 0, age_unknown: 0 },
+    turns: 0,
+    upcoming_turns: 0,
+    inspections: 0
+  };
+  setNavBadge('woBadge', 0);
+  setNavBadge('turnBadge', 0);
+  setNavBadge('inspBadge', 0);
+  var woSearch = $('#woSearch');
+  if (woSearch) woSearch.value = '';
   detailCacheClear();
 }
 
@@ -6259,13 +6290,19 @@ async function fetchLocalWorkOrders(days) {
 function normalizeLocalWorkOrder(r) {
   var rawUuid = r.work_order_uuid || r.work_order_id || r.uuid || r.Id || '';
   var dbApiId = r.db_api_id || r.dbApiId || r.v0_uuid || r.v0_id || r.uuid || r.UUID || '';
+  var propertyGroupName = String(r.property_group_name || r.property_group || r.PropertyGroupName || '').trim();
+  var canOpen = !(r.can_open === false || String(r.can_open || '').toLowerCase() === 'false');
   return {
-    id: r.work_order_number || r.WorkOrderNumber || r.service_request_number || '',
+    id: r.work_order_number || r.WorkOrderNumber || r.service_request_number || r.id || '',
     uuid: rawUuid,
     dbApiId: dbApiId,
     _dataSource: r._source || 'v0_local',
+    _propertyGroup: propertyGroupName,
+    globalSearchResult: !!r.global_search_result,
+    canOpen: canOpen,
     propertyId: r.property_id || r.PropertyId || '',
     propertyGroupId: String(r.property_group_id || r.property_group_uuid || r.PropertyGroupId || r.PropertyGroupUuid || '').trim(),
+    propertyGroupName: propertyGroupName,
     propertyName: r.property_name || r.property || r.PropertyName || '',
     propertyAddress: r.property_address || ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
     siteManager: r.site_manager || r.property_manager || '',
@@ -6274,7 +6311,7 @@ function normalizeLocalWorkOrder(r) {
     unit: r.unit_name || r.UnitName || r.unit_id || '',
     priority: r.priority || r.Priority || 'Normal',
     status: r.status || r.Status || 'New',
-    description: r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
+    description: r.description || r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
     vendorName: r.vendor_name || r.vendor || r.VendorName || '',
     vendorId: r.vendor_id || r.VendorId || '',
     vendorTrade: r.vendor_trade || r.VendorTrade || '',
@@ -6284,7 +6321,7 @@ function normalizeLocalWorkOrder(r) {
     workCompletedOn: r.work_completed_on || r.WorkCompletedOn || '',
     scheduledStart: r.scheduled_start || r.ScheduledStart || '',
     scheduledEnd: r.scheduled_end || r.ScheduledEnd || '',
-    type: r.work_order_type || r.Type || '',
+    type: r.category || r.work_order_type || r.Type || '',
     amount: r.amount || r.Amount || '',
     tenant: r.primary_tenant || r.PrimaryTenant || '',
     tenantEmail: r.primary_tenant_email || r.PrimaryTenantEmail || '',
@@ -6365,6 +6402,7 @@ async function fetchWorkOrders(options) {
   var requestedOffset = options && Number.isFinite(Number(options.offset))
     ? Math.max(0, Math.floor(Number(options.offset)))
     : WORK_ORDERS_ACTIVE_OFFSET;
+  var workOrdersRequestGeneration = ++_workOrdersRequestGeneration;
   _workOrdersActivePageLoading = true;
   try {
     setApiStatus('loading', 'Loading work orders from PostgreSQL…');
@@ -6392,6 +6430,7 @@ async function fetchWorkOrders(options) {
      var firstPage = await loadWOPage(WORK_ORDERS_ACTIVE_PAGE_SIZE, requestedOffset);
      var combinedResults = firstPage.results || firstPage.data || [];
      var serverTotal = Math.max(0, Number(firstPage.total) || 0);
+     if (workOrdersRequestGeneration !== _workOrdersRequestGeneration) return false;
      if (requestGeneration !== _scopeRequestGeneration || String(scopedGroupUuid || '') !== String(getEffectiveGroupUuid() || '')) return false;
      var activeResults = combinedResults;
      WORK_ORDERS_ACTIVE = activeResults.map(normalizeLocalWorkOrder);
@@ -6407,10 +6446,64 @@ async function fetchWorkOrders(options) {
     fetchNavBadgeTotals(true);
     return true;
   } catch (err) {
+    if (workOrdersRequestGeneration !== _workOrdersRequestGeneration || requestGeneration !== _scopeRequestGeneration) return false;
     setDataSourceState('work_orders', 'no_response', { count: null, error: String((err && err.message) || err || 'work orders unavailable') });
     return false;
   } finally {
-    _workOrdersActivePageLoading = false;
+    if (workOrdersRequestGeneration === _workOrdersRequestGeneration) _workOrdersActivePageLoading = false;
+  }
+}
+
+function clearWorkOrderLookup() {
+  _workOrderLookupRequestGeneration++;
+  _activeWorkOrderSearch = '';
+  _workOrderLookupTotal = 0;
+  _workOrderLookupLoading = false;
+  WORK_ORDER_LOOKUP_RESULTS = [];
+}
+
+async function fetchWorkOrderLookup(searchTerm) {
+  var searchQuery = String(searchTerm || '').trim();
+  if (searchQuery.length < 3) {
+    clearWorkOrderLookup();
+    return true;
+  }
+
+  var requestId = ++_workOrderLookupRequestGeneration;
+  var scopeGeneration = _scopeRequestGeneration;
+  var scopedGroupUuid = getEffectiveGroupUuid();
+  _workOrderLookupLoading = true;
+  try {
+    var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+    var url = localBase + '/api/local/work_orders?limit=100&offset=0&search=' + encodeURIComponent(searchQuery);
+    if (scopedGroupUuid) url += '&property_group_id=' + encodeURIComponent(scopedGroupUuid);
+    var token = getProxyAccessToken();
+    var headers = { 'Accept': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    var response = await fetchWithTimeout(url, { headers: headers }, 45000);
+    var data = {};
+    try { data = await response.json(); } catch (_) { data = {}; }
+    if (!response.ok || data.ok === false) {
+      throw new Error(String(data.error || data.message || ('Work order lookup failed: HTTP ' + response.status)));
+    }
+
+    var currentSearch = $('#woSearch') ? String($('#woSearch').value || '').trim() : '';
+    if (requestId !== _workOrderLookupRequestGeneration || scopeGeneration !== _scopeRequestGeneration || currentSearch !== searchQuery) return false;
+    WORK_ORDER_LOOKUP_RESULTS = (data.results || data.data || []).map(normalizeLocalWorkOrder);
+    _workOrderLookupTotal = Math.max(0, Number(data.total) || WORK_ORDER_LOOKUP_RESULTS.length);
+    _activeWorkOrderSearch = searchQuery;
+    return true;
+  } catch (error) {
+    var latestSearch = $('#woSearch') ? String($('#woSearch').value || '').trim() : '';
+    if (requestId === _workOrderLookupRequestGeneration && latestSearch === searchQuery) {
+      WORK_ORDER_LOOKUP_RESULTS = [];
+      _workOrderLookupTotal = 0;
+      _activeWorkOrderSearch = searchQuery;
+      showToast(String((error && error.message) || error || 'Work order lookup failed'), { kind: 'error' });
+    }
+    return false;
+  } finally {
+    if (requestId === _workOrderLookupRequestGeneration) _workOrderLookupLoading = false;
   }
 }
 
@@ -7532,6 +7625,7 @@ async function fetchInspections() {
     setDataSourceState('inspections', 'ok', { count: INSPECTIONS.length, error: '' });
     return true;
   } catch (err) {
+    if (requestGeneration !== _scopeRequestGeneration) return false;
     setDataSourceState('inspections', 'no_response', { count: null, error: String((err && err.message) || err || 'inspections unavailable') });
     return false;
   }
@@ -12005,6 +12099,7 @@ function wireBillingFilters() {
   });
 
   document.addEventListener('groupFilterChanged', function() {
+    clearWorkOrderLookup();
     WORK_ORDERS_ACTIVE_OFFSET = 0;
     WORK_ORDERS_ACTIVE_TOTAL = 0;
     WORK_ORDERS_ACTIVE_HAS_NEXT = false;
@@ -14459,6 +14554,13 @@ function setWOSubtab(tab) {
       fetchInactiveWorkOrders().then(function(ok) {
         if (ok && currentWOSubtab === 'completed') renderWorkOrders();
       });
+    } else {
+      var activeSearch = $('#woSearch') ? String($('#woSearch').value || '').trim() : '';
+      if (activeSearch.length >= 3 && activeSearch !== _activeWorkOrderSearch) {
+        fetchWorkOrderLookup(activeSearch).then(function() {
+          if (currentWOSubtab === 'active') renderWorkOrders();
+        });
+      }
     }
   }
   syncSubtabDock();
@@ -16982,10 +17084,19 @@ var KANBAN_STATUSES = [
   { key: 'Ready to Bill', label: 'Ready to Bill' }
 ];
 
+function isWorkOrderLookupActive() {
+  var search = $('#woSearch') ? String($('#woSearch').value || '').trim() : '';
+  return currentWOTab === 'active' && search.length >= 3 && search === _activeWorkOrderSearch;
+}
+
 function getFilteredWOs() {
   var search = $('#woSearch') ? $('#woSearch').value : '';
-  var sourceArray = (currentWOTab === 'inactive') ? WORK_ORDERS_INACTIVE : WORK_ORDERS_ACTIVE;
+  var lookupActive = isWorkOrderLookupActive();
+  var sourceArray = lookupActive
+    ? WORK_ORDER_LOOKUP_RESULTS
+    : ((currentWOTab === 'inactive') ? WORK_ORDERS_INACTIVE : WORK_ORDERS_ACTIVE);
   return sourceArray.filter(function(wo) {
+    if (lookupActive && wo.globalSearchResult) return true;
     // Status filter (from filter buttons or kanban column click)
     if (currentWOFilter && currentWOFilter !== 'all' && wo.status !== currentWOFilter) return false;
     // Priority dropdown
@@ -17006,27 +17117,13 @@ function getFilteredWOs() {
     // Property group scope is applied server-side on fetch; no client re-filter.
     // Flagged filter
     if (currentWOFilter === 'flagged' && !isWOFlagged(wo.id)) return false;
-    // Search — when a search term is entered, match against WO fields.
-    // Property group filtering is handled server-side on fetch for the default view;
-    // the search allows finding WOs across all groups so a PM can locate a WO even
-    // if it falls outside their assigned property group, and see its group.
-    // When searching, we match across all WOs (not just the scoped table) so the
-    // PM can find any WO and see its property group assignment for notification.
+    // Search within the rows returned by the server.
     if (search) {
       var s = search.toLowerCase();
       var haystack = [String(wo.id), String(wo.description || ''), String(wo.propertyName || ''), String(wo.vendorName || ''), String(wo.unit || ''), String(wo.tenant || ''), String(wo.assignedUser || '')].join(' ').toLowerCase();
       return haystack.indexOf(s) !== -1;
     }
     return true;
-  });
-}
-
-function fetchWorkOrdersForSearch() {
-  return fetch('/api/local/work_orders?limit=50&offset=0', {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  }).then(function(res) { return res.json(); }).then(function(data) {
-    return data.results || data || [];
   });
 }
 
@@ -17855,6 +17952,25 @@ function renderWOContextPanel(wo) {
     return;
   }
   currentWOSelection = wo;
+  if (wo.canOpen === false) {
+    panel.innerHTML = '<div class="wo-context-head">' +
+      '<div><span>Work order lookup</span><h3>#' + escapeHtml(String(wo.id || '')) + '</h3></div>' +
+      '<button class="wo-context-close" id="woContextClose" type="button" aria-label="Close work order lookup"><i class="fas fa-times"></i></button>' +
+      '</div>' +
+      '<div class="wo-context-empty wo-context-restricted"><i class="fas fa-lock" aria-hidden="true"></i>' +
+      '<strong>Outside your property group</strong>' +
+      '<span>This lookup result cannot be opened. Contact <b>' + escapeHtml(wo.propertyGroupName || wo._propertyGroup || 'the listed property group') + '</b> about this work order.</span>' +
+      (wo.propertyName ? '<span>Property: ' + escapeHtml(wo.propertyName) + '</span>' : '') +
+      '</div>';
+    panel.classList.add('is-open');
+    var restrictedCloseButton = document.getElementById('woContextClose');
+    if (restrictedCloseButton) restrictedCloseButton.onclick = function() {
+      currentWOSelection = null;
+      renderWOContextPanel(null);
+      if (woGridApi) woGridApi.deselectAll();
+    };
+    return;
+  }
   var statusClass = getWOStatusClass(wo.status);
   var timeline = [];
   if (wo.created) timeline.push({ date: wo.created, title: 'Work order opened', detail: wo.createdBy || 'Request received' });
@@ -17974,7 +18090,7 @@ function getWorkOrderGridColumnDefs(rows) {
       cellRenderer: function(params) {
         var row = params.data || {};
         var owner = row.owner || 'Unassigned';
-        var location = [row.propertyName, row.unit && row.unit !== '-' ? row.unit : ''].filter(Boolean).join(' · ');
+        var location = [row.propertyName, row.propertyGroupName, row.unit && row.unit !== '-' ? row.unit : ''].filter(Boolean).join(' · ');
         return '<div class="wo-mobile-row">' +
           '<div class="wo-mobile-row__top"><strong>#' + escapeHtml(String(row.id || '')) + '</strong>' +
           '<span class="wo-status-pill wo-status-pill--' + getWOStatusClass(row.status) + '">' + escapeHtml(row.status || 'Unknown') + '</span></div>' +
@@ -17989,6 +18105,7 @@ function getWorkOrderGridColumnDefs(rows) {
   return [
     { field: 'id', headerName: 'WO #', minWidth: 96, maxWidth: 120, cellRenderer: function(p){ return '<strong>#' + escapeHtml(String(p.value || '')) + '</strong>'; } },
     { field: 'propertyName', headerName: 'Property', minWidth: 180 },
+    { field: 'propertyGroupName', headerName: 'Property Group', minWidth: 180 },
     { field: 'propertyAddress', headerName: 'Address', minWidth: 210 },
     { field: 'propertyManager', headerName: 'Property Manager', minWidth: 160 },
     { field: 'unit', headerName: 'Unit', minWidth: 90, maxWidth: 110 },
@@ -18010,7 +18127,8 @@ function getWorkOrderGridColumnDefs(rows) {
     { field: 'assignedUser', headerName: 'Assignee', minWidth: 150 },
     { field: 'vendorName', headerName: 'Vendor', minWidth: 160 },
     { field: 'openedDate', headerName: 'Opened', minWidth: 125, maxWidth: 145 },
-    { field: 'ageDays', headerName: 'Age (d)', minWidth: 96, maxWidth: 110, sort: currentWOSort === 'oldest' ? 'desc' : undefined }
+    { field: 'ageDays', headerName: 'Age (d)', minWidth: 96, maxWidth: 110, sort: currentWOSort === 'oldest' ? 'desc' : undefined },
+    { field: 'accessLabel', headerName: 'Access', minWidth: 110, maxWidth: 130 }
   ].filter(function(column) {
     return column.field === 'id' || columnHasData(column.field);
   });
@@ -18034,6 +18152,9 @@ function renderWorkOrdersGrid(rows) {
     suppressCellFocus: false,
     includeHiddenColumnsInQuickFilter: true,
     quickFilterText: currentWOGridSearch,
+    getRowClass: function(params) {
+      return params.data && params.data.__raw && params.data.__raw.canOpen === false ? 'wo-row-restricted' : '';
+    },
     getRowHeight: function() {
       return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 680px)').matches ? 112 : undefined;
     },
@@ -18059,6 +18180,10 @@ function renderWorkOrdersGrid(rows) {
     },
     onRowDoubleClicked: function(evt) {
       var wo = evt && evt.data && evt.data.__raw;
+      if (wo && wo.canOpen === false) {
+        showToast('Lookup only: contact ' + (wo.propertyGroupName || wo._propertyGroup || 'the assigned property group'), { kind: 'warning' });
+        return;
+      }
       if (wo && wo.id) showWODetail(wo.id);
     }
   });
@@ -18145,7 +18270,13 @@ function renderWorkOrders() {
   if (!board) return;
   board.classList.toggle('layout-list', currentWOView === 'list');
   rebuildWOScopedFilters();
+  var lookupActive = isWorkOrderLookupActive();
   var filtered = sortWorkOrders(getFilteredWOs());
+  if (currentWOSelection) {
+    currentWOSelection = filtered.find(function(wo) {
+      return String(wo.id || '') === String(currentWOSelection.id || '');
+    }) || null;
+  }
 
   // Local paging over the full server set: badge, list, grid and pager share
   // these rows, so the counts always agree.
@@ -18168,7 +18299,9 @@ function renderWorkOrders() {
     : '';
   var statusContextHtml = currentWOTab === 'inactive'
     ? '<div class="wo-inactive-context"><i class="fas fa-check-circle"></i><div><strong>Completed / Inactive Work Orders</strong><span>Work already completed, canceled, or otherwise no longer active.</span></div><b>' + WORK_ORDERS_INACTIVE.length + '</b></div>'
-    : '<div class="wo-active-context"><div><strong>Active Work Queue</strong><span>' + WORK_ORDERS_ACTIVE_TOTAL + ' open work orders requiring attention.</span></div>' + activePagerHtml + '</div>';
+    : (lookupActive
+      ? '<div class="wo-active-context"><div><strong>Global Work Order Lookup</strong><span>Lookup-only results outside your property group are locked.</span></div><b>' + _workOrderLookupTotal + ' matches</b></div>'
+      : '<div class="wo-active-context"><div><strong>Active Work Queue</strong><span>' + WORK_ORDERS_ACTIVE_TOTAL + ' open work orders requiring attention.</span></div>' + activePagerHtml + '</div>');
 
   // ── List view ──────────────────────────────────────────────────────────────
   if (currentWOView === 'list') {
@@ -18185,6 +18318,7 @@ function renderWorkOrders() {
       return {
         id: wo.id,
         propertyName: wo.propertyName || wo.propertyAddress || '-',
+        propertyGroupName: wo.propertyGroupName || wo._propertyGroup || '',
         propertyAddress: wo.propertyAddress || '',
         propertyManager: String(
           wo.propertyManager || wo.property_manager || wo.siteManager || wo.site_manager ||
@@ -18200,6 +18334,7 @@ function renderWorkOrders() {
         openedDate: wo.created ? formatDate(wo.created) : '',
         ageDays: age.days === null ? -1 : age.days,
         ageBucket: getWOAnalyticsAgeBucket(age.days === null ? 0 : age.days),
+        accessLabel: wo.canOpen === false ? 'Lookup only' : '',
         __raw: wo
       };
     });
@@ -18348,7 +18483,8 @@ function renderWorkOrders() {
       html += '<div class="kc-meta">';
       if (ageMeta.days !== null) html += '<span class="wo-age-pill ' + ageMeta.cls + '"><i class="fas fa-hourglass-half"></i> ' + escapeHtml(ageMeta.label) + '</span>';
       if (wo.propertyName) html += '<span><i class="fas fa-building"></i> ' + escapeHtml(wo.propertyName) + '</span>';
-      if (!currentPropertyGroup && wo._propertyGroup) html += '<span class="kc-group-badge"><i class="fas fa-layer-group"></i> ' + escapeHtml(wo._propertyGroup) + '</span>';
+      if (wo.globalSearchResult && (wo.propertyGroupName || wo._propertyGroup)) html += '<span class="kc-group-badge"><i class="fas fa-layer-group"></i> ' + escapeHtml(wo.propertyGroupName || wo._propertyGroup) + '</span>';
+      else if (!currentPropertyGroup && wo._propertyGroup) html += '<span class="kc-group-badge"><i class="fas fa-layer-group"></i> ' + escapeHtml(wo._propertyGroup) + '</span>';
       if (wo.unit) html += '<span><i class="fas fa-door-open"></i> ' + escapeHtml(wo.unit) + '</span>';
       if (wo.vendorName) {
         html += '<span><i class="fas fa-hard-hat"></i> ' + escapeHtml(wo.vendorName) + '</span>';
@@ -18377,6 +18513,7 @@ function renderWorkOrders() {
       html += '<div class="kc-meta"><span>' + escapeHtml(wo.status) + '</span>';
       if (ageMeta.days !== null) html += '<span class="wo-age-pill ' + ageMeta.cls + '"><i class="fas fa-hourglass-half"></i> ' + escapeHtml(ageMeta.label) + '</span>';
       if (wo.propertyName) html += '<span><i class="fas fa-building"></i> ' + escapeHtml(wo.propertyName) + '</span>';
+      if (wo.globalSearchResult && (wo.propertyGroupName || wo._propertyGroup)) html += '<span class="kc-group-badge"><i class="fas fa-layer-group"></i> ' + escapeHtml(wo.propertyGroupName || wo._propertyGroup) + '</span>';
       html += '</div></div>';
     });
     html += '</div></div>';
@@ -18971,7 +19108,8 @@ function renderWOFollowupQueue() {
 function showWODetail(id) {
   var ref = String(id || '').trim().replace(/^#/, '');
   var refLower = ref.toLowerCase();
-  var wo = WORK_ORDERS.find(function(w) {
+  var detailCandidates = WORK_ORDERS.concat(isWorkOrderLookupActive() ? WORK_ORDER_LOOKUP_RESULTS : []);
+  var wo = detailCandidates.find(function(w) {
     var idText = String(w.id || '').trim();
     var uuidText = String(w.uuid || '').trim();
     if (idText === ref || uuidText === ref) return true;
@@ -18979,6 +19117,10 @@ function showWODetail(id) {
     return false;
   });
   if (!wo) return;
+  if (wo.canOpen === false) {
+    showToast('Lookup only: contact ' + (wo.propertyGroupName || wo._propertyGroup || 'the assigned property group'), { kind: 'warning' });
+    return;
+  }
   var woDbUuid = resolveWODbUuid(wo);
   var woRefForApi = woDbUuid || (isUuidString(wo.uuid || '') ? String(wo.uuid) : '') || String(wo.id || '');
   var displayContext = resolveWODisplayContext(wo, null);
@@ -23609,7 +23751,16 @@ function wireUpUI() {
   });
 
   // WO dropdown filters
-  $('#woSearch').addEventListener('input', debounce(function() { renderWorkOrders(); }, CONFIG.DEBOUNCE_MS));
+  $('#woSearch').addEventListener('input', debounce(async function() {
+    var searchTerm = String($('#woSearch').value || '').trim();
+    if (currentWOTab === 'inactive') {
+      clearWorkOrderLookup();
+      renderWorkOrders();
+      return;
+    }
+    await fetchWorkOrderLookup(searchTerm);
+    renderWorkOrders();
+  }, CONFIG.DEBOUNCE_MS));
   if ($('#woPriorityFilter')) {
     $('#woPriorityFilter').addEventListener('change', function() { currentWOPriority = this.value; renderWorkOrders(); });
   }

@@ -35,6 +35,11 @@ export function buildWorkOrderPagination(
   };
 }
 
+export function resolveWorkOrderLookupSearch(value: unknown, minimumLength = 3, maximumLength = 180): string {
+  const search = String(value ?? '').trim().slice(0, Math.max(1, maximumLength));
+  return search.length >= Math.max(1, minimumLength) ? search : '';
+}
+
 export function resolveWorkOrderHistoryDays(value: unknown, maximumDays = 3_650): number | null {
   if (value === undefined || value === null || String(value).trim() === '') return null;
   const parsed = Number.parseInt(String(value), 10);
