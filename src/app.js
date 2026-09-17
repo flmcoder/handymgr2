@@ -20572,6 +20572,7 @@ function buildTurnPipeline() {
 
   // PASS 1: Add all turns from unit_turn_detail report
   TURNS.forEach(function(turn) {
+    if (!isInPropertyGroup(turn.propertyId, turn.property, currentPropertyGroup)) return;
     var key = makeKey(turn.propertyId, turn.unitId, turn.moveOut) ||
               turn.unitTurnId || (turn.unit + '|' + turn.property);
     addEntry(key, turn.unit, turn.property, turn.propertyId, turn.unitId, turn.moveOut, turn, '');
@@ -20579,6 +20580,7 @@ function buildTurnPipeline() {
 
   // PASS 2: Add upcoming move-outs not already in pipeline (the "Upcoming" phase)
   UPCOMING_MOVEOUTS.forEach(function(mo) {
+    if (!isInPropertyGroup(mo.propertyId, mo.property, currentPropertyGroup)) return;
     var key = makeKey(mo.propertyId, mo.unitId, mo.moveOut);
     if (!key || seenKeys[key]) return;
     addEntry(key, mo.unit, mo.property, mo.propertyId, mo.unitId, mo.moveOut, null, mo.tenant);
