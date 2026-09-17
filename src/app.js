@@ -6439,6 +6439,14 @@ function refreshScopedOperationalDataAfterGroupChange() {
   WORK_ORDERS_ACTIVE_OFFSET = 0;
   WORK_ORDERS_ACTIVE_TOTAL = 0;
   WORK_ORDERS_ACTIVE_HAS_NEXT = false;
+  // Remove derived rows immediately so a failed or empty scoped turn request
+  // cannot leave the previous property's pipeline visible.
+  TURNS = [];
+  UPCOMING_MOVEOUTS = [];
+  TURN_WORK_ORDERS = [];
+  UNIT_TURNS_DB = [];
+  TURN_PIPE_DATA = [];
+  renderTurnBoard();
   Promise.all([
     fetchWorkOrders({ offset: 0 }),
     fetchProperties(),
