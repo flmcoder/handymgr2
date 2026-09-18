@@ -206,12 +206,20 @@ export async function ensureMagicPortalTables(db: Pick<SqlPool, 'unsafe'>): Prom
       expires_at TIMESTAMPTZ NOT NULL,
       used BOOLEAN NOT NULL DEFAULT FALSE,
       used_at TIMESTAMPTZ,
+      opened BOOLEAN NOT NULL DEFAULT FALSE,
+      opened_at TIMESTAMPTZ,
+      open_count INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       metadata JSONB NOT NULL DEFAULT '{}'::jsonb
     )
   `);
   await db.unsafe('CREATE INDEX IF NOT EXISTS magic_tokens_wo_id_idx ON magic_tokens(wo_id)');
   await db.unsafe('CREATE INDEX IF NOT EXISTS magic_tokens_expires_at_idx ON magic_tokens(expires_at)');
+  await db.unsafe('CREATE INDEX IF NOT EXISTS magic_tokens_tech_id_idx ON magic_tokens(tech_id)');
+  
+  await db.unsafe(`ALTER TABLE magic_tokens ADD COLUMN IF NOT EXISTS opened BOOLEAN DEFAULT FALSE`);
+  await db.unsafe(`ALTER TABLE magic_tokens ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ`);
+  await db.unsafe(`ALTER TABLE magic_tokens ADD COLUMN IF NOT EXISTS open_count INTEGER DEFAULT 0`);
 }
 
 function signPortalPayload(payload: Record<string, string>, secret: string): string {
@@ -282,14 +290,38 @@ export async function findMagicPortalToken(
   if (!token && !shortCode) return null;
   const rows = await db.unsafe(
     `SELECT token, short_code, wo_id, wo_number, tech_id, tech_name, tech_phone,
-            tenant_name, tenant_phone, property_address, expires_at, used, used_at, metadata
+            tenant_name, tenant_phone, property_address, expires_at, used, used_at,
+            opened, opened_at, open_count, metadata
        FROM magic_tokens
       WHERE ($1::text <> '' AND token = $1)
-        OR ($2::text <> '' AND short_code = $2)
+         OR ($2::text <> '' AND short_code = $2)
       LIMIT 1`,
     [token, shortCode],
   );
   return rows[0] || null;
+}
+
+export async function trackMagicPortalOpen(
+  db: Pick<SqlPool, 'unsafe'>,
+  tokenOrShortCode: string,
+): Promise<{ opened: boolean; openCount: number }> {
+  if (!db.unsafe) throw new Error('Database client does not support direct SQL');
+  const lookup = String(tokenOrShortCode || '').trim();
+  if (!lookup) return { opened: false, openCount: 0 };
+  
+  const rows = await db.unsafe(
+    `UPDATE magic_tokens
+     SET opened = TRUE,
+         opened_at = COALESCE(opened_at, NOW()),
+         open_count = open_count + 1,
+         metadata = metadata || jsonb_build_object('last_opened_at', NOW())
+     WHERE (token = $1 OR short_code = $1)
+       AND used = FALSE
+     RETURNING opened, open_count`,
+    [lookup],
+  );
+  
+  return rows[0] || { opened: false, openCount: 0 };
 }
 
 function escapeHtml(value: unknown): string {
@@ -303,19 +335,23 @@ function escapeHtml(value: unknown): string {
 
 export function renderMagicPortalHtml(tokenRow: Record<string, any>): string {
   const token = JSON.stringify(String(tokenRow.token || '')).replace(/</g, '\\u003c');
+  const shortCode = JSON.stringify(String(tokenRow.short_code || '')).replace(/</g, '\\u003c');
   const expired = new Date(tokenRow.expires_at).getTime() <= Date.now();
   const unavailable = tokenRow.used === true || expired;
   const unavailableMessage = tokenRow.used === true
     ? 'This link has already been submitted.'
     : 'This link has expired. Contact dispatch for a new link.';
+  const openCount = Number(tokenRow.open_count || 0);
+  const openedStatus = tokenRow.opened ? `<div style="font-size:11px;color:var(--muted);margin-top:8px">Link opened ${openCount} time${openCount !== 1 ? 's' : ''}${tokenRow.opened_at ? ' · Last: ' + new Date(tokenRow.opened_at).toLocaleString() : ''}</div>` : '';
+  
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HandyManager Work Order Portal</title>
 <style>
-:root{color-scheme:dark;--bg:#111827;--panel:#1f2937;--line:#374151;--text:#f9fafb;--muted:#9ca3af;--accent:#22c55e;--danger:#ef4444}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 ui-sans-serif,system-ui,sans-serif}.shell{max-width:620px;margin:auto;padding:22px}.brand{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}h1{font-size:25px;margin:7px 0 4px}.meta{color:var(--muted);margin-bottom:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px}.row{margin-bottom:15px}.row label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px}select,textarea{width:100%;border:1px solid var(--line);border-radius:6px;background:#111827;color:var(--text);padding:12px;font:inherit}textarea{min-height:120px;resize:vertical}button{width:100%;border:0;border-radius:6px;background:var(--accent);color:#052e16;padding:13px;font-weight:800;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}.status{margin-top:12px;font-size:14px}.error{color:#fca5a5}.success{color:#86efac}
+:root{color-scheme:dark;--bg:#111827;--panel:#1f2937;--line:#374151;--text:#f9fafb;--muted:#9ca3af;--accent:#22c55e;--danger:#ef4444}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 ui-sans-serif,system-ui,sans-serif}.shell{max-width:620px;margin:auto;padding:22px}.brand{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}h1{font-size:25px;margin:7px 0 4px}.meta{color:var(--muted);margin-bottom:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px}.row{margin-bottom:15px}.row label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px}select,textarea{width:100%;border:1px solid var(--line);border-radius:6px;background:#111827;color:var(--text);padding:12px;font:inherit}textarea{min-height:120px;resize:vertical}button{width:100%;border:0;border-radius:6px;background:var(--accent);color:#052e16;padding:13px;font-weight:800;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}.status{margin-top:12px;font-size:14px}.error{color:#fca5a5}.success{color:#86efac}.opened-indicator{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:6px;animation:pulse 2s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 </style></head><body><main class="shell"><div class="brand">Fort Lowell Realty</div><h1>Work Order #${escapeHtml(tokenRow.wo_number || tokenRow.wo_id)}</h1><div class="meta">${escapeHtml(tokenRow.property_address)} · ${escapeHtml(tokenRow.tech_name)}</div><section class="card">${unavailable
     ? `<p class="error">${escapeHtml(unavailableMessage)}</p>`
-    : `<form id="portalForm"><div class="row"><label for="status">Work order status</label><select id="status" name="status" required><option value="">Select status</option><option>Scheduled</option><option>Waiting</option><option>Work Completed</option></select></div><div class="row"><label for="note">Completion or exception note</label><textarea id="note" name="note_text" maxlength="1200"></textarea></div><button id="submit" type="submit">Submit update</button><div id="result" class="status" role="status"></div></form>`}</section></main>${unavailable ? '' : `<script>const token=${token};document.getElementById('portalForm').addEventListener('submit',async(event)=>{event.preventDefault();const button=document.getElementById('submit');const result=document.getElementById('result');button.disabled=true;result.className='status';result.textContent='Submitting…';try{const response=await fetch('/api/magic-portal/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,status:document.getElementById('status').value,note_text:document.getElementById('note').value})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'Submission failed');result.className='status success';result.textContent='Update received successfully.';}catch(error){button.disabled=false;result.className='status error';result.textContent=error.message||'Submission failed';}});</script>`}</body></html>`;
+    : `<form id="portalForm"><div class="row"><label for="status">Work order status</label><select id="status" name="status" required><option value="">Select status</option><option>Scheduled</option><option>Waiting</option><option>Work Completed</option></select></div><div class="row"><label for="note">Completion or exception note</label><textarea id="note" name="note_text" maxlength="1200"></textarea></div><button id="submit" type="submit">Submit update</button><div id="result" class="status" role="status"></div></form>${openedStatus}`}</section></main>${unavailable ? '' : `<script>const token=${token};const shortCode=${shortCode};if(!sessionStorage.getItem('magic_portal_opened_'+shortCode)){fetch('/api/magic-portal/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({short_code:shortCode})}).catch(()=>{});sessionStorage.setItem('magic_portal_opened_'+shortCode,'1');}document.getElementById('portalForm').addEventListener('submit',async(event)=>{event.preventDefault();const button=document.getElementById('submit');const result=document.getElementById('result');button.disabled=true;result.className='status';result.textContent='Submitting…';try{const response=await fetch('/api/magic-portal/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,status:document.getElementById('status').value,note_text:document.getElementById('note').value})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'Submission failed');result.className='status success';result.textContent='Update received successfully.';}catch(error){button.disabled=false;result.className='status error';result.textContent=error.message||'Submission failed';}});</script>`}</body></html>`;
 }
 
 export async function consumeMagicTokenTransaction(
@@ -362,6 +398,16 @@ export async function consumeMagicTokenTransaction(
       [String(tokenRow.wo_id), status, noteText, action],
     );
     if (!workOrderRows[0]) throw new Error('Magic Portal work order was not found');
+
+    await connection.unsafe(
+      `UPDATE monitored_work_orders
+       SET last_tech_response_at = NOW(),
+           warning_sent = false,
+           warning_sent_at = null,
+           updated_at = NOW()
+       WHERE wo_id = $1`,
+      [String(tokenRow.wo_id)],
+    ).catch(() => {});
 
     const consumedRows = await connection.unsafe(
       `UPDATE magic_tokens
