@@ -1,6 +1,6 @@
 {
   "name": "handymgr2",
-  "version": "9.8.79",
+  "version": "9.8.80",
   "description": "HandyManager Dashboard",
   "main": "index.js",
   "type": "module",
