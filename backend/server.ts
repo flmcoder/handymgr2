@@ -51,6 +51,7 @@ import {
   normalizePortalPayload,
   renderMagicPortalHtml,
   sendMagicPortalSms,
+  trackMagicPortalOpen,
   type MagicPortalInput,
 } from './magicPortal';
 import { parseVendorDirectoryQuery, evaluateVendorCompliance } from './vendorDirectoryPolicy';
@@ -1630,13 +1631,34 @@ function ageHoursSince(value: string): number {
   return Number.isFinite(diff) ? diff / 3_600_000 : 0;
 }
 
-function deriveDispatchBranch(propertyGroupId: string, tier1GroupId: string, tier2GroupId: string): string {
+function deriveDispatchBranch(propertyGroupId: string, tier1GroupId: string, tier2GroupId: string, branchMap?: Record<string, string>): string {
   const groupId = String(propertyGroupId || '').trim().toLowerCase();
   const tier1 = String(tier1GroupId || '').trim().toLowerCase();
   const tier2 = String(tier2GroupId || '').trim().toLowerCase();
   if (groupId && tier1 && groupId === tier1) return 'phoenix';
   if (groupId && tier2 && groupId === tier2) return 'tucson';
+  if (groupId && branchMap && branchMap[groupId]) return branchMap[groupId];
   return 'unknown';
+}
+
+function parseBranchMapping(jsonStr: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (!jsonStr) return map;
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (parsed && typeof parsed === 'object') {
+      for (const [key, value] of Object.entries(parsed)) {
+        const k = String(key || '').trim().toLowerCase();
+        const v = String(value || '').trim().toLowerCase();
+        if (k && (v === 'phoenix' || v === 'tucson')) {
+          map[k] = v;
+        }
+      }
+    }
+  } catch {
+    // Ignore invalid JSON
+  }
+  return map;
 }
 
 async function ensureDispatchControlTables(): Promise<void> {
@@ -1752,11 +1774,53 @@ async function ensureDispatchControlTables(): Promise<void> {
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS reassign_pct REAL DEFAULT 0`);
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS last_warning_at TIMESTAMPTZ`);
   await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS last_reassigned_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS manual_score_override BOOLEAN DEFAULT FALSE`);
+  await queryClient.unsafe(`ALTER TABLE tech_grades ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ`);
   await queryClient.unsafe(`UPDATE tech_grades SET performance_score = COALESCE(performance_score, grade, 100) WHERE performance_score IS NULL`);
   await queryClient.unsafe(`UPDATE tech_grades SET target_share_pct = COALESCE(target_share_pct, 0) WHERE target_share_pct IS NULL`);
   await queryClient.unsafe(`UPDATE tech_grades SET active_wo_count = COALESCE(active_wo_count, 0) WHERE active_wo_count IS NULL`);
   await queryClient.unsafe(`UPDATE tech_grades SET go_back_pct = COALESCE(go_back_pct, 0) WHERE go_back_pct IS NULL`);
   await queryClient.unsafe(`UPDATE tech_grades SET reassign_pct = COALESCE(reassign_pct, 0) WHERE reassign_pct IS NULL`);
+
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS tech_grade_history (
+      id BIGSERIAL PRIMARY KEY,
+      tech_id TEXT NOT NULL,
+      wo_id TEXT,
+      wo_number TEXT,
+      event_type TEXT NOT NULL,
+      score_delta REAL NOT NULL DEFAULT 0,
+      reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS tech_grade_history_tech_id_idx ON tech_grade_history(tech_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS tech_grade_history_created_at_idx ON tech_grade_history(created_at DESC)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS tech_grade_history_wo_id_idx ON tech_grade_history(wo_id)`);
+
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS monitored_work_orders (
+      wo_id TEXT PRIMARY KEY,
+      wo_number TEXT,
+      property_address TEXT,
+      branch TEXT,
+      assigned_tech_id TEXT NOT NULL,
+      assigned_tech_name TEXT,
+      warning_threshold_hours INTEGER NOT NULL DEFAULT 24,
+      warning_sent BOOLEAN DEFAULT FALSE,
+      warning_sent_at TIMESTAMPTZ,
+      last_tech_response_at TIMESTAMPTZ,
+      magic_link_sent BOOLEAN DEFAULT FALSE,
+      magic_link_sent_at TIMESTAMPTZ,
+      status TEXT DEFAULT 'monitoring',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS monitored_work_orders_tech_idx ON monitored_work_orders(assigned_tech_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS monitored_work_orders_status_idx ON monitored_work_orders(status)`);
 
   await queryClient.unsafe(`
     CREATE TABLE IF NOT EXISTS reassignment_audit (
@@ -1780,6 +1844,163 @@ async function ensureDispatchControlTables(): Promise<void> {
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS reassignment_audit_created_idx ON reassignment_audit(created_at)`);
 
   dispatchControlTablesEnsured = true;
+}
+
+async function recordGradeHistory(techId: string, woId: string, woNumber: string, eventType: string, scoreDelta: number, reason: string): Promise<void> {
+  try {
+    await queryClient.unsafe(
+      `insert into tech_grade_history (tech_id, wo_id, wo_number, event_type, score_delta, reason)
+       values ($1, $2, $3, $4, $5, $6)`,
+      [techId, woId, woNumber, eventType, scoreDelta, reason]
+    );
+  } catch (err) {
+    console.warn('[dispatch:grade_history] failed to record', String((err as any)?.message || err));
+  }
+}
+
+async function startMonitoringWorkOrder(params: Record<string, string>): Promise<any> {
+  await ensureDispatchControlTables();
+  
+  const woId = String(params.wo_id || '').trim();
+  const woNumber = String(params.wo_number || '').trim();
+  const techId = String(params.tech_id || '').trim();
+  const warningHours = Math.max(1, Math.min(168, Number(params.warning_hours || 24)));
+  const initialAction = String(params.initial_action || 'notify').trim();
+  
+  if (!woId) throw new Error('Work order ID is required');
+  if (!techId) throw new Error('Tech ID is required');
+  
+  const queueRows = await queryClient.unsafe(
+    `select * from reassignment_queue where wo_id = $1 limit 1`,
+    [woId]
+  );
+  
+  const queueRow = queueRows[0] as any;
+  if (!queueRow) throw new Error('Work order not found in queue');
+  
+  const techRows = await queryClient.unsafe(
+    `select * from tech_grades where tech_id = $1 limit 1`,
+    [techId]
+  );
+  
+  const techRow = techRows[0] as any;
+  if (!techRow) throw new Error('Tech not found in roster');
+  
+  const propertyAddress = String(queueRow.property_address || '').trim();
+  const branch = String(queueRow.branch || '').trim();
+  const techName = String(techRow.tech_name || '').trim();
+  const techPhone = String(techRow.tech_phone || '').trim();
+  
+  await queryClient.unsafe(
+    `insert into monitored_work_orders (
+       wo_id, wo_number, property_address, branch, assigned_tech_id, assigned_tech_name,
+       warning_threshold_hours, status, magic_link_sent, magic_link_sent_at
+     ) values ($1, $2, $3, $4, $5, $6, $7, 'monitoring', false, null)
+     on conflict (wo_id) do update set
+       assigned_tech_id = excluded.assigned_tech_id,
+       assigned_tech_name = excluded.assigned_tech_name,
+       warning_threshold_hours = excluded.warning_threshold_hours,
+       warning_sent = false,
+       warning_sent_at = null,
+       last_tech_response_at = null,
+       status = 'monitoring',
+       updated_at = NOW()`,
+    [woId, woNumber, propertyAddress, branch, techId, techName, warningHours]
+  );
+  
+  let magicLinkSent = false;
+  let magicLinkError = '';
+  
+  if (initialAction === 'notify' && techPhone) {
+    try {
+      const { createMagicPortalSession, sendMagicPortalSms, buildMagicPortalSmsMessage } = await import('./magicPortal.js');
+      
+      const session = await createMagicPortalSession(queryClient, {
+        woId,
+        woNumber,
+        techId,
+        techName,
+        techPhone,
+        tenantName: '',
+        tenantPhone: '',
+        propertyAddress,
+      });
+      
+      const smsMessage = buildMagicPortalSmsMessage(woNumber, session.magicLink);
+      await sendMagicPortalSms(techPhone, smsMessage);
+      
+      await queryClient.unsafe(
+        `update monitored_work_orders set magic_link_sent = true, magic_link_sent_at = NOW(), updated_at = NOW() where wo_id = $1`,
+        [woId]
+      );
+      
+      magicLinkSent = true;
+      
+      await writeDispatchAudit(
+        woId,
+        'monitoring_started',
+        `Started monitoring WO with magic link sent to ${techName}`,
+        {
+          tech_id: techId,
+          tech_name: techName,
+          warning_hours: warningHours,
+          magic_link: session.magicLink,
+          mode: 'TEST',
+        }
+      );
+    } catch (err) {
+      magicLinkError = String((err as any)?.message || err);
+      console.warn('[dispatch:monitoring] magic link failed', magicLinkError);
+    }
+  } else {
+    await writeDispatchAudit(
+      woId,
+      'monitoring_started',
+      `Started monitoring WO (silent mode)`,
+      {
+        tech_id: techId,
+        tech_name: techName,
+        warning_hours: warningHours,
+        mode: 'TEST',
+      }
+    );
+  }
+  
+  return {
+    ok: true,
+    wo_id: woId,
+    tech_id: techId,
+    tech_name: techName,
+    warning_hours: warningHours,
+    magic_link_sent: magicLinkSent,
+    magic_link_error: magicLinkError || null,
+    mode: 'TEST',
+  };
+}
+
+async function stopMonitoringWorkOrder(params: Record<string, string>): Promise<any> {
+  await ensureDispatchControlTables();
+  
+  const woId = String(params.wo_id || '').trim();
+  if (!woId) throw new Error('Work order ID is required');
+  
+  await queryClient.unsafe(
+    `update monitored_work_orders set status = 'stopped', updated_at = NOW() where wo_id = $1`,
+    [woId]
+  );
+  
+  await writeDispatchAudit(
+    woId,
+    'monitoring_stopped',
+    `Stopped monitoring WO`,
+    { mode: 'TEST' }
+  );
+  
+  return {
+    ok: true,
+    wo_id: woId,
+    mode: 'TEST',
+  };
 }
 
 async function readDispatchConfig(keys: string[]): Promise<Record<string, string>> {
@@ -1880,9 +2101,11 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
   const config = await readDispatchConfig([
     'dispatch_tier1_group_uuid',
     'dispatch_tier2_group_uuid',
+    'dispatch_branch_mapping',
   ]);
   const tier1GroupUuid = String(params.tier1_group_uuid || config.dispatch_tier1_group_uuid || '').trim();
   const tier2GroupUuid = String(params.tier2_group_uuid || config.dispatch_tier2_group_uuid || '').trim();
+  const branchMap = parseBranchMapping(config.dispatch_branch_mapping || '');
 
   const rowsToUpsert: Array<Record<string, unknown>> = [];
   const bodyTechs = safeParseArray((params.techs || params.technicians || params.records) as unknown);
@@ -1967,7 +2190,7 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
 
       const propertyGroupUuid = String(row?.property_group_id || '').trim();
       if (!propertyGroupUuid) addReason('missing_property_group_uuid_in_work_order');
-      const branch = deriveDispatchBranch(propertyGroupUuid, tier1GroupUuid, tier2GroupUuid);
+      const branch = deriveDispatchBranch(propertyGroupUuid, tier1GroupUuid, tier2GroupUuid, branchMap);
       if (branch === 'unknown') addReason('unmapped_property_group_uuid');
 
       for (const candidate of rowCandidates) {
@@ -2008,10 +2231,10 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
     await queryClient.unsafe(
       `insert into tech_grades (
         tech_id, tech_name, tech_email, tech_phone, geo_zone, property_group_uuid, tier, grade,
-         performance_score, target_share_pct, active,
-         jobs_completed, no_contact_count, active_wo_count,
-         go_back_pct, reassign_pct, updated_at
-      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, coalesce($12, 0), coalesce($13, 0), coalesce($14, 0), coalesce($15, 0), coalesce($16, 0), NOW())
+          performance_score, target_share_pct, active,
+          jobs_completed, no_contact_count, active_wo_count,
+          go_back_pct, reassign_pct, manual_score_override, last_synced_at, updated_at
+       ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, coalesce($12, 0), coalesce($13, 0), coalesce($14, 0), coalesce($15, 0), coalesce($16, 0), $17, NOW(), NOW())
        on conflict (tech_id) do update set
          tech_name = excluded.tech_name,
         tech_email = case
@@ -2022,10 +2245,23 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
          geo_zone = excluded.geo_zone,
          property_group_uuid = excluded.property_group_uuid,
          tier = excluded.tier,
-         grade = excluded.grade,
-         performance_score = excluded.performance_score,
+         grade = case
+           when excluded.manual_score_override then excluded.grade
+           when excluded.grade = 100 and tech_grades.grade is not null and tech_grades.grade != 100 then tech_grades.grade
+           else excluded.grade
+         end,
+         performance_score = case
+           when excluded.manual_score_override then excluded.performance_score
+           when excluded.performance_score = 100 and tech_grades.performance_score is not null and tech_grades.performance_score != 100 then tech_grades.performance_score
+           else excluded.performance_score
+         end,
+         manual_score_override = case
+           when excluded.manual_score_override then true
+           else tech_grades.manual_score_override
+         end,
          target_share_pct = excluded.target_share_pct,
          active = excluded.active,
+         last_synced_at = NOW(),
          updated_at = NOW()`,
       [
         techId,
@@ -2044,6 +2280,7 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
         asNumericLike(tech.active_wo_count, 0),
         asNumericLike(tech.go_back_pct, 0),
         asNumericLike(tech.reassign_pct, 0),
+        asBooleanLike(tech.manual_score_override, false),
       ],
     );
     upserted += 1;
@@ -2063,6 +2300,54 @@ async function syncDispatchAssignees(params: Record<string, string>): Promise<an
   };
 }
 
+async function autoDetectBranchMapping(): Promise<{ ok: boolean; mapping: Record<string, string>; updated: boolean }> {
+  const mapping: Record<string, string> = {};
+
+  try {
+    const rows = await queryClient.unsafe(
+      `SELECT property_group_uuid, geo_zone FROM tech_grades
+       WHERE property_group_uuid IS NOT NULL AND property_group_uuid != ''
+         AND geo_zone IS NOT NULL AND geo_zone != ''
+       GROUP BY property_group_uuid, geo_zone
+       ORDER BY property_group_uuid`,
+    );
+
+    for (const row of rows as any[]) {
+      const uuid = String(row?.property_group_uuid || '').trim().toLowerCase();
+      const zone = String(row?.geo_zone || '').trim().toLowerCase();
+      if (uuid && (zone === 'phoenix' || zone === 'tucson')) {
+        if (!mapping[uuid]) {
+          mapping[uuid] = zone;
+        }
+      }
+    }
+
+    const existingConfig = await readDispatchConfig(['dispatch_branch_mapping']);
+    const existingMapping = parseBranchMapping(existingConfig.dispatch_branch_mapping || '');
+
+    const hasChanges = Object.keys(mapping).some(k => mapping[k] !== existingMapping[k]) ||
+                       Object.keys(existingMapping).some(k => mapping[k] !== existingMapping[k]);
+
+    if (hasChanges && Object.keys(mapping).length > 0) {
+      await queryClient.unsafe(
+        `INSERT INTO proxy_config (key, value, updated_at)
+         VALUES ('dispatch_branch_mapping', $1, NOW())
+         ON CONFLICT (key) DO UPDATE SET
+           value = EXCLUDED.value,
+           updated_at = NOW()`,
+        [JSON.stringify(mapping)],
+      );
+      console.info(`[dispatch:auto_branch_mapping] Updated mapping with ${Object.keys(mapping).length} entries`);
+      return { ok: true, mapping, updated: true };
+    }
+
+    return { ok: true, mapping: existingMapping, updated: false };
+  } catch (error) {
+    console.warn('[dispatch:auto_branch_mapping] Failed:', String((error as any)?.message || error));
+    return { ok: false, mapping, updated: false };
+  }
+}
+
 async function refreshDispatchQueue(params: Record<string, string>): Promise<any> {
   await ensureDispatchControlTables();
   const shouldRefresh = shouldRefreshDispatchSnapshot(params);
@@ -2070,6 +2355,7 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
   const config = await readDispatchConfig([
     'dispatch_tier1_group_uuid',
     'dispatch_tier2_group_uuid',
+    'dispatch_branch_mapping',
     'reassign_threshold_hours',
     'grace_period_enabled',
     'max_reassigns_before_escalate',
@@ -2077,6 +2363,19 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
 
   const tier1GroupUuid = String(params.tier1_group_uuid || config.dispatch_tier1_group_uuid || '').trim();
   const tier2GroupUuid = String(params.tier2_group_uuid || config.dispatch_tier2_group_uuid || '').trim();
+  let branchMap = parseBranchMapping(config.dispatch_branch_mapping || '');
+
+  if (Object.keys(branchMap).length === 0) {
+    const autoResult = await autoDetectBranchMapping();
+    if (autoResult.ok) {
+      branchMap = autoResult.mapping;
+    }
+  }
+
+  const page = Math.max(1, Number(params.page || 1));
+  const pageSize = Math.min(100, Math.max(10, Number(params.page_size || params.pageSize || 50)));
+  const offset = (page - 1) * pageSize;
+  const branchFilter = String(params.branch || '').trim().toLowerCase();
   const thresholdHours = Math.max(12, asNumericLike(config.reassign_threshold_hours, 48));
   const warningLeadHours = Math.max(12, thresholdHours - 12);
   const maxReassignsBeforeEscalate = Math.max(1, Math.round(asNumericLike(config.max_reassigns_before_escalate, 2)));
@@ -2122,7 +2421,7 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     const shouldTrack = autoExempt || warningSent || graceUsed || reassignmentCount > 0 || escalated || ageHours >= warningLeadHours;
     if (!shouldTrack) continue;
 
-    const branch = deriveDispatchBranch(String(row?.property_group_id || ''), tier1GroupUuid, tier2GroupUuid);
+    const branch = deriveDispatchBranch(String(row?.property_group_id || ''), tier1GroupUuid, tier2GroupUuid, branchMap);
     includedRows.push({
       wo_id: woId,
       wo_number: String(row?.wo_number || '').trim(),
@@ -2160,7 +2459,19 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     });
   }
 
-  for (const row of includedRows) {
+  if (includedRows.length > 0) {
+    const cols = [
+      'wo_id', 'wo_number', 'property_id', 'property_group_uuid', 'property_address',
+      'category', 'priority', 'status', 'assigned_user_id', 'assigned_user_name',
+      'assigned_tech_id', 'assigned_tech_name', 'branch',
+      'auto_exempt', 'auto_exempt_at', 'auto_exempt_by',
+      'warning_sent', 'warning_sent_at',
+      'grace_used', 'grace_used_at',
+      'reassignment_count', 'last_reassigned_at',
+      'escalated', 'escalated_at',
+      'first_seen_at', 'updated_at', 'created_at'
+    ];
+    const arrays = cols.map(col => includedRows.map(row => row[col]));
     await queryClient.unsafe(
       `insert into reassignment_queue (
          wo_id, wo_number, property_id, property_group_uuid, property_address,
@@ -2172,17 +2483,17 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
          reassignment_count, last_reassigned_at,
          escalated, escalated_at,
          first_seen_at, updated_at, created_at
-       ) values (
-         $1,$2,$3,$4,$5,
-         $6,$7,$8,$9,$10,
-         $11,$12,$13,
-         $14,$15,$16,
-         $17,$18,
-         $19,$20,
-         $21,$22,
-         $23,$24,
-         $25,$26,$27
        )
+       select
+         unnest($1::text[]), unnest($2::text[]), unnest($3::text[]), unnest($4::text[]), unnest($5::text[]),
+         unnest($6::text[]), unnest($7::text[]), unnest($8::text[]), unnest($9::text[]), unnest($10::text[]),
+         unnest($11::text[]), unnest($12::text[]), unnest($13::text[]),
+         unnest($14::boolean[]), unnest($15::timestamptz[]), unnest($16::text[]),
+         unnest($17::boolean[]), unnest($18::timestamptz[]),
+         unnest($19::boolean[]), unnest($20::timestamptz[]),
+         unnest($21::integer[]), unnest($22::timestamptz[]),
+         unnest($23::boolean[]), unnest($24::timestamptz[]),
+         unnest($25::timestamptz[]), unnest($26::timestamptz[]), unnest($27::timestamptz[])
        on conflict (wo_id) do update set
          wo_number = excluded.wo_number,
          property_id = excluded.property_id,
@@ -2210,41 +2521,27 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
          first_seen_at = coalesce(reassignment_queue.first_seen_at, excluded.first_seen_at),
          updated_at = NOW(),
          created_at = coalesce(reassignment_queue.created_at, excluded.created_at)`,
-      [
-        row.wo_id,
-        row.wo_number,
-        row.property_id,
-        row.property_group_uuid,
-        row.property_address,
-        row.category,
-        row.priority,
-        row.status,
-        row.assigned_user_id,
-        row.assigned_user_name,
-        row.assigned_tech_id,
-        row.assigned_tech_name,
-        row.branch,
-        row.auto_exempt,
-        row.auto_exempt_at,
-        row.auto_exempt_by,
-        row.warning_sent,
-        row.warning_sent_at,
-        row.grace_used,
-        row.grace_used_at,
-        row.reassignment_count,
-        row.last_reassigned_at,
-        row.escalated,
-        row.escalated_at,
-        row.first_seen_at,
-        row.updated_at,
-        row.created_at,
-      ],
+      arrays
     );
   }
 
   }
 
-  const queueRows = await queryClient.unsafe(`select * from reassignment_queue order by updated_at desc limit 5000`);
+  let queueQuery = `select * from reassignment_queue`;
+  let countQuery = `select count(*) as total from reassignment_queue`;
+  const queryParams: any[] = [];
+  
+  if (branchFilter && (branchFilter === 'phoenix' || branchFilter === 'tucson')) {
+    queueQuery += ` where branch = $1`;
+    countQuery += ` where branch = $1`;
+    queryParams.push(branchFilter);
+  }
+  
+  queueQuery += ` order by updated_at desc limit $${queryParams.length + 1} offset $${queryParams.length + 2}`;
+  queryParams.push(pageSize, offset);
+  
+  const queueRows = await queryClient.unsafe(queueQuery, queryParams);
+  const totalQueueCount = await queryClient.unsafe(countQuery, branchFilter && (branchFilter === 'phoenix' || branchFilter === 'tucson') ? [branchFilter] : []);
   const techRosterSql = `
     with roster_baseline as (
       select
@@ -2266,6 +2563,8 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
         coalesce(g.no_contact_count, 0) as no_contact_count,
         g.last_warning_at,
         g.last_reassigned_at,
+        g.last_synced_at,
+        coalesce(g.manual_score_override, false) as manual_score_override,
         coalesce(g.updated_at, u.cached_at, now()) as updated_at,
         coalesce(u.appfolio_active, true) as appfolio_active
       from appfolio_users u
@@ -2304,6 +2603,28 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     }
   }
   const auditRows = await queryClient.unsafe(`select id, wo_id, event_type, event_message, payload_json, created_at from reassignment_audit order by id desc limit 300`);
+
+  const gradeHistoryByTech = new Map<string, any[]>();
+  const historyRows = await queryClient.unsafe(
+    `select tech_id, wo_id, wo_number, event_type, score_delta, reason, created_at 
+     from tech_grade_history 
+     where tech_id = any($1::text[]) 
+     order by created_at desc limit 1000`,
+    [techRows.map((r: any) => String(r.tech_id || '').trim()).filter(Boolean)]
+  );
+  for (const row of historyRows as any[]) {
+    const techId = String(row.tech_id || '').trim();
+    if (!techId) continue;
+    if (!gradeHistoryByTech.has(techId)) gradeHistoryByTech.set(techId, []);
+    gradeHistoryByTech.get(techId)!.push({
+      wo_id: String(row.wo_id || ''),
+      wo_number: String(row.wo_number || ''),
+      event_type: String(row.event_type || ''),
+      score_delta: Number(row.score_delta || 0),
+      reason: String(row.reason || ''),
+      created_at: asIso(row.created_at),
+    });
+  }
 
   const queue = (queueRows as any[]).map((row) => ({
     wo_id: String(row.wo_id || ''),
@@ -2355,6 +2676,29 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     const performanceScore = Number(row.performance_score ?? row.grade ?? 100);
     const score = Number.isFinite(performanceScore) ? performanceScore : 100;
     const targetShare = queue.length > 0 ? (activeCount / queue.length) * 100 : 0;
+    
+    const gradeHistory = gradeHistoryByTech.get(techId) || [];
+    
+    let weightedScore = score;
+    if (gradeHistory.length > 0 && !row.manual_score_override) {
+      const now = Date.now();
+      const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
+      const recentHistory = gradeHistory.filter(h => new Date(h.created_at).getTime() > thirtyDaysAgo);
+      
+      if (recentHistory.length > 0) {
+        let totalDelta = 0;
+        let weightSum = 0;
+        for (const h of recentHistory) {
+          const ageDays = (now - new Date(h.created_at).getTime()) / (24 * 60 * 60 * 1000);
+          const weight = Math.max(0.1, 1 - (ageDays / 30));
+          totalDelta += h.score_delta * weight;
+          weightSum += weight;
+        }
+        const avgWeightedDelta = weightSum > 0 ? totalDelta / weightSum : 0;
+        weightedScore = Math.max(0, Math.min(100, score + avgWeightedDelta));
+      }
+    }
+    
     return {
       tech_id: techId,
       tech_name: String(row.tech_name || techId),
@@ -2365,7 +2709,9 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
       tier: Number(row.tier || 1),
       active: asBooleanLike(row.active, true) ? 1 : 0,
       grade: Number(row.grade ?? score),
-      performance_score: score,
+      performance_score: weightedScore,
+      base_score: score,
+      manual_override: asBooleanLike(row.manual_score_override, false) ? 1 : 0,
       target_share_pct: Number.isFinite(Number(row.target_share_pct)) && Number(row.target_share_pct) > 0 ? Number(row.target_share_pct) : targetShare,
       active_wo_count: activeCount,
       go_back_pct: Number.isFinite(Number(row.go_back_pct)) ? Number(row.go_back_pct) : (jobsCompleted > 0 ? Math.min(100, (noContactCount / jobsCompleted) * 100) : 0),
@@ -2375,9 +2721,14 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
       appfolio_active: asBooleanLike(row.appfolio_active, true) ? 1 : 0,
       last_warning_at: asIso(row.last_warning_at),
       last_reassigned_at: asIso(row.last_reassigned_at),
+      last_synced_at: asIso(row.last_synced_at),
       updated_at: asIso(row.updated_at),
+      grade_history: gradeHistory.slice(0, 20),
     };
   });
+
+  const total = Number((totalQueueCount as any[])?.[0]?.total || queue.length);
+  const totalPages = Math.ceil(total / pageSize);
 
   return {
     ok: true,
@@ -2395,13 +2746,21 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     tier2_claims: [],
     monitored_work_orders: queue.filter((row) => row.warning_sent || row.reassignment_count > 0),
     stats: {
-      total_queue: queue.length,
+      total_queue: total,
       total_techs: roster.length,
       pending: queue.filter((row) => row.status === 'monitoring').length,
       exempt: queue.filter((row) => row.auto_exempt).length,
       warned: queue.filter((row) => row.warning_sent).length,
       reassigned: queue.filter((row) => Number(row.reassignment_count || 0) > 0).length,
       escalated: queue.filter((row) => row.escalated).length,
+    },
+    pagination: {
+      page,
+      page_size: pageSize,
+      total,
+      total_pages: totalPages,
+      has_next: page < totalPages,
+      has_prev: page > 1,
     },
     source: 'postgres_local',
   };
@@ -2452,12 +2811,78 @@ async function runDispatchWarningCron(params: Record<string, string>): Promise<a
     if (Number(row.reassignment_count || 0) >= maxReassignsBeforeEscalate) escalated += 1;
   }
 
+  const monitoredRows = await queryClient.unsafe(
+    `select m.*, t.tech_phone, t.tech_name, t.tech_email
+     from monitored_work_orders m
+     left join tech_grades t on t.tech_id = m.assigned_tech_id
+     where m.status = 'monitoring'`
+  );
+
+  let monitoredWarned = 0;
+  for (const mRow of monitoredRows as any[]) {
+    const lastResponse = mRow.last_tech_response_at || mRow.magic_link_sent_at || mRow.created_at;
+    const hoursSinceResponse = ageHoursSince(lastResponse);
+    const thresholdHours = Number(mRow.warning_threshold_hours || 24);
+
+    if (hoursSinceResponse < thresholdHours) continue;
+    if (mRow.warning_sent) continue;
+
+    const techPhone = String(mRow.tech_phone || '').trim();
+    if (!techPhone) continue;
+
+    try {
+      const { createMagicPortalSession, sendMagicPortalSms, buildMagicPortalSmsMessage } = await import('./magicPortal.js');
+      
+      const session = await createMagicPortalSession(queryClient, {
+        woId: mRow.wo_id,
+        woNumber: String(mRow.wo_number || ''),
+        techId: mRow.assigned_tech_id,
+        techName: String(mRow.tech_name || mRow.assigned_tech_name || ''),
+        techPhone,
+        tenantName: '',
+        tenantPhone: '',
+        propertyAddress: String(mRow.property_address || ''),
+      });
+      
+      const warningMessage = `⚠️ URGENT: WO #${mRow.wo_number || mRow.wo_id} needs your attention. No response for ${Math.round(hoursSinceResponse)} hours. Update status: ${session.magicLink}`;
+      await sendMagicPortalSms(techPhone, warningMessage);
+      
+      await queryClient.unsafe(
+        `update monitored_work_orders
+         set warning_sent = true,
+             warning_sent_at = NOW(),
+             updated_at = NOW()
+         where wo_id = $1`,
+        [mRow.wo_id]
+      );
+      
+      await writeDispatchAudit(
+        mRow.wo_id,
+        'monitoring_warning_sent',
+        `Warning SMS sent to ${mRow.tech_name || mRow.assigned_tech_name} after ${Math.round(hoursSinceResponse)} hours`,
+        {
+          tech_id: mRow.assigned_tech_id,
+          tech_name: mRow.tech_name || mRow.assigned_tech_name,
+          hours_since_response: Math.round(hoursSinceResponse),
+          threshold_hours: thresholdHours,
+          magic_link: session.magicLink,
+          mode: 'TEST',
+        }
+      );
+      
+      monitoredWarned += 1;
+    } catch (err) {
+      console.warn('[dispatch:monitoring_warning] failed', String((err as any)?.message || err));
+    }
+  }
+
   const refreshed = await refreshDispatchQueue(params);
   return {
     ok: true,
     run: 'noon_warning_cron',
     candidates: snapshot.queue.length,
     warned,
+    monitored_warned: monitoredWarned,
     skipped,
     escalated,
     queue: refreshed.queue,
@@ -2467,6 +2892,7 @@ async function runDispatchWarningCron(params: Record<string, string>): Promise<a
     tier2_claims: refreshed.tier2_claims,
     monitored_work_orders: refreshed.monitored_work_orders,
     stats: refreshed.stats,
+    mode: 'TEST',
   };
 }
 
@@ -3633,6 +4059,31 @@ app.post('/api/magic-portal/submit', magicPortalJson, magicPortalForm, async (re
   await respondMagicPortalSubmission(req, res);
 });
 
+app.post('/api/magic-portal/open', magicPortalJson, magicPortalForm, async (req: Request, res: Response) => {
+  try {
+    const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
+    const shortCode = String(body.short_code || body.shortCode || '').trim();
+    const token = String(body.token || '').trim();
+    
+    if (!shortCode && !token) {
+      res.status(400).json({ ok: false, error: 'Missing short_code or token' });
+      return;
+    }
+    
+    const lookup = shortCode || token;
+    const result = await trackMagicPortalOpen(queryClient, lookup);
+    
+    res.json({
+      ok: true,
+      opened: result.opened,
+      open_count: result.openCount,
+    });
+  } catch (error) {
+    console.error('[magic-portal] open tracking failed', String((error as any)?.message || error));
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Open tracking failed') });
+  }
+});
+
 const legacyActionRoutes = {
   units: async (req: Request, res: Response) => {
     const params = toActionParams(req);
@@ -4670,6 +5121,28 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     } catch (error) {
       logTunnelError(error, '/api?action=dispatch_seed_reassignment_test');
       res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Queue seed failed') });
+    }
+    return;
+  }
+
+  if (action === 'start_monitoring_work_order') {
+    try {
+      const params = toActionParams(req);
+      res.json(await startMonitoringWorkOrder(params));
+    } catch (error) {
+      logTunnelError(error, '/api?action=start_monitoring_work_order');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Start monitoring failed') });
+    }
+    return;
+  }
+
+  if (action === 'stop_monitoring_work_order') {
+    try {
+      const params = toActionParams(req);
+      res.json(await stopMonitoringWorkOrder(params));
+    } catch (error) {
+      logTunnelError(error, '/api?action=stop_monitoring_work_order');
+      res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Stop monitoring failed') });
     }
     return;
   }
@@ -9658,6 +10131,70 @@ app.post('/api/local/proxy_config/upsert', async (req: Request, res: Response) =
   } catch (error) {
     logTunnelError(error, '/api/local/proxy_config/upsert');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to save proxy config') });
+  }
+});
+
+app.get('/api/local/dispatch_branch_mapping', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+
+    const config = await readDispatchConfig(['dispatch_branch_mapping']);
+    const mapping = parseBranchMapping(config.dispatch_branch_mapping || '');
+
+    res.json({ ok: true, mapping });
+  } catch (error) {
+    logTunnelError(error, '/api/local/dispatch_branch_mapping');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to load branch mapping') });
+  }
+});
+
+app.post('/api/local/dispatch_branch_mapping', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+
+    const mapping = req.body?.mapping;
+    if (!mapping || typeof mapping !== 'object') {
+      res.status(400).json({ ok: false, error: 'Missing or invalid mapping object' });
+      return;
+    }
+
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(mapping as Record<string, string>)) {
+      const k = String(key || '').trim().toLowerCase();
+      const v = String(value || '').trim().toLowerCase();
+      if (k && (v === 'phoenix' || v === 'tucson')) {
+        normalized[k] = v;
+      }
+    }
+
+    await queryClient.unsafe(
+      `INSERT INTO proxy_config (key, value, updated_at)
+       VALUES ('dispatch_branch_mapping', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET
+         value = EXCLUDED.value,
+         updated_at = NOW()`,
+      [JSON.stringify(normalized)],
+    );
+
+    res.json({ ok: true, mapping: normalized });
+  } catch (error) {
+    logTunnelError(error, '/api/local/dispatch_branch_mapping');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Failed to save branch mapping') });
+  }
+});
+
+app.post('/api/local/dispatch_branch_mapping/auto_detect', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+
+    const result = await autoDetectBranchMapping();
+    res.json(result);
+  } catch (error) {
+    logTunnelError(error, '/api/local/dispatch_branch_mapping/auto_detect');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Auto-detect failed') });
   }
 });
 
