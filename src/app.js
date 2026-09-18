@@ -2726,7 +2726,9 @@ function getLocalReadActionPath(action) {
     vacancies: '/api/local/vacancies',
     property_map: '/api/local/property_map',
     property_stats: '/api/local/property_stats',
-    property_group_directory: '/api/local/property_group_directory'
+    property_group_directory: '/api/local/property_group_directory',
+    reassignment_queue: '/api/local/reassignment_queue',
+    tenant_comms_log: '/api/local/tenant_comms_log'
   };
   return LOCAL_READ_ACTIONS[action] || '';
 }
@@ -27491,6 +27493,7 @@ var DISPATCH = {
   tucsonPagination: {},
   _pollTimer: null, _lastAuditMax: 0, POLL_MS: 30000,
 };
+window.DISPATCH = DISPATCH;
 
 var DISPATCH_BRANCHES = {
   phoenix: { key: 'phoenix', label: 'Phoenix', uuid: 'efe085ca-229e-11ef-bfba-069ca18f5865' },
@@ -27757,9 +27760,9 @@ function resolveDispatchProxyBaseUrl() {
 }
 
 function dispatchPost(action, body) {
-  var base = resolveDispatchProxyBaseUrl();
+  var base = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
   if (!base) {
-    return Promise.reject(new Error('Dispatch system: proxy base URL not configured. Open Vault and set Proxy URL.'));
+    return Promise.reject(new Error('Dispatch system: backend URL not configured.'));
   }
   var sep = base.indexOf('?')!==-1?'&':'?';
   var url = base + sep + 'action=' + encodeURIComponent(action);
@@ -28548,6 +28551,7 @@ var DispatchQueue = {
     } catch(e) { v9Toast('Remove failed', e.message, 'danger'); }
   }
 };
+window.DispatchQueue = DispatchQueue;
 
 var DispatchRoster = {
   _editing: false,
@@ -28583,8 +28587,21 @@ var DispatchRoster = {
     if (zoneEl) zoneEl.value = branch;
     this._syncTierForBranch(branch);
   },
-  _open: function() { document.getElementById('techRosterModal').classList.add('show'); },
-  _close: function() { document.getElementById('techRosterModal').classList.remove('show'); },
+  _open: function() {
+    var modal = document.getElementById('techRosterModal');
+    if (!modal) {
+      console.error('[DispatchRoster._open] Modal element not found!');
+      v9Toast('Modal error', 'Tech roster modal not found in DOM', 'danger');
+      return;
+    }
+    modal.classList.add('show');
+    var firstInput = modal.querySelector('input:not([type=hidden]), select');
+    if (firstInput) firstInput.focus();
+  },
+  _close: function() {
+    var modal = document.getElementById('techRosterModal');
+    if (modal) modal.classList.remove('show');
+  },
   openAdd: function() {
     this._editing=false;
     document.getElementById('techRosterModalTitle').textContent='Add Tech to Roster';
@@ -28600,8 +28617,21 @@ var DispatchRoster = {
     this._open();
   },
   openEdit: function(techId) {
+    console.log('[DispatchRoster.openEdit] Called with techId:', techId, 'DISPATCH.techs.length:', DISPATCH.techs ? DISPATCH.techs.length : 'undefined');
+    if (!DISPATCH.techs || DISPATCH.techs.length === 0) {
+      console.error('[DispatchRoster.openEdit] DISPATCH.techs is empty or undefined!');
+      v9Toast('Roster not loaded', 'Please wait for the roster to finish loading', 'warning');
+      return;
+    }
     var t=DISPATCH.techs.find(function(x){return x.tech_id===techId;});
-    if(!t)return;
+    if(!t){
+      console.error('[DispatchRoster.openEdit] Tech not found:', techId, 'Available techs:', DISPATCH.techs.length);
+      if (DISPATCH.techs.length > 0) {
+        console.log('[DispatchRoster.openEdit] Sample tech IDs:', DISPATCH.techs.slice(0, 3).map(function(x) { return x.tech_id; }));
+      }
+      v9Toast('Tech not found', 'Could not find tech with ID: ' + String(techId || '').substring(0, 20), 'warning');
+      return;
+    }
     this._editing=true;
     document.getElementById('techRosterModalTitle').textContent='Edit Tech';
     document.getElementById('rosterTechId').value=t.tech_id; document.getElementById('rosterTechId').disabled=true;
@@ -28732,6 +28762,7 @@ var DispatchRoster = {
     document.getElementById('gradeHistoryModal').classList.remove('show');
   }
 };
+window.DispatchRoster = DispatchRoster;
 
 var DispatchComms = {
   _readLivePayload: function() {
@@ -28855,6 +28886,7 @@ var DispatchComms = {
     }
   }
 };
+window.DispatchComms = DispatchComms;
 
 var DispatchConfig = {
   _getTierGroupInputs: function() {
@@ -29429,6 +29461,7 @@ var DispatchConfig = {
     }
   }
 };
+window.DispatchConfig = DispatchConfig;
 
 // ══════════════════════════════════════════════════════════════════
 // DISPATCH CONTROL — Master controller
@@ -29712,6 +29745,7 @@ var DispatchControl = {
     }
   }
 };
+window.DispatchControl = DispatchControl;
 
 // Wire dispatch nav tab (overrides scaffold wiring)
 (function wireDispatchTab(){

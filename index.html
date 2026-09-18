@@ -1571,7 +1571,7 @@
 <section class="section" id="sec-dispatch">
   <div class="dispatch-topbar">
     <div>
-      <div class="dispatch-title"><span class="dispatch-live-dot" id="dispatchLiveDot"></span> ⚡ Dispatch Control</div>
+      <div class="dispatch-title"><span class="dispatch-live-dot" id="dispatchLiveDot"></span> ⚡ Dispatch Control <span style="background:var(--warning);color:var(--bg-primary);font-size:.65rem;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:8px;text-transform:uppercase">BETA</span></div>
       <div class="dispatch-live-label" id="dispatchLiveLabel">Initializing...</div>
     </div>
     <div class="dispatch-topbar__right">
@@ -1636,14 +1636,43 @@
           <option value="grace">Grace Active</option>
           <option value="reassigned">Reassigned</option>
         </select>
+        <select id="queueViewMode" style="font-family:var(--font-mono);font-size:.78rem;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)">
+          <option value="split">Split View (Phoenix/Tucson)</option>
+          <option value="combined">Combined View</option>
+        </select>
       </div>
     </div>
-    <div class="table-wrapper"><div class="table-scroll">
-      <table class="queue-table" id="queueTable">
-        <thead><tr><th>Status</th><th>WO #</th><th>Address</th><th>Tech</th><th>Reassigns</th><th>First Seen</th><th>Last Action</th><th>Actions</th></tr></thead>
-        <tbody id="queueTableBody"><tr><td colspan="8"><div class="v9-loading"><i class="fas fa-circle-notch"></i><p>Loading queue...</p></div></td></tr></tbody>
-      </table>
-    </div></div>
+    <div id="queueSplitView">
+      <div style="margin-bottom:1.5rem">
+        <h4 style="margin:0 0 .5rem 0;font-size:.95rem;color:var(--accent)"><i class="fas fa-map-marker-alt"></i> Phoenix Queue</h4>
+        <div class="table-wrapper"><div class="table-scroll">
+          <table class="queue-table">
+            <thead><tr><th>Status</th><th>WO #</th><th>Address</th><th>Tech</th><th>Reassigns</th><th>First Seen</th><th>Last Action</th><th>Actions</th></tr></thead>
+            <tbody id="queueTableBodyPhoenix"><tr><td colspan="8"><div class="v9-loading"><i class="fas fa-circle-notch"></i><p>Loading...</p></div></td></tr></tbody>
+          </table>
+        </div></div>
+        <div id="queuePaginationPhoenix" style="margin-top:.5rem"></div>
+      </div>
+      <div>
+        <h4 style="margin:0 0 .5rem 0;font-size:.95rem;color:var(--purple)"><i class="fas fa-map-marker-alt"></i> Tucson Queue</h4>
+        <div class="table-wrapper"><div class="table-scroll">
+          <table class="queue-table">
+            <thead><tr><th>Status</th><th>WO #</th><th>Address</th><th>Tech</th><th>Reassigns</th><th>First Seen</th><th>Last Action</th><th>Actions</th></tr></thead>
+            <tbody id="queueTableBodyTucson"><tr><td colspan="8"><div class="v9-loading"><i class="fas fa-circle-notch"></i><p>Loading...</p></div></td></tr></tbody>
+          </table>
+        </div></div>
+        <div id="queuePaginationTucson" style="margin-top:.5rem"></div>
+      </div>
+    </div>
+    <div id="queueCombinedView" style="display:none">
+      <div class="table-wrapper"><div class="table-scroll">
+        <table class="queue-table" id="queueTable">
+          <thead><tr><th>Status</th><th>WO #</th><th>Address</th><th>Tech</th><th>Reassigns</th><th>First Seen</th><th>Last Action</th><th>Actions</th></tr></thead>
+          <tbody id="queueTableBody"><tr><td colspan="8"><div class="v9-loading"><i class="fas fa-circle-notch"></i><p>Loading queue...</p></div></td></tr></tbody>
+        </table>
+      </div></div>
+      <div id="queuePagination" style="margin-top:.75rem"></div>
+    </div>
   </div>
 
   <div class="dispatch-subpanel" id="dispatch-panel-roster">
@@ -1662,8 +1691,8 @@
     <div id="dispatchRosterSyncReport" style="display:none;margin:0 0 1rem;padding:.7rem .8rem;border-radius:10px;border:1px solid var(--border);background:var(--bg-subtle);font-size:.78rem"></div>
     <div class="table-wrapper"><div class="table-scroll">
       <table class="roster-table" id="rosterTable">
-        <thead><tr><th>Tier</th><th>Name</th><th>Phone (E.164)</th><th>Branch</th><th>Score</th><th>Active WOs</th><th>WO Share</th><th>Status</th><th>Actions</th></tr></thead>
-        <tbody id="rosterTableBody"><tr><td colspan="9"><div class="v9-loading"><i class="fas fa-circle-notch"></i><p>Loading roster...</p></div></td></tr></tbody>
+        <thead><tr><th>Tier</th><th>Name</th><th>Phone (E.164)</th><th>Branch</th><th>Score</th><th>Active WOs</th><th>WO Share</th><th>Last Synced</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="rosterTableBody"><tr><td colspan="10"><div class="v9-loading"><i class="fas fa-circle-notch"></i><p>Loading roster...</p></div></td></tr></tbody>
       </table>
     </div></div>
   </div>
@@ -2115,6 +2144,10 @@
         </select>
       </div>
       <div class="form-group">
+        <label class="form-label">Performance Score <span style="font-size:.7rem;color:var(--text-muted);font-weight:400">(0-100, admin override)</span></label>
+        <input type="number" class="form-input" id="rosterTechScore" min="0" max="100" step="0.1" placeholder="100" style="font-family:var(--font-mono)">
+      </div>
+      <div class="form-group">
         <label class="form-label">Property Group UUID</label>
         <select class="form-select" id="rosterTechGroupUuid" style="font-family:var(--font-mono)">
           <option value="">Auto from branch</option>
@@ -2138,6 +2171,80 @@
     <div class="dispatch-modal__footer">
       <button class="btn-dispatch-secondary" id="techRosterModalCancel">Cancel</button>
       <button class="btn-dispatch-primary" id="techRosterModalSave"><i class="fas fa-save"></i> Save Tech</button>
+    </div>
+  </div>
+</div>
+
+<!-- Grade History Modal -->
+<div class="dispatch-modal-overlay" id="gradeHistoryModal">
+  <div class="dispatch-modal" style="max-width:700px">
+    <div class="dispatch-modal__head">
+      <h3 id="gradeHistoryModalTitle">Grade History</h3>
+      <button class="dispatch-modal__close" id="gradeHistoryModalClose">&times;</button>
+    </div>
+    <div class="dispatch-modal__body" style="max-height:60vh">
+      <div id="gradeHistoryContent"></div>
+    </div>
+    <div class="dispatch-modal__footer">
+      <button class="btn-dispatch-secondary" id="gradeHistoryModalCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Monitor Setup Modal -->
+<div class="dispatch-modal-overlay" id="monitorSetupModal">
+  <div class="dispatch-modal" style="max-width:650px">
+    <div class="dispatch-modal__head">
+      <h3 id="monitorSetupModalTitle">Setup Monitoring</h3>
+      <button class="dispatch-modal__close" id="monitorSetupModalClose">&times;</button>
+    </div>
+    <div class="dispatch-modal__body">
+      <input type="hidden" id="monitorWoId">
+      <input type="hidden" id="monitorWoNumber">
+      
+      <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px">
+        <div style="font-size:.82rem;font-weight:600;margin-bottom:6px"><i class="fas fa-info-circle"></i> Work Order Details</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.78rem">
+          <div><span style="color:var(--text-muted)">WO #:</span> <strong id="monitorDisplayWoNum">—</strong></div>
+          <div><span style="color:var(--text-muted)">Branch:</span> <strong id="monitorDisplayBranch">—</strong></div>
+          <div style="grid-column:1/-1"><span style="color:var(--text-muted)">Address:</span> <strong id="monitorDisplayAddress">—</strong></div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Assigned Tech <span style="color:var(--danger)">*</span></label>
+        <select class="form-select" id="monitorAssignedTech">
+          <option value="">Select tech...</option>
+        </select>
+        <div style="font-size:.72rem;color:var(--text-muted);margin-top:4px">Current assignee from AppFolio, or select a different tech for reassignment</div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Warning Threshold <span style="color:var(--danger)">*</span></label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="number" class="form-input" id="monitorWarningHours" min="1" max="168" value="24" style="width:100px;font-family:var(--font-mono)">
+          <span style="font-size:.82rem;color:var(--text-muted)">hours without response</span>
+        </div>
+        <div style="font-size:.72rem;color:var(--text-muted);margin-top:4px">After this time, a warning SMS will be sent to the tech</div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Initial Action</label>
+        <select class="form-select" id="monitorInitialAction">
+          <option value="notify">Send magic link via SMS now</option>
+          <option value="silent">Start monitoring without notification</option>
+        </select>
+        <div style="font-size:.72rem;color:var(--text-muted);margin-top:4px">Whether to immediately notify the tech or just start tracking</div>
+      </div>
+
+      <div style="background:var(--warning-dim);border:1px solid var(--warning);border-radius:8px;padding:10px;margin-top:12px">
+        <div style="font-size:.78rem;font-weight:600;color:var(--warning);margin-bottom:4px"><i class="fas fa-flask"></i> TEST MODE</div>
+        <div style="font-size:.72rem;color:var(--text-secondary)">This monitoring system is in beta. No automated reassignments will occur. All actions are logged for review.</div>
+      </div>
+    </div>
+    <div class="dispatch-modal__footer">
+      <button class="btn-dispatch-secondary" id="monitorSetupModalCancel">Cancel</button>
+      <button class="btn-dispatch-primary" id="monitorSetupModalSave"><i class="fas fa-play"></i> Start Monitoring</button>
     </div>
   </div>
 </div>

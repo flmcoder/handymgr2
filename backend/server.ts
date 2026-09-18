@@ -10198,6 +10198,90 @@ app.post('/api/local/dispatch_branch_mapping/auto_detect', async (req: Request, 
   }
 });
 
+app.get('/api/local/reassignment_queue', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+
+    const params: Record<string, string> = {};
+    for (const [key, value] of Object.entries(req.query || {})) {
+      if (typeof value === 'string') params[key] = value;
+    }
+    params.read_only = '1';
+
+    const result = await refreshDispatchQueue(params);
+    res.json(result);
+  } catch (error) {
+    logTunnelError(error, '/api/local/reassignment_queue');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Reassignment queue query failed') });
+  }
+});
+
+app.get('/api/local/tenant_comms_log', async (req: Request, res: Response) => {
+  try {
+    const session = await requireAdminSession(req, res);
+    if (!session) return;
+
+    await ensureTenantCommsTable();
+
+    const limit = Math.max(1, Math.min(500, Number(req.query?.limit || 60)));
+    const page = Math.max(1, Number(req.query?.page || 1));
+    const offset = (page - 1) * limit;
+
+    const countRows = await queryClient.unsafe(
+      `select count(*)::int as total from tenant_communications_log`,
+      [],
+    );
+    const total = Number((countRows as any[])[0]?.total || 0) || 0;
+
+    const rows = await queryClient.unsafe(
+      `select
+         id, property_group_id, property_id, wo_id, tenant_name, tenant_phone,
+         tech_name, template_used, message_body, rc_message_id, magic_link,
+         status, created_at, raw_json
+       from tenant_communications_log
+       order by created_at desc, id desc
+       limit $1 offset $2`,
+      [limit, offset],
+    );
+
+    const data = (rows as any[]).map((row) => ({
+      ...(row.raw_json && typeof row.raw_json === 'object' ? row.raw_json : {}),
+      id: String(row.id || ''),
+      property_group_id: String(row.property_group_id || ''),
+      property_id: String(row.property_id || ''),
+      wo_id: String(row.wo_id || ''),
+      tenant_name: String(row.tenant_name || ''),
+      tenant_phone: String(row.tenant_phone || ''),
+      tech_name: String(row.tech_name || ''),
+      template_used: String(row.template_used || ''),
+      message_body: String(row.message_body || ''),
+      rc_message_id: String(row.rc_message_id || ''),
+      magic_link: String(row.magic_link || ''),
+      status: String(row.status || ''),
+      created_at: asIso(row.created_at),
+    }));
+
+    res.json({
+      ok: true,
+      data,
+      results: data,
+      count: data.length,
+      pagination: {
+        total,
+        page,
+        limit,
+        offset,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+      source: 'postgres_local',
+    });
+  } catch (error) {
+    logTunnelError(error, '/api/local/tenant_comms_log');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Tenant comms query failed') });
+  }
+});
+
 app.post('/api/local/reassignment_queue/clear_exempt', async (req: Request, res: Response) => {
   try {
     const session = await requireAdminSession(req, res);
