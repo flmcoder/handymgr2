@@ -1117,6 +1117,27 @@ function normalizePropertyLookupKey(value) {
   return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+function parsePropertyGroupIds(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map(function(v) { return String(v || '').trim(); }).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    var trimmed = value.trim();
+    if (!trimmed) return [];
+    if (trimmed.charAt(0) === '[') {
+      try {
+        var parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.map(function(v) { return String(v || '').trim(); }).filter(Boolean);
+        }
+      } catch (e) { /* fall through */ }
+    }
+    return [trimmed];
+  }
+  return [];
+}
+
 function parseIsoDateSafe(value) {
   var raw = String(value || '').trim();
   if (!raw) return null;
@@ -1249,8 +1270,8 @@ function isInEffectivePropertyScope(propertyId, propertyName) {
       property.propertyGroupUuid,
       property.property_group_uuid,
     ];
-    var rawGroupIds = property.PropertyGroupIds || property.property_group_ids || property._groupIds;
-    if (Array.isArray(rawGroupIds)) groupIds = groupIds.concat(rawGroupIds);
+    var rawGroupIds = parsePropertyGroupIds(property.PropertyGroupIds || property.property_group_ids || property._groupIds);
+    groupIds = groupIds.concat(rawGroupIds);
     if (groupIds.some(function(groupId) {
       return scopeIds.indexOf(String(groupId || '').trim().toLowerCase()) !== -1;
     })) return true;
@@ -1262,7 +1283,8 @@ function isInEffectivePropertyScope(propertyId, propertyName) {
 // Helper: add a group name to a lookup map entry (creates array if needed)
 function _addToGroupMap(map, key, groupName) {
   if (!key) return;
-  var k = String(key);
+  var k = String(key).trim();
+  if (!k) return;
   if (!map[k]) map[k] = [];
   if (map[k].indexOf(groupName) === -1) map[k].push(groupName);
 }
@@ -8110,11 +8132,7 @@ async function resolvePropertyGroupNames() {
         } else if (typeof smObj === 'string') {
           smName = smObj.trim();
         }
-        var gIds = [];
-        var rawGroupIds = p.PropertyGroupIds || p.property_group_ids || [];
-        if (Array.isArray(rawGroupIds)) {
-          gIds = rawGroupIds.map(function(v) { return String(v || '').trim(); }).filter(Boolean);
-        }
+        var gIds = parsePropertyGroupIds(p.PropertyGroupIds || p.property_group_ids);
         if (pid && pname) uuidMapFallback[String(pid)] = {
           name: String(pname),
           site_manager_name: smName,
@@ -8153,9 +8171,7 @@ async function resolvePropertyGroupNames() {
 
     function _normalizeGroupIds(entry) {
       if (!entry || typeof entry !== 'object') return [];
-      var ids = entry.group_ids || entry.groupIds || [];
-      if (!Array.isArray(ids)) return [];
-      return ids.map(function(v) { return String(v || '').trim(); }).filter(Boolean);
+      return parsePropertyGroupIds(entry.group_ids || entry.groupIds);
     }
 
     function _propertyMetaFromMap(entry) {
