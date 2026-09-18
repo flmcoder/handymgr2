@@ -27838,14 +27838,20 @@ function renderDispatchGrades(techs) {
 }
 
 function renderDispatchQueue(queue) {
+  var splitView = document.getElementById('queueSplitView');
+  var combinedView = document.getElementById('queueCombinedView');
+  if (!splitView || !combinedView) {
+    console.warn('[renderDispatchQueue] Queue view containers not found in DOM');
+    return;
+  }
   if (DISPATCH.queueViewMode === 'split') {
-    document.getElementById('queueSplitView').style.display = 'block';
-    document.getElementById('queueCombinedView').style.display = 'none';
+    splitView.style.display = 'block';
+    combinedView.style.display = 'none';
     renderBranchQueue('phoenix', DISPATCH.phoenixQueue || []);
     renderBranchQueue('tucson', DISPATCH.tucsonQueue || []);
   } else {
-    document.getElementById('queueSplitView').style.display = 'none';
-    document.getElementById('queueCombinedView').style.display = 'block';
+    splitView.style.display = 'none';
+    combinedView.style.display = 'block';
     renderCombinedQueue(queue);
   }
 }
@@ -29566,12 +29572,16 @@ var DispatchControl = {
   },
   _renderActivePanel: function() {
     var p=DISPATCH.activePanel;
-    if(p==='grades') renderDispatchGrades(DISPATCH.techs);
-    if(p==='queue')  renderDispatchQueue(DISPATCH.queue);
-    if(p==='roster') renderDispatchRoster(DISPATCH.techs);
-    if(p==='audit')  renderDispatchAudit(DISPATCH.audit);
-    if(p==='blasts') renderDispatchBlasts(DISPATCH.blasts,DISPATCH.claims);
-    if(p==='comms')  renderDispatchComms(DISPATCH.comms);
+    try {
+      if(p==='grades') renderDispatchGrades(DISPATCH.techs);
+      if(p==='queue')  renderDispatchQueue(DISPATCH.queue);
+      if(p==='roster') renderDispatchRoster(DISPATCH.techs);
+      if(p==='audit')  renderDispatchAudit(DISPATCH.audit);
+      if(p==='blasts') renderDispatchBlasts(DISPATCH.blasts,DISPATCH.claims);
+      if(p==='comms')  renderDispatchComms(DISPATCH.comms);
+    } catch(e) {
+      console.error('[_renderActivePanel] Error rendering panel:', p, e);
+    }
   },
   init: async function() {
     if(DISPATCH.initialized)return;

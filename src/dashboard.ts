@@ -1289,8 +1289,9 @@ interface InspectionRecord {
 export function buildInspectionMapOption(inspections: InspectionRecord[]): ECOption {
   const today = Date.now();
   const MS_DAY = 86400000;
+  const safeInspections = Array.isArray(inspections) ? inspections : [];
 
-  const data = inspections
+  const data = safeInspections
     .filter(r => r._x != null && r._y != null)
     .map(r => {
       const name = r.property_name || r.propertyName || 'Unknown';
@@ -1339,7 +1340,7 @@ export function buildInspectionMapOption(inspections: InspectionRecord[]): ECOpt
     series: [{
       type: 'effectScatter',
       rippleEffect: { scale: 2.5, brushType: 'stroke' },
-      data,
+      data: data.length > 0 ? data : [{ name: 'No Data', value: [50, 50, 0, ''], symbolSize: 12, itemStyle: { color: '#94a3b8' } }],
       zlevel: 1,
     }],
   };
@@ -1369,9 +1370,10 @@ interface TurnPipeEntry {
 /**
  * Builds a Funnel chart option from TURN_PIPE_DATA showing how many turns
  * are at each pipeline stage (cumulative — each stage includes all later stages).
- */
+  */
 export function buildTurnoverPipelineOption(turns: TurnPipeEntry[]): ECOption {
-  const active = turns.filter(t => !t.isClosed);
+  const safeTurns = Array.isArray(turns) ? turns : [];
+  const active = safeTurns.filter(t => !t.isClosed);
   const total  = active.length || 1; // avoid div-zero
 
   const stageDefs: Array<{ key: keyof NonNullable<TurnPipeEntry['stages']>; label: string; color: string }> = [
@@ -1416,7 +1418,7 @@ export function buildTurnoverPipelineOption(turns: TurnPipeEntry[]): ECOption {
         fontSize: 11,
         fontWeight: 600,
       },
-      data: funnelData,
+      data: funnelData.length > 0 ? funnelData : [{ name: 'No Data', value: 0, _count: 0, itemStyle: { color: '#94a3b8' } }],
     }],
   };
 }
@@ -1469,7 +1471,8 @@ function colorizeStatus(nodes: SunburstNode[]): SunburstNode[] {
 }
 
 export function buildPortfolioSunburstOption(data: SunburstNode[]): ECOption {
-  const colored = colorizeStatus(data);
+  const safeData = Array.isArray(data) ? data : [];
+  const colored = colorizeStatus(safeData);
 
   return {
     backgroundColor: 'transparent',
@@ -1484,7 +1487,7 @@ export function buildPortfolioSunburstOption(data: SunburstNode[]): ECOption {
     },
     series: [{
       type: 'sunburst',
-      data: colored,
+      data: colored.length > 0 ? colored : [{ name: 'No Data', value: 0 }],
       radius: ['8%', '95%'],
       sort: 'desc',
       emphasis: {
@@ -2103,8 +2106,9 @@ export function buildWoSankeyOption(wos: WoRecord[]): ECOption {
   }
 
   const groupNames: Record<string, string> = {};
+  const safeWos = Array.isArray(wos) ? wos : [];
 
-  for (const wo of wos) {
+  for (const wo of safeWos) {
     // Layer 1: Property Group
     const rawGroup = String(
       wo.property_group || wo.property_group_id || wo.propertyGroupId || 'Unassigned Group',
@@ -2161,8 +2165,8 @@ export function buildWoSankeyOption(wos: WoRecord[]): ECOption {
     },
     series: [{
       type: 'sankey' as const,
-      data: nodes,
-      links,
+      data: nodes.length > 0 ? nodes : [{ name: 'No Data', itemStyle: { color: '#94a3b8' } }],
+      links: links.length > 0 ? links : [],
       emphasis: {
         focus: 'adjacency' as const,
         lineStyle: { opacity: 0.7 },
