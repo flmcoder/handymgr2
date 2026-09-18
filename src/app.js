@@ -2631,7 +2631,7 @@ async function stabilizeProxySessionAfterLogin(timeoutMs) {
 // Backward compatible with existing callers that pass a numeric timeout as arg #3.
 async function fetchWithTimeout(url, opts, timeoutMsOrRetries, baseBackoffMs) {
   var options = Object.assign({}, opts || {});
-  var timeoutMs = Number(options.timeout || 0) || 15000;
+  var timeoutMs = Number(options.timeout || 0) || 30000;
   var retries = 3;
   var backoffMs = Number(baseBackoffMs || 0) || 2000;
 
@@ -2749,7 +2749,7 @@ async function proxyAction(action, params, options) {
     var localHeaders = { 'Accept': 'application/json' };
     if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
 
-    var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 45000);
+    var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 60000);
     var localData = {};
     try { localData = await localRes.json(); } catch (e) { localData = {}; }
 
