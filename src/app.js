@@ -18341,11 +18341,12 @@ async function renderWOAnalyticsCharts() {
   var data = await fetchChartAnalytics('work-orders').catch(function() { return null; });
   if (!data || generation !== _chartAnalyticsGeneration) return;
 
+  var agingData = data.aging || {};
   var agingRows = [
-    { name: '0-7', value: Number(data.aging.age_0_7 || 0) },
-    { name: '8-30', value: Number(data.aging.age_8_30 || 0) },
-    { name: '31-60', value: Number(data.aging.age_31_60 || 0) },
-    { name: '60+', value: Number(data.aging.age_61_plus || 0) }
+    { name: '0-7', value: Number(agingData.age_0_7 || 0) },
+    { name: '8-30', value: Number(agingData.age_8_30 || 0) },
+    { name: '31-60', value: Number(agingData.age_31_60 || 0) },
+    { name: '60+', value: Number(agingData.age_61_plus || 0) }
   ];
   var ownerRows = (data.by_owner || []).slice(0, 8).map(function(r) {
     return { name: String(r.label), value: Number(r.value || 0) };
