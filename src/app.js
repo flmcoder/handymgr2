@@ -2768,27 +2768,34 @@ async function proxyAction(action, params, options) {
     if (localQuery) localUrl += '?' + localQuery;
 
     var localToken = getProxyAccessToken();
-    var localHeaders = { 'Accept': 'application/json' };
-    if (localToken) localHeaders['Authorization'] = 'Bearer ' + localToken;
-
-    var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 60000);
-    var localData = {};
-    try { localData = await localRes.json(); } catch (e) { localData = {}; }
-
-    if (!localRes.ok || localData.ok === false) {
-      throw new Error(String((localData && (localData.error || localData.message)) || ('Local read failed for ' + action + ': HTTP ' + localRes.status)));
-    }
-
-    var localResults = Array.isArray(localData.results) ? localData.results : (Array.isArray(localData.data) ? localData.data : []);
-    var EMPTY_LOCAL_FALLBACK_ACTIONS = {
-      turns: true,
-      unit_turns: true,
-      turns_incremental: true,
-    };
-    if (EMPTY_LOCAL_FALLBACK_ACTIONS[action] && localResults.length === 0 && API_PROXY) {
-      console.warn('[Local Read Empty] ' + action + ' returned 0 rows from /api/local; falling back to legacy proxy action');
+    if (!localToken) {
+      // Token not available yet; skip local read and fall back to legacy proxy
+      if (API_PROXY) {
+        console.warn('[Local Read Skipped] No bearer token available for ' + action + '; falling back to legacy proxy');
+      }
     } else {
-      return Object.assign({}, localData, { _source: 'postgres_local' });
+      var localHeaders = { 'Accept': 'application/json' };
+      localHeaders['Authorization'] = 'Bearer ' + localToken;
+
+      var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 60000);
+      var localData = {};
+      try { localData = await localRes.json(); } catch (e) { localData = {}; }
+
+      if (!localRes.ok || localData.ok === false) {
+        throw new Error(String((localData && (localData.error || localData.message)) || ('Local read failed for ' + action + ': HTTP ' + localRes.status)));
+      }
+
+      var localResults = Array.isArray(localData.results) ? localData.results : (Array.isArray(localData.data) ? localData.data : []);
+      var EMPTY_LOCAL_FALLBACK_ACTIONS = {
+        turns: true,
+        unit_turns: true,
+        turns_incremental: true,
+      };
+      if (EMPTY_LOCAL_FALLBACK_ACTIONS[action] && localResults.length === 0 && API_PROXY) {
+        console.warn('[Local Read Empty] ' + action + ' returned 0 rows from /api/local; falling back to legacy proxy action');
+      } else {
+        return Object.assign({}, localData, { _source: 'postgres_local' });
+      }
     }
   }
 
@@ -2842,6 +2849,12 @@ function isLikelyAppShellProxyBase(base) {
 }
 
 async function parseJsonResponseOrThrow(res, contextLabel) {
+  if (!res.ok) {
+    var errText = '';
+    try { errText = await res.text(); } catch (e) { errText = ''; }
+    var errPreview = String(errText || '').replace(/\s+/g, ' ').slice(0, 180);
+    throw new Error((contextLabel || 'Response') + ' HTTP ' + res.status + (errPreview ? ': ' + errPreview : ''));
+  }
   var rawText = '';
   try { rawText = await res.text(); } catch (e) { rawText = ''; }
   if (!rawText) return {};
