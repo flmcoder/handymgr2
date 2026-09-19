@@ -4,8 +4,7 @@
  */
 
 export const OPEN_WORK_ORDER_STATUS_FILTER = `(
-  coalesce(lower(status), '') not like '%completed%'
-  and coalesce(lower(status), '') not like '%cancel%'
+  coalesce(lower(status), '') not in ('completed', 'canceled', 'work completed')
   and coalesce(lower(status), '') not like '%no need to bill%'
 )`;
 
@@ -28,11 +27,6 @@ export const WORK_ORDER_CREATED_AT_EXPR = `coalesce(
   case
     when (raw_json ->> 'created_at') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
       then (raw_json ->> 'created_at')::timestamptz
-    else null
-  end,
-  case
-    when (raw_json ->> 'created_date') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-      then (raw_json ->> 'created_date')::timestamptz
     else null
   end,
   updated_at

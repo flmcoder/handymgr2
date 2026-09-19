@@ -9,7 +9,7 @@ import {
 test('work-orders analytics uses the badge open filter and aging buckets', () => {
   const { sql, params } = buildWorkOrdersAnalyticsQuery([]);
   assert.equal(params.length, 0);
-  assert.match(sql, /not like '%completed%'/);
+  assert.match(sql, /not in \('completed', 'canceled', 'work completed'\)/);
   assert.match(sql, /by_status/);
   assert.match(sql, /by_type/);
   assert.match(sql, /by_owner/);

@@ -102,12 +102,12 @@ work_order_base as (
     wo.description,
     wo.created_at,
     coalesce(
-      nullif(wo.raw_json->>'UnitTurnId', ''),
-      nullif(wo.raw_json->>'unit_turn_id', '')
+      nullif(wo.raw_json->>'unit_turn_id', ''),
+      nullif(wo.raw_json->>'UnitTurnId', '')
     ) as linked_unit_turn_id,
     coalesce(
-      nullif(wo.raw_json->>'UnitTurnCategory', ''),
       nullif(wo.raw_json->>'unit_turn_category', ''),
+      nullif(wo.raw_json->>'UnitTurnCategory', ''),
       nullif(wo.category, '')
     ) as unit_turn_category,
     coalesce(
@@ -136,16 +136,16 @@ work_order_base as (
     ) as has_assigned_user,
     coalesce(
       nullif(regexp_replace(coalesce(
-        wo.raw_json->>'VendorBillAmount',
         wo.raw_json->>'vendor_bill_amount',
+        wo.raw_json->>'VendorBillAmount',
         ''
       ), '[^0-9.-]', '', 'g'), '')::numeric,
       0
     ) as vendor_bill_amount,
     coalesce(
       nullif(regexp_replace(coalesce(
-        wo.raw_json->>'TotalCost',
         wo.raw_json->>'total_cost',
+        wo.raw_json->>'TotalCost',
         wo.total_cost::text,
         wo.estimated_amount::text,
         ''

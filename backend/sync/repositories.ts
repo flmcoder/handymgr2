@@ -549,7 +549,7 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
       ? (row.assigned_users ?? row.AssignedUsers)
       : [];
     const firstUser = assignedUsers[0] ?? {};
-    const workOrderUuid = asStr(row.v0_uuid || row.UUID || row.uuid || row.work_order_uuid)
+    const workOrderUuid = asStr(row.Id || row.id || row.v0_uuid || row.UUID || row.uuid || row.work_order_uuid)
       || (isUuidLike(id) ? id : null);
     const rawWithUuid = {
       ...row,
@@ -569,8 +569,8 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
         propertyId,
         unitId: asStr(row.unit_id || row.UnitId),
         propertyGroupId: resolvedGroup,
-        description: asStr(row.description || row.Description || row.subject || row.Subject, 1000),
-        category: asStr(row.category || row.Category || row.work_order_type || row.WorkOrderType),
+        description: asStr(row.JobDescription || row.jobDescription || row.description || row.Description || row.subject || row.Subject, 1000),
+        category: asStr(row.Type || row.type || row.category || row.Category || row.work_order_type || row.WorkOrderType),
         priority: asStr(row.priority || row.Priority),
         status: asStr(row.status || row.Status),
         assignedUserId: asStr(firstUser.id || firstUser.Id),

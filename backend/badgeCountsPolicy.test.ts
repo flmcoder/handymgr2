@@ -58,8 +58,7 @@ test('buildBadgeCountsPayload tolerates missing counts', () => {
 });
 
 test('OPEN_WORK_ORDER_STATUS_FILTER excludes terminal statuses', () => {
-  assert.match(OPEN_WORK_ORDER_STATUS_FILTER, /not like '%completed%'/);
-  assert.match(OPEN_WORK_ORDER_STATUS_FILTER, /not like '%cancel%'/);
+  assert.match(OPEN_WORK_ORDER_STATUS_FILTER, /not in \('completed', 'canceled', 'work completed'\)/);
   assert.match(OPEN_WORK_ORDER_STATUS_FILTER, /not like '%no need to bill%'/);
 });
 
@@ -72,8 +71,8 @@ test('WORK_ORDER_CREATED_AT_EXPR falls back to the raw AppFolio payload when the
   // The raw-value casts stay guarded by a leading-date regex, so a malformed
   // payload string can never raise an invalid-syntax cast for the aggregate.
   const guardedCasts = (WORK_ORDER_CREATED_AT_EXPR.match(/~ '\^\[0-9\]\{4\}/g) || []).length;
-  assert.equal(guardedCasts, 3);
-  assert.equal((WORK_ORDER_CREATED_AT_EXPR.match(/::timestamptz/g) || []).length, 3);
+  assert.equal(guardedCasts, 2);
+  assert.equal((WORK_ORDER_CREATED_AT_EXPR.match(/::timestamptz/g) || []).length, 2);
   // Never includes an unguarded table alias (the badge aggregate has none).
   assert.doesNotMatch(WORK_ORDER_CREATED_AT_EXPR, /wo\.created_at/);
 });
