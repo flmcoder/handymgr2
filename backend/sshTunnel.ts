@@ -241,11 +241,17 @@ async function startTunnel(config: TunnelConfig, isRestart = false): Promise<voi
 }
 
 export function isSshDbTunnelEnabled(): boolean {
+  if (envFlag('SKIP_TUNNEL')) {
+    return false;
+  }
   return envFlag('SSH_DB_TUNNEL_ENABLED');
 }
 
 export function getSshDbTunnelTarget(): { host: string; port: number } | null {
-  if (!isSshDbTunnelEnabled()) {
+  const skipTunnel = envFlag('SKIP_TUNNEL');
+  const tunnelEnabled = envFlag('SSH_DB_TUNNEL_ENABLED');
+  
+  if (!skipTunnel && !tunnelEnabled) {
     return null;
   }
 
