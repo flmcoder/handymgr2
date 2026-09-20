@@ -12,6 +12,10 @@ export type NormalizedBillSyncRow = {
   invoiceDate: Date | null;
   dueDate: Date | null;
   paidAt: Date | null;
+  workOrderId: string | null;
+  cashAccountId: string | null;
+  postingDate: Date | null;
+  accountNumber: string | null;
   updatedAt: Date | null;
 };
 
@@ -65,6 +69,10 @@ export function normalizeBillSyncRow(value: unknown): NormalizedBillSyncRow | nu
     invoiceDate: optionalDate(row.InvoiceDate ?? row.invoice_date ?? row.BillDate ?? row.bill_date),
     dueDate: optionalDate(row.DueDate ?? row.due_date),
     paidAt: optionalDate(row.PaidAt ?? row.paid_at ?? row.PaymentDate ?? row.payment_date),
+    workOrderId: optionalString(row.WorkOrderId ?? row.work_order_id),
+    cashAccountId: optionalString(row.CashAccountId ?? row.cash_account_id),
+    postingDate: optionalDate(row.PostingDate ?? row.posting_date),
+    accountNumber: optionalString(row.AccountNumber ?? row.account_number),
     updatedAt: optionalDate(row.LastUpdatedAt ?? row.last_updated_at ?? row.UpdatedAt ?? row.updated_at),
   };
 }

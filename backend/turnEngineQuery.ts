@@ -105,6 +105,11 @@ work_order_base as (
       nullif(wo.raw_json->>'unit_turn_id', ''),
       nullif(wo.raw_json->>'UnitTurnId', '')
     ) as linked_unit_turn_id,
+    -- Category-based milestones (locks, paint, flooring, etc.) require v2 report data
+    -- with numeric unit_turn_category codes ('7', '1', '2', '4', '6', '3').
+    -- v0 API syncs the Type field ('Unit Turn', 'Resident', 'Internal') into wo.category,
+    -- which doesn't map to the numeric codes. For v0-only data, these milestones will
+    -- show as "not_started" until v2 report data is synced.
     coalesce(
       nullif(wo.raw_json->>'unit_turn_category', ''),
       nullif(wo.raw_json->>'UnitTurnCategory', ''),
@@ -143,11 +148,11 @@ work_order_base as (
       0
     ) as vendor_bill_amount,
     coalesce(
+      wo.total_cost,
+      wo.estimated_amount,
       nullif(regexp_replace(coalesce(
         wo.raw_json->>'total_cost',
         wo.raw_json->>'TotalCost',
-        wo.total_cost::text,
-        wo.estimated_amount::text,
         ''
       ), '[^0-9.-]', '', 'g'), '')::numeric,
       0

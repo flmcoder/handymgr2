@@ -67,6 +67,10 @@ export const appfolioBills = pgTable(
     invoiceDate: timestamp('invoice_date', { withTimezone: true }),
     dueDate: timestamp('due_date', { withTimezone: true }),
     paidAt: timestamp('paid_at', { withTimezone: true }),
+    workOrderId: text('work_order_id'),
+    cashAccountId: text('cash_account_id'),
+    postingDate: timestamp('posting_date', { withTimezone: true }),
+    accountNumber: text('account_number'),
     rawJson: jsonb('raw_json').notNull().default({}),
     cachedAt: timestamp('cached_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }),
@@ -76,6 +80,7 @@ export const appfolioBills = pgTable(
     propertyIdx: index('appfolio_bills_property_idx').on(table.propertyId),
     statusIdx: index('appfolio_bills_status_idx').on(table.status),
     updatedIdx: index('appfolio_bills_updated_idx').on(table.updatedAt),
+    workOrderIdx: index('appfolio_bills_work_order_idx').on(table.workOrderId),
   }),
 );
 
@@ -120,8 +125,18 @@ export const appfolioWorkOrders = pgTable(
     assignedUserName: text('assigned_user_name'),
     vendorId: text('vendor_id'),
     vendorName: text('vendor_name'),
+    vendorTrade: text('vendor_trade'),
     estimatedAmount: real('estimated_amount'),
     totalCost: real('total_cost'),
+    occupancyId: text('occupancy_id'),
+    completedOn: timestamp('completed_on', { withTimezone: true }),
+    workCompletedOn: timestamp('work_completed_on', { withTimezone: true }),
+    canceledOn: timestamp('canceled_on', { withTimezone: true }),
+    scheduledStart: timestamp('scheduled_start', { withTimezone: true }),
+    scheduledEnd: timestamp('scheduled_end', { withTimezone: true }),
+    woType: text('wo_type'),
+    workOrderIssue: text('work_order_issue'),
+    requestingTenantId: text('requesting_tenant_id'),
     createdAt: timestamp('created_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }),
     rawJson: jsonb('raw_json').notNull().default({}),
@@ -132,6 +147,8 @@ export const appfolioWorkOrders = pgTable(
     statusIdx: index('appfolio_work_orders_status_idx').on(table.status),
     propertyIdx: index('appfolio_work_orders_property_idx').on(table.propertyId),
     unitIdx: index('appfolio_work_orders_unit_idx').on(table.unitId),
+    woTypeIdx: index('appfolio_work_orders_wo_type_idx').on(table.woType),
+    vendorTradeIdx: index('appfolio_work_orders_vendor_trade_idx').on(table.vendorTrade),
   }),
 );
 
@@ -620,6 +637,46 @@ export const appfolioRateCounters = pgTable(
   (table) => ({
     pk: unique('appfolio_rate_counters_pk').on(table.apiVersion, table.endpointKey, table.windowType, table.windowStart),
     windowIdx: index('appfolio_rate_counters_window_idx').on(table.windowType, table.windowStart),
+  }),
+);
+
+// Aged work order auto-closure staging table
+export const agedWoClosureCandidates = pgTable(
+  'aged_wo_closure_candidates',
+  {
+    id: text('id').primaryKey(),
+    workOrderId: text('work_order_id').notNull(),
+    woNumber: text('wo_number'),
+    workOrderUuid: text('work_order_uuid'),
+    billId: text('bill_id').notNull(),
+    billNumber: text('bill_number'),
+    vendorId: text('vendor_id'),
+    vendorName: text('vendor_name'),
+    propertyId: text('property_id'),
+    propertyName: text('property_name'),
+    unitId: text('unit_id'),
+    woStatus: text('wo_status'),
+    woTotalCost: real('wo_total_cost'),
+    billTotalAmount: real('bill_total_amount'),
+    amountDelta: real('amount_delta'),
+    matchScore: real('match_score'),
+    matchReason: text('match_reason'),
+    status: text('status').notNull().default('pending_review'),
+    pipelineRunId: text('pipeline_run_id'),
+    reviewedBy: text('reviewed_by'),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    reviewNotes: text('review_notes'),
+    closureResult: jsonb('closure_result'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index('aged_wo_closure_candidates_status_idx').on(table.status),
+    woIdx: index('aged_wo_closure_candidates_wo_idx').on(table.workOrderId),
+    billIdx: index('aged_wo_closure_candidates_bill_idx').on(table.billId),
+    vendorIdx: index('aged_wo_closure_candidates_vendor_idx').on(table.vendorId),
+    runIdx: index('aged_wo_closure_candidates_run_idx').on(table.pipelineRunId),
+    propertyIdx: index('aged_wo_closure_candidates_property_idx').on(table.propertyId),
   }),
 );
 

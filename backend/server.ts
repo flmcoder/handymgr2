@@ -982,6 +982,47 @@ async function ensureBillsTable(): Promise<void> {
   billsTableEnsured = true;
 }
 
+let closureTableEnsured = false;
+async function ensureClosureCandidatesTable(): Promise<void> {
+  if (closureTableEnsured) return;
+  await queryClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS aged_wo_closure_candidates (
+      id TEXT PRIMARY KEY,
+      work_order_id TEXT NOT NULL,
+      wo_number TEXT,
+      work_order_uuid TEXT,
+      bill_id TEXT NOT NULL,
+      bill_number TEXT,
+      vendor_id TEXT,
+      vendor_name TEXT,
+      property_id TEXT,
+      property_name TEXT,
+      unit_id TEXT,
+      wo_status TEXT,
+      wo_total_cost REAL,
+      bill_total_amount REAL,
+      amount_delta REAL,
+      match_score REAL,
+      match_reason TEXT,
+      status TEXT NOT NULL DEFAULT 'pending_review',
+      pipeline_run_id TEXT,
+      reviewed_by TEXT,
+      reviewed_at TIMESTAMPTZ,
+      review_notes TEXT,
+      closure_result JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_status_idx ON aged_wo_closure_candidates(status)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_wo_idx ON aged_wo_closure_candidates(work_order_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_bill_idx ON aged_wo_closure_candidates(bill_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_vendor_idx ON aged_wo_closure_candidates(vendor_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_run_idx ON aged_wo_closure_candidates(pipeline_run_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_property_idx ON aged_wo_closure_candidates(property_id)`);
+  closureTableEnsured = true;
+}
+
 type CachedV2Report = {
   rows: any[];
   fresh: boolean;
@@ -10717,6 +10758,141 @@ function startRecurringSyncScheduler(): void {
   console.log('[server:sync-scheduler] enabled', { endpoints, intervalMinutes, maxPages, runOnBoot });
 }
 
+// ── Auto-Closure Pipeline Routes ──────────────────────────────────────────────
+
+app.post('/api/local/auto_closure/start', async (req: Request, res: Response) => {
+  try {
+    const { runStage1 } = await import('./autoClosurePipeline.ts');
+    res.status(202).json({ ok: true, message: 'Stage 1 started. Check status at /api/local/auto_closure/status' });
+    runStage1().catch((err: unknown) => {
+      console.error('[autoClosure] uncaught error', String((err as any)?.message ?? err));
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: String((error as any)?.message ?? 'pipeline start failed') });
+  }
+});
+
+app.get('/api/local/auto_closure/status', async (_req: Request, res: Response) => {
+  try {
+    const { getPipelineStatusWithCounts } = await import('./autoClosurePipeline.ts');
+    const status = await getPipelineStatusWithCounts();
+    res.json({ ok: true, ...status });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: String((error as any)?.message ?? 'status check failed') });
+  }
+});
+
+app.get('/api/local/auto_closure/candidates', async (req: Request, res: Response) => {
+  try {
+    const { getCandidates, getPipelineStatus } = await import('./autoClosurePipeline.ts');
+    const status = getPipelineStatus();
+    if (!status.pipelineRunId) {
+      res.json({ ok: true, data: [], meta: { total: 0, limit: 50, offset: 0 } });
+      return;
+    }
+    const statusFilter = String(req.query.status ?? '').trim() || undefined;
+    const limit = Math.max(1, Math.min(500, Number(req.query.limit ?? 50)));
+    const offset = Math.max(0, Number(req.query.offset ?? 0));
+    const result = await getCandidates(status.pipelineRunId, { status: statusFilter, limit, offset });
+    res.json({
+      ok: true,
+      data: result.candidates,
+      meta: {
+        total: result.total,
+        limit,
+        offset,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: String((error as any)?.message ?? 'candidates fetch failed') });
+  }
+});
+
+app.post('/api/local/auto_closure/approve', async (req: Request, res: Response) => {
+  try {
+    const { approveCandidates, getPipelineStatus } = await import('./autoClosurePipeline.ts');
+    const status = getPipelineStatus();
+    if (!status.pipelineRunId) {
+      res.status(400).json({ ok: false, error: 'No active pipeline run. Start Stage 1 first.' });
+      return;
+    }
+    const candidateIds: string[] = Array.isArray(req.body?.candidate_ids) ? req.body.candidate_ids : [];
+    const reviewedBy = String(req.body?.reviewed_by ?? 'unknown').trim();
+    if (candidateIds.length === 0) {
+      res.status(400).json({ ok: false, error: 'candidate_ids array is required' });
+      return;
+    }
+    const result = await approveCandidates(status.pipelineRunId, candidateIds, reviewedBy);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: String((error as any)?.message ?? 'approval failed') });
+  }
+});
+
+app.post('/api/local/auto_closure/reject', async (req: Request, res: Response) => {
+  try {
+    const { rejectCandidates, getPipelineStatus } = await import('./autoClosurePipeline.ts');
+    const status = getPipelineStatus();
+    if (!status.pipelineRunId) {
+      res.status(400).json({ ok: false, error: 'No active pipeline run.' });
+      return;
+    }
+    const candidateIds: string[] = Array.isArray(req.body?.candidate_ids) ? req.body.candidate_ids : [];
+    const reviewedBy = String(req.body?.reviewed_by ?? 'unknown').trim();
+    const notes = String(req.body?.notes ?? '').trim();
+    if (candidateIds.length === 0) {
+      res.status(400).json({ ok: false, error: 'candidate_ids array is required' });
+      return;
+    }
+    const result = await rejectCandidates(status.pipelineRunId, candidateIds, reviewedBy, notes);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: String((error as any)?.message ?? 'rejection failed') });
+  }
+});
+
+app.post('/api/local/auto_closure/reset', async (_req: Request, res: Response) => {
+  try {
+    const { resetPipeline } = await import('./autoClosurePipeline.ts');
+    await resetPipeline();
+    res.json({ ok: true, message: 'Pipeline reset. All candidates cleared.' });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: String((error as any)?.message ?? 'reset failed') });
+  }
+});
+
+app.post('/api/local/auto_closure/candidates/:id', async (req: Request, res: Response) => {
+  try {
+    const { updateSingleCandidate } = await import('./autoClosurePipeline.ts');
+    const candidateId = String(req.params.id ?? '').trim();
+    const action = String(req.body?.action ?? '').trim();
+
+    if (!candidateId) {
+      res.status(400).json({ ok: false, error: 'Candidate ID is required' });
+      return;
+    }
+
+    if (action !== 'approve' && action !== 'reject') {
+      res.status(400).json({ ok: false, error: 'Invalid action. Must be "approve" or "reject".' });
+      return;
+    }
+
+    const reviewedBy = String(req.body?.reviewed_by ?? 'unknown').trim();
+    const notes = String(req.body?.notes ?? '').trim();
+
+    const result = await updateSingleCandidate(candidateId, action as 'approve' | 'reject', reviewedBy, notes);
+
+    if (!result) {
+      res.status(404).json({ ok: false, error: 'Candidate not found or already processed.' });
+      return;
+    }
+
+    res.json({ ok: true, data: result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: String((error as any)?.message ?? 'candidate update failed') });
+  }
+});
+
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
 
@@ -10731,6 +10907,7 @@ app.listen(PORT, HOST, () => {
       await applyWorkOrderCreatedAtBackfill();
       await ensurePropertyGroupsTable();
       await ensureBillsTable();
+      await ensureClosureCandidatesTable();
       const { failInterruptedRuns } = await import('./sync/runStore.ts');
       await failInterruptedRuns(processStartedAt);
       startRecurringSyncScheduler();
