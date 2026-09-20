@@ -1010,6 +1010,16 @@ async function ensureClosureCandidatesTable(): Promise<void> {
       reviewed_at TIMESTAMPTZ,
       review_notes TEXT,
       closure_result JSONB,
+      wo_created_at TIMESTAMPTZ,
+      wo_completed_on TIMESTAMPTZ,
+      bill_invoice_date TIMESTAMPTZ,
+      bill_paid_at TIMESTAMPTZ,
+      bill_service_from TIMESTAMPTZ,
+      bill_service_to TIMESTAMPTZ,
+      property_address TEXT,
+      match_flags JSONB NOT NULL DEFAULT '{}'::jsonb,
+      confidence_score INTEGER,
+      confidence_tier TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -1020,6 +1030,19 @@ async function ensureClosureCandidatesTable(): Promise<void> {
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_vendor_idx ON aged_wo_closure_candidates(vendor_id)`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_run_idx ON aged_wo_closure_candidates(pipeline_run_id)`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_property_idx ON aged_wo_closure_candidates(property_id)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_confidence_tier_idx ON aged_wo_closure_candidates(confidence_tier)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS aged_wo_closure_candidates_confidence_score_idx ON aged_wo_closure_candidates(confidence_score DESC NULLS LAST)`);
+  await queryClient.unsafe(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_confidence_tier'
+      ) THEN
+        ALTER TABLE aged_wo_closure_candidates
+          ADD CONSTRAINT chk_confidence_tier
+          CHECK (confidence_tier IN ('very_high', 'high', 'medium', 'low', 'none'));
+      END IF;
+    END $$;
+  `);
   closureTableEnsured = true;
 }
 
@@ -10763,8 +10786,9 @@ function startRecurringSyncScheduler(): void {
 app.post('/api/local/auto_closure/start', async (req: Request, res: Response) => {
   try {
     const { runStage1 } = await import('./autoClosurePipeline.ts');
+    const minAgeDays = Number(req.body?.min_age_days ?? req.body?.minAgeDays ?? 15);
     res.status(202).json({ ok: true, message: 'Stage 1 started. Check status at /api/local/auto_closure/status' });
-    runStage1().catch((err: unknown) => {
+    runStage1(minAgeDays).catch((err: unknown) => {
       console.error('[autoClosure] uncaught error', String((err as any)?.message ?? err));
     });
   } catch (error) {

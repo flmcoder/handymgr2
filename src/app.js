@@ -4630,7 +4630,7 @@ var forcedPropertyGroupUuid = '';
 var forcedPropertyGroupUuids = [];
 var forcedPropertyGroupName = '';
 var currentTurnFilter = 'open';
-var currentWOCloseAssistAge = 14;
+var currentWOCloseAssistAge = 15;
 var _billsLoading = false;
 var _billsLoadedAt = 0;
 var _vendorsNeedRender = false;
@@ -10129,10 +10129,10 @@ function renderWOAttachmentsList(attachments, errorText) {
   }
   var contentTypes = [];
   var html = attachments.map(function(att) {
-    var name = String(att.FileName || att.file_name || att.Name || att.name || att.Id || att.id || 'Attachment');
+    var name = String(att.Name || att.FileName || att.file_name || att.name || att.Id || att.id || 'Attachment');
     var contentType = String(att.ContentType || att.content_type || att.MimeType || att.mime_type || 'unknown').trim();
     var createdAt = String(att.CreatedAt || att.created_at || att.UpdatedAt || att.updated_at || '');
-    var url = String(att.DownloadUrl || att.download_url || att.Url || att.url || att.FileUrl || att.file_url || '').trim();
+    var url = String(att.URL || att.DownloadUrl || att.download_url || att.Url || att.url || att.FileUrl || att.file_url || '').trim();
     if (contentType && contentTypes.indexOf(contentType) === -1) contentTypes.push(contentType);
     return '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid rgba(148,163,184,.12)">' +
       '<div>' +
@@ -14972,6 +14972,10 @@ var currentActivityFilter = 'all';
 var expandedWOColumn = '';
 var kanbanBoardScrollState = { left: 0, top: 0 };
 var woCloseAssist = { currentPage: 0, pageSize: 10 };
+var currentWOCloseTier = 'all';
+var CLOSURE_CANDIDATES = [];
+var CLOSURE_CANDIDATES_LOADED = false;
+var _closurePipelineLoading = false;
 var showCompletedWOHistory = false;
 var PAYABLES_ROWS = [];
 var _payablesLoading = false;
@@ -19417,7 +19421,234 @@ function computeWOCloseAssistRows() {
   return rows;
 }
 
+// ── WO Close Assistant: new backend confidence-scoring render path ────────────
+
+function confidenceTierMeta(tier) {
+  switch (String(tier || '').toLowerCase()) {
+    case 'very_high': return { key: 'very_high', label: 'Very High', color: '#16a34a', bg: 'rgba(22,163,74,.14)' };
+    case 'high':      return { key: 'high',      label: 'High',      color: '#ca8a04', bg: 'rgba(202,138,4,.16)' };
+    case 'medium':    return { key: 'medium',    label: 'Medium',    color: '#ea580c', bg: 'rgba(234,88,12,.14)' };
+    case 'low':       return { key: 'low',       label: 'Low',       color: '#dc2626', bg: 'rgba(220,38,38,.14)' };
+    case 'none':      return { key: 'none',      label: 'None',      color: '#dc2626', bg: 'rgba(220,38,38,.14)' };
+    default:          return { key: 'other',     label: String(tier || '—'), color: '#94a3b8', bg: 'rgba(148,163,184,.14)' };
+  }
+}
+
+function confidenceTierBadge(tier, score) {
+  var m = confidenceTierMeta(tier);
+  var scoreTxt = (score != null && score !== '') ? (' ' + score) : '';
+  return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;color:' + m.color + ';border:1px solid ' + m.color + ';background:' + m.bg + '">' + escapeHtml(m.label) + scoreTxt + '</span>';
+}
+
+function matchFlagLabels(flags) {
+  if (!flags || typeof flags !== 'object') return [];
+  var map = {
+    direct_link: 'Direct WO-to-Bill Link',
+    vendor_id: 'Vendor ID Matched',
+    property_id: 'Property ID Matched',
+    amount_exact: 'Exact Amount Match',
+    amount_tolerance: 'Amount Within 10%',
+    property_address: 'Property Address Matched',
+    vendor_name_fuzzy: 'Vendor Name Matched',
+    multi_unit: 'Multi-Unit Property Grouping',
+    date_overlap: 'Dates Overlapped'
+  };
+  var out = [];
+  Object.keys(map).forEach(function(k) {
+    var v = flags[k];
+    if (v === true || v === 'true' || v === 1 || v === 't') out.push(map[k]);
+  });
+  return out;
+}
+
+async function localApiRequest(path, opts) {
+  var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
+  var headers = { 'Accept': 'application/json' };
+  var method = (opts && opts.method) || 'GET';
+  if (method !== 'GET') headers['Content-Type'] = 'application/json';
+  var token = getProxyAccessToken();
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  var fetchOpts = { method: method, headers: headers };
+  if (opts && opts.body !== undefined) fetchOpts.body = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body);
+  var res = await fetchWithTimeout(localBase + path, fetchOpts, 60000);
+  var data = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) throw new Error('Local API ' + path + ' failed (' + res.status + ')');
+  return data;
+}
+
+async function loadClosureCandidates() {
+  if (_closurePipelineLoading) return false;
+  _closurePipelineLoading = true;
+  var btn = $('#btnRefreshCloseAssist');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Matching\u2026'; }
+  try {
+    await localApiRequest('/api/local/auto_closure/start', { method: 'POST', body: { min_age_days: currentWOCloseAssistAge } });
+
+    var status = null;
+    for (var i = 0; i < 80; i++) {
+      await sleep(1500);
+      try {
+        status = await localApiRequest('/api/local/auto_closure/status');
+      } catch (e) { status = null; }
+      if (status && (status.stage === 'stage1_complete' || status.stage === 'failed' || status.stage === 'stage2_approved')) break;
+    }
+
+    var c = await localApiRequest('/api/local/auto_closure/candidates?limit=1000');
+    CLOSURE_CANDIDATES = (c && Array.isArray(c.data)) ? c.data : [];
+    CLOSURE_CANDIDATES_LOADED = true;
+    woCloseAssist.currentPage = 0;
+    renderWOCloseAssist();
+    showToast('Matching complete — ' + CLOSURE_CANDIDATES.length + ' candidate(s)', { kind: 'success' });
+    return true;
+  } catch (err) {
+    showToast('Matching failed: ' + String((err && err.message) || err), { kind: 'danger' });
+    return false;
+  } finally {
+    _closurePipelineLoading = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-receipt"></i> Run Matching'; }
+  }
+}
+
+async function closeHighConfidence() {
+  var high = CLOSURE_CANDIDATES.filter(function(c) {
+    return (Number(c.confidence_score) || 0) >= 80 && String(c.status || '').toLowerCase() === 'pending_review';
+  });
+  if (high.length === 0) {
+    showToast('No high-confidence (80+) candidates pending review', { kind: 'warning' });
+    return;
+  }
+  var ids = high.map(function(c) { return c.id; });
+  if (!window.confirm('Close ' + ids.length + ' work order(s) with confidence 80+?')) return;
+  try {
+    var res = await localApiRequest('/api/local/auto_closure/approve', { method: 'POST', body: { candidate_ids: ids, reviewed_by: 'bulk-high-confidence' } });
+    var approved = (res && res.approved) || ids.length;
+    showToast('Approved ' + approved + ' high-confidence work order(s)', { kind: 'success' });
+    await loadClosureCandidates();
+  } catch (err) {
+    showToast('Bulk close failed: ' + String((err && err.message) || err), { kind: 'danger' });
+  }
+}
+
 function renderWOCloseAssist() {
+  if (CLOSURE_CANDIDATES_LOADED) { renderWOCloseAssistBackend(); return; }
+  renderWOCloseAssistLegacy();
+}
+
+function renderWOCloseAssistBackend() {
+  var body = $('#woCloseAssistBody');
+  var summary = $('#woCloseAssistSummary');
+  var pagination = $('#woCloseAssistPagination');
+  var container = $('#woCloseAssistContainer');
+  if (!body || !summary || !pagination || !container) return;
+
+  var rows = CLOSURE_CANDIDATES.slice();
+  if (currentWOCloseTier && currentWOCloseTier !== 'all') {
+    rows = rows.filter(function(c) { return String(c.confidence_tier || '').toLowerCase() === currentWOCloseTier; });
+  }
+
+  var tierCounts = { very_high: 0, high: 0, medium: 0, low: 0, none: 0 };
+  rows.forEach(function(c) {
+    var t = String(c.confidence_tier || 'none').toLowerCase();
+    if (tierCounts[t] !== undefined) tierCounts[t]++;
+  });
+  summary.textContent = rows.length + ' candidate(s) • Very High: ' + tierCounts.very_high +
+    ' • High: ' + tierCounts.high + ' • Medium: ' + tierCounts.medium +
+    ' • Low/None: ' + (tierCounts.low + tierCounts.none) +
+    (currentWOCloseTier !== 'all' ? ' • (filtered: ' + confidenceTierMeta(currentWOCloseTier).label + ')' : '');
+
+  if (rows.length === 0) {
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">No candidates match the current tier filter. Click “Run Matching” to (re)generate matches.</td></tr>';
+    pagination.innerHTML = '';
+    woCloseAssist.currentPage = 0;
+    return;
+  }
+
+  var totalPages = Math.max(1, Math.ceil(rows.length / woCloseAssist.pageSize));
+  if (woCloseAssist.currentPage >= totalPages) woCloseAssist.currentPage = totalPages - 1;
+  if (woCloseAssist.currentPage < 0) woCloseAssist.currentPage = 0;
+  var start = woCloseAssist.currentPage * woCloseAssist.pageSize;
+  var pageItems = rows.slice(start, start + woCloseAssist.pageSize);
+
+  var html = '';
+  pageItems.forEach(function(c) {
+    var woId = String(c.work_order_id || '');
+    var tierKey = String(c.confidence_tier || 'none').toLowerCase();
+    var flags = matchFlagLabels(c.match_flags);
+    var billId = String(c.bill_id || '');
+    var billLabel = String(c.bill_number || c.bill_id || 'Bill');
+    var ageDays = c.wo_created_at ? daysBetween(new Date(c.wo_created_at), new Date()) : null;
+    var billAmt = (c.bill_total_amount != null && c.bill_total_amount !== '') ? currency(c.bill_total_amount) : '';
+    var suggestion = tierKey === 'very_high' ? 'Close' : tierKey === 'high' ? 'Verify & close' : tierKey === 'medium' ? 'Review bill' : 'Insufficient evidence';
+
+    var billEvidence = billId
+      ? '<div style="display:flex;flex-direction:column;gap:3px">' +
+          '<span style="font-family:var(--font-mono);font-size:11px;font-weight:600">' + escapeHtml(billLabel) + '</span>' +
+          '<span style="font-size:10px;color:var(--text-muted)">' + escapeHtml(String(c.vendor_name || '')) + '</span>' +
+          (billAmt ? '<span style="font-size:10px;color:var(--text-muted)">' + billAmt + '</span>' : '') +
+        '</div>'
+      : '<span style="color:var(--text-muted)">—</span>';
+
+    html += '<tr style="cursor:pointer">';
+    html += '<td><button class="action-btn" data-woid="' + escapeHtml(woId) + '" style="padding:2px 8px">#' + escapeHtml(woId) + '</button></td>';
+    html += '<td>' + escapeHtml(c.property_name || '—') + '</td>';
+    html += '<td>' + escapeHtml(c.unit_id || '—') + '</td>';
+    html += '<td>' + (ageDays != null ? (ageDays + 'd') : '—') + '</td>';
+    html += '<td>' + escapeHtml(c.vendor_name || '—') + '</td>';
+    html += '<td>' + billEvidence + '</td>';
+    html += '<td>' + confidenceTierBadge(c.confidence_tier, c.confidence_score) + '</td>';
+    html += '<td>' + escapeHtml(suggestion) + '</td>';
+    html += '<td style="white-space:nowrap">' +
+      '<button class="action-btn" data-woca-toggle="' + escapeHtml(woId) + '" style="padding:2px 8px;margin-right:4px" title="Show match flags"><i class="fas fa-list-ul"></i> Details</button>' +
+      (billId ? '<button class="action-btn" data-billopen="' + escapeHtml(billId) + '" style="padding:2px 8px" title="Open bill">Bill</button>' : '') +
+      '</td>';
+    html += '</tr>';
+    html += '<tr id="woca-detail-' + escapeHtml(woId) + '" style="display:none"><td colspan="9" style="background:var(--bg-secondary);border-top:none">' +
+      '<div style="padding:8px 14px;font-size:12px">' +
+      '<div style="font-weight:600;margin-bottom:6px;color:var(--text-primary)">Match flags' +
+        (c.confidence_score != null && c.confidence_score !== '' ? ' <span style="color:var(--text-muted);font-weight:500">(score ' + escapeHtml(String(c.confidence_score)) + ')</span>' : '') +
+        '</div>' +
+        (flags.length
+          ? '<div style="display:flex;flex-wrap:wrap;gap:6px">' + flags.map(function(f) { return '<span class="tag" style="margin:0">' + escapeHtml(f) + '</span>'; }).join('') + '</div>'
+          : '<span style="color:var(--text-muted)">No matched flags recorded.</span>') +
+      '</div></td></tr>';
+  });
+
+  body.innerHTML = html;
+  pagination.innerHTML = '<button class="action-btn" id="woCloseAssistPrev"' + (woCloseAssist.currentPage === 0 ? ' disabled' : '') + '>← Prev</button>' +
+    '<span class="page-label">Page ' + (woCloseAssist.currentPage + 1) + ' of ' + totalPages + '</span>' +
+    '<button class="action-btn" id="woCloseAssistNext"' + (woCloseAssist.currentPage >= totalPages - 1 ? ' disabled' : '') + '>Next →</button>';
+
+  Array.prototype.forEach.call(body.querySelectorAll('button[data-woid]'), function(btn) {
+    btn.addEventListener('click', function(e) { e.stopPropagation(); showWODetail(btn.getAttribute('data-woid')); });
+  });
+  Array.prototype.forEach.call(body.querySelectorAll('button[data-woca-toggle]'), function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var wid = btn.getAttribute('data-woca-toggle');
+      var tr = document.getElementById('woca-detail-' + wid);
+      if (tr) tr.style.display = tr.style.display === 'none' ? '' : 'none';
+    });
+  });
+  Array.prototype.forEach.call(body.querySelectorAll('button[data-billopen]'), function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var billId = btn.getAttribute('data-billopen');
+      if (billId) showBillDetailModal(billId);
+    });
+  });
+
+  var prevBtn = document.getElementById('woCloseAssistPrev');
+  var nextBtn = document.getElementById('woCloseAssistNext');
+  if (prevBtn) prevBtn.addEventListener('click', function() {
+    if (woCloseAssist.currentPage <= 0) return; woCloseAssist.currentPage--; renderWOCloseAssist(); container.scrollTop = 0;
+  });
+  if (nextBtn) nextBtn.addEventListener('click', function() {
+    if (woCloseAssist.currentPage >= totalPages - 1) return; woCloseAssist.currentPage++; renderWOCloseAssist(); container.scrollTop = 0;
+  });
+}
+
+function renderWOCloseAssistLegacy() {
   var body = $('#woCloseAssistBody');
   var summary = $('#woCloseAssistSummary');
   var pagination = $('#woCloseAssistPagination');
@@ -24587,9 +24818,21 @@ function wireUpUI() {
   });
   if ($('#woCloseAge')) {
     $('#woCloseAge').addEventListener('change', function() {
-      currentWOCloseAssistAge = parseInt(this.value || '14', 10) || 14;
+      currentWOCloseAssistAge = parseInt(this.value || '15', 10) || 15;
       woCloseAssist.currentPage = 0;
       renderWOCloseAssist();
+    });
+  }
+  if ($('#woCloseTier')) {
+    $('#woCloseTier').addEventListener('change', function() {
+      currentWOCloseTier = this.value || 'all';
+      woCloseAssist.currentPage = 0;
+      renderWOCloseAssist();
+    });
+  }
+  if ($('#btnCloseHighConfidence')) {
+    $('#btnCloseHighConfidence').addEventListener('click', function() {
+      closeHighConfidence();
     });
   }
   // WO sub-tabs
@@ -24845,20 +25088,7 @@ function wireUpUI() {
   }
   if ($('#btnRefreshCloseAssist')) {
     $('#btnRefreshCloseAssist').addEventListener('click', async function() {
-      if (_billsLoading) return;
-      _billsLoading = true;
-      this.disabled = true;
-      this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading AP\u2026';
-      try {
-        var ok = await fetchBills(DEFAULT_BILLS_LOOKBACK_DAYS);
-        woCloseAssist.currentPage = 0;
-        renderWOCloseAssist();
-        showToast(ok ? ('AP loaded — ' + BILLS.length + ' bills') : 'Could not load AP bills', ok ? { kind: 'success' } : { kind: 'warning' });
-      } finally {
-        _billsLoading = false;
-        this.disabled = false;
-        this.innerHTML = '<i class="fas fa-receipt"></i> Refresh AP';
-      }
+      await loadClosureCandidates();
     });
   }
   // WO group filter wired below with global sync

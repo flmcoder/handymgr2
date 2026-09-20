@@ -12,7 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=Karla:wght@400;500;600;700&family=Inconsolata:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="stylesheet" href="css/app.css?v=20260916a">
-  <script type="module" crossorigin src="/assets/index-CQsjqqYb.js"></script>
+  <script type="module" crossorigin src="/assets/index-CgiAAaMf.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-LIicOyF1.css">
 </head>
 <body class="theme-neo dashboard-skin-neo-on">
@@ -103,7 +103,7 @@
       <div class="vault-proxy-hint">Optional proxy relay settings for backend routing.</div>
     </div>
     <div class="vault-error" id="vaultError"></div>
-    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.8.84</span></div>
+    <div class="vault-footer"><i class="fas fa-shield-alt"></i> <span id="vaultSessionVersion">Secured Session: v9.8.86</span></div>
   </div>
 </div>
 
@@ -115,7 +115,7 @@
   <div class="topbar-left">
     <div class="topbar-logo"><img src="assets/logo.png" alt="HandyManager" class="topbar-logo-img" id="topbarLogoImg"></div>
     <div class="topbar-divider"></div>
-    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.8.84</span></div>
+    <div class="build-badge"><i class="fas fa-sparkles"></i> Running <span class="tag" id="buildBadgeTag">9.8.86</span></div>
     <div class="topbar-status loading" id="apiStatus"><span class="dot"></span> <span id="apiStatusText">Connecting…</span></div>
     <span class="role-badge" id="roleBadge"><i class="fas fa-hard-hat"></i> Vendor Only</span>
   </div>
@@ -143,7 +143,7 @@
     <div class="sidebar-brand-icon"><img src="assets/favicon.svg" alt="HandyManager" class="sidebar-brand-logo"></div>
     <div>
       <div class="sidebar-brand-text">HandyMgr</div>
-      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.8.84</div>
+      <div class="sidebar-brand-ver" id="sidebarBrandVer">v9.8.86</div>
     </div>
   </div>
 
@@ -470,13 +470,22 @@
     <div class="table-header">
       <div class="table-title"><i class="fas fa-clipboard-check" style="color:var(--warning)"></i> WO Close Assist</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="woCloseAge" class="form-select" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
-          <option value="14">14+ days</option>
+        <select id="woCloseAge" class="form-select" style="font-size:12px;padding:5px 10px;min-width:120px;font-family:var(--font-mono)">
+          <option value="15">15+ days</option>
           <option value="30">30+ days</option>
           <option value="60">60+ days</option>
           <option value="180">180+ days</option>
         </select>
-        <button class="sec-refresh" id="btnRefreshCloseAssist"><i class="fas fa-receipt"></i> Refresh AP</button>
+        <select id="woCloseTier" class="form-select" style="font-size:12px;padding:5px 10px;min-width:130px;font-family:var(--font-mono)">
+          <option value="all">All Tiers</option>
+          <option value="very_high">Very High</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+          <option value="none">None</option>
+        </select>
+        <button class="sec-refresh" id="btnRefreshCloseAssist"><i class="fas fa-receipt"></i> Run Matching</button>
+        <button class="action-btn" id="btnCloseHighConfidence" title="Approve and close all candidates with confidence 80+"><i class="fas fa-check-double"></i> Close All High Confidence</button>
       </div>
     </div>
       <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)" id="woCloseAssistSummary">Loading…</div>
