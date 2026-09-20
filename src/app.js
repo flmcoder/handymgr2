@@ -21583,7 +21583,13 @@ function renderTurnKPIs() {
   e('kpiTurnBilledSub', 'active + on radar + completed');
 
   var tb = $('#turnBadge');
-  if (tb) tb.textContent = (NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.turns : (active.length + onRadar.length));
+  if (tb) {
+    var currentScope = String(getEffectiveGroupUuid() || '');
+    var badgeTurns = (NAV_BADGE_TOTALS_LOADED && NAV_BADGE_TOTALS_SCOPE === currentScope)
+      ? NAV_BADGE_TOTALS.turns
+      : (active.length + onRadar.length);
+    tb.textContent = badgeTurns;
+  }
 
   renderTurnInsights(inScope);
 
@@ -25641,7 +25647,7 @@ function wireUpUI() {
       },
       properties: function() { setPropertiesSubtab(currentPropertiesSubtab || 'directory'); },
       managerreview: function() { renderManagerReviewSection(); },
-      turnboard: function() { renderTurnPipelineUI(); },
+      turnboard: function() { renderTurnPipelineUI(); try { renderTurnKPIs(); } catch(e) {} },
       inspections: function() { renderInspections($('#inspSearch') ? $('#inspSearch').value : ''); },
       vendors: function() {
         fetchVendors({ resetPage: true }).then(function(ok) {
