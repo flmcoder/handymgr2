@@ -10117,6 +10117,7 @@ function renderWOAttachmentsList(attachments, errorText) {
   var el = document.getElementById('detailAttachmentList');
   var metaEl = document.getElementById('detailAttachmentTypes');
   if (!el) return;
+  console.log('[renderWOAttachmentsList] attachments:', JSON.stringify(attachments, null, 2));
   if (errorText) {
     el.innerHTML = '<div style="color:var(--danger);font-size:11px;line-height:1.5">Failed to load attachments. ' + escapeHtml(errorText) + '</div>';
     if (metaEl) metaEl.textContent = 'debug: attachment request failed';
@@ -10192,6 +10193,7 @@ async function loadWOAttachments(woIdOrUuid, woContext) {
         var localRes = await fetchWithTimeout(localUrl, { headers: localHeaders }, 30000);
         var localData = {};
         try { localData = await localRes.json(); } catch (e) { localData = {}; }
+        console.log('[loadWOAttachments] local backend response:', localRes.status, JSON.stringify(localData, null, 2));
         if (localRes.ok && localData && localData.ok !== false) {
           renderWOAttachmentsList(normalizeWOAttachmentList(localData));
           return;
