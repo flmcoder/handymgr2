@@ -23,6 +23,7 @@ type TunnelRuntime = {
 let runtime: TunnelRuntime | null = null;
 let startPromise: Promise<void> | null = null;
 let restartTimer: NodeJS.Timeout | null = null;
+let restartAttempts = 0;
 let shutdown = false;
 let exitHooksInstalled = false;
 
@@ -147,24 +148,140 @@ function waitForLocalPort(port: number, timeoutMs: number): Promise<void> {
   });
 }
 
+/**
+ * Resolves once the local port can be bound (i.e. nothing else is listening on
+ * it). ssh is launched with ExitOnForwardFailure=yes, so if the port is still
+ * held by a lingering ssh child or a TIME_WAIT socket, ssh exits 255 with
+ * "cannot listen to port" and triggers an endless restart loop. Waiting for the
+ * port to be free before spawning breaks that loop.
+ */
+export function waitForPortFree(port: number, timeoutMs: number): Promise<void> {
+  const startedAt = Date.now();
+
+  return new Promise((resolve, reject) => {
+    const tryBind = () => {
+      const tester = net.createServer();
+
+      tester.once('error', (err: NodeJS.ErrnoException) => {
+        tester.close();
+        if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
+          if (Date.now() - startedAt >= timeoutMs) {
+            reject(new Error(`Local port 127.0.0.1:${port} still in use after ${timeoutMs}ms`));
+            return;
+          }
+          setTimeout(tryBind, 250);
+          return;
+        }
+        reject(err);
+      });
+
+      tester.once('listening', () => {
+        tester.close(() => resolve());
+      });
+
+      tester.listen(port, '127.0.0.1');
+    };
+
+    tryBind();
+  });
+}
+
+/**
+ * Sends SIGTERM (then SIGKILL as a fallback) to an ssh child and resolves once
+ * it has exited, so the local forward port is released before we respawn.
+ */
+function killChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+
+    child.once('exit', () => resolve());
+
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      resolve();
+      return;
+    }
+
+    setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 2_000);
+  });
+}
+
+/**
+ * Exponential backoff (capped at 30s) for tunnel restart attempts. Exported so
+ * the backoff schedule can be asserted in tests without touching timers.
+ */
+export function computeRestartDelay(attempt: number): number {
+  const safeAttempt = Math.max(1, Math.floor(attempt));
+  return Math.min(2_000 * 2 ** (safeAttempt - 1), 30_000);
+}
+
 function scheduleRestart(config: TunnelConfig): void {
   if (shutdown || restartTimer) {
     return;
   }
 
+  restartAttempts += 1;
+  const delay = computeRestartDelay(restartAttempts) + Math.floor(Math.random() * 1_000);
+  console.log(`[ssh-tunnel] Scheduling tunnel restart #${restartAttempts} in ${delay}ms`);
+
   restartTimer = setTimeout(() => {
     restartTimer = null;
-    void startTunnel(config, true).catch((error) => {
+    if (shutdown || startPromise || runtime) {
+      return;
+    }
+    void requestLaunch(config).catch((error) => {
       console.error('[ssh-tunnel] restart failed:', String((error as Error).message || error));
-      scheduleRestart(config);
     });
-  }, 2_000);
+  }, delay);
+}
+
+/**
+ * Single-flight launcher. Both the initial start and every restart funnel
+ * through here so there is never more than one ssh child competing for the
+ * local forward port at a time.
+ */
+function requestLaunch(config: TunnelConfig): Promise<void> {
+  if (startPromise) {
+    return startPromise;
+  }
+  startPromise = startTunnel(config, restartAttempts > 0).finally(() => {
+    startPromise = null;
+  });
+  return startPromise;
 }
 
 async function startTunnel(config: TunnelConfig, isRestart = false): Promise<void> {
   installExitHooks();
 
+  if (shutdown) {
+    return;
+  }
+
+  // Kill any prior ssh child and wait for it to exit so it releases the port.
+  if (runtime?.child) {
+    const previousChild = runtime.child;
+    runtime = null;
+    await killChild(previousChild);
+  }
+
   const identityFile = await ensureIdentityFile(config);
+
+  // Ensure the local forward port is actually free before spawning, otherwise
+  // ExitOnForwardFailure=yes makes ssh exit 255 ("cannot listen to port").
+  await waitForPortFree(config.localPort, Number(readEnv('SSH_DB_TUNNEL_PORT_FREE_TIMEOUT_MS') || 10_000));
+
   const destination = `${config.user}@${config.host}`;
   const localBinding = `127.0.0.1:${config.localPort}:${config.remoteHost}:${config.remotePort}`;
   const args = [
@@ -230,6 +347,7 @@ async function startTunnel(config: TunnelConfig, isRestart = false): Promise<voi
       .then(() => {
         settled = true;
         runtime = { child, config };
+        restartAttempts = 0;
         resolve();
       })
       .catch((error) => {
@@ -278,9 +396,8 @@ export async function ensureDbSshTunnel(): Promise<void> {
       hasIdentityFile: Boolean(config.identityFile),
       hasInlinePrivateKey: Boolean(config.privateKeyText),
     });
-    startPromise = startTunnel(config).finally(() => {
-      startPromise = null;
-    });
+    await requestLaunch(config);
+    return;
   }
 
   await startPromise;
