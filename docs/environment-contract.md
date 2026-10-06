@@ -11,6 +11,7 @@ This repository uses `render.yaml` as a partial deployment snapshot, but the bac
 - `DB_NAME`
 - `DBI` / `PGHOST`
 - `DB_PORT` / `PGPORT`
+- `SKIP_TUNNEL`
 - `DB_PASSWORD`
 - `SSH_DB_TUNNEL_ENABLED`
 - `SSH_DB_TUNNEL_HOST`
@@ -23,6 +24,7 @@ This repository uses `render.yaml` as a partial deployment snapshot, but the bac
 - `SSH_DB_TUNNEL_PRIVATE_KEY_B64`
 - `SSH_DB_TUNNEL_IDENTITY_FILE`
 - `SSH_DB_TUNNEL_READY_TIMEOUT_MS`
+- `SSH_DB_TUNNEL_PORT_FREE_TIMEOUT_MS`
 
 ## Backend Keys Read by Code
 
@@ -44,7 +46,8 @@ This repository uses `render.yaml` as a partial deployment snapshot, but the bac
 - `DB_NAME` / `PGDATABASE` - database name
 - `DB_USER` / `PGUSER` - database user
 - `DB_PASSWORD` / `PGPASSWORD` - database password
-- `DB_SSL` - SSL mode
+- `DB_SSL` - set to `true` to require SSL for PostgreSQL connections
+- `SKIP_TUNNEL` - when true, bypasses SSH tunnel startup and connects directly to `DBI` / `DB_PORT` (or the host/port from `SQL_SE`)
 - `DB_POOL_MAX` - pool size
 - `DB_IDLE_TIMEOUT` - pool idle timeout
 - `DB_CONNECT_TIMEOUT` - connect timeout
@@ -105,7 +108,8 @@ This repository uses `render.yaml` as a partial deployment snapshot, but the bac
 
 - The dashboard must contain the AppFolio, RingCentral, OTP, sync, and proxy keys above even though `render.yaml` does not currently export them.
 - Secret values should stay in Render dashboard secrets, not in git.
-- `DBI` is intentionally used by the codebase as the tunnel host key, so the dashboard key should stay aligned with that name unless the code is changed.
+- `DBI` / `DB_PORT` are the direct database endpoint when `SKIP_TUNNEL=true`; otherwise the tunnel target overrides them with localhost and the local tunnel port.
+- Direct PostgreSQL mode requires `SKIP_TUNNEL=true`; verify the endpoint is reachable from Render and set `DB_SSL=true` when the endpoint supports TLS before enabling it.
 - Any new backend env var should be added here first, then mirrored in Render.
 
 ## Live Render Audit (2026-07-12)

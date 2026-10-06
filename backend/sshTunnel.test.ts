@@ -2,7 +2,50 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import test from 'node:test';
 
-import { computeRestartDelay, waitForPortFree } from './sshTunnel.ts';
+import { computeRestartDelay, getSshDbTunnelTarget, waitForPortFree } from './sshTunnel.ts';
+
+function withEnvironment(values: Record<string, string | undefined>, run: () => void): void {
+  const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+test('getSshDbTunnelTarget uses localhost only when the tunnel is enabled', () => {
+  withEnvironment({ SSH_DB_TUNNEL_ENABLED: 'true', SKIP_TUNNEL: undefined, SSH_DB_TUNNEL_LOCAL_PORT: '15432' }, () => {
+    assert.deepEqual(getSshDbTunnelTarget(), { host: '127.0.0.1', port: 15432 });
+  });
+
+  withEnvironment({ SSH_DB_TUNNEL_ENABLED: undefined, SKIP_TUNNEL: undefined }, () => {
+    assert.equal(getSshDbTunnelTarget(), null);
+  });
+});
+
+test('getSshDbTunnelTarget leaves DBI and DB_PORT untouched when SKIP_TUNNEL is enabled', () => {
+  withEnvironment({ SSH_DB_TUNNEL_ENABLED: 'true', SKIP_TUNNEL: 'true' }, () => {
+    assert.equal(getSshDbTunnelTarget(), null);
+  });
+
+  withEnvironment({ SSH_DB_TUNNEL_ENABLED: undefined, SKIP_TUNNEL: 'true' }, () => {
+    assert.equal(getSshDbTunnelTarget(), null);
+  });
+});
 
 test('computeRestartDelay grows exponentially from 2s and caps at 30s', () => {
   assert.equal(computeRestartDelay(1), 2_000);

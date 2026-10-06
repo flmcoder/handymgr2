@@ -27,6 +27,8 @@ projects:
         sync: false
       - key: DB_PASSWORD
         sync: false
+      - key: SKIP_TUNNEL
+        sync: false
       - key: SSH_DB_TUNNEL_ENABLED
         sync: false
       - key: SSH_DB_TUNNEL_HOST
@@ -48,6 +50,8 @@ projects:
       - key: SSH_DB_TUNNEL_IDENTITY_FILE
         sync: false
       - key: SSH_DB_TUNNEL_READY_TIMEOUT_MS
+        sync: false
+      - key: SSH_DB_TUNNEL_PORT_FREE_TIMEOUT_MS
         sync: false
       - key: SYNC_SCHEDULER_V2_ENABLED
         value: "true"

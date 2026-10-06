@@ -368,8 +368,8 @@ export function isSshDbTunnelEnabled(): boolean {
 export function getSshDbTunnelTarget(): { host: string; port: number } | null {
   const skipTunnel = envFlag('SKIP_TUNNEL');
   const tunnelEnabled = envFlag('SSH_DB_TUNNEL_ENABLED');
-  
-  if (!skipTunnel && !tunnelEnabled) {
+
+  if (skipTunnel || !tunnelEnabled) {
     return null;
   }
 
