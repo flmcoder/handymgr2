@@ -32,6 +32,7 @@ import {
   unitTurnWorkOrders,
 } from '../schema.ts';
 import { normalizeBillSyncRow } from './billSyncPolicy.ts';
+import { normalizeTenantDirectoryRow } from './tenantDirectoryPolicy.ts';
 
 type GroupCatalogEntry = { id: string; uuid: string; name: string };
 
@@ -707,12 +708,13 @@ export async function upsertTenantDirectory(rows: any[]): Promise<UpsertResult> 
   let skipped = 0;
 
   for (const row of rows) {
-    const propertyId = asStr(row.property_id || row.PropertyId);
-    const unitId = asStr(row.unit_id || row.UnitId);
+    const normalized = normalizeTenantDirectoryRow(row);
+    const propertyId = normalized.propertyId;
+    const unitId = normalized.unitId;
     const recordId = reportRowKey(
       row,
       ['occupancy_id', 'OccupancyId'],
-      [propertyId, unitId, row.move_out_date || row.MoveOutDate, row.tenant || row.Tenant],
+      [propertyId, unitId, normalized.moveOut, normalized.tenantName],
     );
 
     await db
@@ -720,17 +722,17 @@ export async function upsertTenantDirectory(rows: any[]): Promise<UpsertResult> 
       .values({
         recordId,
         propertyId,
-        propertyName: asStr(row.property_name || row.PropertyName),
+        propertyName: normalized.propertyName,
         unitId,
-        unitName: asStr(row.unit_name || row.UnitName),
-        tenantName: asStr(row.tenant || row.Tenant || row.tenant_name || row.TenantName),
+        unitName: normalized.unitName,
+        tenantName: normalized.tenantName,
         status: asStr(row.status || row.Status),
         tenantType: asStr(row.tenant_type || row.TenantType),
         phoneNumbers: asStr(row.phone_numbers || row.PhoneNumbers),
         emails: asStr(row.emails || row.Emails),
-        moveInDate: asDate(row.move_in || row.MoveIn || row.move_in_date || row.MoveInDate),
+        moveInDate: asDate(normalized.moveIn),
         leaseTo: asDate(row.lease_to || row.LeaseTo),
-        moveOutDate: asDate(row.move_out || row.MoveOut || row.move_out_date || row.MoveOutDate),
+        moveOutDate: asDate(normalized.moveOut),
         rent: asStr(row.rent || row.Rent),
         tenantTags: asStr(row.tenant_tags || row.TenantTags),
         tenantAgent: asStr(row.tenant_agent || row.TenantAgent),

@@ -42,6 +42,7 @@ import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { buildWorkOrderPagination, resolveExactWorkOrderReference, resolveWorkOrderHistoryDays, resolveWorkOrderLookupSearch } from './workOrderQueryPolicy';
 import { TURN_ENGINE_SQL } from './turnEngineQuery';
 import { upsertTurnTracker } from './sync/repositories';
+import { tenantDirectoryPropertyMatchSql } from './sync/tenantDirectoryPolicy';
 import {
   buildMagicPortalSmsMessage,
   consumeMagicTokenTransaction,
@@ -6902,9 +6903,9 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
       select
         coalesce(i.inspection_id, 'missing:' || coalesce(occ.occupancy_id, occ.unit_id, occ.record_id)) as inspection_id,
         occ.property_id,
-        coalesce(occ.property_name, p.name) as property_name,
+        coalesce(occ.property_name, i.property_name, p.name) as property_name,
         coalesce(occ.unit_id, i.unit_id) as unit_id,
-        coalesce(occ.unit_name, u.name, '') as unit_name,
+        coalesce(occ.unit_name, i.unit_name, u.name, '') as unit_name,
         i.last_inspection_date::date as last_inspection_date,
         coalesce(occ.tenant_name, '') as tenant_name,
         coalesce(occ.phone_numbers, '') as tenant_primary_phone_number,
@@ -6941,8 +6942,8 @@ app.get(['/api/local/grid/inspections', '/api/local/v2/inspections'], async (req
         order by coalesce(i0.last_inspection_date, i0.last_updated_at, i0.cached_at) desc nulls last
         limit 1
       ) i on true
-      left join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || occ.property_id
-      left join appfolio_units u on u.unit_id = occ.unit_id
+      left join appfolio_properties p on ${tenantDirectoryPropertyMatchSql('p', 'coalesce(occ.property_id, i.property_id)')}
+      left join appfolio_units u on u.unit_id = coalesce(occ.unit_id, i.unit_id)
       left join lateral (
         select true as active_turn
         from unit_turn_tracker t
@@ -9220,8 +9221,9 @@ app.get('/api/local/tenant_directory', async (req: Request, res: Response) => {
   try {
     const limit = parseLimit(req.query.limit, 5000, 15000);
     const scopeIds = getPropertyGroupFilters(req);
+    const propertyJoin = tenantDirectoryPropertyMatchSql('p', 't.property_id');
     const rows = scopeIds.length
-      ? await queryClient`
+      ? await queryClient.unsafe(`
         select
           t.record_id,
           t.property_id,
@@ -9242,16 +9244,13 @@ app.get('/api/local/tenant_directory', async (req: Request, res: Response) => {
           t.occupancy_id,
           p.property_group_id
         from appfolio_tenant_directory t
-        join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || t.property_id
+        join appfolio_properties p on ${propertyJoin}
         left join appfolio_units u on u.unit_id = t.unit_id
-         where (
-           p.property_group_id = ANY(${scopeIds}::text[])
-           or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
-         )
+         where (p.property_group_id = ANY($1::text[]) or p.raw_json->'PropertyGroupIds' ?| ($1::text[]))
         order by coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc, t.tenant_name asc
-        limit ${limit}
-      `
-      : await queryClient`
+        limit $2
+      `, [scopeIds, limit])
+      : await queryClient.unsafe(`
         select
           t.record_id,
           t.property_id,
@@ -9272,11 +9271,11 @@ app.get('/api/local/tenant_directory', async (req: Request, res: Response) => {
           t.occupancy_id,
           p.property_group_id
         from appfolio_tenant_directory t
-        left join appfolio_properties p on p.id = t.property_id
+        left join appfolio_properties p on ${propertyJoin}
         left join appfolio_units u on u.unit_id = t.unit_id
         order by coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc, t.tenant_name asc
-        limit ${limit}
-      `;
+        limit $1
+      `, [limit]);
 
     res.json({ ok: true, results: rows, count: (rows as any[]).length, source: 'postgres_local' });
   } catch (error) {
@@ -9290,8 +9289,9 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
     const days = parseDays(req.query.days, 60, 3650);
     const limit = parseLimit(req.query.limit, 2500, 10000);
     const scopeIds = getPropertyGroupFilters(req);
+    const propertyJoin = tenantDirectoryPropertyMatchSql('p', 't.property_id');
     let rows = scopeIds.length
-      ? await queryClient`
+      ? await queryClient.unsafe(`
         select
           t.record_id,
           t.property_id,
@@ -9306,16 +9306,13 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
           t.rent,
           t.occupancy_id
         from appfolio_tenant_directory t
-        join appfolio_properties p on p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || t.property_id
+        join appfolio_properties p on ${propertyJoin}
         left join appfolio_units u on u.unit_id = t.unit_id
-         where (
-           p.property_group_id = ANY(${scopeIds}::text[])
-           or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
-         )
+         where (p.property_group_id = ANY($1::text[]) or p.raw_json->'PropertyGroupIds' ?| ($1::text[]))
         order by coalesce(t.move_out_date, t.cached_at) asc, coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc
-        limit ${limit}
-      `
-      : await queryClient`
+        limit $2
+      `, [scopeIds, limit])
+      : await queryClient.unsafe(`
         select
           t.record_id,
           t.property_id,
@@ -9330,11 +9327,11 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
           t.rent,
           t.occupancy_id
         from appfolio_tenant_directory t
-        left join appfolio_properties p on p.id = t.property_id
+        left join appfolio_properties p on ${propertyJoin}
         left join appfolio_units u on u.unit_id = t.unit_id
         order by coalesce(t.move_out_date, t.cached_at) asc, coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc
-        limit ${limit}
-      `;
+        limit $1
+      `, [limit]);
 
     if ((rows as any[]).length === 0) {
       rows = scopeIds.length

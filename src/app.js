@@ -1,3 +1,5 @@
+import { tenantTransactionDisplayRow } from './occupancyReportPolicy.js';
+
 /* ==============================================================
    MAINTENANCE COCKPIT — AppFolio Live Integration Dashboard
    AES-256-GCM Credential Vault + Rate-Limited API Client
@@ -17380,12 +17382,12 @@ var _occupancyPageState = {};
 var _occupancyReportMap = {
   'tenant-transactions': { action: 'v2_report', report: 'tenant_transactions_summary', bodyId: 'tenantTxBody', tableId: 'tenantTxTable', cols: 6,
     columns: [
-      { key: 'tenant', render: function(r){ return escHtml(r.occupancy_name || r.tenant_name || '\u2014'); } },
-      { key: 'prop', render: function(r){ return escHtml((r.property_name || r.property || '') + ((r.unit_name || r.unit) ? ' / ' + (r.unit_name || r.unit) : '')); } },
-      { key: 'chg', cellAttrs: 'class="u-num-cell"', render: function(r){ return '$' + Number(r.rent_charges || r.total_charges || 0).toFixed(2); } },
-      { key: 'pay', cellAttrs: 'class="u-num-cell"', render: function(r){ return '$' + Number(r.cash_payments || r.total_payments || 0).toFixed(2); } },
-      { key: 'bal', cellAttrs: 'class="u-num-cell"', render: function(r){ return '$' + Number(r.ending_balance || r.balance || 0).toFixed(2); } },
-      { key: 'last', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(r.last_activity_date || '\u2014'); } },
+      { key: 'tenant', render: function(r){ return escHtml(tenantTransactionDisplayRow(r).tenant || '\u2014'); } },
+      { key: 'prop', render: function(r){ return escHtml(tenantTransactionDisplayRow(r).propertyUnit); } },
+      { key: 'chg', cellAttrs: 'class="u-num-cell"', render: function(r){ return '$' + Number(tenantTransactionDisplayRow(r).charges || 0).toFixed(2); } },
+      { key: 'pay', cellAttrs: 'class="u-num-cell"', render: function(r){ return '$' + Number(tenantTransactionDisplayRow(r).payments || 0).toFixed(2); } },
+      { key: 'bal', cellAttrs: 'class="u-num-cell"', render: function(r){ return '$' + Number(tenantTransactionDisplayRow(r).balance || 0).toFixed(2); } },
+      { key: 'last', cellAttrs: 'class="u-date-cell"', render: function(r){ return escHtml(tenantTransactionDisplayRow(r).lastActivity || '\u2014'); } },
     ]
   },
   'tenant-directory': { action: 'v2_report', report: 'tenant_directory', bodyId: 'tenantDirBody', tableId: 'tenantDirTable', cols: 7,

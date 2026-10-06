@@ -40,4 +40,6 @@ test('inspection grid uses active-only residency and returns association fields'
   assert.match(source, /has_valid_unit_association/);
   assert.match(source, /raw_json\s*->>\s*'Link'\s*=\s*'https:\/\/flraz\.appfolio\.com\/properties\/'\s*\|\|\s*occ\.property_id/);
   assert.match(source, /PropertyGroupIds'\s*\?\|\s*\(/);
+  assert.match(source, /coalesce\(occ\.property_name,\s*i\.property_name,\s*p\.name\)/);
+  assert.match(source, /coalesce\(occ\.unit_name,\s*i\.unit_name,\s*u\.name,\s*''\)/);
 });

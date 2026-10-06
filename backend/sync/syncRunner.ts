@@ -202,7 +202,7 @@ const ENDPOINTS: Record<string, EndpointDef> = {
           : (incrementalFrom || new Date(Date.now() - 365 * 86400_000)),
       ),
       columns: [
-        'property', 'property_name', 'property_id', 'property_address', 'unit', 'tenant', 'status', 'tenant_type',
+        'property', 'property_name', 'property_id', 'property_address', 'unit', 'unit_id', 'tenant', 'status', 'tenant_type',
         'phone_numbers', 'emails', 'move_in', 'lease_to', 'rent', 'tenant_tags', 'tenant_agent', 'tenant_visibility',
         'move_out', 'unit_tags', 'occupancy_id',
       ],
