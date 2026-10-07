@@ -6,7 +6,9 @@ import {
   buildMagicPortalLink,
   buildMagicPortalSmsMessage,
   consumeMagicTokenTransaction,
+  createMagicPortalSession,
   normalizePortalPayload,
+  renderMagicPortalHtml,
   resolveMagicPortalBaseUrl,
   sendMagicPortalSms,
 } from './magicPortal.ts';
@@ -107,7 +109,100 @@ test('normalizePortalPayload accepts JSON and urlencoded body values', () => {
     status: 'Waiting',
     noteText: '42',
     action: 'status_update',
+    idempotencyKey: '',
   });
+});
+
+test('creates a work-order portal session without requiring resident phone', async () => {
+  const inserts: Array<{ sql: string; params: unknown[] }> = [];
+  const result = await createMagicPortalSession({
+    unsafe: async (sql, params = []) => {
+      inserts.push({ sql, params });
+      return [];
+    },
+  }, {
+    woId: 'wo-1',
+    woNumber: '1042',
+    techId: 'tech-1',
+    techName: 'Dispatch Test',
+    techPhone: '+15551234567',
+    tenantName: 'Resident',
+    tenantPhone: '',
+    propertyAddress: '123 Example St',
+  }, {
+    MAGIC_LINK_SECRET: 'test-secret',
+    RENDER_EXTERNAL_URL: 'https://handymgr2.onrender.com',
+  });
+
+  assert.equal(inserts.length, 1);
+  assert.match(inserts[0].sql, /session_mode/);
+  assert.equal(inserts[0].params[12], 'reusable');
+  assert.match(result.magicLink, /^https:\/\/handymgr2\.onrender\.com\/s\//);
+});
+
+test('renders synthetic test sessions as non-mutating test portals', () => {
+  const html = renderMagicPortalHtml({
+    token: 'test-token',
+    short_code: 'test-code-1234',
+    wo_id: 'TEST-wo-1',
+    wo_number: 'TEST-1042',
+    tech_name: 'Dispatch Test',
+    property_address: 'Test Property — 123 Example St',
+    session_mode: 'test',
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    used: false,
+  });
+
+  assert.match(html, /TEST SESSION/);
+  assert.match(html, /will not update a real work order/i);
+});
+
+test('reusable sessions audit multiple submissions without consuming the session', async () => {
+  const statements: Array<{ sql: string; params: unknown[] }> = [];
+  const client = {
+    unsafe: async (sql: string, params: unknown[] = []) => {
+      statements.push({ sql: sql.trim(), params });
+      if (/select .* from magic_tokens/is.test(sql)) {
+        return [{ token: 'valid', session_id: 'session-1', wo_id: 'wo-1', session_mode: 'reusable', used: false, expires_at: new Date(Date.now() + 60_000) }];
+      }
+      if (/update appfolio_work_orders/i.test(sql)) return [{ id: 'wo-1' }];
+      if (/insert into portal_submissions/i.test(sql)) return [{ id: 1 }];
+      return [];
+    },
+    release: () => {},
+  };
+
+  await consumeMagicTokenTransaction({ reserve: async () => client }, {
+    token: 'valid', status: 'Waiting', noteText: 'Parts ordered', idempotencyKey: 'submission-1',
+  });
+  await consumeMagicTokenTransaction({ reserve: async () => client }, {
+    token: 'valid', status: 'Scheduled', noteText: 'Visit booked', idempotencyKey: 'submission-2',
+  });
+
+  assert.equal(statements.filter(({ sql }) => /insert into portal_submissions/i.test(sql)).length, 2);
+  assert.equal(statements.filter(({ sql }) => /update magic_tokens\s+set used/i.test(sql)).length, 0);
+});
+
+test('test sessions audit submissions without updating a real work order', async () => {
+  const statements: string[] = [];
+  const client = {
+    unsafe: async (sql: string) => {
+      statements.push(sql.trim());
+      if (/select .* from magic_tokens/is.test(sql)) {
+        return [{ token: 'test-token', session_id: 'session-test', wo_id: 'TEST-wo-1', session_mode: 'test', used: false, expires_at: new Date(Date.now() + 60_000) }];
+      }
+      if (/insert into portal_submissions/i.test(sql)) return [{ id: 1 }];
+      return [];
+    },
+    release: () => {},
+  };
+
+  await consumeMagicTokenTransaction({ reserve: async () => client }, {
+    token: 'test-token', status: 'Waiting', noteText: 'Synthetic test submission', idempotencyKey: 'test-submit-1',
+  });
+
+  assert.equal(statements.some((sql) => /update appfolio_work_orders/i.test(sql)), false);
+  assert.equal(statements.some((sql) => /insert into portal_submissions/i.test(sql)), true);
 });
 
 test('consumeMagicTokenTransaction commits work-order update before token use', async () => {
@@ -116,8 +211,11 @@ test('consumeMagicTokenTransaction commits work-order update before token use', 
     unsafe: async (sql: string) => {
       statements.push(sql.trim());
       if (/select .* from magic_tokens/is.test(sql)) {
-        return [{ token: 'valid', wo_id: 'wo-1', used: false, expires_at: new Date(Date.now() + 60_000) }];
+        return [{ token: 'valid', session_id: 'session-legacy', session_mode: 'legacy_single_use', wo_id: 'wo-1', used: false, expires_at: new Date(Date.now() + 60_000) }];
       }
+      if (/UPDATE appfolio_work_orders/i.test(sql)) return [{ id: 'wo-1' }];
+      if (/INSERT INTO portal_submissions/i.test(sql)) return [{ id: 1 }];
+      if (/UPDATE magic_tokens/i.test(sql)) return [{ token: 'valid' }];
       return [{ id: 'wo-1' }];
     },
     release: () => { statements.push('RELEASE'); },
@@ -132,8 +230,10 @@ test('consumeMagicTokenTransaction commits work-order update before token use', 
   assert.match(statements[0], /^BEGIN/i);
   assert.match(statements[1], /FOR UPDATE/i);
   assert.match(statements[2], /UPDATE appfolio_work_orders/i);
-  assert.match(statements[3], /UPDATE magic_tokens/i);
-  assert.match(statements[4], /^COMMIT/i);
+  assert.match(statements[3], /UPDATE monitored_work_orders/i);
+  assert.match(statements[4], /INSERT INTO portal_submissions/i);
+  assert.match(statements[5], /UPDATE magic_tokens/i);
+  assert.match(statements[6], /^COMMIT/i);
   assert.equal(statements.at(-1), 'RELEASE');
 });
 

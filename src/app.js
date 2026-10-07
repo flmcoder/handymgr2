@@ -29107,15 +29107,15 @@ var DispatchComms = {
     var btn = document.getElementById('btnDispatchSendTestSms');
     var resultEl = document.getElementById('dispatchTestResult');
     var phone = phoneEl ? String(phoneEl.value || '').trim() : '';
-    var adminKey = getDispatchAdminKey();
     if (!/^\+\d{10,15}$/.test(phone)) {
       if (resultEl) resultEl.textContent = 'Enter a valid E.164 phone number such as +15551234567.';
       v9Toast('Invalid phone number', 'Use E.164 format like +15551234567', 'warning');
       return;
     }
-    if (!adminKey) {
-      if (resultEl) resultEl.textContent = 'Set PROXY_ADMIN_KEY in the Database tab before sending test links.';
-      v9Toast('Admin key required', 'Set PROXY_ADMIN_KEY in Database tab first. Generate Link does not require this key.', 'warning');
+    var token = getProxyAccessToken();
+    if (!token) {
+      if (resultEl) resultEl.textContent = 'Sign in with a full admin session before sending a test link.';
+      v9Toast('Admin session required', 'Sign in with a full admin account first.', 'warning');
       return;
     }
 
@@ -29127,12 +29127,21 @@ var DispatchComms = {
     if (resultEl) resultEl.textContent = 'Sending test magic-link SMS to ' + phone + '…';
 
     try {
-      var response = await proxyPost('send_magic_link_test_sms', {
-        key: adminKey,
-        phone: phone,
-        tech_name: 'Dispatch Test',
-        tech_id: 'dispatch-test'
-      });
+      var base = String(API_BASE_URL || '').trim().replace(/\/+$/, '');
+      if (!base) throw new Error('Express backend URL is not configured');
+      var response = await fetchWithTimeout(base + '/api/magic-portal/test-send', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({ phone: phone })
+      }, 30000);
+      var payload = {};
+      try { payload = await response.json(); } catch (_) { payload = {}; }
+      if (!response.ok) throw new Error(String(payload.error || ('HTTP ' + response.status)));
+      response = payload;
       if (!response || !response.ok) {
         throw new Error((response && response.error) || 'Test SMS send failed');
       }
@@ -29146,7 +29155,6 @@ var DispatchComms = {
         resultEl.innerHTML = 'Sent test message to ' + escapeHtml(phone) + '.' + linkHtml;
       }
       v9Toast('Test link sent', phone, 'success');
-      DispatchControl.refresh();
     } catch (e) {
       var message = e && e.message ? e.message : String(e || 'Unknown error');
       if (/failed to fetch/i.test(message)) {

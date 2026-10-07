@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 
 type Environment = Record<string, string | undefined>;
 
@@ -23,6 +23,7 @@ export type MagicPortalInput = {
   tenantName: string;
   tenantPhone: string;
   propertyAddress: string;
+  sessionMode?: 'reusable' | 'test' | 'legacy_single_use';
 };
 
 export type PortalSubmission = {
@@ -30,6 +31,7 @@ export type PortalSubmission = {
   status: string;
   noteText: string;
   action?: string;
+  idempotencyKey?: string;
 };
 
 const ALLOWED_STATUSES = new Set(['Scheduled', 'Waiting', 'Work Completed']);
@@ -186,6 +188,7 @@ export function normalizePortalPayload(body: unknown): PortalSubmission {
     status: String(payload.status || '').trim(),
     noteText: String(payload.note_text ?? payload.noteText ?? '').trim().slice(0, 1200),
     action: String(payload.action || 'status_update').trim() || 'status_update',
+    idempotencyKey: String(payload.idempotency_key || payload.idempotencyKey || '').trim().slice(0, 128),
   };
 }
 
@@ -194,6 +197,7 @@ export async function ensureMagicPortalTables(db: Pick<SqlPool, 'unsafe'>): Prom
   await db.unsafe(`
     CREATE TABLE IF NOT EXISTS magic_tokens (
       token TEXT PRIMARY KEY,
+      session_id UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
       short_code TEXT NOT NULL UNIQUE,
       wo_id TEXT NOT NULL,
       wo_number TEXT,
@@ -204,6 +208,8 @@ export async function ensureMagicPortalTables(db: Pick<SqlPool, 'unsafe'>): Prom
       tenant_phone TEXT,
       property_address TEXT,
       expires_at TIMESTAMPTZ NOT NULL,
+      revoked_at TIMESTAMPTZ,
+      session_mode TEXT NOT NULL DEFAULT 'legacy_single_use',
       used BOOLEAN NOT NULL DEFAULT FALSE,
       used_at TIMESTAMPTZ,
       opened BOOLEAN NOT NULL DEFAULT FALSE,
@@ -216,10 +222,30 @@ export async function ensureMagicPortalTables(db: Pick<SqlPool, 'unsafe'>): Prom
   await db.unsafe('CREATE INDEX IF NOT EXISTS magic_tokens_wo_id_idx ON magic_tokens(wo_id)');
   await db.unsafe('CREATE INDEX IF NOT EXISTS magic_tokens_expires_at_idx ON magic_tokens(expires_at)');
   await db.unsafe('CREATE INDEX IF NOT EXISTS magic_tokens_tech_id_idx ON magic_tokens(tech_id)');
-  
+  await db.unsafe('ALTER TABLE magic_tokens ADD COLUMN IF NOT EXISTS session_id UUID DEFAULT gen_random_uuid()');
+  await db.unsafe('ALTER TABLE magic_tokens ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ');
+  await db.unsafe("ALTER TABLE magic_tokens ADD COLUMN IF NOT EXISTS session_mode TEXT NOT NULL DEFAULT 'legacy_single_use'");
+  await db.unsafe('CREATE UNIQUE INDEX IF NOT EXISTS magic_tokens_session_id_idx ON magic_tokens(session_id)');
   await db.unsafe(`ALTER TABLE magic_tokens ADD COLUMN IF NOT EXISTS opened BOOLEAN DEFAULT FALSE`);
   await db.unsafe(`ALTER TABLE magic_tokens ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ`);
   await db.unsafe(`ALTER TABLE magic_tokens ADD COLUMN IF NOT EXISTS open_count INTEGER DEFAULT 0`);
+  await db.unsafe(`
+    CREATE TABLE IF NOT EXISTS portal_submissions (
+      id BIGSERIAL PRIMARY KEY,
+      session_id UUID NOT NULL,
+      wo_id TEXT NOT NULL,
+      session_mode TEXT NOT NULL,
+      action TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT '',
+      note_text TEXT NOT NULL DEFAULT '',
+      idempotency_key TEXT,
+      submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      outcome JSONB NOT NULL DEFAULT '{}'::jsonb
+    )
+  `);
+  await db.unsafe('CREATE INDEX IF NOT EXISTS portal_submissions_session_idx ON portal_submissions(session_id, submitted_at DESC)');
+  await db.unsafe('CREATE INDEX IF NOT EXISTS portal_submissions_work_order_idx ON portal_submissions(wo_id, submitted_at DESC)');
+  await db.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS portal_submissions_idempotency_idx ON portal_submissions(session_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key <> ''`);
 }
 
 function signPortalPayload(payload: Record<string, string>, secret: string): string {
@@ -233,8 +259,12 @@ export async function createMagicPortalSession(
   input: MagicPortalInput,
   env: Environment = process.env,
 ): Promise<{ token: string; shortCode: string; magicLink: string; expiresAt: string }> {
-  if (!input.woId || !input.techId || !input.techName || !input.tenantPhone || !input.propertyAddress) {
-    throw new Error('Missing required Magic Portal work order, technician, resident, or property fields');
+  const sessionMode = input.sessionMode || 'reusable';
+  if (!input.woId || !input.techId || !input.techName || !input.propertyAddress) {
+    throw new Error('Missing required Magic Portal work order, technician, or property fields');
+  }
+  if (sessionMode !== 'test' && sessionMode !== 'reusable' && sessionMode !== 'legacy_single_use') {
+    throw new Error('Magic Portal session mode is invalid');
   }
   const secret = String(env.MAGIC_LINK_SECRET || '').trim();
   if (!secret) throw new Error('MAGIC_LINK_SECRET is not configured');
@@ -242,6 +272,7 @@ export async function createMagicPortalSession(
 
   const baseUrl = resolveMagicPortalBaseUrl(env);
   const expiresAt = new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString();
+  const sessionId = randomUUID();
   const nonce = randomBytes(18).toString('base64url');
   const shortCode = randomBytes(16).toString('base64url');
   const token = signPortalPayload({
@@ -253,11 +284,12 @@ export async function createMagicPortalSession(
 
   await db.unsafe(
     `INSERT INTO magic_tokens (
-       token, short_code, wo_id, wo_number, tech_id, tech_name, tech_phone,
-       tenant_name, tenant_phone, property_address, expires_at, metadata
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::timestamptz, $12::jsonb)`,
+       token, session_id, short_code, wo_id, wo_number, tech_id, tech_name, tech_phone,
+       tenant_name, tenant_phone, property_address, expires_at, session_mode, metadata
+     ) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::timestamptz, $13, $14::jsonb)`,
     [
       token,
+      sessionId,
       shortCode,
       input.woId,
       input.woNumber,
@@ -268,6 +300,7 @@ export async function createMagicPortalSession(
       input.tenantPhone,
       input.propertyAddress,
       expiresAt,
+      sessionMode,
       JSON.stringify(input),
     ],
   );
@@ -289,7 +322,7 @@ export async function findMagicPortalToken(
   const shortCode = String(lookup.shortCode || '').trim();
   if (!token && !shortCode) return null;
   const rows = await db.unsafe(
-    `SELECT token, short_code, wo_id, wo_number, tech_id, tech_name, tech_phone,
+    `SELECT token, session_id, session_mode, revoked_at, short_code, wo_id, wo_number, tech_id, tech_name, tech_phone,
             tenant_name, tenant_phone, property_address, expires_at, used, used_at,
             opened, opened_at, open_count, metadata
        FROM magic_tokens
@@ -316,7 +349,9 @@ export async function trackMagicPortalOpen(
          open_count = open_count + 1,
          metadata = metadata || jsonb_build_object('last_opened_at', NOW())
      WHERE (token = $1 OR short_code = $1)
-       AND used = FALSE
+      AND revoked_at IS NULL
+      AND expires_at > NOW()
+      AND (session_mode <> 'legacy_single_use' OR used = FALSE)
      RETURNING opened, open_count`,
     [lookup],
   );
@@ -337,10 +372,17 @@ export function renderMagicPortalHtml(tokenRow: Record<string, any>): string {
   const token = JSON.stringify(String(tokenRow.token || '')).replace(/</g, '\\u003c');
   const shortCode = JSON.stringify(String(tokenRow.short_code || '')).replace(/</g, '\\u003c');
   const expired = new Date(tokenRow.expires_at).getTime() <= Date.now();
-  const unavailable = tokenRow.used === true || expired;
-  const unavailableMessage = tokenRow.used === true
+  const legacyUsed = tokenRow.session_mode === 'legacy_single_use' && tokenRow.used === true;
+  const revoked = !!tokenRow.revoked_at;
+  const unavailable = legacyUsed || revoked || expired;
+  const unavailableMessage = revoked
+    ? 'This link has been revoked. Contact dispatch for a new link.'
+    : legacyUsed
     ? 'This link has already been submitted.'
     : 'This link has expired. Contact dispatch for a new link.';
+  const testBanner = tokenRow.session_mode === 'test'
+    ? '<p class="test-banner"><strong>TEST SESSION</strong> — submissions will not update a real work order.</p>'
+    : '';
   const openCount = Number(tokenRow.open_count || 0);
   const openedStatus = tokenRow.opened ? `<div style="font-size:11px;color:var(--muted);margin-top:8px">Link opened ${openCount} time${openCount !== 1 ? 's' : ''}${tokenRow.opened_at ? ' · Last: ' + new Date(tokenRow.opened_at).toLocaleString() : ''}</div>` : '';
   
@@ -348,8 +390,8 @@ export function renderMagicPortalHtml(tokenRow: Record<string, any>): string {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HandyManager Work Order Portal</title>
 <style>
-:root{color-scheme:dark;--bg:#111827;--panel:#1f2937;--line:#374151;--text:#f9fafb;--muted:#9ca3af;--accent:#22c55e;--danger:#ef4444}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 ui-sans-serif,system-ui,sans-serif}.shell{max-width:620px;margin:auto;padding:22px}.brand{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}h1{font-size:25px;margin:7px 0 4px}.meta{color:var(--muted);margin-bottom:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px}.row{margin-bottom:15px}.row label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px}select,textarea{width:100%;border:1px solid var(--line);border-radius:6px;background:#111827;color:var(--text);padding:12px;font:inherit}textarea{min-height:120px;resize:vertical}button{width:100%;border:0;border-radius:6px;background:var(--accent);color:#052e16;padding:13px;font-weight:800;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}.status{margin-top:12px;font-size:14px}.error{color:#fca5a5}.success{color:#86efac}.opened-indicator{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:6px;animation:pulse 2s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
-</style></head><body><main class="shell"><div class="brand">Fort Lowell Realty</div><h1>Work Order #${escapeHtml(tokenRow.wo_number || tokenRow.wo_id)}</h1><div class="meta">${escapeHtml(tokenRow.property_address)} · ${escapeHtml(tokenRow.tech_name)}</div><section class="card">${unavailable
+ :root{color-scheme:dark;--bg:#111827;--panel:#1f2937;--line:#374151;--text:#f9fafb;--muted:#9ca3af;--accent:#22c55e;--danger:#ef4444}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 ui-sans-serif,system-ui,sans-serif}.shell{max-width:620px;margin:auto;padding:22px}.brand{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}h1{font-size:25px;margin:7px 0 4px}.meta{color:var(--muted);margin-bottom:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px}.row{margin-bottom:15px}.row label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px}select,textarea{width:100%;border:1px solid var(--line);border-radius:6px;background:#111827;color:var(--text);padding:12px;font:inherit}textarea{min-height:120px;resize:vertical}button{width:100%;border:0;border-radius:6px;background:var(--accent);color:#052e16;padding:13px;font-weight:800;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}.status{margin-top:12px;font-size:14px}.error{color:#fca5a5}.success{color:#86efac}.test-banner{padding:12px;border:1px solid #f59e0b;border-radius:6px;color:#fcd34d;background:#451a03}.opened-indicator{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:6px;animation:pulse 2s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+</style></head><body><main class="shell"><div class="brand">Fort Lowell Realty</div>${testBanner}<h1>Work Order #${escapeHtml(tokenRow.wo_number || tokenRow.wo_id)}</h1><div class="meta">${escapeHtml(tokenRow.property_address)} · ${escapeHtml(tokenRow.tech_name)}</div><section class="card">${unavailable
     ? `<p class="error">${escapeHtml(unavailableMessage)}</p>`
     : `<form id="portalForm"><div class="row"><label for="status">Work order status</label><select id="status" name="status" required><option value="">Select status</option><option>Scheduled</option><option>Waiting</option><option>Work Completed</option></select></div><div class="row"><label for="note">Completion or exception note</label><textarea id="note" name="note_text" maxlength="1200"></textarea></div><button id="submit" type="submit">Submit update</button><div id="result" class="status" role="status"></div></form>${openedStatus}`}</section></main>${unavailable ? '' : `<script>const token=${token};const shortCode=${shortCode};if(!sessionStorage.getItem('magic_portal_opened_'+shortCode)){fetch('/api/magic-portal/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({short_code:shortCode})}).catch(()=>{});sessionStorage.setItem('magic_portal_opened_'+shortCode,'1');}document.getElementById('portalForm').addEventListener('submit',async(event)=>{event.preventDefault();const button=document.getElementById('submit');const result=document.getElementById('result');button.disabled=true;result.className='status';result.textContent='Submitting…';try{const response=await fetch('/api/magic-portal/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,status:document.getElementById('status').value,note_text:document.getElementById('note').value})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'Submission failed');result.className='status success';result.textContent='Update received successfully.';}catch(error){button.disabled=false;result.className='status error';result.textContent=error.message||'Submission failed';}});</script>`}</body></html>`;
 }
@@ -370,7 +412,7 @@ export async function consumeMagicTokenTransaction(
   try {
     await connection.unsafe('BEGIN');
     const tokenRows = await connection.unsafe(
-      `SELECT token, wo_id, used, expires_at
+      `SELECT token, session_id, session_mode, wo_id, used, revoked_at, expires_at
          FROM magic_tokens
         WHERE token = $1
         FOR UPDATE`,
@@ -378,9 +420,13 @@ export async function consumeMagicTokenTransaction(
     );
     const tokenRow = tokenRows[0];
     if (!tokenRow) throw new Error('Magic Portal token was not found');
-    if (tokenRow.used === true) throw new Error('Magic Portal token has already been used');
+    const sessionMode = String(tokenRow.session_mode || 'legacy_single_use');
+    if (tokenRow.revoked_at) throw new Error('Magic Portal token has been revoked');
+    if (sessionMode === 'legacy_single_use' && tokenRow.used === true) throw new Error('Magic Portal token has already been used');
     if (new Date(tokenRow.expires_at).getTime() <= Date.now()) throw new Error('Magic Portal token has expired');
 
+    let workOrderId = String(tokenRow.wo_id);
+    if (sessionMode !== 'test') {
     const workOrderRows = await connection.unsafe(
         `UPDATE appfolio_work_orders
           SET status = COALESCE(NULLIF($2::text, ''), status),
@@ -398,6 +444,7 @@ export async function consumeMagicTokenTransaction(
       [String(tokenRow.wo_id), status, noteText, action],
     );
     if (!workOrderRows[0]) throw new Error('Magic Portal work order was not found');
+    workOrderId = String(workOrderRows[0].id);
 
     await connection.unsafe(
       `UPDATE monitored_work_orders
@@ -408,23 +455,29 @@ export async function consumeMagicTokenTransaction(
        WHERE wo_id = $1`,
       [String(tokenRow.wo_id)],
     ).catch(() => {});
+    }
 
-    const consumedRows = await connection.unsafe(
-      `UPDATE magic_tokens
-          SET used = TRUE,
-              used_at = NOW(),
-              metadata = metadata || jsonb_build_object(
-                'submission_action', $2::text,
-                'submission_status', $3::text
-              )
-        WHERE token = $1 AND used = FALSE
-        RETURNING token`,
-      [token, action, status],
+    await connection.unsafe(
+      `INSERT INTO portal_submissions (session_id, wo_id, session_mode, action, status, note_text, idempotency_key, outcome)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, NULLIF($7::text, ''), $8::jsonb)`,
+      [String(tokenRow.session_id), String(tokenRow.wo_id), sessionMode, action, status, noteText, submission.idempotencyKey || '', JSON.stringify({ work_order_updated: sessionMode !== 'test' })],
     );
-    if (!consumedRows[0]) throw new Error('Magic Portal token could not be consumed');
+
+    if (sessionMode === 'legacy_single_use') {
+      const consumedRows = await connection.unsafe(
+        `UPDATE magic_tokens
+            SET used = TRUE,
+                used_at = NOW(),
+                metadata = metadata || jsonb_build_object('submission_action', $2::text, 'submission_status', $3::text)
+          WHERE token = $1 AND used = FALSE AND revoked_at IS NULL AND expires_at > NOW()
+          RETURNING token`,
+        [token, action, status],
+      );
+      if (!consumedRows[0]) throw new Error('Magic Portal token could not be consumed');
+    }
 
     await connection.unsafe('COMMIT');
-    return { workOrderId: String(workOrderRows[0].id), status };
+    return { workOrderId, status };
   } catch (error) {
     try {
       await connection.unsafe('ROLLBACK');

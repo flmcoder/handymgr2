@@ -3969,7 +3969,61 @@ function readMagicPortalInput(req: Request): MagicPortalInput {
   };
 }
 
-async function respondGenerateMagicPortal(req: Request, res: Response): Promise<void> {
+async function requireFullAdminSession(req: Request, res: Response): Promise<any | null> {
+  const session = await requireProxySession(req, res);
+  if (!session) return null;
+  if (String(session.role || '').trim().toLowerCase() !== 'full') {
+    res.status(403).json({ ok: false, error: 'Full administrator session required' });
+    return null;
+  }
+  return session;
+}
+
+async function respondMagicPortalTestSend(req: Request, res: Response): Promise<void> {
+  const session = await requireFullAdminSession(req, res);
+  if (!session) return;
+  const phone = String(req.body?.phone || '').trim();
+  if (!/^\+\d{10,15}$/.test(phone)) {
+    res.status(400).json({ ok: false, error: 'A test recipient phone in E.164 format is required' });
+    return;
+  }
+
+  await ensureMagicPortalTables(queryClient as any);
+  const portalSession = await createMagicPortalSession(queryClient as any, {
+    woId: `TEST-${randomUUID()}`,
+    woNumber: 'TEST-1042',
+    techId: 'TEST-TECH',
+    techName: 'Dispatch Test',
+    techPhone: phone,
+    tenantName: 'John Doe (Test Resident)',
+    tenantPhone: '+15551232314',
+    propertyAddress: 'TEST PROPERTY — 123 Example Street',
+    sessionMode: 'test',
+  });
+
+  try {
+    const sms = await sendMagicPortalSms(
+      phone,
+      buildMagicPortalSmsMessage('TEST-1042', portalSession.magicLink),
+    );
+    res.status(200).json({
+      ok: true,
+      test: true,
+      magic_link: portalSession.magicLink,
+      short_code: portalSession.shortCode,
+      expires_at: portalSession.expiresAt,
+      rc_message_id: sms.messageId,
+    });
+  } catch (error) {
+    res.status(502).json({ ok: false, test: true, error: String((error as any)?.message || 'Test SMS handoff failed') });
+  }
+}
+
+async function respondGenerateMagicPortal(
+  req: Request,
+  res: Response,
+  sessionMode: 'reusable' | 'legacy_single_use' = 'reusable',
+): Promise<void> {
   const session = await requireProxySession(req, res);
   if (!session) return;
   if (String(session.role || '').toLowerCase() === 'pm_readonly') {
@@ -3995,6 +4049,7 @@ async function respondGenerateMagicPortal(req: Request, res: Response): Promise<
   }
   const rawWorkOrder = workOrder.raw_json && typeof workOrder.raw_json === 'object' ? workOrder.raw_json : {};
   input.woId = String(workOrder.work_order_uuid || workOrder.id || input.woId);
+  input.sessionMode = sessionMode;
   input.woNumber = String(workOrder.wo_number || input.woNumber || '');
   input.propertyAddress = String(
     rawWorkOrder.PropertyAddress
@@ -4117,6 +4172,15 @@ app.post('/api/magic-portal/generate', magicPortalJson, magicPortalForm, async (
   } catch (error) {
     console.error('[magic-portal] link generation failed', String((error as any)?.message || error));
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Magic Portal link generation failed') });
+  }
+});
+
+app.post('/api/magic-portal/test-send', magicPortalJson, magicPortalForm, async (req: Request, res: Response) => {
+  try {
+    await respondMagicPortalTestSend(req, res);
+  } catch (error) {
+    console.error('[magic-portal] test send failed', String((error as any)?.message || error));
+    res.status(500).json({ ok: false, test: true, error: String((error as any)?.message || 'Magic Portal test send failed') });
   }
 });
 
@@ -4859,7 +4923,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
 
   if (action === 'generate_magic_link' || action === 'handleGenerateMagicLink') {
     try {
-      await respondGenerateMagicPortal(req, res);
+      await respondGenerateMagicPortal(req, res, 'legacy_single_use');
     } catch (error) {
       console.error('[magic-portal] legacy link generation failed', String((error as any)?.message || error));
       res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Magic Portal link generation failed') });
@@ -4867,11 +4931,23 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     return;
   }
 
+  if (action === 'send_magic_link_test_sms') {
+    res.status(410).json({
+      ok: false,
+      error: 'This test-SMS action has been deprecated. Use POST /api/magic-portal/test-send with a full administrator session.',
+      replacement: '/api/magic-portal/test-send',
+    });
+    return;
+  }
+
   if (action === 'portal_validate') {
     try {
       await ensureMagicPortalTables(queryClient as any);
       const tokenRow = await findMagicPortalToken(queryClient as any, { token: String((req.body as any)?.token || '') });
-      const valid = !!tokenRow && tokenRow.used !== true && new Date(tokenRow.expires_at).getTime() > Date.now();
+      const valid = !!tokenRow
+        && !tokenRow.revoked_at
+        && new Date(tokenRow.expires_at).getTime() > Date.now()
+        && (tokenRow.session_mode !== 'legacy_single_use' || tokenRow.used !== true);
       res.status(200).json({
         ok: valid,
         valid,
@@ -4883,7 +4959,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
           property_address: String(tokenRow.property_address || ''),
           expires_at: tokenRow.expires_at,
         } : undefined,
-        error: valid ? undefined : 'Magic Portal token is invalid, expired, or used',
+        error: valid ? undefined : 'Magic Portal session is invalid, expired, revoked, or already submitted',
       });
     } catch (error) {
       res.status(500).json({ ok: false, valid: false, error: String((error as any)?.message || error) });
