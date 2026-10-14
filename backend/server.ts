@@ -39,7 +39,8 @@ import {
 } from './chartAnalyticsPolicy';
 import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
-import { buildWorkOrderPagination, resolveExactWorkOrderReference, resolveWorkOrderHistoryDays, resolveWorkOrderLookupSearch } from './workOrderQueryPolicy';
+import { buildDispatchReassignmentKey, executeDispatchCron, isDispatchAutomationPaused, resolveDispatchVersion } from './dispatchCronPolicy';
+import { buildWorkOrderPagination, resolveExactWorkOrderReference, resolveWorkOrderHistoryDays, resolveWorkOrderLookupSearch, resolveWorkOrderStatusScope } from './workOrderQueryPolicy';
 import { TURN_ENGINE_SQL } from './turnEngineQuery';
 import { upsertTurnTracker } from './sync/repositories';
 import { tenantDirectoryPropertyMatchSql } from './sync/tenantDirectoryPolicy';
@@ -60,6 +61,7 @@ import { parseTenantCommsQuery } from './tenantCommsPolicy';
 import { parseInspectionPage } from './inspectionPolicy';
 import { classifyBillingVendorBucket, parseBillingSpendTimeframe } from './billingVendorSpendPolicy';
 import { normalizeDebugEvent, resolveDebugRetentionDays } from './debugEventsPolicy';
+import { createMagicPortalTestSendHandler } from './magicPortalTestSend';
 import { setStaticCacheHeaders } from './staticCache';
 
 const require = createRequire(import.meta.url);
@@ -1683,7 +1685,7 @@ function buildPropertyAddress(row: any, raw: Record<string, any>): string {
 function getQueueStatus(row: Record<string, any>): string {
   if (asBooleanLike(row.auto_exempt)) return 'exempt';
   if (asBooleanLike(row.escalated)) return 'escalated';
-  if (Number(row.reassignment_count || 0) > 0) return 'reassigned';
+  if (Number(row.stale_flag_count ?? 0) > 0) return 'flagged';
   if (asBooleanLike(row.warning_sent)) return 'warned';
   if (asBooleanLike(row.grace_used)) return 'grace';
   return 'monitoring';
@@ -1739,6 +1741,8 @@ async function ensureDispatchControlTables(): Promise<void> {
       category TEXT,
       priority TEXT,
       status TEXT DEFAULT 'monitoring',
+      work_order_status TEXT,
+      dispatch_version INTEGER NOT NULL DEFAULT 1,
       assigned_user_id TEXT,
       assigned_user_name TEXT,
       assigned_tech_id TEXT,
@@ -1752,7 +1756,9 @@ async function ensureDispatchControlTables(): Promise<void> {
       grace_used BOOLEAN DEFAULT FALSE,
       grace_used_at TIMESTAMPTZ,
       reassignment_count INTEGER DEFAULT 0,
+      stale_flag_count INTEGER NOT NULL DEFAULT 0,
       last_reassigned_at TIMESTAMPTZ,
+      last_reassignment_key TEXT,
       escalated BOOLEAN DEFAULT FALSE,
       escalated_at TIMESTAMPTZ,
       first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1767,6 +1773,8 @@ async function ensureDispatchControlTables(): Promise<void> {
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS category TEXT`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS priority TEXT`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'monitoring'`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS work_order_status TEXT`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS dispatch_version INTEGER NOT NULL DEFAULT 1`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS assigned_user_id TEXT`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS assigned_user_name TEXT`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS assigned_tech_id TEXT`);
@@ -1780,7 +1788,9 @@ async function ensureDispatchControlTables(): Promise<void> {
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS grace_used BOOLEAN DEFAULT FALSE`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS grace_used_at TIMESTAMPTZ`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS reassignment_count INTEGER DEFAULT 0`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS stale_flag_count INTEGER NOT NULL DEFAULT 0`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS last_reassigned_at TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS last_reassignment_key TEXT`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS escalated BOOLEAN DEFAULT FALSE`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ`);
   await queryClient.unsafe(`ALTER TABLE reassignment_queue ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ`);
@@ -2070,6 +2080,7 @@ async function stopMonitoringWorkOrder(params: Record<string, string>): Promise<
 
 async function readDispatchConfig(keys: string[]): Promise<Record<string, string>> {
   const result: Record<string, string> = {};
+  let successfulReads = 0;
   const wanted = Array.from(new Set(keys.map((key) => String(key || '').trim()).filter(Boolean)));
   if (!wanted.length) return result;
 
@@ -2078,13 +2089,14 @@ async function readDispatchConfig(keys: string[]): Promise<Record<string, string
       `select key, value from proxy_config where key = any($1::text[])`,
       [wanted],
     );
+    successfulReads += 1;
     for (const row of rows as any[]) {
       const key = String(row?.key || '').trim();
       const value = String(row?.value ?? '').trim();
       if (key && value && result[key] === undefined) result[key] = value;
     }
-  } catch {
-    // Ignore missing settings tables.
+  } catch (error) {
+    if (String((error as any)?.code || '') !== '42P01') throw error;
   }
 
   try {
@@ -2092,14 +2104,17 @@ async function readDispatchConfig(keys: string[]): Promise<Record<string, string
       `select key, value from app_settings where key = any($1::text[])`,
       [wanted],
     );
+    successfulReads += 1;
     for (const row of rows as any[]) {
       const key = String(row?.key || '').trim();
       const value = String(row?.value ?? '').trim();
       if (key && value && result[key] === undefined) result[key] = value;
     }
-  } catch {
-    // Ignore missing settings tables.
+  } catch (error) {
+    if (String((error as any)?.code || '') !== '42P01') throw error;
   }
+
+  if (successfulReads === 0) throw new Error('Dispatch configuration tables are unavailable');
 
   return result;
 }
@@ -2116,6 +2131,10 @@ async function writeDispatchAudit(
      values ($1, $2, $3, $4::jsonb)`,
     [woId || null, eventType, message, JSON.stringify(payload)],
   );
+}
+
+async function isDispatchPausedNow(): Promise<boolean> {
+  return isDispatchAutomationPaused(await readDispatchConfig(['dispatch_paused']));
 }
 
 async function fetchDispatchWorkOrders(days = 3650): Promise<any[]> {
@@ -2478,12 +2497,26 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
       return Number.isFinite(leadHours) && leadHours >= 48 && leadHours <= 72;
     })() : false;
     const existing = existingByWoId.get(woId);
-    const warningSent = asBooleanLike(existing?.warning_sent) || asBooleanLike(existing?.warning_sent_at);
-    const graceUsed = asBooleanLike(existing?.grace_used);
-    const autoExempt = asBooleanLike(existing?.auto_exempt) || scheduledExemption;
+    const workOrderStatus = String(row?.status || '').trim();
+    const assigneeId = String(row?.assigned_user_id || '').trim();
+    const assignmentChanged = !!existing && (
+      String(existing?.work_order_status || '').trim().toLowerCase() !== workOrderStatus.toLowerCase() ||
+      String(existing?.assigned_user_id || '').trim() !== assigneeId
+    );
+    const warningSent = !assignmentChanged && (asBooleanLike(existing?.warning_sent) || asBooleanLike(existing?.warning_sent_at));
+    const graceUsed = !assignmentChanged && asBooleanLike(existing?.grace_used);
+    const autoExempt = scheduledExemption || asBooleanLike(existing?.auto_exempt);
     const reassignmentCount = Math.max(0, Math.round(asNumericLike(existing?.reassignment_count, 0)));
-    const escalated = asBooleanLike(existing?.escalated) || reassignmentCount >= maxReassignsBeforeEscalate;
-    const shouldTrack = autoExempt || warningSent || graceUsed || reassignmentCount > 0 || escalated || ageHours >= warningLeadHours;
+    const staleFlagCount = assignmentChanged ? 0 : Math.max(0, Math.round(asNumericLike(existing?.stale_flag_count, 0)));
+    const dispatchVersion = resolveDispatchVersion({
+      previousVersion: existing?.dispatch_version,
+      previousWorkOrderStatus: existing?.work_order_status,
+      previousAssigneeId: existing?.assigned_user_id,
+      workOrderStatus,
+      assigneeId,
+    });
+    const escalated = (!assignmentChanged && asBooleanLike(existing?.escalated)) || staleFlagCount >= maxReassignsBeforeEscalate;
+    const shouldTrack = autoExempt || warningSent || graceUsed || reassignmentCount > 0 || staleFlagCount > 0 || escalated || ageHours >= warningLeadHours;
     if (!shouldTrack) continue;
 
     const branch = deriveDispatchBranch(String(row?.property_group_id || ''), tier1GroupUuid, tier2GroupUuid, branchMap);
@@ -2498,27 +2531,33 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
       status: getQueueStatus({
         auto_exempt: autoExempt,
         escalated,
-        reassignment_count: reassignmentCount,
+        stale_flag_count: staleFlagCount,
         warning_sent: warningSent,
         grace_used: graceUsed,
       }),
-      assigned_user_id: String(row?.assigned_user_id || '').trim(),
+      work_order_status: workOrderStatus,
+      dispatch_version: dispatchVersion,
+      assigned_user_id: assigneeId,
       assigned_user_name: String(row?.assigned_user_name || '').trim(),
       assigned_tech_id: String(row?.assigned_user_id || '').trim(),
       assigned_tech_name: String(row?.assigned_user_name || '').trim(),
       branch,
       auto_exempt: autoExempt,
       auto_exempt_at: autoExempt ? (existing?.auto_exempt_at || row?.updated_at || row?.created_at || new Date().toISOString()) : null,
-      auto_exempt_by: scheduledExemption ? (existing?.auto_exempt_by || 'scheduled_window') : (existing?.auto_exempt_by || null),
+      auto_exempt_by: scheduledExemption ? 'scheduled_window' : (existing?.auto_exempt_by || null),
       warning_sent: warningSent,
-      warning_sent_at: existing?.warning_sent_at || null,
+      warning_sent_at: assignmentChanged ? null : existing?.warning_sent_at || null,
       grace_used: graceUsed,
-      grace_used_at: existing?.grace_used_at || null,
+      grace_used_at: assignmentChanged ? null : existing?.grace_used_at || null,
       reassignment_count: reassignmentCount,
-      last_reassigned_at: existing?.last_reassigned_at || null,
+      stale_flag_count: staleFlagCount,
+      last_reassigned_at: assignmentChanged ? null : existing?.last_reassigned_at || null,
+      last_reassignment_key: assignmentChanged ? null : existing?.last_reassignment_key || (staleFlagCount > 0
+        ? buildDispatchReassignmentKey({ woId, dispatchVersion })
+        : null),
       escalated,
-      escalated_at: existing?.escalated_at || null,
-      first_seen_at: existing?.first_seen_at || row?.created_at || row?.updated_at || new Date().toISOString(),
+      escalated_at: assignmentChanged ? null : existing?.escalated_at || null,
+      first_seen_at: assignmentChanged ? (row?.updated_at || new Date().toISOString()) : (existing?.first_seen_at || row?.created_at || row?.updated_at || new Date().toISOString()),
       updated_at: new Date().toISOString(),
       created_at: existing?.created_at || row?.created_at || row?.updated_at || new Date().toISOString(),
     });
@@ -2527,12 +2566,12 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
   if (includedRows.length > 0) {
     const cols = [
       'wo_id', 'wo_number', 'property_id', 'property_group_uuid', 'property_address',
-      'category', 'priority', 'status', 'assigned_user_id', 'assigned_user_name',
+      'category', 'priority', 'status', 'work_order_status', 'dispatch_version', 'assigned_user_id', 'assigned_user_name',
       'assigned_tech_id', 'assigned_tech_name', 'branch',
       'auto_exempt', 'auto_exempt_at', 'auto_exempt_by',
       'warning_sent', 'warning_sent_at',
       'grace_used', 'grace_used_at',
-      'reassignment_count', 'last_reassigned_at',
+      'reassignment_count', 'stale_flag_count', 'last_reassigned_at', 'last_reassignment_key',
       'escalated', 'escalated_at',
       'first_seen_at', 'updated_at', 'created_at'
     ];
@@ -2540,25 +2579,25 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     await queryClient.unsafe(
       `insert into reassignment_queue (
          wo_id, wo_number, property_id, property_group_uuid, property_address,
-         category, priority, status, assigned_user_id, assigned_user_name,
+         category, priority, status, work_order_status, dispatch_version, assigned_user_id, assigned_user_name,
          assigned_tech_id, assigned_tech_name, branch,
          auto_exempt, auto_exempt_at, auto_exempt_by,
          warning_sent, warning_sent_at,
          grace_used, grace_used_at,
-         reassignment_count, last_reassigned_at,
+         reassignment_count, stale_flag_count, last_reassigned_at, last_reassignment_key,
          escalated, escalated_at,
          first_seen_at, updated_at, created_at
        )
        select
          unnest($1::text[]), unnest($2::text[]), unnest($3::text[]), unnest($4::text[]), unnest($5::text[]),
-         unnest($6::text[]), unnest($7::text[]), unnest($8::text[]), unnest($9::text[]), unnest($10::text[]),
-         unnest($11::text[]), unnest($12::text[]), unnest($13::text[]),
-         unnest($14::boolean[]), unnest($15::timestamptz[]), unnest($16::text[]),
-         unnest($17::boolean[]), unnest($18::timestamptz[]),
+         unnest($6::text[]), unnest($7::text[]), unnest($8::text[]), unnest($9::text[]), unnest($10::integer[]), unnest($11::text[]), unnest($12::text[]),
+         unnest($13::text[]), unnest($14::text[]), unnest($15::text[]),
+         unnest($16::boolean[]), unnest($17::timestamptz[]), unnest($18::text[]),
          unnest($19::boolean[]), unnest($20::timestamptz[]),
-         unnest($21::integer[]), unnest($22::timestamptz[]),
-         unnest($23::boolean[]), unnest($24::timestamptz[]),
-         unnest($25::timestamptz[]), unnest($26::timestamptz[]), unnest($27::timestamptz[])
+         unnest($21::boolean[]), unnest($22::timestamptz[]),
+         unnest($23::integer[]), unnest($24::integer[]), unnest($25::timestamptz[]), unnest($26::text[]),
+         unnest($27::boolean[]), unnest($28::timestamptz[]),
+         unnest($29::timestamptz[]), unnest($30::timestamptz[]), unnest($31::timestamptz[])
        on conflict (wo_id) do update set
          wo_number = excluded.wo_number,
          property_id = excluded.property_id,
@@ -2567,23 +2606,47 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
          category = excluded.category,
          priority = excluded.priority,
          status = excluded.status,
+         work_order_status = excluded.work_order_status,
+         dispatch_version = greatest(reassignment_queue.dispatch_version, excluded.dispatch_version),
          assigned_user_id = excluded.assigned_user_id,
          assigned_user_name = excluded.assigned_user_name,
          assigned_tech_id = excluded.assigned_tech_id,
          assigned_tech_name = excluded.assigned_tech_name,
          branch = excluded.branch,
-         auto_exempt = reassignment_queue.auto_exempt or excluded.auto_exempt,
-         auto_exempt_at = coalesce(reassignment_queue.auto_exempt_at, excluded.auto_exempt_at),
-         auto_exempt_by = coalesce(reassignment_queue.auto_exempt_by, excluded.auto_exempt_by),
-         warning_sent = reassignment_queue.warning_sent or excluded.warning_sent,
-         warning_sent_at = coalesce(reassignment_queue.warning_sent_at, excluded.warning_sent_at),
-         grace_used = reassignment_queue.grace_used or excluded.grace_used,
-         grace_used_at = coalesce(reassignment_queue.grace_used_at, excluded.grace_used_at),
-         reassignment_count = greatest(reassignment_queue.reassignment_count, excluded.reassignment_count),
-         last_reassigned_at = coalesce(reassignment_queue.last_reassigned_at, excluded.last_reassigned_at),
-         escalated = reassignment_queue.escalated or excluded.escalated,
-         escalated_at = coalesce(reassignment_queue.escalated_at, excluded.escalated_at),
-         first_seen_at = coalesce(reassignment_queue.first_seen_at, excluded.first_seen_at),
+        auto_exempt = reassignment_queue.auto_exempt or excluded.auto_exempt,
+        auto_exempt_at = coalesce(reassignment_queue.auto_exempt_at, excluded.auto_exempt_at),
+        auto_exempt_by = coalesce(reassignment_queue.auto_exempt_by, excluded.auto_exempt_by),
+        warning_sent = case when reassignment_queue.work_order_status is distinct from excluded.work_order_status
+            or reassignment_queue.assigned_user_id is distinct from excluded.assigned_user_id
+          then false else reassignment_queue.warning_sent or excluded.warning_sent end,
+        warning_sent_at = case when reassignment_queue.work_order_status is distinct from excluded.work_order_status
+            or reassignment_queue.assigned_user_id is distinct from excluded.assigned_user_id
+          then null else coalesce(reassignment_queue.warning_sent_at, excluded.warning_sent_at) end,
+        grace_used = case when reassignment_queue.work_order_status is distinct from excluded.work_order_status
+            or reassignment_queue.assigned_user_id is distinct from excluded.assigned_user_id
+          then false else reassignment_queue.grace_used or excluded.grace_used end,
+        grace_used_at = case when reassignment_queue.work_order_status is distinct from excluded.work_order_status
+            or reassignment_queue.assigned_user_id is distinct from excluded.assigned_user_id
+          then null else coalesce(reassignment_queue.grace_used_at, excluded.grace_used_at) end,
+        reassignment_count = greatest(reassignment_queue.reassignment_count, excluded.reassignment_count),
+        stale_flag_count = case when reassignment_queue.work_order_status is distinct from excluded.work_order_status
+            or reassignment_queue.assigned_user_id is distinct from excluded.assigned_user_id
+          then 0 else greatest(reassignment_queue.stale_flag_count, excluded.stale_flag_count) end,
+        last_reassigned_at = case when reassignment_queue.work_order_status is distinct from excluded.work_order_status
+            or reassignment_queue.assigned_user_id is distinct from excluded.assigned_user_id
+          then null else coalesce(reassignment_queue.last_reassigned_at, excluded.last_reassigned_at) end,
+        last_reassignment_key = case when reassignment_queue.work_order_status is distinct from excluded.work_order_status
+            or reassignment_queue.assigned_user_id is distinct from excluded.assigned_user_id
+          then null else coalesce(reassignment_queue.last_reassignment_key, excluded.last_reassignment_key) end,
+        escalated = case when reassignment_queue.work_order_status is distinct from excluded.work_order_status
+            or reassignment_queue.assigned_user_id is distinct from excluded.assigned_user_id
+          then false else reassignment_queue.escalated or excluded.escalated end,
+        escalated_at = case when reassignment_queue.work_order_status is distinct from excluded.work_order_status
+            or reassignment_queue.assigned_user_id is distinct from excluded.assigned_user_id
+          then null else coalesce(reassignment_queue.escalated_at, excluded.escalated_at) end,
+         first_seen_at = case when reassignment_queue.work_order_status is distinct from excluded.work_order_status
+             or reassignment_queue.assigned_user_id is distinct from excluded.assigned_user_id
+           then excluded.first_seen_at else coalesce(reassignment_queue.first_seen_at, excluded.first_seen_at) end,
          updated_at = NOW(),
          created_at = coalesce(reassignment_queue.created_at, excluded.created_at)`,
       arrays
@@ -2713,6 +2776,9 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     grace_used: asBooleanLike(row.grace_used),
     grace_used_at: asIso(row.grace_used_at),
     reassignment_count: Number(row.reassignment_count || 0),
+    stale_flag_count: Number(row.stale_flag_count || 0),
+    work_order_status: String(row.work_order_status || ''),
+    dispatch_version: Number(row.dispatch_version || 1),
     last_reassigned_at: asIso(row.last_reassigned_at),
     escalated: asBooleanLike(row.escalated),
     escalated_at: asIso(row.escalated_at),
@@ -2727,7 +2793,7 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     const techId = String(row.assigned_tech_id || '').trim();
     if (!techId) continue;
     queueByTech.set(techId, (queueByTech.get(techId) || 0) + 1);
-    if (Number(row.reassignment_count || 0) > 0) {
+    if (Number(row.stale_flag_count || 0) > 0) {
       queueByTechReassign.set(techId, (queueByTechReassign.get(techId) || 0) + 1);
     }
   }
@@ -2809,7 +2875,7 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
     })),
     blasts: [],
     tier2_claims: [],
-    monitored_work_orders: queue.filter((row) => row.warning_sent || row.reassignment_count > 0),
+    monitored_work_orders: queue.filter((row) => row.warning_sent || row.stale_flag_count > 0),
     stats: {
       total_queue: total,
       total_techs: roster.length,
@@ -2832,6 +2898,14 @@ async function refreshDispatchQueue(params: Record<string, string>): Promise<any
 }
 
 async function runDispatchWarningCron(params: Record<string, string>): Promise<any> {
+  return executeDispatchCron({
+    readConfig: () => readDispatchConfig(['dispatch_paused']),
+    pausedResult: { ok: true, run: 'noon_warning_cron', paused: true, candidates: 0, warned: 0, monitored_warned: 0, skipped: 0, escalated: 0 },
+    run: () => runDispatchWarningCronActive(params),
+  });
+}
+
+async function runDispatchWarningCronActive(params: Record<string, string>): Promise<any> {
   const snapshot = await refreshDispatchQueue(params);
   const config = await readDispatchConfig(['reassign_threshold_hours', 'grace_period_enabled', 'max_reassigns_before_escalate']);
   const thresholdHours = Math.max(12, asNumericLike(config.reassign_threshold_hours, 48));
@@ -2842,8 +2916,10 @@ async function runDispatchWarningCron(params: Record<string, string>): Promise<a
   let warned = 0;
   let skipped = 0;
   let escalated = 0;
+  let pausedDuringRun = false;
 
   for (const row of snapshot.queue as any[]) {
+    if (await isDispatchPausedNow()) { pausedDuringRun = true; break; }
     const createdAt = row.first_seen_at || row.updated_at || row.created_at;
     const ageHours = ageHoursSince(createdAt);
     if (row.auto_exempt || ageHours < warningLeadHours) {
@@ -2856,7 +2932,7 @@ async function runDispatchWarningCron(params: Record<string, string>): Promise<a
     }
 
     const nextGrace = graceEnabled && !row.grace_used;
-    await queryClient.unsafe(
+    const claimedRows = await queryClient.unsafe(
       `update reassignment_queue
           set warning_sent = true,
               warning_sent_at = coalesce(warning_sent_at, $2::timestamptz),
@@ -2864,9 +2940,18 @@ async function runDispatchWarningCron(params: Record<string, string>): Promise<a
               grace_used_at = coalesce(grace_used_at, case when $3 then $2::timestamptz else null end),
               status = case when auto_exempt then status else 'warned' end,
               updated_at = NOW()
-        where wo_id = $1`,
-      [row.wo_id, nowIso, nextGrace],
+        where wo_id = $1
+          and coalesce(warning_sent, false) = false
+          and coalesce(auto_exempt, false) = false
+          and coalesce(work_order_status, '') = $4
+          and coalesce(assigned_user_id, '') = $5
+        returning wo_id`,
+      [row.wo_id, nowIso, nextGrace, String(row.work_order_status || ''), String(row.assigned_user_id || '')],
     );
+    if (!(claimedRows as any[]).length) {
+      skipped += 1;
+      continue;
+    }
     await writeDispatchAudit(row.wo_id, 'pre_reassign_warning', 'Warning pass marked work order for follow-up', {
       age_hours: ageHours,
       grace_used: nextGrace,
@@ -2885,6 +2970,7 @@ async function runDispatchWarningCron(params: Record<string, string>): Promise<a
 
   let monitoredWarned = 0;
   for (const mRow of monitoredRows as any[]) {
+    if (await isDispatchPausedNow()) { pausedDuringRun = true; break; }
     const lastResponse = mRow.last_tech_response_at || mRow.magic_link_sent_at || mRow.created_at;
     const hoursSinceResponse = ageHoursSince(lastResponse);
     const thresholdHours = Number(mRow.warning_threshold_hours || 24);
@@ -2895,7 +2981,22 @@ async function runDispatchWarningCron(params: Record<string, string>): Promise<a
     const techPhone = String(mRow.tech_phone || '').trim();
     if (!techPhone) continue;
 
+    let warningClaimAt: unknown = null;
+    let smsAttempted = false;
     try {
+      const claimedRows = await queryClient.unsafe(
+        `update monitored_work_orders
+         set warning_sent = true,
+             warning_sent_at = NOW(),
+             updated_at = NOW()
+         where wo_id = $1 and status = 'monitoring' and coalesce(warning_sent, false) = false
+           and assigned_tech_id = $2
+         returning warning_sent_at`,
+        [mRow.wo_id, String(mRow.assigned_tech_id || '')]
+      );
+      if (!(claimedRows as any[]).length) continue;
+      warningClaimAt = (claimedRows as any[])[0].warning_sent_at;
+
       const { createMagicPortalSession, sendMagicPortalSms, buildMagicPortalSmsMessage } = await import('./magicPortal.js');
       
       const session = await createMagicPortalSession(queryClient, {
@@ -2910,16 +3011,8 @@ async function runDispatchWarningCron(params: Record<string, string>): Promise<a
       });
       
       const warningMessage = `⚠️ URGENT: WO #${mRow.wo_number || mRow.wo_id} needs your attention. No response for ${Math.round(hoursSinceResponse)} hours. Update status: ${session.magicLink}`;
+      smsAttempted = true;
       await sendMagicPortalSms(techPhone, warningMessage);
-      
-      await queryClient.unsafe(
-        `update monitored_work_orders
-         set warning_sent = true,
-             warning_sent_at = NOW(),
-             updated_at = NOW()
-         where wo_id = $1`,
-        [mRow.wo_id]
-      );
       
       await writeDispatchAudit(
         mRow.wo_id,
@@ -2937,14 +3030,27 @@ async function runDispatchWarningCron(params: Record<string, string>): Promise<a
       
       monitoredWarned += 1;
     } catch (err) {
+      if (warningClaimAt && !smsAttempted) {
+        try {
+          await queryClient.unsafe(
+            `update monitored_work_orders
+             set warning_sent = false, warning_sent_at = null, updated_at = NOW()
+             where wo_id = $1 and warning_sent_at = $2`,
+            [mRow.wo_id, warningClaimAt]
+          );
+        } catch (releaseError) {
+          console.warn('[dispatch:monitoring_warning_claim_release] failed', String((releaseError as any)?.message || releaseError));
+        }
+      }
       console.warn('[dispatch:monitoring_warning] failed', String((err as any)?.message || err));
     }
   }
 
-  const refreshed = await refreshDispatchQueue(params);
+  const refreshed = await refreshDispatchQueue(pausedDuringRun ? { ...params, read_only: '1' } : params);
   return {
     ok: true,
     run: 'noon_warning_cron',
+    paused: pausedDuringRun,
     candidates: snapshot.queue.length,
     warned,
     monitored_warned: monitoredWarned,
@@ -2962,16 +3068,26 @@ async function runDispatchWarningCron(params: Record<string, string>): Promise<a
 }
 
 async function runDispatchReassignCron(params: Record<string, string>): Promise<any> {
+  return executeDispatchCron({
+    readConfig: () => readDispatchConfig(['dispatch_paused']),
+    pausedResult: { ok: true, run: 'midnight_reassign_cron', paused: true, candidates: 0, flagged: 0, skipped: 0, escalated: 0 },
+    run: () => runDispatchReassignCronActive(params),
+  });
+}
+
+async function runDispatchReassignCronActive(params: Record<string, string>): Promise<any> {
   const snapshot = await refreshDispatchQueue(params);
   const config = await readDispatchConfig(['reassign_threshold_hours', 'max_reassigns_before_escalate']);
   const thresholdHours = Math.max(12, asNumericLike(config.reassign_threshold_hours, 48));
   const maxReassignsBeforeEscalate = Math.max(1, Math.round(asNumericLike(config.max_reassigns_before_escalate, 2)));
   const nowIso = new Date().toISOString();
-  let reassigned = 0;
+  let flagged = 0;
   let skipped = 0;
   let escalated = 0;
+  let pausedDuringRun = false;
 
   for (const row of snapshot.queue as any[]) {
+    if (await isDispatchPausedNow()) { pausedDuringRun = true; break; }
     const createdAt = row.first_seen_at || row.updated_at || row.created_at;
     const ageHours = ageHoursSince(createdAt);
     if (row.auto_exempt || ageHours < thresholdHours) {
@@ -2979,36 +3095,54 @@ async function runDispatchReassignCron(params: Record<string, string>): Promise<
       continue;
     }
 
-    const nextCount = Number(row.reassignment_count || 0) + 1;
-    const nextEscalated = nextCount >= maxReassignsBeforeEscalate;
-    await queryClient.unsafe(
+    const reassignmentKey = buildDispatchReassignmentKey({
+      woId: row.wo_id,
+      dispatchVersion: row.dispatch_version,
+    });
+    const nextCount = Number(row.stale_flag_count || 0) + 1;
+    const claimedRows = await queryClient.unsafe(
       `update reassignment_queue
-          set reassignment_count = coalesce(reassignment_count, 0) + 1,
+          set stale_flag_count = coalesce(stale_flag_count, 0) + 1,
               last_reassigned_at = $2::timestamptz,
-              escalated = escalated or $3,
-              escalated_at = case when $3 then coalesce(escalated_at, $2::timestamptz) else escalated_at end,
+              escalated = escalated or (coalesce(stale_flag_count, 0) + 1 >= $3),
+              escalated_at = case when coalesce(stale_flag_count, 0) + 1 >= $3 then coalesce(escalated_at, $2::timestamptz) else escalated_at end,
               warning_sent = true,
               warning_sent_at = coalesce(warning_sent_at, $2::timestamptz),
-              status = case when $3 then 'escalated' else 'reassigned' end,
+              last_reassignment_key = $4,
+              status = case when coalesce(stale_flag_count, 0) + 1 >= $3 then 'escalated' else 'flagged' end,
               updated_at = NOW()
-        where wo_id = $1`,
-      [row.wo_id, nowIso, nextEscalated],
+        where wo_id = $1
+          and coalesce(auto_exempt, false) = false
+          and coalesce(last_reassignment_key, '') <> $4
+          and coalesce(dispatch_version, 1) = $5
+          and coalesce(work_order_status, '') = $6
+          and coalesce(assigned_user_id, '') = $7
+        returning stale_flag_count, escalated`,
+      [row.wo_id, nowIso, maxReassignsBeforeEscalate, reassignmentKey, Number(row.dispatch_version || 1), String(row.work_order_status || ''), String(row.assigned_user_id || '')],
     );
-    await writeDispatchAudit(row.wo_id, nextEscalated ? 'escalation_reassign' : 'auto_reassigned', 'Auto-reassignment pass executed', {
+    if (!(claimedRows as any[]).length) {
+      skipped += 1;
+      continue;
+    }
+    const actualCount = Number((claimedRows as any[])[0].stale_flag_count || nextCount);
+    const actualEscalated = asBooleanLike((claimedRows as any[])[0].escalated);
+    await writeDispatchAudit(row.wo_id, actualEscalated ? 'stale_assignment_escalated' : 'stale_assignment_flagged', 'Stale assignment flagged for review; AppFolio assignee was not changed', {
       age_hours: ageHours,
-      reassignment_count: nextCount,
+      stale_flag_count: actualCount,
       threshold_hours: thresholdHours,
+      idempotency_key: reassignmentKey,
     });
-    reassigned += 1;
-    if (nextEscalated) escalated += 1;
+    flagged += 1;
+    if (actualEscalated) escalated += 1;
   }
 
-  const refreshed = await refreshDispatchQueue(params);
+  const refreshed = await refreshDispatchQueue(pausedDuringRun ? { ...params, read_only: '1' } : params);
   return {
     ok: true,
     run: 'midnight_reassign_cron',
+    paused: pausedDuringRun,
     candidates: snapshot.queue.length,
-    reassigned,
+    flagged,
     skipped,
     escalated,
     queue: refreshed.queue,
@@ -3979,45 +4113,15 @@ async function requireFullAdminSession(req: Request, res: Response): Promise<any
   return session;
 }
 
-async function respondMagicPortalTestSend(req: Request, res: Response): Promise<void> {
-  const session = await requireFullAdminSession(req, res);
-  if (!session) return;
-  const phone = String(req.body?.phone || '').trim();
-  if (!/^\+\d{10,15}$/.test(phone)) {
-    res.status(400).json({ ok: false, error: 'A test recipient phone in E.164 format is required' });
-    return;
-  }
-
-  await ensureMagicPortalTables(queryClient as any);
-  const portalSession = await createMagicPortalSession(queryClient as any, {
-    woId: `TEST-${randomUUID()}`,
-    woNumber: 'TEST-1042',
-    techId: 'TEST-TECH',
-    techName: 'Dispatch Test',
-    techPhone: phone,
-    tenantName: 'John Doe (Test Resident)',
-    tenantPhone: '+15551232314',
-    propertyAddress: 'TEST PROPERTY — 123 Example Street',
-    sessionMode: 'test',
-  });
-
-  try {
-    const sms = await sendMagicPortalSms(
-      phone,
-      buildMagicPortalSmsMessage('TEST-1042', portalSession.magicLink),
-    );
-    res.status(200).json({
-      ok: true,
-      test: true,
-      magic_link: portalSession.magicLink,
-      short_code: portalSession.shortCode,
-      expires_at: portalSession.expiresAt,
-      rc_message_id: sms.messageId,
-    });
-  } catch (error) {
-    res.status(502).json({ ok: false, test: true, error: String((error as any)?.message || 'Test SMS handoff failed') });
-  }
-}
+const magicPortalTestSendHandler = createMagicPortalTestSendHandler({
+  requireFullAdminSession,
+  async createSession(input) {
+    await ensureMagicPortalTables(queryClient as any);
+    return createMagicPortalSession(queryClient as any, input);
+  },
+  sendSms: sendMagicPortalSms,
+  buildMessage: buildMagicPortalSmsMessage,
+});
 
 async function respondGenerateMagicPortal(
   req: Request,
@@ -4177,7 +4281,7 @@ app.post('/api/magic-portal/generate', magicPortalJson, magicPortalForm, async (
 
 app.post('/api/magic-portal/test-send', magicPortalJson, magicPortalForm, async (req: Request, res: Response) => {
   try {
-    await respondMagicPortalTestSend(req, res);
+    await magicPortalTestSendHandler(req, res);
   } catch (error) {
     console.error('[magic-portal] test send failed', String((error as any)?.message || error));
     res.status(500).json({ ok: false, test: true, error: String((error as any)?.message || 'Magic Portal test send failed') });
@@ -6049,6 +6153,10 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
     const scopeIds = getPropertyGroupFilters(req);
     const enforcedScopeIds = getEnforcedPropertyGroupFilters(req);
     const searchQuery = resolveWorkOrderLookupSearch(req.query.search);
+    const statusScope = resolveWorkOrderStatusScope(req.query.status_scope);
+    const statusScopeSql = statusScope === 'inactive'
+      ? `(coalesce(lower(wo.status), '') like '%completed%' or coalesce(lower(wo.status), '') like '%cancel%' or coalesce(lower(wo.status), '') like '%no need to bill%')`
+      : OPEN_WORK_ORDER_STATUS_FILTER.replace(/\bstatus\b/g, 'wo.status');
     const requestedStatusFilter = String(req.query.status_filter || '').trim();
     const statusFilter = requestedStatusFilter === 'all' || requestedStatusFilter === 'flagged' ? '' : requestedStatusFilter;
     const exactWorkOrderReference = resolveExactWorkOrderReference(searchQuery);
@@ -6145,6 +6253,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
              ) as property_group_name
            from appfolio_work_orders wo
             where ${searchPredicate}
+              and ${statusScopeSql}
             ${scopedSearchPredicate}
           )
          select
@@ -6205,9 +6314,9 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
               )
             )
              and (
-               coalesce(lower(status), '') not like '%completed%'
-               and coalesce(lower(status), '') not like '%cancel%'
-               and coalesce(lower(status), '') not like '%no need to bill%'
+               ${statusScope === 'inactive'
+                 ? `coalesce(lower(status), '') like '%completed%' or coalesce(lower(status), '') like '%cancel%' or coalesce(lower(status), '') like '%no need to bill%'`
+                 : `coalesce(lower(status), '') not like '%completed%' and coalesce(lower(status), '') not like '%cancel%' and coalesce(lower(status), '') not like '%no need to bill%'`}
              )
              and (${statusFilter} = '' or coalesce(status, '') = ${statusFilter})
            order by coalesce(updated_at, created_at) desc
@@ -6221,9 +6330,9 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
                  created_at, updated_at, raw_json
           from appfolio_work_orders
           where (
-              coalesce(lower(status), '') not like '%completed%'
-              and coalesce(lower(status), '') not like '%cancel%'
-              and coalesce(lower(status), '') not like '%no need to bill%'
+              ${statusScope === 'inactive'
+                ? `coalesce(lower(status), '') like '%completed%' or coalesce(lower(status), '') like '%cancel%' or coalesce(lower(status), '') like '%no need to bill%'`
+                : `coalesce(lower(status), '') not like '%completed%' and coalesce(lower(status), '') not like '%cancel%' and coalesce(lower(status), '') not like '%no need to bill%'`}
              )
              and (${statusFilter} = '' or coalesce(status, '') = ${statusFilter})
            order by coalesce(updated_at, created_at) desc

@@ -727,6 +727,8 @@ View historical turn closures and their data.
 ### PM OTP Accounts Manager
 
 Manage PM user accounts:
+- Accounts and OTP settings load automatically after GM/Admin sign-in (including resumed sessions) and refresh when opening Database Admin. PM and vendor sessions do not load these admin-only panels.
+- Use **Load Users** or the OTP settings **Reload** button to retry a failed request without signing in again.
 - **Add/Edit PM Users:**
   - Email, Full Name, Phone
   - Property Group UUIDs (multi-scope support)

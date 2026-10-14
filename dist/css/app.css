@@ -7397,6 +7397,76 @@ html.dark #sec-workorders .hm-ag-theme .ag-grid-scrolling-rows {
   font-family: var(--font-mono);
 }
 
+/* Shared, accessible page tabs: work orders, billing, properties, occupancy, and debugging. */
+.subpage-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  margin: 0 0 20px;
+  padding: 0 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  white-space: nowrap;
+}
+.subpage-tabs::-webkit-scrollbar { display: none; }
+.subpage-tabs .subpage-tab {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 20px;
+  border: 0;
+  border-bottom: 4px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color .18s ease, background-color .18s ease, border-color .18s ease;
+}
+.subpage-tabs .subpage-tab::after { display: none; }
+.subpage-tabs .subpage-tab:not(.active):not([aria-selected="true"]):hover {
+  background: color-mix(in srgb, var(--text-muted) 10%, var(--bg-card));
+  color: var(--text-primary);
+}
+.subpage-tabs .subpage-tab:not(.active):not([aria-selected="true"]):hover i { color: var(--accent); }
+.subpage-tabs .subpage-tab.active,
+.subpage-tabs .subpage-tab[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+  color: var(--accent);
+  font-weight: 700;
+}
+.subpage-tabs .subpage-tab.active i,
+.subpage-tabs .subpage-tab[aria-selected="true"] i { color: var(--accent); opacity: 1; }
+.subpage-tabs .subpage-tab:focus-visible {
+  z-index: 1;
+  outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -3px;
+}
+
+/* Keep the secondary Queue/Kanban controls visually subordinate to the tabs. */
+#sec-workorders .wo-view-toggle-bar { margin-top: 0; }
+
+@media (max-width: 768px) {
+  .subpage-tabs { margin-bottom: 20px; padding-inline: 0; }
+  .subpage-tabs .subpage-tab { min-height: 48px; padding: 12px 18px; font-size: 14px; }
+  #sec-workorders .subpage-tabs .wo-subtab { min-height: 48px; padding: 12px 18px; font-size: 14px; }
+}
+
 @media (max-width: 1320px) {
   .wo-kpi-strip,
   .wo-analytics-grid {

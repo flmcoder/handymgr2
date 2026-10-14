@@ -40,6 +40,10 @@ export function resolveWorkOrderLookupSearch(value: unknown, minimumLength = 3, 
   return search.length >= Math.max(1, minimumLength) ? search : '';
 }
 
+export function resolveWorkOrderStatusScope(value: unknown): 'active' | 'inactive' {
+  return String(value || '').trim().toLowerCase() === 'inactive' ? 'inactive' : 'active';
+}
+
 /**
  * Cross-portfolio PM lookup is intentionally narrow: only a work-order
  * number/reference may escape the normal property-group scope. Free-text

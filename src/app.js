@@ -1,4 +1,6 @@
 import { tenantTransactionDisplayRow } from './occupancyReportPolicy.js';
+import { mergeTurnSources } from '../backend/turnMappingPolicy.ts';
+import { groupClosureCandidates } from './closureAssistPolicy.js';
 
 /* ==============================================================
    MAINTENANCE COCKPIT — AppFolio Live Integration Dashboard
@@ -974,8 +976,7 @@ async function resumeFromPendingSession() {
   await enforceSessionTypeTransitionReset(prevRole, _accessRole);
   setVaultFeedback('', '');
   setResumeSessionState(null);
-  $('#vaultScreen').style.display = 'none';
-  $('#appShell').classList.add('unlocked');
+  showUnlockedAppShell();
   applyAccessRole();
   await initApp();
   maybeAutoRunSystemHealthCheck();
@@ -2143,6 +2144,7 @@ function syncMobileNavForViewport() {
 
 function setActiveMainSection(tabName) {
   _tabsModule.setActiveMainSection(tabName);
+  if (tabName === 'dbadmin') _authModule.refreshAdminPanels();
 }
 
 function forceActiveTab(tabName) {
@@ -2580,6 +2582,7 @@ function showUnlockedAppShell() {
   var shell = $('#appShell');
   if (vault) vault.style.display = 'none';
   if (shell) shell.classList.add('unlocked');
+  _authModule.refreshAdminPanels();
 }
 
 function formatOtpIdentifierSummary(identifier) {
@@ -2719,6 +2722,14 @@ var _authModule = createAuthModule({
     return (typeof navigator !== 'undefined' && navigator && navigator.platform) ? navigator.platform : 'device';
   },
   stopOtpCountdown: stopOtpCountdown,
+  isSessionReady: isProxySessionReady,
+  getAccessRole: function() { return _accessRole; },
+  loadPmUsers: function() {
+    if (typeof window._loadPmUsersNow === 'function') return window._loadPmUsersNow();
+  },
+  loadOtpSettings: function() {
+    if (typeof window._loadOtpSettingsNow === 'function') return window._loadOtpSettingsNow();
+  },
 });
 
 // ---- Proxy action endpoint caller ----
@@ -5858,7 +5869,6 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
       });
     }
   } catch (sessErr) { /* non-fatal — use stored role */ }
-  showUnlockedAppShell();
   await enforceSessionTypeTransitionReset(previousRole, _accessRole);
   persistAccessRole(_accessRole);
   try { localStorage.setItem('hm_auth_token', existingDeviceToken); } catch (eA) { /* */ }
@@ -5867,18 +5877,11 @@ async function unlockWithDeviceToken(existingDeviceToken, vhost, proxyUrl) {
     await saveVaultConfig(getVaultConfigFromInputs());
   }
   $('#vaultPassphrase').value = '';
-  $('#vaultScreen').style.display = 'none';
-  $('#appShell').classList.add('unlocked');
+  showUnlockedAppShell();
   applyAccessRole();
   initApp().catch(function(err) {
     console.warn('initApp background bootstrap failed:', err && (err.message || err));
   });
-  if (typeof window._loadPmUsersNow === 'function') {
-    window._loadPmUsersNow();
-  }
-  if (typeof window._loadOtpSettingsNow === 'function') {
-    window._loadOtpSettingsNow();
-  }
   maybeAutoRunSystemHealthCheck();
   if (_accessRole === 'pm_readonly') {
     try { forcedPropertyGroupUuid = localStorage.getItem('hm_scope_group_uuid') || forcedPropertyGroupUuid; } catch (eScope) { /* */ }
@@ -6665,7 +6668,8 @@ async function fetchWorkOrderLookup(searchTerm) {
   var _woSearchStart = Date.now();
   try {
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
-    var url = localBase + '/api/local/work_orders?limit=100&offset=0&search=' + encodeURIComponent(searchQuery);
+    var url = localBase + '/api/local/work_orders?limit=100&offset=0&search=' + encodeURIComponent(searchQuery)
+      + '&status_scope=' + encodeURIComponent(currentWOTab === 'inactive' ? 'inactive' : 'active');
     if (scopedGroupUuid) url += '&property_group_id=' + encodeURIComponent(scopedGroupUuid);
     var token = getProxyAccessToken();
     var headers = { 'Accept': 'application/json' };
@@ -7590,20 +7594,22 @@ async function fetchProperties() {
 function normalizeTurnRecord(t) {
   var moveOut = t.move_out_date || t.move_out || t.moveOutDate || t.moveOut || '';
   var turnEnd = t.turn_end_date || t.turn_end || t.turnEndDate || t.completed_at || '';
+  var moveOutDateKey = moveOut ? String(moveOut).slice(0, 10) : '';
   var daysToComplete = parseInt(t.total_days_to_complete || t.totalDays || 0, 10) || 0;
   if (!daysToComplete && moveOut && turnEnd) {
     var d1 = new Date(moveOut), d2 = new Date(turnEnd);
     if (!isNaN(d1) && !isNaN(d2)) { daysToComplete = Math.round((d2 - d1) / 86400000); }
   }
   return {
-    unitTurnId: t.unit_turn_id || t.unit_turn_uuid || t.unitTurnId || t.id || '',
-    unit: t.unit || t.unit_name || t.unit_number || t.unitName || '',
-    property: t.property || t.property_name || t.propertyName || '',
-    propertyId: t.property_id || t.property_uuid || t.propertyId || 0,
-    unitId: t.unit_id || t.unit_uuid || t.unitId || 0,
+    unitTurnId: t.unit_turn_id || t.UnitTurnId || t.unit_turn_uuid || t.UnitTurnUUID || t.unitTurnId || t.id || '',
+    unit: t.unit || t.Unit || t.unit_name || t.UnitName || t.unit_number || t.UnitNumber || t.unitName || '',
+    property: t.property || t.Property || t.property_name || t.PropertyName || t.property_name_address || t.propertyName || '',
+    propertyId: t.property_id || t.PropertyId || t.property_uuid || t.PropertyUUID || t.propertyId || 0,
+    unitId: t.unit_id || t.UnitId || t.unit_uuid || t.UnitUUID || t.unitId || 0,
     notes: t.notes || '',
     referenceUser: t.reference_user || t.referenceUser || t.created_by || '',
     moveOut: moveOut,
+    moveOutDateKey: moveOutDateKey,
     turnEnd: turnEnd,
     expectedMoveIn: t.expected_move_in_date || t.expected_move_in || t.expectedMoveIn || '',
     targetDays: parseInt(t.target_days_to_complete || t.targetDays || 0, 10) || 0,
@@ -19392,10 +19398,10 @@ function computeWOCloseAssistRows() {
     var bestBillScore = billMatches.length > 0 ? amountToNumber(billMatches[0].matchScore || 0) : 0;
     if (hasVendor && billMatches.length > 0 && bestBillScore >= 70) {
       confidence = 'High';
-      suggestion = 'Likely completed — verify and close';
+      suggestion = 'Likely completed — verify work-order status';
     } else if (hasVendor && billMatches.length > 0) {
       confidence = 'Medium';
-      suggestion = 'Possible vendor/property match — review bill details and close if complete';
+      suggestion = 'Possible vendor/property match — review bill details and confirm completion';
     } else if (hasVendor && ageDays >= 60) {
       confidence = 'Medium';
       suggestion = 'Vendor assigned but no AP match — follow up with vendor';
@@ -19498,12 +19504,23 @@ async function loadClosureCandidates() {
       if (status && (status.stage === 'stage1_complete' || status.stage === 'failed' || status.stage === 'stage2_approved')) break;
     }
 
-    var c = await localApiRequest('/api/local/auto_closure/candidates?limit=1000');
-    CLOSURE_CANDIDATES = (c && Array.isArray(c.data)) ? c.data : [];
+    var candidateRows = [];
+    var candidateOffset = 0;
+    var candidateTotal = Infinity;
+    while (candidateOffset < candidateTotal) {
+      var c = await localApiRequest('/api/local/auto_closure/candidates?limit=500&offset=' + candidateOffset);
+      var pageRows = (c && Array.isArray(c.data)) ? c.data : [];
+      candidateRows = candidateRows.concat(pageRows);
+      var reportedTotal = Number(c && c.meta && c.meta.total);
+      candidateTotal = Number.isFinite(reportedTotal) ? reportedTotal : candidateRows.length;
+      if (pageRows.length < 500 || candidateRows.length >= candidateTotal) break;
+      candidateOffset += pageRows.length;
+    }
+    CLOSURE_CANDIDATES = candidateRows;
     CLOSURE_CANDIDATES_LOADED = true;
     woCloseAssist.currentPage = 0;
     renderWOCloseAssist();
-    showToast('Matching complete — ' + CLOSURE_CANDIDATES.length + ' candidate(s)', { kind: 'success' });
+    showToast('Matching complete — ' + CLOSURE_CANDIDATES.length + ' bill-match recommendation(s)', { kind: 'success' });
     return true;
   } catch (err) {
     showToast('Matching failed: ' + String((err && err.message) || err), { kind: 'danger' });
@@ -19523,14 +19540,14 @@ async function closeHighConfidence() {
     return;
   }
   var ids = high.map(function(c) { return c.id; });
-  if (!window.confirm('Close ' + ids.length + ' work order(s) with confidence 80+?')) return;
+  var workOrderCount = new Set(high.map(function(c) { return String(c.work_order_id || c.id || ''); })).size;
+  if (!window.confirm('Approve ' + ids.length + ' bill-match recommendation(s) across ' + workOrderCount + ' work order(s)? This does not close work orders in AppFolio.')) return;
   try {
     var res = await localApiRequest('/api/local/auto_closure/approve', { method: 'POST', body: { candidate_ids: ids, reviewed_by: 'bulk-high-confidence' } });
-    var approved = (res && res.approved) || ids.length;
-    showToast('Approved ' + approved + ' high-confidence work order(s)', { kind: 'success' });
+    showToast('Approval recorded for ' + ids.length + ' high-confidence bill-match recommendation(s) across ' + workOrderCount + ' work order(s)', { kind: 'success' });
     await loadClosureCandidates();
   } catch (err) {
-    showToast('Bulk close failed: ' + String((err && err.message) || err), { kind: 'danger' });
+    showToast('Bulk approval failed: ' + String((err && err.message) || err), { kind: 'danger' });
   }
 }
 
@@ -19546,28 +19563,37 @@ function renderWOCloseAssistBackend() {
   var container = $('#woCloseAssistContainer');
   if (!body || !summary || !pagination || !container) return;
 
-  var rows = CLOSURE_CANDIDATES.slice();
+  var candidates = CLOSURE_CANDIDATES.slice();
   if (currentWOCloseTier && currentWOCloseTier !== 'all') {
-    rows = rows.filter(function(c) { return String(c.confidence_tier || '').toLowerCase() === currentWOCloseTier; });
+    candidates = candidates.filter(function(c) { return String(c.confidence_tier || '').toLowerCase() === currentWOCloseTier; });
   }
 
+  var allGroups = groupClosureCandidates(CLOSURE_CANDIDATES);
+  var tierGroups = groupClosureCandidates(candidates);
+  var tierCandidateIds = new Set(candidates.map(function(candidate) { return String(candidate.id || ''); }));
+  var groupsById = new Map(allGroups.map(function(group) { return [group.key, group]; }));
+  var rows = currentWOCloseTier && currentWOCloseTier !== 'all'
+    ? tierGroups.map(function(group) { return groupsById.get(group.key) || group; })
+    : allGroups;
+
   var tierCounts = { very_high: 0, high: 0, medium: 0, low: 0, none: 0 };
-  rows.forEach(function(c) {
+  candidates.forEach(function(c) {
     var t = String(c.confidence_tier || 'none').toLowerCase();
     if (tierCounts[t] !== undefined) tierCounts[t]++;
   });
-  summary.textContent = rows.length + ' candidate(s) • Very High: ' + tierCounts.very_high +
+  summary.textContent = rows.length + ' work order(s) shown • ' + candidates.length + ' matching bill recommendation(s) • Very High: ' + tierCounts.very_high +
     ' • High: ' + tierCounts.high + ' • Medium: ' + tierCounts.medium +
     ' • Low/None: ' + (tierCounts.low + tierCounts.none) +
-    (currentWOCloseTier !== 'all' ? ' • (filtered: ' + confidenceTierMeta(currentWOCloseTier).label + ')' : '');
+    (currentWOCloseTier !== 'all' ? ' • Filter: ' + confidenceTierMeta(currentWOCloseTier).label : '');
 
   if (rows.length === 0) {
-    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">No candidates match the current tier filter. Click “Run Matching” to (re)generate matches.</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">No work orders match the current tier filter. Click “Run Matching” to (re)generate matches.</td></tr>';
     pagination.innerHTML = '';
     woCloseAssist.currentPage = 0;
     return;
   }
 
+  // Group first, then paginate so bill matches for one work order never split across pages.
   var totalPages = Math.max(1, Math.ceil(rows.length / woCloseAssist.pageSize));
   if (woCloseAssist.currentPage >= totalPages) woCloseAssist.currentPage = totalPages - 1;
   if (woCloseAssist.currentPage < 0) woCloseAssist.currentPage = 0;
@@ -19575,46 +19601,61 @@ function renderWOCloseAssistBackend() {
   var pageItems = rows.slice(start, start + woCloseAssist.pageSize);
 
   var html = '';
-  pageItems.forEach(function(c) {
+  pageItems.forEach(function(group, pageIndex) {
+    var orderedCandidates = group.candidates.slice().sort(function(a, b) {
+      return (Number(b.confidence_score) || 0) - (Number(a.confidence_score) || 0);
+    });
+    var c = orderedCandidates[0] || {};
+    var tierCandidates = currentWOCloseTier && currentWOCloseTier !== 'all'
+      ? orderedCandidates.filter(function(candidate) { return tierCandidateIds.has(String(candidate.id || '')); })
+      : orderedCandidates;
+    if (tierCandidates.length) c = tierCandidates[0];
     var woId = String(c.work_order_id || '');
-    var tierKey = String(c.confidence_tier || 'none').toLowerCase();
-    var flags = matchFlagLabels(c.match_flags);
-    var billId = String(c.bill_id || '');
-    var billLabel = String(c.bill_number || c.bill_id || 'Bill');
+    var tierOrder = { very_high: 5, high: 4, medium: 3, low: 2, none: 1 };
+    var bestTierCandidate = tierCandidates.reduce(function(best, candidate) {
+      return (tierOrder[String(candidate.confidence_tier || 'none').toLowerCase()] || 0) >
+        (tierOrder[String(best.confidence_tier || 'none').toLowerCase()] || 0) ? candidate : best;
+    }, c);
+    var tierKey = String(bestTierCandidate.confidence_tier || 'none').toLowerCase();
+    var flags = Array.from(new Set(orderedCandidates.reduce(function(all, candidate) {
+      return all.concat(matchFlagLabels(candidate.match_flags));
+    }, [])));
+    var detailKey = String(start + pageIndex);
     var ageDays = c.wo_created_at ? daysBetween(new Date(c.wo_created_at), new Date()) : null;
-    var billAmt = (c.bill_total_amount != null && c.bill_total_amount !== '') ? currency(c.bill_total_amount) : '';
-    var suggestion = tierKey === 'very_high' ? 'Close' : tierKey === 'high' ? 'Verify & close' : tierKey === 'medium' ? 'Review bill' : 'Insufficient evidence';
+    var vendors = Array.from(new Set(orderedCandidates.map(function(candidate) { return String(candidate.vendor_name || '').trim(); }).filter(Boolean)));
+    var suggestion = tierKey === 'very_high' || tierKey === 'high' ? 'Review recommendation' : tierKey === 'medium' ? 'Review bill evidence' : 'Insufficient evidence';
 
-    var billEvidence = billId
-      ? '<div style="display:flex;flex-direction:column;gap:3px">' +
-          '<span style="font-family:var(--font-mono);font-size:11px;font-weight:600">' + escapeHtml(billLabel) + '</span>' +
-          '<span style="font-size:10px;color:var(--text-muted)">' + escapeHtml(String(c.vendor_name || '')) + '</span>' +
-          (billAmt ? '<span style="font-size:10px;color:var(--text-muted)">' + billAmt + '</span>' : '') +
-        '</div>'
-      : '<span style="color:var(--text-muted)">—</span>';
+    var billEvidence = '<div style="display:flex;flex-direction:column;gap:5px">' + orderedCandidates.map(function(candidate) {
+      var billId = String(candidate.bill_id || '');
+      var billLabel = String(candidate.bill_number || candidate.bill_id || 'Bill');
+      var billAmt = (candidate.bill_total_amount != null && candidate.bill_total_amount !== '') ? currency(candidate.bill_total_amount) : '';
+      return '<div style="display:flex;flex-direction:column;gap:2px;padding-bottom:4px;border-bottom:1px solid var(--border)">' +
+        (billId
+          ? '<button class="action-btn" data-billopen="' + escapeHtml(billId) + '" style="padding:2px 6px;text-align:left;font-family:var(--font-mono);font-size:11px">' + escapeHtml(billLabel) + '</button>'
+          : '<span style="font-family:var(--font-mono);font-size:11px;font-weight:600">' + escapeHtml(billLabel) + '</span>') +
+        '<span style="font-size:10px;color:var(--text-muted)">' + escapeHtml(String(candidate.vendor_name || '')) +
+        (billAmt ? ' • ' + billAmt : '') + ' • ' + escapeHtml(confidenceTierMeta(candidate.confidence_tier).label) +
+        (candidate.confidence_score != null ? ' (' + escapeHtml(String(candidate.confidence_score)) + ')' : '') + '</span></div>';
+    }).join('') + '</div>';
 
     html += '<tr style="cursor:pointer">';
     html += '<td><button class="action-btn" data-woid="' + escapeHtml(woId) + '" style="padding:2px 8px">#' + escapeHtml(woId) + '</button></td>';
     html += '<td>' + escapeHtml(c.property_name || '—') + '</td>';
     html += '<td>' + escapeHtml(c.unit_id || '—') + '</td>';
     html += '<td>' + (ageDays != null ? (ageDays + 'd') : '—') + '</td>';
-    html += '<td>' + escapeHtml(c.vendor_name || '—') + '</td>';
+    html += '<td>' + escapeHtml(vendors.join(', ') || '—') + '</td>';
     html += '<td>' + billEvidence + '</td>';
-    html += '<td>' + confidenceTierBadge(c.confidence_tier, c.confidence_score) + '</td>';
+    html += '<td>' + confidenceTierBadge(bestTierCandidate.confidence_tier, bestTierCandidate.confidence_score) +
+      (orderedCandidates.length > 1 ? '<div style="font-size:10px;color:var(--text-muted);margin-top:3px">' + orderedCandidates.length + ' bill matches</div>' : '') + '</td>';
     html += '<td>' + escapeHtml(suggestion) + '</td>';
     html += '<td style="white-space:nowrap">' +
-      '<button class="action-btn" data-woca-toggle="' + escapeHtml(woId) + '" style="padding:2px 8px;margin-right:4px" title="Show match flags"><i class="fas fa-list-ul"></i> Details</button>' +
-      (billId ? '<button class="action-btn" data-billopen="' + escapeHtml(billId) + '" style="padding:2px 8px" title="Open bill">Bill</button>' : '') +
+      '<button class="action-btn" data-woca-toggle="' + escapeHtml(detailKey) + '" style="padding:2px 8px;margin-right:4px" title="Show match flags"><i class="fas fa-list-ul"></i> Details</button>' +
       '</td>';
     html += '</tr>';
-    html += '<tr id="woca-detail-' + escapeHtml(woId) + '" style="display:none"><td colspan="9" style="background:var(--bg-secondary);border-top:none">' +
+    html += '<tr id="woca-detail-' + escapeHtml(detailKey) + '" style="display:none"><td colspan="9" style="background:var(--bg-secondary);border-top:none">' +
       '<div style="padding:8px 14px;font-size:12px">' +
-      '<div style="font-weight:600;margin-bottom:6px;color:var(--text-primary)">Match flags' +
-        (c.confidence_score != null && c.confidence_score !== '' ? ' <span style="color:var(--text-muted);font-weight:500">(score ' + escapeHtml(String(c.confidence_score)) + ')</span>' : '') +
-        '</div>' +
-        (flags.length
-          ? '<div style="display:flex;flex-wrap:wrap;gap:6px">' + flags.map(function(f) { return '<span class="tag" style="margin:0">' + escapeHtml(f) + '</span>'; }).join('') + '</div>'
-          : '<span style="color:var(--text-muted)">No matched flags recorded.</span>') +
+      '<div style="font-weight:600;margin-bottom:6px;color:var(--text-primary)">Combined match signals across ' + orderedCandidates.length + ' bill-match recommendation(s)</div>' +
+        (flags.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px">' + flags.map(function(f) { return '<span class="tag" style="margin:0">' + escapeHtml(f) + '</span>'; }).join('') + '</div>' : '<span style="color:var(--text-muted)">No matched flags recorded.</span>') +
       '</div></td></tr>';
   });
 
@@ -19662,7 +19703,7 @@ function renderWOCloseAssistLegacy() {
   var rows = computeWOCloseAssistRows();
   var hi = rows.filter(function(r) { return r.confidence === 'High'; }).length;
   var med = rows.filter(function(r) { return r.confidence === 'Medium'; }).length;
-  summary.textContent = rows.length + ' candidate(s) • High: ' + hi + ' • Medium: ' + med +
+  summary.textContent = rows.length + ' work order(s) • High: ' + hi + ' • Medium: ' + med +
     (BILLS.length > 0 ? ' • AP bills: ' + BILLS.length : ' • AP bills: none loaded — click Refresh AP for evidence');
 
   if (rows.length === 0) {
@@ -19818,7 +19859,7 @@ function showWOCloseAssistModal(r) {
           '<div style="grid-column:1/-1"><span class="u-label-muted">Description</span><div style="margin-top:2px">' + escapeHtml(desc) + '</div></div>' +
           '<div><span class="u-label-muted">Assigned To</span><div style="margin-top:2px;font-weight:600">' + escapeHtml(assignee) + '</div></div>' +
           '<div><span class="u-label-muted">Confidence</span><div style="margin-top:2px;font-weight:700;color:' + confColor + '">' + escapeHtml(r.confidence) + '</div></div>' +
-          '<div style="grid-column:1/-1"><span class="u-label-muted">Suggestion</span><div style="margin-top:2px;color:var(--accent)">' + escapeHtml(r.suggestion) + '</div></div>' +
+          '<div style="grid-column:1/-1"><span class="u-label-muted">Suggested next step</span><div style="margin-top:2px;color:var(--accent)">' + escapeHtml(String(r.suggestion || '').replace(/close/ig, 'review closure')) + '</div></div>' +
           '<div style="grid-column:1/-1"><span class="u-label-muted">Matched Bill</span><div style="margin-top:2px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">' +
             '<span style="font-weight:600">' + escapeHtml(bestBillLabel) + '</span>' +
             (bestBillRef ? '<span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">Ref: ' + escapeHtml(bestBillRef) + '</span>' : '') +
@@ -19843,7 +19884,7 @@ function showWOCloseAssistModal(r) {
     // Pre-fill message
     var msgEl = overlay.querySelector('#wocaPagerMsg');
     if (msgEl) {
-      msgEl.value = 'Follow-up needed: WO #' + woId + ' (' + prop + (unit && unit !== '—' ? ', Unit ' + unit : '') + ') assigned to ' + assignee + ' has been open for ' + r.ageDays + ' days. Please update or close this work order.';
+      msgEl.value = 'Follow-up needed: WO #' + woId + ' (' + prop + (unit && unit !== '—' ? ', Unit ' + unit : '') + ') assigned to ' + assignee + ' has been open for ' + r.ageDays + ' days. Please update the work order status and confirm whether the work is complete.';
     }
 
     function closeModal() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
@@ -20660,6 +20701,32 @@ function buildTurnPipeline() {
   var today = new Date();
   var seenKeys = {};
   var autoClosedCandidates = [];
+  var mergedTurnSources = mergeTurnSources(
+    TURNS.map(function(turn) {
+      return {
+        source: 'native',
+        propertyId: turn.propertyId,
+        unitId: turn.unitId,
+        unitTurnId: turn.unitTurnId,
+        moveOutDate: turn.moveOutDateKey || turn.moveOut,
+        propertyName: turn.property,
+        unitName: turn.unit,
+        workOrders: [],
+      };
+    }).concat(UPCOMING_MOVEOUTS.map(function(moveOut) {
+      return {
+        source: 'moveout',
+        propertyId: moveOut.propertyId,
+        unitId: moveOut.unitId,
+        moveOutDate: moveOut.moveOut,
+        propertyName: moveOut.property,
+        unitName: moveOut.unit,
+        workOrders: [],
+      };
+    }))
+  );
+  var mergedTurnByOverlapKey = {};
+  mergedTurnSources.forEach(function(turn) { mergedTurnByOverlapKey[turn.overlapKey] = turn; });
 
   function isTurnWorkOrderCandidate(woLike, moveOutDate, source) {
     var createdLike = source === 'db'
@@ -20686,8 +20753,16 @@ function buildTurnPipeline() {
 
   // Helper: create a composite key for deduplication
   function makeKey(propId, unitId, moveOut) {
-    var k = String(propId || '') + '-' + String(unitId || '') + '-' + (moveOut || '');
+    var moveOutDate = moveOut ? String(moveOut).slice(0, 10) : '';
+    var k = String(propId || '') + '-' + String(unitId || '') + '-' + moveOutDate;
     return k === '--' ? null : k;
+  }
+
+  function mergeKeyForTurn(propId, unitId, moveOut) {
+    var dateKey = moveOut ? String(moveOut).slice(0, 10) : '';
+    var overlapKey = [String(propId || '').trim(), String(unitId || '').trim(), dateKey].join('|');
+    var merged = mergedTurnByOverlapKey[overlapKey];
+    return merged ? ('merged:' + merged.overlapKey) : makeKey(propId, unitId, moveOut);
   }
 
   // Helper: find matching WOs using tolerant matching (unit/property/date + optional unit_turn_id)
@@ -20761,14 +20836,17 @@ function buildTurnPipeline() {
       var dupe = wos.find(function(w) {
         return String(w.id) === idVal ||
           (next.dbApiId && String(w.dbApiId || '') === String(next.dbApiId)) ||
-          (next.woUuid && String(w.woUuid || '') === String(next.woUuid));
+          (next.woUuid && String(w.woUuid || '') === String(next.woUuid)) ||
+          (next.woNumber && String(w.woNumber || '') === String(next.woNumber));
       });
       if (!dupe) {
-        wos.push(next);
+        wos.push(Object.assign({ sourceKeys: [next.source || 'unknown'] }, next));
         return;
       }
       // Merge with DB status/source when available.
       if (next.source === 'db_api') dupe.source = 'db_api';
+      dupe.sourceKeys = dupe.sourceKeys || [];
+      if (next.source && dupe.sourceKeys.indexOf(next.source) === -1) dupe.sourceKeys.push(next.source);
       if (next.dbApiId) dupe.dbApiId = next.dbApiId;
       if (next.woUuid) dupe.woUuid = next.woUuid;
       if (next.status) dupe.status = next.status;
@@ -20776,6 +20854,7 @@ function buildTurnPipeline() {
       if (!dupe.created && next.created) dupe.created = next.created;
       if (!dupe.vendor && next.vendor) dupe.vendor = next.vendor;
       if (!dupe.priority && next.priority) dupe.priority = next.priority;
+      if (!dupe.unitTurnId && next.unitTurnId) dupe.unitTurnId = next.unitTurnId;
     }
 
     WORK_ORDERS.forEach(function(wo) {
@@ -21197,7 +21276,7 @@ function buildTurnPipeline() {
   // PASS 1: Add all turns from unit_turn_detail report
   TURNS.forEach(function(turn) {
     if (!isInEffectivePropertyScope(turn.propertyId, turn.property)) return;
-    var key = makeKey(turn.propertyId, turn.unitId, turn.moveOut) ||
+    var key = mergeKeyForTurn(turn.propertyId, turn.unitId, turn.moveOutDateKey || turn.moveOut) ||
               turn.unitTurnId || (turn.unit + '|' + turn.property);
     addEntry(key, turn.unit, turn.property, turn.propertyId, turn.unitId, turn.moveOut, turn, '');
   });
@@ -21205,7 +21284,7 @@ function buildTurnPipeline() {
   // PASS 2: Add upcoming move-outs not already in pipeline (the "Upcoming" phase)
   UPCOMING_MOVEOUTS.forEach(function(mo) {
     if (!isInEffectivePropertyScope(mo.propertyId, mo.property)) return;
-    var key = makeKey(mo.propertyId, mo.unitId, mo.moveOut);
+    var key = mergeKeyForTurn(mo.propertyId, mo.unitId, mo.moveOut);
     if (!key || seenKeys[key]) return;
     addEntry(key, mo.unit, mo.property, mo.propertyId, mo.unitId, mo.moveOut, null, mo.tenant);
   });
@@ -24731,11 +24810,6 @@ function wireUpUI() {
   // WO dropdown filters
   $('#woSearch').addEventListener('input', debounce(async function() {
     var searchTerm = String($('#woSearch').value || '').trim();
-    if (currentWOTab === 'inactive') {
-      clearWorkOrderLookup();
-      renderWorkOrders();
-      return;
-    }
     await fetchWorkOrderLookup(searchTerm);
     renderWorkOrders();
   }, CONFIG.DEBOUNCE_MS));
@@ -27419,17 +27493,6 @@ renderDashboardKPIs = function() {
   if (pmUserClearBtn) pmUserClearBtn.addEventListener('click', clearPmUserForm);
   if (pmUserRefreshBtn) pmUserRefreshBtn.addEventListener('click', function() { loadPmUsers(); });
   
-  // Auto-load PM users on page load if proxy is available
-  function autoLoadPmUsers() {
-    if (pmUsersBody) {
-      loadPmUsers().catch(function() { /* silently ignore auto-load failures */ });
-    }
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { setTimeout(autoLoadPmUsers, 500); });
-  } else {
-    setTimeout(autoLoadPmUsers, 500);
-  }
   if (pmUsersBody) {
     pmUsersBody.addEventListener('click', function(ev) {
       var editBtn = ev.target.closest('.pm-edit');
@@ -27459,7 +27522,6 @@ renderDashboardKPIs = function() {
   populatePMGroupDropdown('');
   // Expose a re-populate hook so populateGroupFilters() can call it once groups load
   window._repopulatePMGroupDropdown = function() { populatePMGroupDropdown(''); };
-  loadPmUsers();
 
   // ── OTP Settings Panel ──────────────────────────────────────────────────
   (function initOtpSettings() {
@@ -27482,7 +27544,7 @@ renderDashboardKPIs = function() {
     if (membershipCb) membershipCb.addEventListener('change', updateCheckboxLabels);
 
     function loadOtpSettings() {
-      localPmAdminRequest('/api/local/otp_settings').then(function(data) {
+      return localPmAdminRequest('/api/local/otp_settings').then(function(data) {
         var settings = (data && data.settings) || {};
         if (enabledCb) enabledCb.checked = settings.otp_enabled !== false;
         if (membershipCb) membershipCb.checked = settings.otp_require_pm_membership !== false;
@@ -27522,9 +27584,9 @@ renderDashboardKPIs = function() {
       }).finally(function() { saveBtn.disabled = false; });
     });
 
-    loadOtpSettings();
   })();
 
+  _authModule.refreshAdminPanels();
 })();
 
 // ═══════════════════════════════════════════════════════
@@ -27773,18 +27835,20 @@ var DISPATCH_BRANCHES = {
 // ── Config field definitions ────────────────────────────────────
 var DISPATCH_CONFIG_FIELDS = [
   { key:'warn_threshold_hours',        label:'Warning Threshold',       hint:'Hours inactive before 36-hr warning SMS',       type:'number', min:12,  max:47,  default:36, unit:'hours' },
-  { key:'reassign_threshold_hours',    label:'Reassignment Threshold',  hint:'Hours inactive before midnight auto-reassign',  type:'number', min:24,  max:120, default:48, unit:'hours' },
+  { key:'reassign_threshold_hours',    label:'Stale Assignment Threshold', hint:'Hours before midnight flags an assignment for review', type:'number', min:24, max:120, default:48, unit:'hours' },
   { key:'go_back_tolerance_pct',       label:'Go-Back Forgiveness',     hint:'Go-back % at or below this gets no penalty',    type:'number', min:0,   max:10,  default:2,  unit:'%', step:0.5 },
   { key:'tier2_claim_window_hours',    label:'Tier 2 Claim Window',     hint:'Hours for Tier 2 to reply Y and claim',         type:'number', min:1,   max:48,  default:24, unit:'hours' },
   { key:'grace_period_enabled',        label:'Grace Period',            hint:'Allow one note-activity grace per WO',          type:'toggle', default:1 },
-  { key:'max_reassigns_before_escalate',label:'Escalation Trigger',    hint:'Reassignments before admin alert fires',        type:'number', min:1,   max:5,   default:2,  unit:'reassigns' },
+  { key:'max_reassigns_before_escalate',label:'Escalation Trigger',    hint:'Stale assignment flags before admin alert fires', type:'number', min:1, max:5, default:2, unit:'flags' },
   { key:'dispatch_auto_sync_assignees',label:'Auto Sync Assignees',    hint:'Automatically sync assignee roster when AppFolio assignment events arrive', type:'toggle', default:1 },
   { key:'dispatch_auto_sync_cooldown_sec',label:'Auto Sync Cooldown',  hint:'Minimum seconds between automatic assignee sync runs', type:'number', min:30, max:1800, default:120, unit:'sec' },
 ];
 
 // ── Audit event metadata ────────────────────────────────────────
 var AUDIT_EVENT_META = {
-  auto_reassigned:              { icon:'fa-random',          cls:'danger',  label:'Auto-Reassigned'       },
+  stale_assignment_flagged:     { icon:'fa-flag',             cls:'warning', label:'Stale Assignment Flagged' },
+  stale_assignment_escalated:   { icon:'fa-exclamation',      cls:'danger',  label:'Stale Assignment Escalated' },
+  auto_reassigned:              { icon:'fa-random',           cls:'muted',   label:'Legacy Auto-Reassigned' },
   reassignment_warning_sent:    { icon:'fa-bell',            cls:'warning', label:'Warning Sent'          },
   grace_period_granted:         { icon:'fa-hand-paper',      cls:'info',    label:'Grace Period Granted'  },
   auto_exempt_activated:        { icon:'fa-bell-slash',      cls:'muted',   label:'Exempt Activated'      },
@@ -28141,7 +28205,7 @@ function renderBranchQueue(branch, queue) {
     if(status==='exempt'&&!r.auto_exempt)return false;
     if(status==='escalated'&&!r.escalated)return false;
     if(status==='grace'&&!r.grace_used)return false;
-    if(status==='reassigned'&&!r.reassignment_count)return false;
+    if((status==='reassigned'||status==='flagged')&&!r.stale_flag_count&&!r.reassignment_count)return false;
     return true;
   });
   
@@ -28172,7 +28236,7 @@ function renderCombinedQueue(queue) {
     if(status==='exempt'&&!r.auto_exempt)return false;
     if(status==='escalated'&&!r.escalated)return false;
     if(status==='grace'&&!r.grace_used)return false;
-    if(status==='reassigned'&&!r.reassignment_count)return false;
+    if((status==='reassigned'||status==='flagged')&&!r.stale_flag_count&&!r.reassignment_count)return false;
     return true;
   });
   if(filtered.length===0){
@@ -28211,7 +28275,7 @@ function renderQueueRows(filtered) {
       '<td style="font-family:var(--font-mono);font-size:.8rem;color:var(--accent)">#'+woNum+'</td>'+
       '<td title="'+escapeHtml(r.property_address||'')+'">'+addr+'</td>'+
       '<td>'+tech+'<div style="font-size:.66rem;color:var(--text-muted);font-family:var(--font-mono)">'+branchLabel+'</div></td>'+
-      '<td>'+(Number(r.reassignment_count)>0?'<span style="background:var(--danger-dim);color:var(--danger);padding:1px 6px;border-radius:4px;font-family:var(--font-mono);font-size:.72rem;font-weight:700">'+r.reassignment_count+'×</span>':'<span style="color:var(--text-muted)">—</span>')+'</td>'+
+      '<td>'+(Number(r.stale_flag_count)>0?'<span title="Times flagged for review; no AppFolio reassignment is performed" style="background:var(--warning-dim);color:var(--warning);padding:1px 6px;border-radius:4px;font-family:var(--font-mono);font-size:.72rem;font-weight:700">'+r.stale_flag_count+'× flagged</span>':'<span style="color:var(--text-muted)">—</span>')+'</td>'+
       '<td style="font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted)">'+firstSeen+'</td>'+
       '<td style="font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted)">'+lastAct+'</td>'+
       '<td style="display:flex;gap:4px;flex-wrap:wrap">'+exemptBtn+monBtn+
@@ -28406,7 +28470,7 @@ function renderDispatchConfig(configRows) {
   if (!el) return;
   var configMap={};
   (configRows||[]).forEach(function(r){ configMap[r.key]=r.value; });
-  var pausedVal = Number(configMap.dispatch_paused || 0) === 1;
+  var pausedVal = !Object.prototype.hasOwnProperty.call(configMap, 'dispatch_paused') || ['1','true','yes','on','y'].indexOf(String(configMap.dispatch_paused || '').trim().toLowerCase()) !== -1;
   DISPATCH.paused = pausedVal;
   var savedTier1 = localStorage.getItem('hm_dispatch_tier1_group_uuid') || configMap.dispatch_tier1_group_uuid || DISPATCH.tier1GroupUuid || DISPATCH_BRANCHES.phoenix.uuid;
   var savedTier2 = localStorage.getItem('hm_dispatch_tier2_group_uuid') || configMap.dispatch_tier2_group_uuid || DISPATCH.tier2GroupUuid || DISPATCH_BRANCHES.tucson.uuid;
@@ -28425,7 +28489,7 @@ function renderDispatchConfig(configRows) {
   var html=
     '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap">'+
     '<div><label style="font-weight:700;font-size:.85rem;display:block">Automation Kill Switch</label>'+
-    '<span style="font-size:.72rem;color:var(--text-muted)">Pause all reassignment automation immediately from GUI.</span></div>'+
+    '<span style="font-size:.72rem;color:var(--text-muted)">Pause scheduled dispatch warnings and reassignment recommendations. Does not change AppFolio assignments.</span></div>'+
     '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+
       '<span id="dispatchPauseState" style="font-family:var(--font-mono);font-size:.72rem;padding:3px 8px;border-radius:999px;background:'+(pausedVal?'var(--danger-dim)':'var(--success-dim)')+';color:'+(pausedVal?'var(--danger)':'var(--success)')+'">'+(pausedVal?'PAUSED':'RUNNING')+'</span>'+
       '<button class="'+(pausedVal?'btn-dispatch-primary':'btn-dispatch-warning')+' btn-xs-dispatch" onclick="DispatchConfig.togglePause()">'+(pausedVal?'<i class="fas fa-play"></i> Resume':'<i class="fas fa-pause"></i> Pause')+'</button>'+
@@ -28558,7 +28622,7 @@ function renderDispatchAudit(auditRows) {
     if(evtData.from&&evtData.to)parts.push(escapeHtml(evtData.from)+' → '+escapeHtml(evtData.to));
     if(evtData.tech)parts.push(escapeHtml(evtData.tech));
     if(evtData.address)parts.push(escapeHtml(String(evtData.address).substring(0,50)));
-    if(evtData.reassignment_count)parts.push('Reassign #'+evtData.reassignment_count);
+    if(evtData.stale_flag_count)parts.push('Flag #'+evtData.stale_flag_count+' · no AppFolio reassignment');
     if(evtData.techs_notified)parts.push(evtData.techs_notified+' techs notified');
     var iconBg={'danger':'var(--danger-dim)','warning':'var(--warning-dim)','success':'var(--success-dim)','info':'var(--info-dim)','muted':'var(--bg-input)'}[meta.cls]||'var(--bg-input)';
     html+='<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:.82rem">'+
@@ -29655,7 +29719,6 @@ var DispatchConfig = {
     }catch(e){v9Toast('Save failed',e.message,'danger');}
   },
   runCron: async function(action,btnEl) {
-    if(DISPATCH.paused){v9Toast('Automation paused','Resume automation before running cron passes','warning');return;}
     var secret=getDispatchCronSecret();
     if(!secret){v9Toast('Cron secret required','Enter CRON_SECRET in Config panel and Save first','warning');return;}
     var label=btnEl.innerHTML;
@@ -29665,17 +29728,21 @@ var DispatchConfig = {
     try {
       var data=await proxyPost(action,{},{'x-cron-secret':secret});
       var isOk=data.ok;
+      if (data.paused) {
+        DISPATCH.paused = true;
+        this.applyPauseUi();
+      }
       if(resultEl){
         resultEl.className='cron-result '+(isOk?'cron-result--ok':'cron-result--err');
         resultEl.style.display='';
         var isWarn=action.indexOf('warn')!==-1;
         resultEl.innerHTML=isOk
           ?'✅ <strong>'+escapeHtml(data.run||action)+'</strong> completed '+new Date().toLocaleTimeString()+
-            '<br>Candidates: '+(data.candidates||0)+' · '+(isWarn?'Warned: '+(data.warned||0):'Reassigned: '+(data.reassigned||0))+
+            '<br>Candidates: '+(data.candidates||0)+' · '+(data.paused?'Skipped: dispatch automation is paused':(isWarn?'Warnings flagged: '+(data.warned||0):'Stale assignments flagged: '+(data.flagged||0)))+
             ' · Skipped: '+(data.skipped||0)+(data.escalated>0?' · <span style="color:var(--danger)">🚨 Escalated: '+data.escalated+'</span>':'')
           :'❌ Error: '+escapeHtml(data.error||'Unknown error');
       }
-      if(isOk)v9Toast(isWarn?'Warning pass complete':'Reassign pass complete',(isWarn?data.warned:data.reassigned)+' WOs processed','success');
+      if(isOk)v9Toast(data.paused?'Dispatch automation paused':(isWarn?'Warning pass complete':'Stale assignment pass complete'),data.paused?'No dispatch actions were processed':(isWarn?data.warned:data.flagged)+' work orders flagged','success');
       else v9Toast('Cron failed',data.error,'danger');
       DispatchControl.refresh();
     }catch(e){
@@ -29996,7 +30063,7 @@ var DispatchControl = {
       var newAudit=(data.audit||[]).filter(function(a){return a.id&&a.id>DISPATCH._lastAuditMax;});
       if(newAudit.length>0){
         DISPATCH._lastAuditMax=Math.max.apply(null,newAudit.map(function(a){return a.id||0;}));
-        var importantEvts=['auto_reassigned','auto_exempt_activated','tier2_blast_sent','escalation_tier2_blast'];
+        var importantEvts=['stale_assignment_flagged','stale_assignment_escalated','pre_reassign_warning','auto_reassigned','auto_exempt_activated','tier2_blast_sent','escalation_tier2_blast'];
         newAudit.forEach(function(a){
           if(importantEvts.indexOf(a.event_type)===-1)return;
           var meta=AUDIT_EVENT_META[a.event_type];
@@ -30074,7 +30141,7 @@ var LIVE_TOAST_EVENTS = [
   'work_order.cancelled','work_order.assigned','unit_turn.completed',
   'tenant.move_out','tenant.move_in','tenant.notice_given',
   'lease.renewed','bill.approved',
-  'auto_reassigned','auto_exempt_activated','tier2_blast_sent','escalation_tier2_blast',
+  'stale_assignment_flagged','stale_assignment_escalated','auto_reassigned','auto_exempt_activated','tier2_blast_sent','escalation_tier2_blast',
 ];
 
 // ── Description builders ────────────────────────────────────────

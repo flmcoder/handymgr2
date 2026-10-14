@@ -33,6 +33,7 @@ import {
 } from '../schema.ts';
 import { normalizeBillSyncRow } from './billSyncPolicy.ts';
 import { normalizeTenantDirectoryRow } from './tenantDirectoryPolicy.ts';
+import { normalizeUnitTurnDetail } from '../turnMappingPolicy.ts';
 
 type GroupCatalogEntry = { id: string; uuid: string; name: string };
 
@@ -783,12 +784,13 @@ export async function upsertUnitTurnDetails(rows: any[]): Promise<UpsertResult> 
   let skipped = 0;
 
   for (const row of rows) {
-    const propertyId = asStr(row.property_id || row.PropertyId);
-    const unitId = asStr(row.unit_id || row.UnitId);
+    const normalized = normalizeUnitTurnDetail(row);
+    const propertyId = asStr(normalized.propertyId);
+    const unitId = asStr(normalized.unitId);
     const turnId = reportRowKey(
       row,
-      ['unit_turn_id', 'UnitTurnId'],
-      [propertyId, unitId, row.move_out_date || row.MoveOutDate, row.turn_end_date || row.TurnEndDate],
+      ['unit_turn_id', 'UnitTurnId', 'unit_turn_uuid', 'UnitTurnUUID'],
+      [propertyId, unitId, normalized.moveOutDate, normalized.turnEndDate],
     );
 
     await db
@@ -796,16 +798,16 @@ export async function upsertUnitTurnDetails(rows: any[]): Promise<UpsertResult> 
       .values({
         turnId,
         propertyId,
-        propertyName: asStr(row.property || row.Property || row.property_name || row.PropertyName),
+        propertyName: asStr(normalized.propertyName),
         unitId,
-        unitName: asStr(row.unit || row.Unit || row.unit_name || row.UnitName),
+        unitName: asStr(normalized.unitName),
         notes: asStr(row.notes || row.Notes),
         referenceUser: asStr(row.reference_user || row.ReferenceUser),
-        moveOutDate: asDate(row.move_out_date || row.MoveOutDate),
-        turnEndDate: asDate(row.turn_end_date || row.TurnEndDate),
-        expectedMoveInDate: asDate(row.expected_move_in_date || row.ExpectedMoveInDate),
-        targetDaysToComplete: row.target_days_to_complete != null ? Math.round(Number(row.target_days_to_complete)) : asNum(row.target_days_to_complete),
-        totalDaysToComplete: row.total_days_to_complete != null ? Math.round(Number(row.total_days_to_complete)) : asNum(row.total_days_to_complete),
+        moveOutDate: asDate(normalized.moveOutDate),
+        turnEndDate: asDate(normalized.turnEndDate),
+        expectedMoveInDate: asDate(normalized.expectedMoveInDate),
+        targetDaysToComplete: row.target_days_to_complete != null ? Math.round(Number(row.target_days_to_complete)) : asNum(row.TargetDaysToComplete),
+        totalDaysToComplete: row.total_days_to_complete != null ? Math.round(Number(row.total_days_to_complete)) : asNum(row.TotalDaysToComplete),
         laborFromWorkOrders: asStr(row.labor_from_work_orders || row.LaborFromWorkOrders),
         purchaseOrdersFromWorkOrders: asStr(row.purchase_orders_from_work_orders || row.PurchaseOrdersFromWorkOrders),
         billablesFromWorkOrders: asStr(row.billables_from_work_orders || row.BillablesFromWorkOrders),

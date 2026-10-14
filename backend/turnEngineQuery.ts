@@ -3,7 +3,7 @@ import { propertyIdentityMatch } from './badgeCountsPolicy.ts';
 export const TURN_ENGINE_SQL = String.raw`
 with native_turns as (
   select
-    'native:' || d.turn_id as turn_key,
+    'unit:' || coalesce(d.property_id, '') || ':' || d.unit_id || ':' || to_char(d.move_out_date at time zone 'UTC', 'YYYY-MM-DD') as turn_key,
     d.turn_id as unit_turn_id,
     d.unit_id,
     d.property_id,
@@ -60,7 +60,7 @@ shadow_turns as (
     select 1
     from native_turns n
     where n.unit_id = o.unit_id
-      and n.move_out_date::date between o.move_out_date::date - 7 and o.move_out_date::date + 7
+      and n.move_out_date::date = o.move_out_date::date
   )
 ),
 turn_candidates as (

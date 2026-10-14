@@ -11,6 +11,11 @@ test('turn engine unions native and occupancy-derived shadow turns', () => {
   assert.match(TURN_ENGINE_SQL, /appfolio_tenant_directory/i);
 });
 
+test('native turn and same-unit same-date move-out notice produce one canonical turn identity', () => {
+  assert.match(TURN_ENGINE_SQL, /'unit:'\s*\|\|\s*coalesce\(d\.property_id, ''\)\s*\|\|\s*':'\s*\|\|\s*d\.unit_id\s*\|\|\s*':'\s*\|\|\s*to_char\(d\.move_out_date at time zone 'UTC', 'YYYY-MM-DD'\)/i);
+  assert.match(TURN_ENGINE_SQL, /n\.move_out_date::date\s*=\s*o\.move_out_date::date/i);
+});
+
 test('work-order sweep is bounded by move-out and next move-in', () => {
   assert.match(TURN_ENGINE_SQL, /wo\.unit_id\s*=\s*tb\.unit_id/i);
   assert.match(TURN_ENGINE_SQL, /wo\.created_at\s*>?=\s*tb\.move_out_date/i);

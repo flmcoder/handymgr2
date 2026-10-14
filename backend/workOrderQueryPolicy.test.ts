@@ -6,6 +6,7 @@ import {
   buildWorkOrderPagination,
   resolveExactWorkOrderReference,
   resolveWorkOrderLookupSearch,
+  resolveWorkOrderStatusScope,
   resolveWorkOrderHistoryDays,
 } from './workOrderQueryPolicy.ts';
 
@@ -100,6 +101,12 @@ test('global work-order lookup bounds oversized search terms', () => {
   assert.equal(resolveWorkOrderLookupSearch('x'.repeat(500)).length, 180);
 });
 
+test('work-order lookup status scope distinguishes active and inactive searches', () => {
+  assert.equal(resolveWorkOrderStatusScope('inactive'), 'inactive');
+  assert.equal(resolveWorkOrderStatusScope('completed'), 'active');
+  assert.equal(resolveWorkOrderStatusScope(undefined), 'active');
+});
+
 test('cross-group lookup accepts only explicit work-order references', () => {
   assert.equal(resolveExactWorkOrderReference('#WO-554'), 'WO-554');
   assert.equal(resolveExactWorkOrderReference('554'), '554');
@@ -122,6 +129,22 @@ test('work-order endpoint keeps default scope and redacts global lookup rows', a
   assert.match(route, /case when can_open then raw_json else '\{\}'::jsonb end as raw_json/i);
   assert.match(route, /global_search_result/);
   assert.doesNotMatch(route, /appfolio_work_orders\.property_name/);
+  assert.match(route, /resolveWorkOrderStatusScope\(req\.query\.status_scope\)/);
+  assert.match(route, /and \$\{statusScopeSql\}/);
+});
+
+test('work-order frontend searches the server across active and inactive status scopes', async () => {
+  const source = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+  const lookupStart = source.indexOf('async function fetchWorkOrderLookup(');
+  const lookupEnd = source.indexOf('async function fetchInactiveWorkOrders(', lookupStart);
+  const lookup = source.slice(lookupStart, lookupEnd);
+  const searchBindingStart = source.indexOf("$('#woSearch').addEventListener('input'");
+  const searchBindingEnd = source.indexOf("if ($('#woPriorityFilter'))", searchBindingStart);
+  const searchBinding = source.slice(searchBindingStart, searchBindingEnd);
+
+  assert.match(lookup, /status_scope=' \+ encodeURIComponent\(currentWOTab === 'inactive' \? 'inactive' : 'active'\)/);
+  assert.match(searchBinding, /await fetchWorkOrderLookup\(searchTerm\)/);
+  assert.doesNotMatch(searchBinding, /currentWOTab === 'inactive'[\s\S]{0,100}clearWorkOrderLookup\(\)/);
 });
 
 test('PM work-order detail endpoints enforce scope after global lookup', async () => {

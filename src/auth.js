@@ -4,6 +4,13 @@ export function createAuthModule(deps) {
   var getProxyUrl = deps.getProxyUrl;
   var getNavigatorPlatform = deps.getNavigatorPlatform;
 
+  function refreshAdminPanels() {
+    if (!deps.isSessionReady()) return Promise.resolve();
+    var role = deps.getAccessRole();
+    if (role !== 'full' && role !== 'manager') return Promise.resolve();
+    return Promise.all([deps.loadPmUsers(), deps.loadOtpSettings()]);
+  }
+
   function normalizeOtpEmail(raw) {
     var email = String(raw || '').trim().toLowerCase();
     if (!email) return '';
@@ -173,6 +180,7 @@ export function createAuthModule(deps) {
   }
 
   return {
+    refreshAdminPanels: refreshAdminPanels,
     normalizeOtpEmail: normalizeOtpEmail,
     extractUsPhoneDigits: extractUsPhoneDigits,
     normalizeOtpPhone: normalizeOtpPhone,
