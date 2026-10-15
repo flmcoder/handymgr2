@@ -20,9 +20,10 @@ import {
   extractReportRows,
   shouldHydrateReport,
 } from './reportCachePolicy';
-import { filterBillsForPropertyScope, resolveBillScope } from './billScopePolicy';
+import { filterBillsForPropertyScope, normalizeRequestedScopeIds, resolveBillScope } from './billScopePolicy';
 import { enforceScopedSession } from './scopedSessionGuard';
 import { isClientAbortError } from './requestErrorPolicy';
+import { splitSqlStatements } from './sqlMigrationPolicy';
 import { buildRequestedSyncEndpoints, runSequentially } from './syncSchedulerPolicy';
 import { formatSyncSummaryLine, shouldLogSyncSummary } from './logNoisePolicy';
 import {
@@ -40,7 +41,7 @@ import {
 import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { buildDispatchReassignmentKey, executeDispatchCron, isDispatchAutomationPaused, resolveDispatchVersion } from './dispatchCronPolicy';
-import { buildWorkOrderPagination, resolveExactWorkOrderReference, resolveWorkOrderHistoryDays, resolveWorkOrderLookupSearch, resolveWorkOrderStatusScope } from './workOrderQueryPolicy';
+import { buildLocalWorkOrdersCountQuery, buildLocalWorkOrdersQuery, buildWorkOrderPagination, buildWorkOrderStatusScopeSql, resolveExactWorkOrderReference, resolveWorkOrderHistoryDays, resolveWorkOrderLookupSearch, resolveWorkOrderStatusScope } from './workOrderQueryPolicy';
 import { TURN_ENGINE_SQL } from './turnEngineQuery';
 import { upsertTurnTracker } from './sync/repositories';
 import { tenantDirectoryPropertyMatchSql } from './sync/tenantDirectoryPolicy';
@@ -591,16 +592,13 @@ function sanitizeSyncEndpoints(
 }
 
 function parsePropertyGroupId(value: unknown): string {
-  const raw = String(value ?? '').trim();
-  if (!raw) return '';
-  // Accept single values or comma-delimited lists; single-group callers use
-  // the first entry, union scopes use parsePropertyGroupIds below.
-  const first = raw.split(',').map((v) => v.trim()).find(Boolean);
-  return String(first || '');
+  // Single-group callers use the first entry; union scopes use parsePropertyGroupIds.
+  return parsePropertyGroupIds(value)[0] || '';
 }
 
+/** Requested group set; "All Groups" sentinels resolve to an empty (unrestricted) set. */
 function parsePropertyGroupIds(value: unknown): string[] {
-  return deviceAuthHandlers.parseScopeUuidSet(value);
+  return normalizeRequestedScopeIds(deviceAuthHandlers.parseScopeUuidSet(value));
 }
 
 function getRequestedPropertyGroupId(req: Request): string {
@@ -863,47 +861,36 @@ const reportHydrationInFlight = new Map<string, Promise<void>>();
 let propertyGroupsTableEnsured = false;
 let syncDriftMigrationApplied = false;
 let workOrderCreatedAtBackfillApplied = false;
+let workOrderV0ColumnsRepairApplied = false;
 
-async function applyWorkOrderCreatedAtBackfill(): Promise<void> {
-  if (workOrderCreatedAtBackfillApplied) return;
-
-  const migrationUrl = new URL('../db/migrations/2026-09-10_work_orders_created_at_backfill.sql', import.meta.url);
-  const rawSql = await readFile(migrationUrl, 'utf8');
-  const statements = rawSql
-    .split('\n')
-    .filter((line) => !line.trim().startsWith('--'))
-    .join('\n')
-    .split(/;\s*\n/)
-    .map((statement) => statement.trim())
-    .filter(Boolean);
-
+async function runMigrationFile(fileName: string): Promise<number> {
+  const rawSql = await readFile(new URL(`../db/migrations/${fileName}`, import.meta.url), 'utf8');
+  const statements = splitSqlStatements(rawSql);
   for (const statement of statements) {
     await queryClient.unsafe(statement);
   }
+  return statements.length;
+}
 
+async function applyWorkOrderV0ColumnsRepair(): Promise<void> {
+  if (workOrderV0ColumnsRepairApplied) return;
+  const count = await runMigrationFile('2026-10-15_work_orders_v0_columns_repair.sql');
+  workOrderV0ColumnsRepairApplied = true;
+  console.log(`[server:migration] applied work order v0 column repair (${count} statements)`);
+}
+
+async function applyWorkOrderCreatedAtBackfill(): Promise<void> {
+  if (workOrderCreatedAtBackfillApplied) return;
+  const count = await runMigrationFile('2026-09-10_work_orders_created_at_backfill.sql');
   workOrderCreatedAtBackfillApplied = true;
-  console.log(`[server:migration] applied work order created_at backfill (${statements.length} statements)`);
+  console.log(`[server:migration] applied work order created_at backfill (${count} statements)`);
 }
 
 async function applySyncDriftMigration(): Promise<void> {
   if (syncDriftMigrationApplied) return;
-
-  const migrationUrl = new URL('../db/migrations/2026-08-30_postgres_v2_sync_drift_repair.sql', import.meta.url);
-  const rawSql = await readFile(migrationUrl, 'utf8');
-  const statements = rawSql
-    .split('\n')
-    .filter((line) => !line.trim().startsWith('--'))
-    .join('\n')
-    .split(/;\s*\n/)
-    .map((statement) => statement.trim())
-    .filter(Boolean);
-
-  for (const statement of statements) {
-    await queryClient.unsafe(statement);
-  }
-
+  const count = await runMigrationFile('2026-08-30_postgres_v2_sync_drift_repair.sql');
   syncDriftMigrationApplied = true;
-  console.log(`[server:migration] applied v2 sync drift repair (${statements.length} statements)`);
+  console.log(`[server:migration] applied v2 sync drift repair (${count} statements)`);
 }
 
 async function ensureReportLatencyPolicyTable(): Promise<void> {
@@ -6154,9 +6141,7 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
     const enforcedScopeIds = getEnforcedPropertyGroupFilters(req);
     const searchQuery = resolveWorkOrderLookupSearch(req.query.search);
     const statusScope = resolveWorkOrderStatusScope(req.query.status_scope);
-    const statusScopeSql = statusScope === 'inactive'
-      ? `(coalesce(lower(wo.status), '') like '%completed%' or coalesce(lower(wo.status), '') like '%cancel%' or coalesce(lower(wo.status), '') like '%no need to bill%')`
-      : OPEN_WORK_ORDER_STATUS_FILTER.replace(/\bstatus\b/g, 'wo.status');
+    const statusScopeSql = buildWorkOrderStatusScopeSql(statusScope, 'wo.status');
     const requestedStatusFilter = String(req.query.status_filter || '').trim();
     const statusFilter = requestedStatusFilter === 'all' || requestedStatusFilter === 'flagged' ? '' : requestedStatusFilter;
     const exactWorkOrderReference = resolveExactWorkOrderReference(searchQuery);
@@ -6292,106 +6277,18 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
       );
       searchTotal = Number((rows as any[])[0]?.search_total || 0) || 0;
     } else {
+      const listOptions = { scopeIds, statusScope, statusFilter, limit, offset };
       try {
-        rows = scopeIds.length
-          ? await queryClient`
-          select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-                 category, priority, status, assigned_user_id, assigned_user_name,
-                 vendor_id, vendor_name, estimated_amount, total_cost,
-                 created_at, updated_at, raw_json
-          from appfolio_work_orders
-          where (
-              property_group_id = ANY(${scopeIds}::text[])
-              or exists (
-                select 1 from appfolio_properties p
-                where p.id = appfolio_work_orders.property_id
-                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
-              )
-              or exists (
-                select 1 from appfolio_properties p
-                where p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
-                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
-              )
-            )
-             and (
-               ${statusScope === 'inactive'
-                 ? `coalesce(lower(status), '') like '%completed%' or coalesce(lower(status), '') like '%cancel%' or coalesce(lower(status), '') like '%no need to bill%'`
-                 : `coalesce(lower(status), '') not like '%completed%' and coalesce(lower(status), '') not like '%cancel%' and coalesce(lower(status), '') not like '%no need to bill%'`}
-             )
-             and (${statusFilter} = '' or coalesce(status, '') = ${statusFilter})
-           order by coalesce(updated_at, created_at) desc
-          limit ${limit}
-            offset ${offset}
-          `
-          : await queryClient`
-          select id, work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-                 category, priority, status, assigned_user_id, assigned_user_name,
-                 vendor_id, vendor_name, estimated_amount, total_cost,
-                 created_at, updated_at, raw_json
-          from appfolio_work_orders
-          where (
-              ${statusScope === 'inactive'
-                ? `coalesce(lower(status), '') like '%completed%' or coalesce(lower(status), '') like '%cancel%' or coalesce(lower(status), '') like '%no need to bill%'`
-                : `coalesce(lower(status), '') not like '%completed%' and coalesce(lower(status), '') not like '%cancel%' and coalesce(lower(status), '') not like '%no need to bill%'`}
-             )
-             and (${statusFilter} = '' or coalesce(status, '') = ${statusFilter})
-           order by coalesce(updated_at, created_at) desc
-          limit ${limit}
-            offset ${offset}
-        `;
+        const query = buildLocalWorkOrdersQuery(listOptions);
+        rows = await queryClient.unsafe(query.sql, query.params as any[]);
       } catch (error) {
         const message = String((error as any)?.message || error || '');
         const code = String((error as any)?.code || '');
         if (!(code === '42703' && /work_order_uuid/i.test(message))) {
           throw error;
         }
-
-        rows = scopeIds.length
-          ? await queryClient`
-          select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-                 category, priority, status, assigned_user_id, assigned_user_name,
-                 vendor_id, vendor_name, estimated_amount, total_cost,
-                 created_at, updated_at, raw_json
-          from appfolio_work_orders
-          where (
-              property_group_id = ANY(${scopeIds}::text[])
-              or exists (
-                select 1 from appfolio_properties p
-                where p.id = appfolio_work_orders.property_id
-                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
-              )
-              or exists (
-                select 1 from appfolio_properties p
-                where p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
-                  and p.raw_json->'PropertyGroupIds' ?| ${scopeIds}::text[]
-              )
-            )
-             and (
-               coalesce(lower(status), '') not like '%completed%'
-               and coalesce(lower(status), '') not like '%cancel%'
-               and coalesce(lower(status), '') not like '%no need to bill%'
-             )
-             and (${statusFilter} = '' or coalesce(status, '') = ${statusFilter})
-           order by coalesce(updated_at, created_at) desc
-          limit ${limit}
-            offset ${offset}
-          `
-          : await queryClient`
-          select id, null::text as work_order_uuid, wo_number, property_id, unit_id, property_group_id, description,
-                 category, priority, status, assigned_user_id, assigned_user_name,
-                 vendor_id, vendor_name, estimated_amount, total_cost,
-                 created_at, updated_at, raw_json
-          from appfolio_work_orders
-           where (
-               coalesce(lower(status), '') not like '%completed%'
-               and coalesce(lower(status), '') not like '%cancel%'
-               and coalesce(lower(status), '') not like '%no need to bill%'
-             )
-             and (${statusFilter} = '' or coalesce(status, '') = ${statusFilter})
-           order by coalesce(updated_at, created_at) desc
-          limit ${limit}
-            offset ${offset}
-        `;
+        const query = buildLocalWorkOrdersQuery({ ...listOptions, includeWorkOrderUuid: false });
+        rows = await queryClient.unsafe(query.sql, query.params as any[]);
       }
     }
 
@@ -6408,32 +6305,8 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
     let total = searchTotal ?? results.length;
     if (searchTotal === null) {
       try {
-        const totalRows = scopeIds.length
-          ? await queryClient.unsafe(
-              `select count(*)::int as total from appfolio_work_orders
-               where (
-                 property_group_id = ANY($1::text[])
-                 or exists (
-                   select 1 from appfolio_properties p
-                   where p.id = appfolio_work_orders.property_id
-                     and p.raw_json->'PropertyGroupIds' ?| $1::text[]
-                 )
-                 or exists (
-                   select 1 from appfolio_properties p
-                   where p.raw_json->>'Link' = 'https://flraz.appfolio.com/properties/' || appfolio_work_orders.property_id
-                     and p.raw_json->'PropertyGroupIds' ?| $1::text[]
-                 )
-               )
-                and ${OPEN_WORK_ORDER_STATUS_FILTER}
-                and ($2 = '' or coalesce(status, '') = $2)`,
-               [scopeIds, statusFilter],
-             )
-           : await queryClient.unsafe(
-               `select count(*)::int as total from appfolio_work_orders
-                where ${OPEN_WORK_ORDER_STATUS_FILTER}
-                  and ($1 = '' or coalesce(status, '') = $1)`,
-               [statusFilter],
-             );
+        const countQuery = buildLocalWorkOrdersCountQuery({ scopeIds, statusScope, statusFilter });
+        const totalRows = await queryClient.unsafe(countQuery.sql, countQuery.params as any[]);
         total = Number((totalRows as any[])[0]?.total || 0) || 0;
       } catch (countErr) {
         console.warn('[work_orders] total count failed; falling back to page length', String((countErr as any)?.message || countErr));
@@ -11110,6 +10983,7 @@ app.listen(PORT, HOST, () => {
   void (async () => {
     try {
       await applySyncDriftMigration();
+      await applyWorkOrderV0ColumnsRepair();
       await applyWorkOrderCreatedAtBackfill();
       await ensurePropertyGroupsTable();
       await ensureBillsTable();

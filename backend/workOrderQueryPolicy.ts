@@ -1,3 +1,5 @@
+import { OPEN_WORK_ORDER_STATUS_FILTER, buildWorkOrderPropertyGroupScopeSql } from './badgeCountsPolicy.ts';
+
 export function buildActiveWorkOrdersUrl(
   baseUrl: unknown,
   propertyGroupUuid: unknown = '',
@@ -61,4 +63,77 @@ export function resolveWorkOrderHistoryDays(value: unknown, maximumDays = 3_650)
   const parsed = Number.parseInt(String(value), 10);
   if (!Number.isFinite(parsed)) return maximumDays;
   return Math.max(1, Math.min(maximumDays, parsed));
+}
+
+const INACTIVE_STATUS_SQL = `(coalesce(lower(status), '') like '%completed%' or coalesce(lower(status), '') like '%cancel%' or coalesce(lower(status), '') like '%no need to bill%')`;
+
+/** SQL predicate for the active/inactive work-order tabs; `status` is qualified with `statusColumn`. */
+export function buildWorkOrderStatusScopeSql(
+  statusScope: 'active' | 'inactive',
+  statusColumn = 'status',
+): string {
+  const base = statusScope === 'inactive' ? INACTIVE_STATUS_SQL : OPEN_WORK_ORDER_STATUS_FILTER;
+  return base.replace(/\bstatus\b/g, statusColumn);
+}
+
+export type LocalWorkOrdersQueryOptions = {
+  scopeIds: readonly string[];
+  statusScope: 'active' | 'inactive';
+  statusFilter: string;
+  limit: number;
+  offset: number;
+  includeWorkOrderUuid?: boolean;
+};
+
+export type BuiltSqlQuery = { sql: string; params: unknown[] };
+
+function buildLocalWorkOrdersWhere(
+  options: Pick<LocalWorkOrdersQueryOptions, 'scopeIds' | 'statusScope' | 'statusFilter'>,
+): { where: string; params: unknown[] } {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (options.scopeIds.length) {
+    params.push([...options.scopeIds]);
+    clauses.push(buildWorkOrderPropertyGroupScopeSql('wo', `$${params.length}`));
+  }
+  clauses.push(buildWorkOrderStatusScopeSql(options.statusScope, 'wo.status'));
+  if (options.statusFilter) {
+    params.push(options.statusFilter);
+    clauses.push(`coalesce(wo.status, '') = $${params.length}::text`);
+  }
+  return { where: clauses.join('\n and '), params };
+}
+
+/**
+ * Row-fetch query for /api/local/work_orders. Built from the same WHERE as the
+ * count query so the grid and the total can never disagree. Every value is a
+ * bound parameter; SQL fragments are concatenated, never bound.
+ */
+export function buildLocalWorkOrdersQuery(options: LocalWorkOrdersQueryOptions): BuiltSqlQuery {
+  const { where, params } = buildLocalWorkOrdersWhere(options);
+  params.push(options.limit, options.offset);
+  const limitParam = `$${params.length - 1}`;
+  const offsetParam = `$${params.length}`;
+  const uuidColumn = options.includeWorkOrderUuid === false ? 'null::text as work_order_uuid' : 'wo.work_order_uuid';
+  return {
+    sql: `select wo.id, ${uuidColumn}, wo.wo_number, wo.property_id, wo.unit_id, wo.property_group_id, wo.description,
+            wo.category, wo.priority, wo.status, wo.assigned_user_id, wo.assigned_user_name,
+            wo.vendor_id, wo.vendor_name, wo.estimated_amount, wo.total_cost,
+            wo.created_at, wo.updated_at, wo.raw_json
+          from appfolio_work_orders wo
+          where ${where}
+          order by coalesce(wo.updated_at, wo.created_at) desc nulls last, wo.id
+          limit ${limitParam} offset ${offsetParam}`,
+    params,
+  };
+}
+
+export function buildLocalWorkOrdersCountQuery(
+  options: Pick<LocalWorkOrdersQueryOptions, 'scopeIds' | 'statusScope' | 'statusFilter'>,
+): BuiltSqlQuery {
+  const { where, params } = buildLocalWorkOrdersWhere(options);
+  return {
+    sql: `select count(*)::int as total from appfolio_work_orders wo where ${where}`,
+    params,
+  };
 }

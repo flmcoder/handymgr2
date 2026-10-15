@@ -14,6 +14,30 @@ function toScopeList(value: unknown): string[] {
   return out;
 }
 
+const GLOBAL_SCOPE_TOKENS = new Set([
+  '__all__',
+  'all',
+  '*',
+  'all_groups',
+  'all-groups',
+  'all groups',
+  'all properties',
+]);
+
+export function isGlobalScopeToken(value: unknown): boolean {
+  return GLOBAL_SCOPE_TOKENS.has(String(value ?? '').trim().toLowerCase());
+}
+
+/**
+ * Drops client-side "All Groups" sentinels from a requested scope list. Any
+ * global token means "no group restriction", so the result is empty (unscoped)
+ * rather than a list containing a value that matches no property group.
+ */
+export function normalizeRequestedScopeIds(ids: readonly string[]): string[] {
+  if (ids.some(isGlobalScopeToken)) return [];
+  return [...ids];
+}
+
 export function resolveBillScope(
   role: unknown,
   sessionGroupId: unknown,

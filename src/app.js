@@ -5104,7 +5104,7 @@ function normalizeGroupSelectionValue(value) {
   var raw = String(value || '').trim();
   if (!raw) return '';
   var lower = raw.toLowerCase();
-  if (lower === 'all properties') return '';
+  if (lower === 'all properties' || lower === 'all groups' || lower === 'all' || lower === '__all__' || lower === '*') return '';
   // Treat AppFolio pseudo-global group entries as unscoped.
   if (lower.indexOf('all properties') !== -1 && (raw.charAt(0) === '*' || lower.indexOf('appfolio') !== -1)) return '';
   return raw;

@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
   buildActiveWorkOrdersUrl,
+  buildLocalWorkOrdersCountQuery,
+  buildLocalWorkOrdersQuery,
+  buildWorkOrderStatusScopeSql,
   buildWorkOrderPagination,
   resolveExactWorkOrderReference,
   resolveWorkOrderLookupSearch,
@@ -123,7 +126,9 @@ test('work-order endpoint keeps default scope and redacts global lookup rows', a
   assert.match(route, /resolveWorkOrderLookupSearch\(req\.query\.search\)/);
   assert.match(route, /resolveExactWorkOrderReference\(searchQuery\)/);
   assert.match(route, /buildWorkOrderPropertyGroupScopeSql\('wo', '\$6'\)/);
-  assert.match(route, /property_group_id\s*=\s*ANY\(\$\{scopeIds\}::text\[\]\)/i);
+  assert.match(route, /buildLocalWorkOrdersQuery\(/);
+  assert.match(route, /buildLocalWorkOrdersCountQuery\(/);
+  assert.doesNotMatch(route, /queryClient`/);
   assert.match(route, /PropertyGroupIds'\s*\?\|\s*\$2::text\[\]/);
   assert.match(route, /case when can_open then id else '' end as id/i);
   assert.match(route, /case when can_open then raw_json else '\{\}'::jsonb end as raw_json/i);
@@ -172,4 +177,73 @@ test('session transitions invalidate scoped requests and clear lookup state', as
   assert.match(source, /window\.WORK_ORDERS = \[\]/);
   assert.match(source, /window\.AppDB\.properties\.clear\(\)/);
   assert.match(source, /if \(woSearch\) woSearch\.value = ''/);
+});
+
+test('work-order row query and count query share the same WHERE clause and params', () => {
+  for (const statusScope of ['active', 'inactive'] as const) {
+    for (const scopeIds of [[], ['g1', 'g2']]) {
+      const opts = { scopeIds, statusScope, statusFilter: 'Assigned' };
+      const rows = buildLocalWorkOrdersQuery({ ...opts, limit: 100, offset: 200 });
+      const count = buildLocalWorkOrdersCountQuery(opts);
+      const rowWhere = rows.sql.split(/\bwhere\b/).slice(1).join('where').split('order by')[0].trim();
+      const countWhere = count.sql.split(/\bwhere\b/).slice(1).join('where').trim();
+      assert.equal(rowWhere, countWhere);
+      assert.deepEqual(rows.params.slice(0, -2), count.params);
+    }
+  }
+});
+
+test('work-order row query binds values and never binds SQL fragments as parameters', () => {
+  const { sql, params } = buildLocalWorkOrdersQuery({
+    scopeIds: ['g1'], statusScope: 'inactive', statusFilter: '', limit: 50, offset: 0,
+  });
+  assert.deepEqual(params, [['g1'], 50, 0]);
+  assert.match(sql, /limit \$2 offset \$3/);
+  assert.match(sql, /like '%completed%'/);
+  assert.ok(params.every((p) => typeof p !== 'string' || !/coalesce|like/i.test(p)));
+});
+
+test('unscoped work-order query has no group clause and status filter is optional', () => {
+  const { sql, params } = buildLocalWorkOrdersQuery({
+    scopeIds: [], statusScope: 'active', statusFilter: '', limit: 100, offset: 0,
+  });
+  assert.deepEqual(params, [100, 0]);
+  assert.doesNotMatch(sql, /PropertyGroupIds/);
+  assert.doesNotMatch(sql, /coalesce\(wo\.status, ''\) = /);
+  assert.match(sql, /limit \$1 offset \$2/);
+});
+
+test('work-order row query supports the legacy schema without work_order_uuid', () => {
+  const { sql } = buildLocalWorkOrdersQuery({
+    scopeIds: [], statusScope: 'active', statusFilter: '', limit: 1, offset: 0, includeWorkOrderUuid: false,
+  });
+  assert.match(sql, /null::text as work_order_uuid/);
+  assert.doesNotMatch(sql, /wo\.work_order_uuid/);
+});
+
+test('active status scope matches the dashboard open filter and qualifies the column', () => {
+  const active = buildWorkOrderStatusScopeSql('active', 'wo.status');
+  assert.match(active, /lower\(wo\.status\)/);
+  assert.doesNotMatch(active, /[^.]\bstatus\b/);
+  assert.match(buildWorkOrderStatusScopeSql('inactive'), /like '%cancel%'/);
+});
+
+test('work-order query applies status filter and scope params in order', () => {
+  const { params, sql } = buildLocalWorkOrdersQuery({
+    scopeIds: ['g1'], statusScope: 'active', statusFilter: 'Assigned', limit: 10, offset: 5,
+  });
+  assert.deepEqual(params, [['g1'], 'Assigned', 10, 5]);
+  assert.match(sql, /= \$2::text/);
+  assert.match(sql, /limit \$3 offset \$4/);
+});
+
+test('frontend and backend both treat All Groups sentinels as unscoped', async () => {
+  const app = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+  const fnStart = app.indexOf('function normalizeGroupSelectionValue(');
+  const fn = app.slice(fnStart, app.indexOf('function getEffectiveGroupId', fnStart));
+  assert.match(fn, /'all groups'/);
+  assert.match(fn, /'__all__'/);
+
+  const server = await readFile(new URL('./server.ts', import.meta.url), 'utf8');
+  assert.match(server, /function parsePropertyGroupIds[\s\S]{0,200}normalizeRequestedScopeIds\(/);
 });

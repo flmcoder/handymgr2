@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   filterBillsForPropertyScope,
+  isGlobalScopeToken,
+  normalizeRequestedScopeIds,
   resolveBillScope,
 } from './billScopePolicy.ts';
 
@@ -63,5 +65,32 @@ test('filterBillsForPropertyScope returns no rows when group membership is empty
   assert.deepEqual(
     filterBillsForPropertyScope([{ Id: 'bill', PropertyId: 'property-a' }], new Set()),
     [],
+  );
+});
+test('global scope tokens resolve to an unrestricted requested scope', () => {
+  for (const token of ['__all__', 'ALL', '*', 'All Groups', ' all properties ', 'all-groups', 'all_groups']) {
+    assert.equal(isGlobalScopeToken(token), true, token);
+    assert.deepEqual(normalizeRequestedScopeIds([token]), [], token);
+  }
+  assert.deepEqual(normalizeRequestedScopeIds(['group-a', '__all__']), []);
+});
+
+test('real group ids and empty input are preserved by scope normalization', () => {
+  assert.equal(isGlobalScopeToken(''), false);
+  assert.equal(isGlobalScopeToken(undefined), false);
+  assert.equal(isGlobalScopeToken('group-a'), false);
+  assert.deepEqual(normalizeRequestedScopeIds([]), []);
+  assert.deepEqual(normalizeRequestedScopeIds(['group-a', 'group-b']), ['group-a', 'group-b']);
+});
+
+test('PM sessions ignore a global request token and keep every assigned group', () => {
+  const requested = normalizeRequestedScopeIds(['__all__']);
+  assert.deepEqual(
+    resolveBillScope('pm_readonly', ['g1', 'g2'], requested),
+    { allowed: true, propertyGroupId: 'g1', propertyGroupIds: ['g1', 'g2'] },
+  );
+  assert.deepEqual(
+    resolveBillScope('manager', [], requested),
+    { allowed: true, propertyGroupId: '', propertyGroupIds: [] },
   );
 });
