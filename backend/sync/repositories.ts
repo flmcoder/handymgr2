@@ -13,7 +13,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../db.ts';
 import {
   appfolioUsers,
@@ -34,7 +34,15 @@ import {
 import { normalizeBillSyncRow } from './billSyncPolicy.ts';
 import { normalizeTenantDirectoryRow } from './tenantDirectoryPolicy.ts';
 import { normalizeUnitTurnDetail } from '../turnMappingPolicy.ts';
-import { writeWorkOrderWithDiagnostics } from './workOrderUpsertPolicy.ts';
+import { postgresErrorDetails, writeWorkOrderWithDiagnostics } from './workOrderUpsertPolicy.ts';
+import {
+  resolveTrackerIdentity,
+  summarizeTurnTrackerFailures,
+  writeTurnTrackerWithDiagnostics,
+  type TrackerRow,
+  type TurnTrackerFailure,
+} from './turnTrackerUpsertPolicy.ts';
+import { isTransientDbError, withDbRetry } from '../dbResiliencePolicy.ts';
 
 type GroupCatalogEntry = { id: string; uuid: string; name: string };
 
@@ -978,92 +986,149 @@ export async function upsertEstimates(rows: any[]): Promise<UpsertResult> {
 
 // ── Turn Tracker ──────────────────────────────────────────────────────────────
 
-export async function upsertTurnTracker(records: any[]): Promise<UpsertResult> {
-  let upserted = 0;
-  let skipped = 0;
+type TurnTrackerTx = Pick<typeof db, 'select' | 'insert' | 'update'>;
 
-  for (const record of records) {
-    const turnKey = asStr(record.turn_key);
-    if (!turnKey) continue;
+async function findTrackerRow(
+  tx: TurnTrackerTx,
+  column: typeof unitTurnTracker.turnKey | typeof unitTurnTracker.trackingUuid,
+  value: string,
+): Promise<TrackerRow | null> {
+  const rows = await tx
+    .select({ trackingUuid: unitTurnTracker.trackingUuid, turnKey: unitTurnTracker.turnKey })
+    .from(unitTurnTracker)
+    .where(eq(column, value))
+    .limit(1);
+  return rows[0] ?? null;
+}
 
-    const trackingUuid = asStr(record.tracking_uuid) ?? createHash('sha256').update(turnKey).digest('hex').slice(0, 36);
+export async function upsertTurnTrackerRecord(record: any, turnKey: string, database: typeof db = db): Promise<void> {
+  const incomingUuid = asStr(record.tracking_uuid) ?? createHash('sha256').update(turnKey).digest('hex').slice(0, 36);
 
-    await db
-      .insert(unitTurnTracker)
-      .values({
-        trackingUuid,
-        trackingCode: asStr(record.tracking_code),
-        turnKey,
-        unitTurnId: asStr(record.unit_turn_id),
-        unitId: asStr(record.unit_id),
-        propertyId: asStr(record.property_id),
-        unitName: asStr(record.unit_name),
-        propertyName: asStr(record.property_name),
-        status: asStr(record.status) ?? 'open',
-        confidenceScore: asNum(record.confidence_score),
-        confidenceLabel: asStr(record.confidence_label),
-        sourceFlags: record.source_flags ?? {},
-        metadata: record.metadata ?? {},
-        closedAt: asDate(record.closed_at),
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: unitTurnTracker.trackingUuid,
-        set: {
-          trackingCode: sql`EXCLUDED.tracking_code`,
-          unitTurnId: sql`EXCLUDED.unit_turn_id`,
-          unitId: sql`EXCLUDED.unit_id`,
-          propertyId: sql`EXCLUDED.property_id`,
-          unitName: sql`EXCLUDED.unit_name`,
-          propertyName: sql`EXCLUDED.property_name`,
-          status: sql`EXCLUDED.status`,
-          confidenceScore: sql`EXCLUDED.confidence_score`,
-          confidenceLabel: sql`EXCLUDED.confidence_label`,
-          sourceFlags: sql`EXCLUDED.source_flags`,
-          metadata: sql`EXCLUDED.metadata`,
-          closedAt: sql`EXCLUDED.closed_at`,
-          updatedAt: sql`NOW()`,
-        },
+  await database.transaction(async (tx) => {
+    const identity = resolveTrackerIdentity(
+      { trackingUuid: incomingUuid, turnKey },
+      await findTrackerRow(tx, unitTurnTracker.turnKey, turnKey),
+      await findTrackerRow(tx, unitTurnTracker.trackingUuid, incomingUuid),
+    );
+    const trackingUuid = identity.trackingUuid;
+    if (identity.conflictingRow) {
+      console.warn('[unit_turn_tracker:upsert] tracking_uuid and turn_key match different rows; keeping turn_key row', {
+        turn_key: turnKey,
+        incoming_tracking_uuid: incomingUuid,
+        kept_tracking_uuid: trackingUuid,
+        orphan_turn_key: identity.conflictingRow.turnKey,
       });
+    }
 
-    // Milestones
+    const fields = {
+      trackingCode: asStr(record.tracking_code),
+      unitTurnId: asStr(record.unit_turn_id),
+      unitId: asStr(record.unit_id),
+      propertyId: asStr(record.property_id),
+      unitName: asStr(record.unit_name),
+      propertyName: asStr(record.property_name),
+      status: asStr(record.status) ?? 'open',
+      confidenceScore: asNum(record.confidence_score),
+      confidenceLabel: asStr(record.confidence_label),
+      sourceFlags: record.source_flags ?? {},
+      metadata: record.metadata ?? {},
+      closedAt: asDate(record.closed_at),
+      updatedAt: new Date(),
+    };
+
+    if (identity.existing) {
+      await tx
+        .update(unitTurnTracker)
+        .set({ ...fields, ...(identity.rekey ? { turnKey } : {}) })
+        .where(eq(unitTurnTracker.trackingUuid, trackingUuid));
+    } else {
+      await tx.insert(unitTurnTracker).values({ trackingUuid, turnKey, ...fields });
+    }
+
+    // Children are keyed by (tracking_uuid, key) and updated in place so
+    // repeated syncs do not accumulate duplicate rows.
     if (record.milestones && typeof record.milestones === 'object') {
       for (const [key, val] of Object.entries(record.milestones as any)) {
         const m = val as any;
-        await db
-          .insert(unitTurnMilestones)
-          .values({
-            trackingUuid,
-            milestoneKey: key,
-            milestoneDate: asDate(m?.date),
-            source: asStr(m?.source),
-            notes: asStr(m?.notes),
-          });
-        // Not using onConflict here because milestones are append-only by design.
-        // Duplicate attempts are caught at the DB unique constraint if one exists.
+        const milestone = {
+          milestoneDate: asDate(m?.date),
+          source: asStr(m?.source),
+          notes: asStr(m?.notes),
+        };
+        const updated = await tx
+          .update(unitTurnMilestones)
+          .set(milestone)
+          .where(and(eq(unitTurnMilestones.trackingUuid, trackingUuid), eq(unitTurnMilestones.milestoneKey, key)))
+          .returning({ id: unitTurnMilestones.id });
+        if (!updated.length) {
+          await tx.insert(unitTurnMilestones).values({ trackingUuid, milestoneKey: key, ...milestone });
+        }
       }
     }
 
-    // Linked work orders
     if (Array.isArray(record.work_orders)) {
       for (const wo of record.work_orders) {
         const woId = asStr(wo.wo_id || wo.id);
         if (!woId) continue;
-        await db
-          .insert(unitTurnWorkOrders)
-          .values({
+        // `removed` is intentionally untouched on update so a manual removal survives re-sync.
+        const linked = { woDbUuid: asStr(wo.wo_db_uuid), status: asStr(wo.status) };
+        const updated = await tx
+          .update(unitTurnWorkOrders)
+          .set(linked)
+          .where(and(eq(unitTurnWorkOrders.trackingUuid, trackingUuid), eq(unitTurnWorkOrders.woId, woId)))
+          .returning({ id: unitTurnWorkOrders.id });
+        if (!updated.length) {
+          await tx.insert(unitTurnWorkOrders).values({
             trackingUuid,
             woId,
-            woDbUuid: asStr(wo.wo_db_uuid),
             source: asStr(wo.source) ?? 'sync',
-            status: asStr(wo.status),
             removed: false,
+            ...linked,
           });
+        }
       }
     }
+  });
+}
 
-    upserted++;
+export async function upsertTurnTracker(records: any[]): Promise<UpsertResult> {
+  let upserted = 0;
+  let skipped = 0;
+  const failures: TurnTrackerFailure[] = [];
+
+  for (const record of records) {
+    const turnKey = asStr(record.turn_key);
+    if (!turnKey) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      await writeTurnTrackerWithDiagnostics(record, () => withDbRetry(
+        // A concurrent writer can win the insert race (23505); a second pass then finds the row and updates it.
+        () => withDbRetry(() => upsertTurnTrackerRecord(record, turnKey), {
+          attempts: 2,
+          label: 'unit_turn_tracker:race',
+          isRetryable: (error) => String((postgresErrorDetails(error) as any).code) === '23505',
+          baseMs: 50,
+        }),
+        {
+          label: 'unit_turn_tracker',
+          onRetry: ({ attempt, delayMs, error }) => console.warn(
+            `[unit_turn_tracker:upsert] transient DB error, retry ${attempt} in ${delayMs}ms`,
+            { ...postgresErrorDetails(error), message: String((error as any)?.message || error) },
+          ),
+        },
+      ));
+      upserted++;
+    } catch (error) {
+      // Connection-level failures abort the batch; the sync runner reports the run as failed.
+      if (isTransientDbError(error)) throw error;
+      failures.push({ turnKey, error });
+    }
   }
 
-  return { upserted, skipped };
+  const summary = summarizeTurnTrackerFailures(records.length, upserted, failures);
+  if (summary.fatal) throw summary.fatal;
+  return { upserted, skipped: skipped + summary.skipped };
 }

@@ -21,6 +21,7 @@ import { appfolioRawResponses } from '../schema.ts';
 import { afFetch, isCursorExpired, AfFetchError } from './fetchWorker.ts';
 import { afBaseUrl } from './afCredentials.ts';
 import { postgresErrorDetails } from './workOrderUpsertPolicy.ts';
+import { withDbRetry } from '../dbResiliencePolicy.ts';
 import {
   startRun, persistPageCursor, finalizeRun, incrementRunCounters,
   getLastSuccessfulCursor,
@@ -356,7 +357,14 @@ export async function runSync(opts: {
 
       // Map and upsert rows into domain table.
       const rows = def.extractRows(result.data);
-      const { upserted, skipped } = await def.upsert(rows);
+      // Upserts are idempotent, so a tunnel drop mid-page is safe to retry.
+      const { upserted, skipped } = await withDbRetry(() => def.upsert(rows), {
+        label: `sync:${endpointKey}`,
+        onRetry: ({ attempt, delayMs, error }) => console.warn(
+          `[syncRunner] transient DB error endpoint=${endpointKey} retry=${attempt} in ${delayMs}ms`,
+          { ...postgresErrorDetails(error), message: String((error as any)?.message ?? error) },
+        ),
+      });
       totalUpserted += upserted;
       totalSkipped += skipped;
 

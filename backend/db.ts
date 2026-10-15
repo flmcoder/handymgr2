@@ -2,6 +2,7 @@ import 'dotenv/config';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import * as schema from './schema';
+import { buildPostgresResilienceOptions, isTransientDbError, withDbRetry } from './dbResiliencePolicy';
 import { ensureDbSshTunnel, getSshDbTunnelTarget, isSshDbTunnelEnabled } from './sshTunnel';
 
 const SQL_SE = String(process.env.SQL_SE || '').trim();
@@ -91,9 +92,7 @@ export const queryClient = postgres({
   username: dbConfig.username,
   password: dbConfig.password,
   ssl: dbConfig.ssl,
-  max: Number(process.env.DB_POOL_MAX || 10),
-  idle_timeout: Number(process.env.DB_IDLE_TIMEOUT || 20),
-  connect_timeout: Number(process.env.DB_CONNECT_TIMEOUT || 10),
+  ...buildPostgresResilienceOptions(),
   prepare: false,
   // Swallow non-critical schema notices (e.g. 42P07 "relation already exists")
   // emitted by idempotent migrations on every server restart.
@@ -104,7 +103,14 @@ export const db = drizzle(queryClient, { schema });
 
 export async function pingDatabase(): Promise<boolean> {
   try {
-    await queryClient`select 1 as ok`;
+    await withDbRetry(() => queryClient`select 1 as ok`, {
+      label: 'ping',
+      attempts: 3,
+      onRetry: ({ attempt, delayMs, error }) => console.warn(
+        `[db] ping failed (${isTransientDbError(error) ? 'transient' : 'error'}), retry ${attempt} in ${delayMs}ms:`,
+        String((error as Error)?.message || error),
+      ),
+    });
     return true;
   } catch (error) {
     console.error('[db] PostgreSQL/PgBouncer connection failure:', error);
