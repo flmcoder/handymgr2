@@ -34,6 +34,7 @@ import {
 import { normalizeBillSyncRow } from './billSyncPolicy.ts';
 import { normalizeTenantDirectoryRow } from './tenantDirectoryPolicy.ts';
 import { normalizeUnitTurnDetail } from '../turnMappingPolicy.ts';
+import { writeWorkOrderWithDiagnostics } from './workOrderUpsertPolicy.ts';
 
 type GroupCatalogEntry = { id: string; uuid: string; name: string };
 
@@ -567,72 +568,76 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
     const groupInfo = resolvePropertyGroupInfo(row);
     const resolvedGroup = groupInfo.canonicalGroupKey || (propertyId ? (propertyGroupByPropertyId.get(propertyId) || null) : null);
 
-    await db
-      .insert(appfolioWorkOrders)
-      .values({
-        id,
-        workOrderUuid,
-        woNumber,
-        propertyId,
-        unitId: asStr(row.unit_id || row.UnitId),
-        propertyGroupId: resolvedGroup,
-        description: asStr(row.JobDescription || row.jobDescription || row.description || row.Description || row.subject || row.Subject, 1000),
-        category: asStr(row.Type || row.type || row.category || row.Category || row.work_order_type || row.WorkOrderType),
-        priority: asStr(row.priority || row.Priority),
-        status: asStr(row.status || row.Status),
-        assignedUserId: asStr(firstUser.id || firstUser.Id),
-        assignedUserName: asStr(firstUser.name || firstUser.Name || firstUser.full_name),
-        vendorId: asStr(row.vendor_id || row.VendorId),
-        vendorName: asStr(row.vendor_name || row.VendorName),
-        vendorTrade: asStr(row.vendor_trade || row.VendorTrade),
-        estimatedAmount: asNum(row.estimated_amount || row.EstimatedAmount || row.EstimateAmount || row.estimate_amount),
-        totalCost: asNum(row.total_cost || row.TotalCost),
-        occupancyId: asStr(row.occupancy_id || row.OccupancyId),
-        completedOn: asDate(row.completed_on || row.CompletedOn),
-        workCompletedOn: asDate(row.work_completed_on || row.WorkCompletedOn),
-        canceledOn: asDate(row.canceled_on || row.CanceledOn),
-        scheduledStart: asDate(row.scheduled_start || row.ScheduledStart),
-        scheduledEnd: asDate(row.scheduled_end || row.ScheduledEnd),
-        woType: asStr(row.wo_type || row.WoType || row.type || row.Type),
-        workOrderIssue: asStr(row.work_order_issue || row.WorkOrderIssue),
-        requestingTenantId: asStr(row.requesting_tenant_id || row.RequestingTenantId),
-        createdAt: asDate(row.CreatedAt || row.created_at || row.CreatedDate || row.created_date),
-        updatedAt: asDate(row.last_updated_at || row.LastUpdatedAt || row.updated_at),
-        rawJson: rawWithUuid,
-      })
-      .onConflictDoUpdate({
-        target: appfolioWorkOrders.id,
-        set: {
-          workOrderUuid: sql`EXCLUDED.work_order_uuid`,
-          woNumber: sql`EXCLUDED.wo_number`,
-          propertyId: sql`EXCLUDED.property_id`,
-          unitId: sql`EXCLUDED.unit_id`,
-          propertyGroupId: sql`EXCLUDED.property_group_id`,
-          description: sql`EXCLUDED.description`,
-          category: sql`EXCLUDED.category`,
-          priority: sql`EXCLUDED.priority`,
-          status: sql`EXCLUDED.status`,
-          assignedUserId: sql`EXCLUDED.assigned_user_id`,
-          assignedUserName: sql`EXCLUDED.assigned_user_name`,
-          vendorId: sql`EXCLUDED.vendor_id`,
-          vendorName: sql`EXCLUDED.vendor_name`,
-          vendorTrade: sql`EXCLUDED.vendor_trade`,
-          estimatedAmount: sql`EXCLUDED.estimated_amount`,
-          totalCost: sql`EXCLUDED.total_cost`,
-          occupancyId: sql`EXCLUDED.occupancy_id`,
-          completedOn: sql`EXCLUDED.completed_on`,
-          workCompletedOn: sql`EXCLUDED.work_completed_on`,
-          canceledOn: sql`EXCLUDED.canceled_on`,
-          scheduledStart: sql`EXCLUDED.scheduled_start`,
-          scheduledEnd: sql`EXCLUDED.scheduled_end`,
-          woType: sql`EXCLUDED.wo_type`,
-          workOrderIssue: sql`EXCLUDED.work_order_issue`,
-          requestingTenantId: sql`EXCLUDED.requesting_tenant_id`,
-          createdAt: sql`EXCLUDED.created_at`,
-          updatedAt: sql`EXCLUDED.updated_at`,
-          rawJson: sql`EXCLUDED.raw_json`,
-        },
-      });
+    const values = {
+      id,
+      workOrderUuid,
+      woNumber,
+      propertyId,
+      unitId: asStr(row.unit_id || row.UnitId),
+      propertyGroupId: resolvedGroup,
+      description: asStr(row.JobDescription || row.jobDescription || row.description || row.Description || row.subject || row.Subject, 1000),
+      category: asStr(row.Type || row.type || row.category || row.Category || row.work_order_type || row.WorkOrderType),
+      priority: asStr(row.priority || row.Priority),
+      status: asStr(row.status || row.Status),
+      assignedUserId: asStr(firstUser.id || firstUser.Id),
+      assignedUserName: asStr(firstUser.name || firstUser.Name || firstUser.full_name),
+      vendorId: asStr(row.vendor_id || row.VendorId),
+      vendorName: asStr(row.vendor_name || row.VendorName),
+      vendorTrade: asStr(row.vendor_trade || row.VendorTrade),
+      estimatedAmount: asNum(row.estimated_amount || row.EstimatedAmount || row.EstimateAmount || row.estimate_amount),
+      totalCost: asNum(row.total_cost || row.TotalCost),
+      occupancyId: asStr(row.occupancy_id || row.OccupancyId),
+      completedOn: asDate(row.completed_on || row.CompletedOn),
+      workCompletedOn: asDate(row.work_completed_on || row.WorkCompletedOn),
+      canceledOn: asDate(row.canceled_on || row.CanceledOn),
+      scheduledStart: asDate(row.scheduled_start || row.ScheduledStart),
+      scheduledEnd: asDate(row.scheduled_end || row.ScheduledEnd),
+      woType: asStr(row.wo_type || row.WoType || row.type || row.Type),
+      workOrderIssue: asStr(row.work_order_issue || row.WorkOrderIssue),
+      requestingTenantId: asStr(row.requesting_tenant_id || row.RequestingTenantId),
+      createdAt: asDate(row.CreatedAt || row.created_at || row.CreatedDate || row.created_date),
+      updatedAt: asDate(row.last_updated_at || row.LastUpdatedAt || row.updated_at),
+      rawJson: rawWithUuid,
+    } as const;
+
+    await writeWorkOrderWithDiagnostics(values, async (sanitizedValues) => {
+      await db
+        .insert(appfolioWorkOrders)
+        .values(sanitizedValues)
+        .onConflictDoUpdate({
+          target: appfolioWorkOrders.id,
+          set: {
+            workOrderUuid: sql`EXCLUDED.work_order_uuid`,
+            woNumber: sql`EXCLUDED.wo_number`,
+            propertyId: sql`EXCLUDED.property_id`,
+            unitId: sql`EXCLUDED.unit_id`,
+            propertyGroupId: sql`EXCLUDED.property_group_id`,
+            description: sql`EXCLUDED.description`,
+            category: sql`EXCLUDED.category`,
+            priority: sql`EXCLUDED.priority`,
+            status: sql`EXCLUDED.status`,
+            assignedUserId: sql`EXCLUDED.assigned_user_id`,
+            assignedUserName: sql`EXCLUDED.assigned_user_name`,
+            vendorId: sql`EXCLUDED.vendor_id`,
+            vendorName: sql`EXCLUDED.vendor_name`,
+            vendorTrade: sql`EXCLUDED.vendor_trade`,
+            estimatedAmount: sql`EXCLUDED.estimated_amount`,
+            totalCost: sql`EXCLUDED.total_cost`,
+            occupancyId: sql`EXCLUDED.occupancy_id`,
+            completedOn: sql`EXCLUDED.completed_on`,
+            workCompletedOn: sql`EXCLUDED.work_completed_on`,
+            canceledOn: sql`EXCLUDED.canceled_on`,
+            scheduledStart: sql`EXCLUDED.scheduled_start`,
+            scheduledEnd: sql`EXCLUDED.scheduled_end`,
+            woType: sql`EXCLUDED.wo_type`,
+            workOrderIssue: sql`EXCLUDED.work_order_issue`,
+            requestingTenantId: sql`EXCLUDED.requesting_tenant_id`,
+            createdAt: sql`EXCLUDED.created_at`,
+            updatedAt: sql`EXCLUDED.updated_at`,
+            rawJson: sql`EXCLUDED.raw_json`,
+          },
+        });
+    });
 
     upserted++;
   }

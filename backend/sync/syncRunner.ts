@@ -20,6 +20,7 @@ import { db } from '../db.ts';
 import { appfolioRawResponses } from '../schema.ts';
 import { afFetch, isCursorExpired, AfFetchError } from './fetchWorker.ts';
 import { afBaseUrl } from './afCredentials.ts';
+import { postgresErrorDetails } from './workOrderUpsertPolicy.ts';
 import {
   startRun, persistPageCursor, finalizeRun, incrementRunCounters,
   getLastSuccessfulCursor,
@@ -395,8 +396,16 @@ export async function runSync(opts: {
     const errorText = err instanceof AfFetchError
       ? `${err.kind}: ${err.message}`
       : String((err as any)?.message ?? err);
+    const dbError = postgresErrorDetails(err);
 
-    console.error(`[syncRunner] FAILED runId=${ctx.runId} endpoint=${endpointKey}`, errorText);
+    console.error(`[syncRunner] FAILED runId=${ctx.runId} endpoint=${endpointKey}`, {
+      message: errorText,
+      code: dbError.code,
+      detail: dbError.detail,
+      constraint: dbError.constraint,
+      table: dbError.table,
+      column: dbError.column,
+    });
 
     await finalizeRun(ctx.runId, 'failed', {
       lastError: errorText, pagesCompleted: pageIndex, rowsUpserted: totalUpserted, rowsSkipped: totalSkipped,
