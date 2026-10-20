@@ -8331,6 +8331,7 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
     const limit = parseLimit(req.query.limit, 3000);
     const scopeIds = getPropertyGroupFilters(req);
     const scopeOrNull = scopeIds.length ? scopeIds : null;
+    const propertyJoin = tenantDirectoryPropertyMatchSql('p', 'wo.property_id');
     const rows = await queryClient`
       select
         tw.wo_id,
@@ -8346,6 +8347,7 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
         wo.unit_id as unit_uuid,
         wo.unit_id as "unit_id",
         wo.property_id,
+        coalesce(nullif(pg.uuid, ''), nullif(p.property_group_id, '')) as property_group_uuid,
         wo.status,
         wo.priority,
         wo.category,
@@ -8359,16 +8361,14 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
       left join appfolio_work_orders wo
         on wo.id = coalesce(tw.wo_db_uuid, tw.wo_id)
            or wo.wo_number = tw.wo_id
+      left join appfolio_properties p on ${propertyJoin}
+      left join appfolio_property_groups pg on pg.uuid = p.property_group_id or pg.id = p.property_group_id
        where coalesce(tw.removed, false) = false
         and coalesce(tw.created_at, now()) >= now() - (${days}::int * interval '1 day')
-        and (${scopeOrNull}::text[] is null or exists (
-           select 1 from appfolio_properties p_scope
-           where p_scope.id = wo.property_id
-             and (
-               p_scope.property_group_id = ANY(${scopeOrNull}::text[])
-               or p_scope.raw_json->'PropertyGroupIds' ?| (${scopeOrNull}::text[])
-             )
-         ))
+        and (${scopeOrNull}::text[] is null or (
+          p.property_group_id = ANY(${scopeOrNull}::text[])
+          or p.raw_json->'PropertyGroupIds' ?| (${scopeOrNull}::text[])
+        ))
       order by coalesce(wo.updated_at, tw.created_at) desc
       limit ${limit}
     `;
@@ -8387,6 +8387,7 @@ app.get('/api/local/turn_work_orders', async (req: Request, res: Response) => {
         unit_id: row.unit_id || pickRaw(raw, ['unit_id', 'UnitId']) || '',
         PropertyId: row.property_id || pickRaw(raw, ['PropertyId', 'property_id']) || '',
         property_id: row.property_id || pickRaw(raw, ['property_id', 'PropertyId']) || '',
+        property_group_uuid: row.property_group_uuid ? String(row.property_group_uuid) : null,
         Status: row.status || row.tracker_status || pickRaw(raw, ['Status', 'status']) || '',
         status: row.status || row.tracker_status || pickRaw(raw, ['status', 'Status']) || '',
         Priority: row.priority || pickRaw(raw, ['Priority', 'priority']) || '',
@@ -9412,11 +9413,14 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
           t.phone_numbers,
           t.emails,
           t.rent,
-          t.occupancy_id
+          t.occupancy_id,
+          coalesce(nullif(pg.uuid, ''), nullif(p.property_group_id, '')) as property_group_uuid
         from appfolio_tenant_directory t
-        join appfolio_properties p on ${propertyJoin}
+        left join appfolio_properties p on ${propertyJoin}
+        left join appfolio_property_groups pg on pg.uuid = p.property_group_id or pg.id = p.property_group_id
         left join appfolio_units u on u.unit_id = t.unit_id
-         where (p.property_group_id = ANY($1::text[]) or p.raw_json->'PropertyGroupIds' ?| ($1::text[]))
+         where p.id is not null
+           and (p.property_group_id = ANY($1::text[]) or p.raw_json->'PropertyGroupIds' ?| ($1::text[]))
         order by coalesce(t.move_out_date, t.cached_at) asc, coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc
         limit $2
       `, [scopeIds, limit])
@@ -9433,9 +9437,11 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
           t.phone_numbers,
           t.emails,
           t.rent,
-          t.occupancy_id
+          t.occupancy_id,
+          coalesce(nullif(pg.uuid, ''), nullif(p.property_group_id, '')) as property_group_uuid
         from appfolio_tenant_directory t
         left join appfolio_properties p on ${propertyJoin}
+        left join appfolio_property_groups pg on pg.uuid = p.property_group_id or pg.id = p.property_group_id
         left join appfolio_units u on u.unit_id = t.unit_id
         order by coalesce(t.move_out_date, t.cached_at) asc, coalesce(t.property_name, p.name) asc, coalesce(t.unit_name, u.name) asc
         limit $1
@@ -9455,9 +9461,11 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
             coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as phone_numbers,
             coalesce(nullif(u.raw_json->>'tenant_email',''), nullif(u.raw_json->>'TenantEmail','')) as emails,
             coalesce(nullif(u.raw_json->>'rent',''), nullif(u.raw_json->>'Rent',''), nullif(u.raw_json->>'market_rent','')) as rent,
-            coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id
+            coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id,
+            coalesce(nullif(pg.uuid, ''), nullif(p.property_group_id, '')) as property_group_uuid
           from appfolio_units u
-          inner join appfolio_properties p on p.id = u.property_id
+          left join appfolio_properties p on ${tenantDirectoryPropertyMatchSql('p', 'u.property_id')}
+          left join appfolio_property_groups pg on pg.uuid = p.property_group_id or pg.id = p.property_group_id
            where (
              p.property_group_id = ANY(${scopeIds}::text[])
              or p.raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
@@ -9477,9 +9485,11 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
             coalesce(nullif(u.raw_json->>'tenant_primary_phone_number',''), nullif(u.raw_json->>'TenantPrimaryPhoneNumber','')) as phone_numbers,
             coalesce(nullif(u.raw_json->>'tenant_email',''), nullif(u.raw_json->>'TenantEmail','')) as emails,
             coalesce(nullif(u.raw_json->>'rent',''), nullif(u.raw_json->>'Rent',''), nullif(u.raw_json->>'market_rent','')) as rent,
-            coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id
+            coalesce(nullif(u.raw_json->>'occupancy_id',''), nullif(u.raw_json->>'OccupancyId','')) as occupancy_id,
+            coalesce(nullif(pg.uuid, ''), nullif(p.property_group_id, '')) as property_group_uuid
           from appfolio_units u
-          inner join appfolio_properties p on p.id = u.property_id
+          left join appfolio_properties p on ${tenantDirectoryPropertyMatchSql('p', 'u.property_id')}
+          left join appfolio_property_groups pg on pg.uuid = p.property_group_id or pg.id = p.property_group_id
           order by p.name asc, u.name asc
           limit ${limit}
         `;
@@ -9491,6 +9501,7 @@ app.get('/api/local/upcoming_moveouts', async (req: Request, res: Response) => {
     const results = (rows as any[]).map((row) => ({
       property_name: String(row.property_name || ''),
       property_id: String(row.property_id || ''),
+      property_group_uuid: row.property_group_uuid ? String(row.property_group_uuid) : null,
       unit_name: String(row.unit_name || ''),
       unit_id: String(row.unit_id || ''),
       occupancy_name: String(row.tenant_name || ''),
