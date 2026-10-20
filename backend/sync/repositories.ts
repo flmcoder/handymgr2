@@ -34,7 +34,7 @@ import {
 import { normalizeBillSyncRow } from './billSyncPolicy.ts';
 import { normalizeTenantDirectoryRow } from './tenantDirectoryPolicy.ts';
 import { normalizeUnitTurnDetail } from '../turnMappingPolicy.ts';
-import { postgresErrorDetails, writeWorkOrderWithDiagnostics } from './workOrderUpsertPolicy.ts';
+import { postgresErrorDetails, resolveWorkOrderAssignee, writeWorkOrderWithDiagnostics } from './workOrderUpsertPolicy.ts';
 import {
   resolveTrackerIdentity,
   summarizeTurnTrackerFailures,
@@ -560,10 +560,7 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
     const woNumber = asStr(row.work_order_number || row.WorkOrderNumber || row.Number);
     if (!woNumber) continue;
 
-    const assignedUsers = Array.isArray(row.assigned_users ?? row.AssignedUsers)
-      ? (row.assigned_users ?? row.AssignedUsers)
-      : [];
-    const firstUser = assignedUsers[0] ?? {};
+    const assignee = resolveWorkOrderAssignee(row);
     const workOrderUuid = asStr(row.Id || row.id || row.v0_uuid || row.UUID || row.uuid || row.work_order_uuid)
       || (isUuidLike(id) ? id : null);
     const rawWithUuid = {
@@ -587,8 +584,8 @@ export async function upsertWorkOrders(rows: any[]): Promise<UpsertResult> {
       category: asStr(row.Type || row.type || row.category || row.Category || row.work_order_type || row.WorkOrderType),
       priority: asStr(row.priority || row.Priority),
       status: asStr(row.status || row.Status),
-      assignedUserId: asStr(firstUser.id || firstUser.Id),
-      assignedUserName: asStr(firstUser.name || firstUser.Name || firstUser.full_name),
+      assignedUserId: asStr(assignee.id),
+      assignedUserName: asStr(assignee.name),
       vendorId: asStr(row.vendor_id || row.VendorId),
       vendorName: asStr(row.vendor_name || row.VendorName),
       vendorTrade: asStr(row.vendor_trade || row.VendorTrade),

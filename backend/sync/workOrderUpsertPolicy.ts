@@ -3,6 +3,29 @@ const IDENTIFIER_FIELDS = [
   'assignedUserId', 'vendorId', 'occupancyId', 'requestingTenantId',
 ] as const;
 
+function firstNonBlank(...values: unknown[]): string {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+/** Resolve assignee fields from AppFolio rows, preferring the first assigned user. */
+export function resolveWorkOrderAssignee(row: Record<string, any>): { id: string; name: string } {
+  const assignedUsers = Array.isArray(row.assigned_users)
+    ? row.assigned_users
+    : Array.isArray(row.AssignedUsers) ? row.AssignedUsers : [];
+  const user = assignedUsers[0] && typeof assignedUsers[0] === 'object' ? assignedUsers[0] : {};
+  return {
+    id: firstNonBlank(user.id, user.Id, user.user_id, user.userId, user.UserId, user.UserID,
+      row.AssignedUserId, row.assigned_user_id),
+    name: firstNonBlank(user.name, user.Name, user.full_name, user.fullName, user.FullName,
+      user.user_name, user.userName, user.UserName, row.AssignedUserName, row.assigned_user_name),
+  };
+}
+
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' ? value as Record<string, unknown> : null;
 }

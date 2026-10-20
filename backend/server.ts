@@ -41,7 +41,7 @@ import {
 import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from './dbSearchPolicy';
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { buildDispatchReassignmentKey, executeDispatchCron, isDispatchAutomationPaused, resolveDispatchVersion } from './dispatchCronPolicy';
-import { buildLocalWorkOrdersCountQuery, buildLocalWorkOrdersQuery, buildWorkOrderPagination, buildWorkOrderStatusScopeSql, resolveExactWorkOrderReference, resolveWorkOrderHistoryDays, resolveWorkOrderLookupSearch, resolveWorkOrderStatusScope } from './workOrderQueryPolicy';
+import { buildLocalWorkOrdersCountQuery, buildLocalWorkOrdersQuery, buildWorkOrderPagination, buildWorkOrderStatusScopeSql, normalizeWorkOrderDateFields, resolveExactWorkOrderReference, resolveWorkOrderHistoryDays, resolveWorkOrderLookupSearch, resolveWorkOrderStatusScope } from './workOrderQueryPolicy';
 import { TURN_ENGINE_SQL } from './turnEngineQuery';
 import { upsertTurnTracker } from './sync/repositories';
 import { tenantDirectoryPropertyMatchSql } from './sync/tenantDirectoryPolicy';
@@ -3862,8 +3862,7 @@ function normalizeWorkOrderRow(row: any): Record<string, any> {
     vendor: vendorLabel,
     description: String(row?.description || pickRaw(raw, ['description', 'Description', 'subject', 'Subject']) || ''),
     created_at: createdAt,
-    completed_on: updatedAt,
-    work_completed_on: updatedAt,
+    ...normalizeWorkOrderDateFields(row),
     estimated_amount: row?.estimated_amount,
     total_cost: row?.total_cost,
     _source: 'postgres_local',
@@ -6279,6 +6278,9 @@ app.get('/api/local/work_orders', async (req: Request, res: Response) => {
            case when can_open then vendor_name else '' end as vendor_name,
            case when can_open then estimated_amount else null end as estimated_amount,
            case when can_open then total_cost else null end as total_cost,
+           case when can_open then completed_on else null end as completed_on,
+           case when can_open then work_completed_on else null end as work_completed_on,
+           case when can_open then canceled_on else null end as canceled_on,
            case when can_open then created_at else null end as created_at,
            case when can_open then updated_at else null end as updated_at,
            case when can_open then raw_json else '{}'::jsonb end as raw_json,
@@ -7373,7 +7375,10 @@ app.get('/api/local/properties', async (req: Request, res: Response) => {
         ? await queryClient`
           select id, name, property_group_id, street, city, state, zip, raw_json
           from appfolio_properties
-          where property_group_id = ANY(${scopeIds}::text[])
+          where (
+            property_group_id = ANY(${scopeIds}::text[])
+            or raw_json->'PropertyGroupIds' ?| (${scopeIds}::text[])
+          )
           order by name asc
           limit ${limit}
         `

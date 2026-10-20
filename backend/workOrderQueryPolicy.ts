@@ -87,6 +87,37 @@ export type LocalWorkOrdersQueryOptions = {
 
 export type BuiltSqlQuery = { sql: string; params: unknown[] };
 
+function firstRawValue(raw: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    const value = raw[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+  return null;
+}
+
+function toIsoDate(value: unknown): string {
+  if (value === undefined || value === null || value === '') return '';
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+}
+
+/** Preserve stored work-order lifecycle timestamps, using raw AppFolio dates only when a column is null. */
+export function normalizeWorkOrderDateFields(row: Record<string, any>): {
+  completed_on: string;
+  work_completed_on: string;
+  canceled_on: string;
+} {
+  const raw = row.raw_json && typeof row.raw_json === 'object' ? row.raw_json as Record<string, unknown> : {};
+  const value = (column: string, rawKeys: string[]): string => toIsoDate(
+    row[column] !== undefined && row[column] !== null ? row[column] : firstRawValue(raw, rawKeys),
+  );
+  return {
+    completed_on: value('completed_on', ['completed_on', 'CompletedOn', 'CompletedDate', 'completed_date']),
+    work_completed_on: value('work_completed_on', ['work_completed_on', 'WorkCompletedOn', 'WorkCompletedDate', 'work_completed_date']),
+    canceled_on: value('canceled_on', ['canceled_on', 'CanceledOn', 'CancelledOn', 'CanceledDate', 'canceled_date']),
+  };
+}
+
 function buildLocalWorkOrdersWhere(
   options: Pick<LocalWorkOrdersQueryOptions, 'scopeIds' | 'statusScope' | 'statusFilter'>,
 ): { where: string; params: unknown[] } {
@@ -119,6 +150,7 @@ export function buildLocalWorkOrdersQuery(options: LocalWorkOrdersQueryOptions):
     sql: `select wo.id, ${uuidColumn}, wo.wo_number, wo.property_id, wo.unit_id, wo.property_group_id, wo.description,
             wo.category, wo.priority, wo.status, wo.assigned_user_id, wo.assigned_user_name,
             wo.vendor_id, wo.vendor_name, wo.estimated_amount, wo.total_cost,
+            wo.completed_on, wo.work_completed_on, wo.canceled_on,
             wo.created_at, wo.updated_at, wo.raw_json
           from appfolio_work_orders wo
           where ${where}

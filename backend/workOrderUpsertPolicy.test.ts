@@ -1,7 +1,26 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { mock, test } from 'node:test';
-import { postgresErrorDetails, writeWorkOrderWithDiagnostics } from './sync/workOrderUpsertPolicy.ts';
+import { postgresErrorDetails, resolveWorkOrderAssignee, writeWorkOrderWithDiagnostics } from './sync/workOrderUpsertPolicy.ts';
+
+test('work-order assignee resolution falls back to top-level fields when the array is empty', () => {
+  assert.deepEqual(resolveWorkOrderAssignee({
+    AssignedUsers: [], AssignedUserId: 'user-direct', AssignedUserName: 'Direct Assignee',
+  }), { id: 'user-direct', name: 'Direct Assignee' });
+  assert.deepEqual(resolveWorkOrderAssignee({
+    assigned_users: [], assigned_user_id: 'user-snake', assigned_user_name: 'Snake Assignee',
+  }), { id: 'user-snake', name: 'Snake Assignee' });
+});
+
+test('work-order assignee resolution prefers first user and handles nested AppFolio variants', () => {
+  assert.deepEqual(resolveWorkOrderAssignee({
+    AssignedUsers: [{ UserId: 'user-array', FullName: 'Array Assignee' }],
+    AssignedUserId: 'user-direct', AssignedUserName: 'Direct Assignee',
+  }), { id: 'user-array', name: 'Array Assignee' });
+  assert.deepEqual(resolveWorkOrderAssignee({
+    assigned_users: [{ userId: 'user-camel', fullName: 'Camel Assignee' }],
+  }), { id: 'user-camel', name: 'Camel Assignee' });
+});
 
 test('single representative AppFolio work-order insert preserves values and nulls blank identifiers', async () => {
   const payload = {

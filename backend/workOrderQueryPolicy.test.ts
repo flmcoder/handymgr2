@@ -11,6 +11,7 @@ import {
   resolveWorkOrderLookupSearch,
   resolveWorkOrderStatusScope,
   resolveWorkOrderHistoryDays,
+  normalizeWorkOrderDateFields,
 } from './workOrderQueryPolicy.ts';
 
 test('buildActiveWorkOrdersUrl requests all active rows without a date window', () => {
@@ -219,6 +220,58 @@ test('work-order row query supports the legacy schema without work_order_uuid', 
   });
   assert.match(sql, /null::text as work_order_uuid/);
   assert.doesNotMatch(sql, /wo\.work_order_uuid/);
+});
+
+test('work-order row query selects completion and cancellation dates', () => {
+  const { sql } = buildLocalWorkOrdersQuery({
+    scopeIds: [], statusScope: 'inactive', statusFilter: '', limit: 100, offset: 0,
+  });
+  assert.match(sql, /wo\.completed_on,\s*wo\.work_completed_on,\s*wo\.canceled_on/);
+});
+
+test('work-order normalization preserves distinct lifecycle dates instead of updated_at', () => {
+  const normalizedDates = normalizeWorkOrderDateFields({
+    completed_on: '2026-10-10T12:00:00Z',
+    work_completed_on: '2026-10-11T13:00:00Z',
+    canceled_on: '2026-10-12T14:00:00Z',
+    updated_at: '2026-10-20T15:00:00Z',
+  });
+  assert.deepEqual(normalizedDates, {
+    completed_on: '2026-10-10T12:00:00.000Z',
+    work_completed_on: '2026-10-11T13:00:00.000Z',
+    canceled_on: '2026-10-12T14:00:00.000Z',
+  });
+  assert.notEqual(normalizedDates.completed_on, '2026-10-20T15:00:00.000Z');
+  assert.deepEqual(normalizeWorkOrderDateFields({
+    completed_on: null,
+    work_completed_on: null,
+    canceled_on: null,
+    updated_at: '2026-10-20T15:00:00Z',
+    raw_json: {
+      CompletedOn: '2026-10-01T00:00:00Z',
+      WorkCompletedOn: '2026-10-02T00:00:00Z',
+      CanceledOn: '2026-10-03T00:00:00Z',
+    },
+  }), {
+    completed_on: '2026-10-01T00:00:00.000Z',
+    work_completed_on: '2026-10-02T00:00:00.000Z',
+    canceled_on: '2026-10-03T00:00:00.000Z',
+  });
+});
+
+test('work-order endpoint serializes lifecycle dates and property fallback keeps PropertyGroupIds matching', async () => {
+  const source = await readFile(new URL('./server.ts', import.meta.url), 'utf8');
+  const normalizeStart = source.indexOf('function normalizeWorkOrderRow(');
+  const normalizeEnd = source.indexOf('\nfunction hydrateWorkOrderProperties', normalizeStart);
+  const normalizer = source.slice(normalizeStart, normalizeEnd);
+  assert.match(normalizer, /\.\.\.normalizeWorkOrderDateFields\(row\)/);
+  assert.doesNotMatch(normalizer, /completed_on:\s*updatedAt|work_completed_on:\s*updatedAt/);
+
+  const propertiesStart = source.indexOf("app.get('/api/local/properties'");
+  const propertiesEnd = source.indexOf("app.get('/api/local/", propertiesStart + 1);
+  const propertiesRoute = source.slice(propertiesStart, propertiesEnd);
+  assert.match(propertiesRoute, /code === '42P01'/);
+  assert.match(propertiesRoute, /raw_json->'PropertyGroupIds'\s*\?\|\s*\(\$\{scopeIds\}::text\[\]\)/);
 });
 
 test('active status scope matches the dashboard open filter and qualifies the column', () => {
