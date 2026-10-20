@@ -1,6 +1,41 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { getTableConfig } from 'drizzle-orm/pg-core';
+import { appfolioBills } from './schema.ts';
 import { normalizeBillSyncRow } from './sync/billSyncPolicy.ts';
+
+test('ensureBillsTable creates or repairs every column declared by appfolioBills', () => {
+  const serverSource = readFileSync(new URL('./server.ts', import.meta.url), 'utf8');
+  const ensureBillsTable = serverSource.match(
+    /async function ensureBillsTable\(\): Promise<void> \{([\s\S]*?)\n\}/,
+  )?.[1];
+
+  assert.ok(ensureBillsTable, 'ensureBillsTable implementation should exist');
+
+  const createTableSql = ensureBillsTable.match(
+    /CREATE TABLE IF NOT EXISTS appfolio_bills \(([\s\S]*?)\n\s*\)/,
+  )?.[1];
+  assert.ok(createTableSql, 'ensureBillsTable should create appfolio_bills');
+
+  const coveredColumns = new Set<string>();
+  for (const line of createTableSql.split('\n')) {
+    const columnName = line.trim().match(/^([a-z_][a-z0-9_]*)\s+/i)?.[1];
+    if (columnName) coveredColumns.add(columnName);
+  }
+  for (const match of ensureBillsTable.matchAll(
+    /ALTER TABLE appfolio_bills ADD COLUMN IF NOT EXISTS ([a-z_][a-z0-9_]*)/gi,
+  )) {
+    coveredColumns.add(match[1]);
+  }
+
+  const declaredColumns = getTableConfig(appfolioBills).columns.map((column) => column.name);
+  assert.deepEqual(
+    declaredColumns.filter((columnName) => !coveredColumns.has(columnName)),
+    [],
+    'every appfolioBills schema column must be present in the initializer DDL or repair statements',
+  );
+});
 
 test('normalizeBillSyncRow maps a direct-property AppFolio bill', () => {
   const normalized = normalizeBillSyncRow({

@@ -960,15 +960,24 @@ async function ensureBillsTable(): Promise<void> {
       invoice_date TIMESTAMPTZ,
       due_date TIMESTAMPTZ,
       paid_at TIMESTAMPTZ,
+      work_order_id TEXT,
+      cash_account_id TEXT,
+      posting_date TIMESTAMPTZ,
+      account_number TEXT,
       raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
       cached_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ
     )
   `);
+  await queryClient.unsafe(`ALTER TABLE appfolio_bills ADD COLUMN IF NOT EXISTS work_order_id TEXT`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_bills ADD COLUMN IF NOT EXISTS cash_account_id TEXT`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_bills ADD COLUMN IF NOT EXISTS posting_date TIMESTAMPTZ`);
+  await queryClient.unsafe(`ALTER TABLE appfolio_bills ADD COLUMN IF NOT EXISTS account_number TEXT`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_bills_vendor_idx ON appfolio_bills(vendor_id)`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_bills_property_idx ON appfolio_bills(property_id)`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_bills_status_idx ON appfolio_bills(status)`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_bills_updated_idx ON appfolio_bills(updated_at DESC)`);
+  await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS appfolio_bills_work_order_idx ON appfolio_bills(work_order_id)`);
   billsTableEnsured = true;
 }
 
@@ -4774,6 +4783,10 @@ async function fetchBillsFromDbApi(params: Params, scopeIds: string[] = []): Pro
         b.invoice_date,
         b.due_date,
         b.paid_at,
+        b.work_order_id,
+        b.cash_account_id,
+        b.posting_date,
+        b.account_number,
         b.raw_json,
         b.updated_at,
         b.cached_at
@@ -4806,6 +4819,10 @@ async function fetchBillsFromDbApi(params: Params, scopeIds: string[] = []): Pro
         invoice_date: asIso(row.invoice_date),
         due_date: asIso(row.due_date),
         paid_at: asIso(row.paid_at),
+        work_order_id: row.work_order_id,
+        cash_account_id: row.cash_account_id,
+        posting_date: asIso(row.posting_date),
+        account_number: row.account_number,
         updated_at: asIso(row.updated_at),
         raw: row.raw_json,
       })),
@@ -5435,7 +5452,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
   return routeHandler(req, res);
 });
 
-app.get('/health', async (_req: Request, res: Response) => {
+const healthHandler = async (_req: Request, res: Response): Promise<void> => {
   const dbOk = await pingDatabase();
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.status(dbOk ? 200 : 503).json({
@@ -5444,7 +5461,11 @@ app.get('/health', async (_req: Request, res: Response) => {
     version: getBuildVersion(),
     database: dbOk ? 'up' : 'down',
   });
-});
+};
+
+app.route(['/health', '/system/ping'])
+  .get(healthHandler)
+  .head(healthHandler);
 
 app.get(['/api/health/providers', '/api/local/health/providers'], async (_req: Request, res: Response) => {
   try {
