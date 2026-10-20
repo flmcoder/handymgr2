@@ -5598,6 +5598,7 @@ async function ensureVendorDirectoryTable(): Promise<void> {
   await queryClient.unsafe(`ALTER TABLE vendor_directory ADD COLUMN IF NOT EXISTS email TEXT`);
   await queryClient.unsafe(`ALTER TABLE vendor_directory ADD COLUMN IF NOT EXISTS liability_ins_expires TEXT`);
   await queryClient.unsafe(`ALTER TABLE vendor_directory ADD COLUMN IF NOT EXISTS workers_comp_expires TEXT`);
+  await queryClient.unsafe(`ALTER TABLE vendor_directory ADD COLUMN IF NOT EXISTS raw_json JSONB NOT NULL DEFAULT '{}'::jsonb`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS vendor_directory_name_idx ON vendor_directory(lower(vendor_name))`);
   await queryClient.unsafe(`CREATE INDEX IF NOT EXISTS vendor_directory_group_idx ON vendor_directory(property_group_id)`);
   vendorDirectoryTableEnsured = true;
@@ -5631,6 +5632,7 @@ async function hydrateVendorDirectoryCompliance(): Promise<{ synced: number }> {
               email = coalesce(nullif($4, ''), email),
               liability_ins_expires = coalesce(nullif($5, ''), liability_ins_expires),
               workers_comp_expires = coalesce(nullif($6, ''), workers_comp_expires),
+              raw_json = coalesce(raw_json, '{}'::jsonb) || $7::jsonb,
               updated_at = NOW()
         where lower(vendor_name) = lower($1)
         returning vendor_key`,
@@ -5641,6 +5643,7 @@ async function hydrateVendorDirectoryCompliance(): Promise<{ synced: number }> {
         String(row?.email || '').trim(),
         String(row?.liability_ins_expires || '').trim(),
         String(row?.workers_comp_expires || '').trim(),
+        JSON.stringify(row || {}),
       ],
     );
     synced += (updated as any[]).length;
@@ -7465,6 +7468,15 @@ app.get(['/api/local/vendors', '/api/local/v2/vendors'], async (req: Request, re
            max(coalesce(vd.email, '')) as email,
            max(coalesce(vd.liability_ins_expires, '')) as liability_ins_expires,
            max(coalesce(vd.workers_comp_expires, '')) as workers_comp_expires,
+           max(coalesce(vd.raw_json->>'street', vd.raw_json->>'Street', wo.raw_json->>'vendor_street', wo.raw_json->>'VendorStreet', '')) as street,
+           max(coalesce(vd.raw_json->>'city', vd.raw_json->>'City', wo.raw_json->>'vendor_city', wo.raw_json->>'VendorCity', '')) as city,
+           max(coalesce(vd.raw_json->>'state', vd.raw_json->>'State', wo.raw_json->>'vendor_state', wo.raw_json->>'VendorState', '')) as state,
+           max(coalesce(vd.raw_json->>'zip', vd.raw_json->>'Zip', vd.raw_json->>'postal_code', vd.raw_json->>'PostalCode', wo.raw_json->>'vendor_zip', wo.raw_json->>'VendorZip', '')) as zip,
+           max(coalesce(vd.raw_json->>'auto_ins_expires', vd.raw_json->>'AutoInsExpires', wo.raw_json->>'auto_ins_expires', wo.raw_json->>'AutoInsExpires', '')) as auto_ins_expires,
+           max(coalesce(vd.raw_json->>'license', vd.raw_json->>'License', wo.raw_json->>'license', wo.raw_json->>'License', '')) as license,
+           max(coalesce(vd.raw_json->>'license_expires', vd.raw_json->>'LicenseExpires', vd.raw_json->>'contractor_license_expires', vd.raw_json->>'ContractorLicenseExpires', vd.raw_json->>'business_license_expires', vd.raw_json->>'BusinessLicenseExpires', wo.raw_json->>'license_expires', wo.raw_json->>'LicenseExpires', '')) as license_expires,
+           max(coalesce(vd.raw_json->>'tags', vd.raw_json->>'Tags', wo.raw_json->>'vendor_tags', wo.raw_json->>'VendorTags', '')) as tags,
+           max(coalesce(vd.raw_json->>'do_not_use_for_work_order', vd.raw_json->>'DoNotUseForWorkOrder', wo.raw_json->>'do_not_use_for_work_order', wo.raw_json->>'DoNotUseForWorkOrder', '')) as do_not_use_for_work_order,
            wo.property_group_id,
            count(*)::int as open_work_order_count,
            min(coalesce(wo.created_at, wo.updated_at, now())) as first_seen_at,
@@ -7496,6 +7508,9 @@ app.get(['/api/local/vendors', '/api/local/v2/vendors'], async (req: Request, re
           liability_ins_expires: liabilityInsExpires,
           workers_comp_expires: workersCompExpires,
         });
+        const rawDoNotUse = row?.do_not_use_for_work_order;
+        const doNotUseForWorkOrder = rawDoNotUse === true
+          || /^(true|1|yes)$/i.test(String(rawDoNotUse || '').trim());
         return {
           vendor_id: vendorId,
           name: vendorName,
@@ -7506,8 +7521,17 @@ app.get(['/api/local/vendors', '/api/local/v2/vendors'], async (req: Request, re
           vendor_type: String(row?.category || '').trim(),
           phone_numbers: String(row?.phone_numbers || '').trim(),
           email: String(row?.email || '').trim(),
+          street: String(row?.street || '').trim(),
+          city: String(row?.city || '').trim(),
+          state: String(row?.state || '').trim(),
+          zip: String(row?.zip || '').trim(),
           liability_ins_expires: liabilityInsExpires,
+          auto_ins_expires: String(row?.auto_ins_expires || '').trim(),
           workers_comp_expires: workersCompExpires,
+          license: String(row?.license || '').trim(),
+          license_expires: String(row?.license_expires || '').trim(),
+          tags: String(row?.tags || '').trim(),
+          do_not_use_for_work_order: doNotUseForWorkOrder,
           compliant: compliance.compliant,
           compliance,
           open_work_order_count: Number(row?.open_work_order_count || 0) || 0,

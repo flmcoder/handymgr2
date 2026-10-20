@@ -6430,6 +6430,39 @@ async function fetchLocalWorkOrders(days) {
   return data;
 }
 
+function normalizeWorkOrderDisplayStatus(status) {
+  var normalized = String(status || '').trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+  var statusAliases = {
+    'new': 'New',
+    'open': 'New',
+    'estimate requested': 'Estimate Requested',
+    'estimate_requested': 'Estimate Requested',
+    'estimate request': 'Estimate Requested',
+    'estimate req': 'Estimate Requested',
+    'est. req.': 'Estimate Requested',
+    'est req': 'Estimate Requested',
+    'bid requested': 'Estimate Requested',
+    'estimated': 'Estimated',
+    'estimate received': 'Estimated',
+    'bid received': 'Estimated',
+    'assigned': 'Assigned',
+    'vendor assigned': 'Assigned',
+    'in progress': 'Assigned',
+    'approved': 'Assigned',
+    'scheduled': 'Scheduled',
+    'waiting': 'Waiting',
+    'waiting parts': 'Waiting',
+    'waiting for parts': 'Waiting',
+    'on hold': 'Waiting',
+    'work done': 'Work Done',
+    'work_done': 'Work Done',
+    'work completed': 'Work Done',
+    'completed': 'Work Done',
+    'ready to bill': 'Ready to Bill'
+  };
+  return statusAliases[normalized] || 'Other';
+}
+
 function normalizeLocalWorkOrder(r) {
   var rawUuid = r.work_order_uuid || r.work_order_id || r.uuid || r.Id || '';
   var dbApiId = r.db_api_id || r.dbApiId || r.v0_uuid || r.v0_id || r.uuid || r.UUID || '';
@@ -6453,7 +6486,7 @@ function normalizeLocalWorkOrder(r) {
     unitTurnId: r.unit_turn_id || r.UnitTurnId || '',
     unit: r.unit_name || r.UnitName || r.unit_id || '',
     priority: r.priority || r.Priority || 'Normal',
-    status: r.status || r.Status || 'New',
+    status: normalizeWorkOrderDisplayStatus(r.status || r.Status || 'New'),
     description: r.description || r.job_description || r.JobDescription || r.service_request_description || r.Description || '',
     vendorName: r.vendor_name || r.vendor || r.VendorName || '',
     vendorId: r.vendor_id || r.VendorId || '',
@@ -7425,10 +7458,12 @@ async function fetchVendors(options) {
     setApiStatus('loading', 'Loading vendors (local)\u2026');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var scopedGroupUuid = getEffectiveGroupUuid();
+    setDataSourceState('vendors', 'loading', { error: '' });
     if (!scopedGroupUuid) {
       VENDORS = [];
       _vendorDirectoryTotal = 0;
       _vendorDirectoryTotalPages = 1;
+      setDataSourceState('vendors', 'idle', { count: 0, error: '' });
       var emptyGrid = $('#vendorGrid');
       if (emptyGrid) emptyGrid.innerHTML = emptyHtml('fa-layer-group', 'Select a property group to load vendors');
       return false;
@@ -7445,7 +7480,10 @@ async function fetchVendors(options) {
     });
     if (options && options.refreshCompliance) params.set('refresh_compliance', '1');
     var url = localBase + '/api/local/v2/vendors?' + params.toString();
-    var res = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 45000);
+    var token = getProxyAccessToken();
+    var headers = { 'Accept': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    var res = await fetchWithTimeout(url, { headers: headers }, 45000);
     var data = {};
     try { data = await res.json(); } catch (e) { data = {}; }
     if (!res.ok || data.ok === false) {
@@ -7469,6 +7507,7 @@ async function fetchVendors(options) {
         autoInsurance: v.auto_ins_expires || '',
         workersComp: v.workers_comp_expires || '',
         licenseExpires: v.license_expires || v.contractor_license_expires || v.business_license_expires || '',
+        license: v.license || '',
         phone: v.phone_numbers || '',
         email: v.email || '',
         address: ((v.street || '') + ' ' + (v.city || '') + ' ' + (v.state || '') + ' ' + (v.zip || '')).trim(),
@@ -7486,22 +7525,28 @@ async function fetchVendors(options) {
     _vendorDirectoryPage = Number(data.page || _vendorDirectoryPage) || 1;
     _vendorDirectoryPageSize = Number(data.per_page || _vendorDirectoryPageSize) || 50;
     _vendorDirectoryTotalPages = Number(data.total_pages || 1) || 1;
+    setDataSourceState('vendors', 'ok', { count: VENDORS.length, error: '' });
     buildReferenceMaps(VENDORS, PROPERTIES);
     return true;
   } catch (err) {
+    var vendorError = String((err && (err.message || err)) || 'Vendor request failed');
+    console.error('fetchVendors failed:', err);
     VENDORS = [];
+    setDataSourceState('vendors', 'no_response', { count: null, error: vendorError });
     buildReferenceMaps(VENDORS, PROPERTIES);
+    renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
     return false;
   }
 }
 
 // Properties: local PostgreSQL read
 async function fetchProperties() {
+  var requestGeneration = _scopeRequestGeneration;
+  var scopedGroupUuid = getEffectiveGroupUuid();
+  setDataSourceState('properties', 'loading', { error: '' });
   try {
     setApiStatus('loading', 'Loading properties (local)…');
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
-    var scopedGroupUuid = getEffectiveGroupUuid();
-    var requestGeneration = _scopeRequestGeneration;
     var token = getProxyAccessToken();
     var headers = { 'Accept': 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
@@ -7581,12 +7626,17 @@ async function fetchProperties() {
       });
     });
     buildReferenceMaps(VENDORS, PROPERTIES);
+    setDataSourceState('properties', 'ok', { count: PROPERTIES.length, error: '' });
     return true;
   } catch (err) {
+    if (requestGeneration !== _scopeRequestGeneration || String(scopedGroupUuid || '') !== String(getEffectiveGroupUuid() || '')) return false;
+    var propertyError = String((err && (err.message || err)) || 'Properties request failed');
+    console.error('fetchProperties failed:', err);
     PROPERTIES = [];
     _propertyManagementStateById = {};
     _propertyManagementStateByName = {};
     buildReferenceMaps(VENDORS, PROPERTIES);
+    setDataSourceState('properties', 'no_response', { count: null, error: propertyError });
     return false;
   }
 }
@@ -7664,9 +7714,11 @@ var INSPECTIONS = [];
 var INSPECTION_LOOKBACK_DAYS = 180;
 var DATA_SOURCE_STATE = {
   work_orders: { status: 'idle', count: null, error: '', last_updated_at: '' },
+  properties: { status: 'idle', count: null, error: '', last_updated_at: '' },
   turns: { status: 'idle', count: null, error: '', last_updated_at: '' },
   inspections: { status: 'idle', count: null, error: '', last_updated_at: '' },
   upcoming_moveouts: { status: 'idle', count: null, error: '', last_updated_at: '' },
+  vendors: { status: 'idle', count: null, error: '', last_updated_at: '' },
   bills: { status: 'idle', count: null, error: '', last_updated_at: '' },
   billing_kpis: { status: 'idle', count: null, error: '', last_updated_at: '' }
 };
@@ -7700,9 +7752,11 @@ function getDataSourceState(name) {
 
 var _DATA_SOURCE_LABELS = {
   work_orders: 'Work orders',
+  properties: 'Properties',
   turns: 'Turns',
   inspections: 'Inspections',
   upcoming_moveouts: 'Upcoming move-outs',
+  vendors: 'Vendors',
   bills: 'Bills',
   billing_kpis: 'Billing KPIs'
 };
@@ -17703,9 +17757,10 @@ function getFilteredWOs() {
     ? WORK_ORDER_LOOKUP_RESULTS
     : ((currentWOTab === 'inactive') ? WORK_ORDERS_INACTIVE : WORK_ORDERS_ACTIVE);
   return sourceArray.filter(function(wo) {
+    var canonicalStatus = normalizeWorkOrderDisplayStatus(wo.status);
     if (lookupActive && wo.globalSearchResult && wo.canOpen === false) return true;
     // Status filter (from filter buttons or kanban column click)
-    if (currentWOFilter && currentWOFilter !== 'all' && wo.status !== currentWOFilter) return false;
+    if (currentWOFilter && currentWOFilter !== 'all' && currentWOFilter !== 'flagged' && canonicalStatus !== normalizeWorkOrderDisplayStatus(currentWOFilter)) return false;
     // Priority dropdown
     if (currentWOPriority && wo.priority !== currentWOPriority) return false;
     // Type dropdown
@@ -18927,6 +18982,18 @@ function renderWorkOrders() {
 
   // ── List view ──────────────────────────────────────────────────────────────
   if (currentWOView === 'list') {
+    var listWorkOrderState = getDataSourceState('work_orders');
+    if (woPageRows.length === 0 && (listWorkOrderState.status === 'no_response' || listWorkOrderState.status === 'error')) {
+      board.innerHTML = '<div id="woDatasetContext">' + statusContextHtml + '</div><div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-triangle-exclamation" style="font-size:36px;display:block;margin-bottom:12px;color:var(--danger)"></i><div>Unable to load work orders: ' + escapeHtml(listWorkOrderState.error || 'Unknown API or authentication error') + '</div><div class="empty-state-actions"><button type="button" class="btn btn-secondary" id="workOrdersRetryButton">Retry</button></div></div>';
+      var listRetryButton = document.getElementById('workOrdersRetryButton');
+      if (listRetryButton) listRetryButton.addEventListener('click', function() {
+        listRetryButton.disabled = true;
+        listRetryButton.textContent = 'Retrying…';
+        fetchWorkOrders({ offset: 0 }).then(function() { renderWorkOrders(); });
+      });
+      renderCompletedWOHistorySection();
+      return;
+    }
     var woGridRowsBase = woPageRows.map(function(wo) {
       var age = getWOAgeMeta(wo);
       var property = wo.propertyId && window.AppDB && window.AppDB.properties
@@ -18948,7 +19015,7 @@ function renderWorkOrders() {
         ).trim(),
         unit: wo.unit || '-',
         description: wo.description || '-',
-        status: wo.status || '-',
+        status: normalizeWorkOrderDisplayStatus(wo.status || 'New'),
         priority: wo.priority || '-',
         assignedUser: String(wo.assignedUser || '').trim(),
         vendorName: String(wo.vendorName || '').trim(),
@@ -19068,7 +19135,18 @@ function renderWorkOrders() {
   var tabsHtml = '<div id="woDatasetContext">' + statusContextHtml + '</div>';
 
   if ((WORK_ORDERS_ACTIVE.length + WORK_ORDERS_INACTIVE.length) === 0) {
-    board.innerHTML = tabsHtml + '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-inbox" style="font-size:36px;display:block;margin-bottom:12px;color:var(--border)"></i>No work orders loaded. Connect to API or import a cache file.</div>';
+    var workOrderState = getDataSourceState('work_orders');
+    if (workOrderState.status === 'no_response' || workOrderState.status === 'error') {
+      board.innerHTML = tabsHtml + '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-triangle-exclamation" style="font-size:36px;display:block;margin-bottom:12px;color:var(--danger)"></i><div>Unable to load work orders: ' + escapeHtml(workOrderState.error || 'Unknown API or authentication error') + '</div><div class="empty-state-actions"><button type="button" class="btn btn-secondary" id="workOrdersRetryButton">Retry</button></div></div>';
+      var retryWorkOrdersButton = document.getElementById('workOrdersRetryButton');
+      if (retryWorkOrdersButton) retryWorkOrdersButton.addEventListener('click', function() {
+        retryWorkOrdersButton.disabled = true;
+        retryWorkOrdersButton.textContent = 'Retrying…';
+        fetchWorkOrders({ offset: 0 }).then(function() { renderWorkOrders(); });
+      });
+    } else {
+      board.innerHTML = tabsHtml + '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-inbox" style="font-size:36px;display:block;margin-bottom:12px;color:var(--border)"></i>No work orders loaded. Connect to API or import a cache file.</div>';
+    }
     renderCompletedWOHistorySection();
     return;
   }
@@ -19076,7 +19154,8 @@ function renderWorkOrders() {
   // Group WOs by status
   var groups = {};
   woPageRows.forEach(function(wo) {
-    var st = wo.status || 'New';
+    var st = normalizeWorkOrderDisplayStatus(wo.status || 'New');
+    wo.status = st;
     if (!groups[st]) groups[st] = [];
     groups[st].push(wo);
   });
@@ -19123,7 +19202,7 @@ function renderWorkOrders() {
   });
 
   // Also show any WOs with statuses not in KANBAN_STATUSES
-  var otherWos = woPageRows.filter(function(wo) { return !KANBAN_STATUSES.some(function(s) { return s.key === wo.status; }); });
+  var otherWos = woPageRows.filter(function(wo) { return normalizeWorkOrderDisplayStatus(wo.status) === 'Other'; });
   if (otherWos.length > 0) {
     var otherExpanded = expandedWOColumn === 'Other';
     html += '<div class="kanban-col' + (otherExpanded ? ' column--expanded' : '') + '" data-column="Other"><div class="kanban-col-head" data-column="Other"><span class="kanban-col-title">Other</span><div style="display:flex;align-items:center;gap:8px"><span class="kanban-col-count">' + otherWos.length + '</span><span class="kanban-col-toggle">' + (otherExpanded ? '▼' : '▶') + '</span></div></div><div class="kanban-col-body">';
@@ -22877,6 +22956,21 @@ function renderVendors(search) {
   var nextPage = $('#vendorNextPage');
   if (prevPage) prevPage.disabled = _vendorDirectoryPage <= 1;
   if (nextPage) nextPage.disabled = _vendorDirectoryPage >= _vendorDirectoryTotalPages;
+
+  var vendorState = getDataSourceState('vendors');
+  if (vendorState.status === 'no_response' || vendorState.status === 'error') {
+    container.innerHTML = emptyHtml('fa-triangle-exclamation', 'Unable to load vendors: ' + (vendorState.error || 'Unknown error'))
+      + '<div class="empty-state-actions"><button type="button" class="btn btn-secondary" id="vendorRetryButton">Retry</button></div>';
+    var retryButton = $('#vendorRetryButton');
+    if (retryButton) retryButton.addEventListener('click', function() {
+      retryButton.disabled = true;
+      retryButton.textContent = 'Retrying…';
+      fetchVendors({ resetPage: true }).then(function(ok) {
+        if (ok) renderVendors($('#vendorSearch') ? $('#vendorSearch').value : '');
+      });
+    });
+    return;
+  }
 
   var searchText = (search || '').trim();
   var searchLower = searchText.toLowerCase();
@@ -27823,6 +27917,7 @@ var DISPATCH = {
   tucsonPage: 1,
   phoenixPagination: {},
   tucsonPagination: {},
+  _livePollFailures: 0,
   _pollTimer: null, _lastAuditMax: 0, POLL_MS: 30000,
 };
 window.DISPATCH = DISPATCH;
@@ -27921,6 +28016,12 @@ function getDispatchWoBranch(wo) {
 }
 function getDispatchQueueBranch(row) {
   if (!row) return 'unknown';
+  var rowBranch = String(row.branch || '').trim().toLowerCase();
+  if (rowBranch === 'phoenix' || rowBranch === 'tucson') return rowBranch;
+  var groupBranch = getDispatchBranchForGroupUuid(row.property_group_uuid);
+  if (groupBranch !== 'unknown') return groupBranch;
+  if (rowBranch) return 'unknown';
+
   var woId = String(row.wo_id || '').trim();
   var woNum = String(row.wo_number || '').trim();
   var match = null;
@@ -29474,6 +29575,7 @@ var DispatchConfig = {
             tier: inferredBranch === 'phoenix' ? 1 : 2,
             geo_zone: inferredBranch,
             property_group_uuid: inferredGroupUuid,
+            tech_email: String(u.tech_email || u.TechEmail || u.email || u.Email || '').trim(),
             active: 1
           });
         }
@@ -30054,7 +30156,7 @@ var DispatchControl = {
   _pollLive: async function() {
     try {
       var data=await proxyAction('reassignment_queue',{limit:'100'});
-      if(!data.ok)return;
+      if(!data || !data.ok)throw new Error(String((data && (data.error || data.message)) || 'Dispatch live poll returned an unsuccessful response'));
       DISPATCH.queue=data.queue||[]; DISPATCH.techs=data.tech_roster||[];
       DISPATCH.audit=data.audit||[]; DISPATCH.blasts=data.blasts||[];
       DISPATCH.claims=data.tier2_claims||[]; DISPATCH.stats=data.stats||{};
@@ -30071,9 +30173,24 @@ var DispatchControl = {
         });
       }
       DispatchControl._renderActivePanel();
+      DISPATCH._livePollFailures=0;
+      var dot=document.getElementById('dispatchLiveDot');
       var lbl=document.getElementById('dispatchLiveLabel');
-      if(lbl)lbl.textContent='Live · '+new Date().toLocaleTimeString();
-    }catch(e){ /* silent */ }
+      if(dot)dot.style.background='var(--success)';
+      if(lbl){lbl.textContent='Live · '+new Date().toLocaleTimeString();lbl.removeAttribute('title');}
+    }catch(e){
+      DISPATCH._livePollFailures=Number(DISPATCH._livePollFailures||0)+1;
+      console.debug('[Dispatch] Live poll failed ('+DISPATCH._livePollFailures+' consecutive):',e);
+      if(DISPATCH._livePollFailures>=2){
+        var dot=document.getElementById('dispatchLiveDot');
+        var lbl=document.getElementById('dispatchLiveLabel');
+        if(dot)dot.style.background=DISPATCH._livePollFailures>=4?'var(--danger)':'var(--warning)';
+        if(lbl){
+          lbl.textContent='Stale · retrying';
+          lbl.title=String((e&&(e.message||e))||'Dispatch live poll failed');
+        }
+      }
+    }
   },
   maybeAutoSyncAssignees: async function(sourceLabel) {
     if (!DISPATCH.autoSyncAssignees) return;
@@ -30296,13 +30413,17 @@ function decodeWebhookEventV9(evt) {
             var sec=document.getElementById(secId);
             if(!sec||!sec.classList.contains('active'))return;
             if(!keyArr.some(function(k){return SECMAP[secId].indexOf(k)!==-1;}))return;
-            if(secId==='sec-workorders'){try{renderWorkOrders();}catch(e){}}
-            else if(secId==='sec-estimates'){try{renderEstimates();}catch(e){}}
-            else if(secId==='sec-turnboard'){try{renderTurnBoard();}catch(e){}}
-            else if(secId==='sec-dashboard'){try{renderDashboardKPIs();}catch(e){} try{renderTurnDashboardStrip();}catch(e){} try{renderActivityFeed();}catch(e){}}
-            else if(secId==='sec-billing'){try{renderBillingSection();}catch(e){}}
-            else if(secId==='sec-inspections'){try{renderInspections('');}catch(e){}}
-            else if(secId==='sec-vendors'){try{renderVendors('');}catch(e){}}
+            if(secId==='sec-workorders'){try{renderWorkOrders();}catch(e){console.error('[Live invalidation] renderWorkOrders failed:',e);}}
+            else if(secId==='sec-estimates'){try{renderEstimates();}catch(e){console.error('[Live invalidation] renderEstimates failed:',e);}}
+            else if(secId==='sec-turnboard'){try{renderTurnBoard();}catch(e){console.error('[Live invalidation] renderTurnBoard failed:',e);}}
+            else if(secId==='sec-dashboard'){
+              try{renderDashboardKPIs();}catch(e){console.error('[Live invalidation] renderDashboardKPIs failed:',e);}
+              try{renderTurnDashboardStrip();}catch(e){console.error('[Live invalidation] renderTurnDashboardStrip failed:',e);}
+              try{renderActivityFeed();}catch(e){console.error('[Live invalidation] renderActivityFeed failed:',e);}
+            }
+            else if(secId==='sec-billing'){try{renderBillingSection();}catch(e){console.error('[Live invalidation] renderBillingSection failed:',e);}}
+            else if(secId==='sec-inspections'){try{renderInspections('');}catch(e){console.error('[Live invalidation] renderInspections failed:',e);}}
+            else if(secId==='sec-vendors'){try{renderVendors('');}catch(e){console.error('[Live invalidation] renderVendors failed:',e);}}
           });
           var disSec=document.getElementById('sec-dispatch');
           if(disSec&&disSec.classList.contains('active')&&DISPATCH.initialized)DispatchControl._pollLive();
@@ -30429,11 +30550,11 @@ function decodeWebhookEventV9(evt) {
     // Respond to invalidation events → refresh activity feed + dashboard KPIs
     window.addEventListener('handymgr:webhook-invalidate',function(e){
       requestAnimationFrame(function(){
-        try{renderActivityFeed();}catch(err){}
+        try{renderActivityFeed();}catch(err){console.error('[Webhook invalidation] renderActivityFeed failed:',err);}
         var woKeys=['work_orders','turn_work_orders','turns','upcoming_moveouts','bills'];
         var detail=(e&&e.detail&&e.detail.keys)?e.detail.keys:[];
-        if(detail.some(function(k){return woKeys.indexOf(k)!==-1;})){try{renderDashboardKPIs();}catch(err){}}
-        if(detail.some(function(k){return k==='bills';})){try{renderBillingSection();}catch(err){}}
+        if(detail.some(function(k){return woKeys.indexOf(k)!==-1;})){try{renderDashboardKPIs();}catch(err){console.error('[Webhook invalidation] renderDashboardKPIs failed:',err);}}
+        if(detail.some(function(k){return k==='bills';})){try{renderBillingSection();}catch(err){console.error('[Webhook invalidation] renderBillingSection failed:',err);}}
       });
     });
     document.addEventListener('visibilitychange',function(){if(!document.hidden&&_pollTimer)_poll();});
