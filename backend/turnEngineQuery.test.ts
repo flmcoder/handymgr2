@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { TURN_ENGINE_SQL } from './turnEngineQuery.ts';
+import { buildTurnEngineCountQuery, TURN_ENGINE_SQL } from './turnEngineQuery.ts';
+import { tenantDirectoryPropertyMatchSql } from './sync/tenantDirectoryPolicy.ts';
 
 test('turn engine unions native and occupancy-derived shadow turns', () => {
   assert.match(TURN_ENGINE_SQL, /native_turns\s+as/i);
@@ -14,6 +15,21 @@ test('turn engine unions native and occupancy-derived shadow turns', () => {
 test('native turn and same-unit same-date move-out notice produce one canonical turn identity', () => {
   assert.match(TURN_ENGINE_SQL, /'unit:'\s*\|\|\s*coalesce\(d\.property_id, ''\)\s*\|\|\s*':'\s*\|\|\s*d\.unit_id\s*\|\|\s*':'\s*\|\|\s*to_char\(d\.move_out_date at time zone 'UTC', 'YYYY-MM-DD'\)/i);
   assert.match(TURN_ENGINE_SQL, /n\.move_out_date::date\s*=\s*o\.move_out_date::date/i);
+});
+
+test('native and shadow turns carry canonical property-group UUIDs through the response', async () => {
+  const source = await readFile(new URL('./server.ts', import.meta.url), 'utf8');
+  const routeStart = source.indexOf("app.get('/api/local/v2/turns'");
+  const routeEnd = source.indexOf("app.get('/api/local/turns'", routeStart);
+  const route = source.slice(routeStart, routeEnd);
+
+  assert.match(tenantDirectoryPropertyMatchSql('p', 'd.property_id'), /raw_json ->> 'PropertyId'/);
+  assert.match(TURN_ENGINE_SQL, /left join appfolio_properties p on \(\s*p\.id = d\.property_id/i);
+  assert.match(TURN_ENGINE_SQL, /left join appfolio_properties p on \(\s*p\.id = td\.property_id/i);
+  assert.match(TURN_ENGINE_SQL, /left join appfolio_property_groups pg on pg\.uuid = p\.property_group_id or pg\.id = p\.property_group_id/i);
+  assert.equal((TURN_ENGINE_SQL.match(/coalesce\(nullif\(pg\.uuid, ''\), nullif\(p\.property_group_id, ''\)\) as property_group_uuid/gi) || []).length, 2);
+  assert.match(TURN_ENGINE_SQL, /fr\.property_group_uuid/i);
+  assert.match(route, /property_group_uuid: row\.property_group_uuid \? String\(row\.property_group_uuid\) : null/);
 });
 
 test('work-order sweep is bounded by move-out and next move-in', () => {
@@ -84,6 +100,22 @@ test('turn engine exposes occupancy triage for the priority view', () => {
 test('turn scope matches badge identity (singular group id or PropertyGroupIds array)', () => {
   assert.match(TURN_ENGINE_SQL, /p_scope\.property_group_id = ANY\(\$3::text\[\]\)/i);
   assert.match(TURN_ENGINE_SQL, /p_scope\.raw_json->'PropertyGroupIds' \?\|\s*\(\$3::text\[\]\)/);
+});
+
+test('badge counts aggregate Turn Engine metrics in PostgreSQL instead of transferring full rows', async () => {
+  const source = await readFile(new URL('./server.ts', import.meta.url), 'utf8');
+  const routeStart = source.indexOf("app.get('/api/local/badge_counts'");
+  const routeEnd = source.indexOf("app.get('/api/local/analytics/work-orders'", routeStart);
+  const route = source.slice(routeStart, routeEnd);
+
+  const countSql = buildTurnEngineCountQuery();
+  assert.match(route, /buildTurnEngineCountQuery\(\)/);
+  assert.match(countSql, /count\(\*\) filter \(where lower\(coalesce\(turn_rows\.status, ''\)\) <> 'completed'\)::int as turns/i);
+  assert.match(countSql, /from \([\s\S]*\) as turn_rows/i);
+  assert.doesNotMatch(countSql, /\nlimit \$\d+/i);
+  assert.match(countSql, /\$1::int[\s\S]*\$2::text\[\][\s\S]*\$3::text/i);
+  assert.match(route, /turnMetrics\.turns/);
+  assert.doesNotMatch(route, /const activeTurnRows\s*=\s*\(turnRows as any\[\]\)\.filter/);
 });
 
 test('Express registers authenticated unit-turn tracker synchronization', async () => {

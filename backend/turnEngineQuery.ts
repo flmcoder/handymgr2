@@ -1,4 +1,5 @@
 import { propertyIdentityMatch } from './badgeCountsPolicy.ts';
+import { tenantDirectoryPropertyMatchSql } from './sync/tenantDirectoryPolicy.ts';
 
 export const TURN_ENGINE_SQL = String.raw`
 with native_turns as (
@@ -7,6 +8,7 @@ with native_turns as (
     d.turn_id as unit_turn_id,
     d.unit_id,
     d.property_id,
+    coalesce(nullif(pg.uuid, ''), nullif(p.property_group_id, '')) as property_group_uuid,
     d.unit_name,
     d.property_name,
     d.move_out_date,
@@ -15,6 +17,8 @@ with native_turns as (
     d.unit_turn_status,
     true as is_native_turn
   from appfolio_unit_turn_details d
+  left join appfolio_properties p on ${tenantDirectoryPropertyMatchSql('p', 'd.property_id')}
+  left join appfolio_property_groups pg on pg.uuid = p.property_group_id or pg.id = p.property_group_id
   where d.unit_id is not null
     and d.move_out_date is not null
 ),
@@ -26,11 +30,14 @@ notice_occupancies as (
     td.record_id,
     td.unit_id,
     td.property_id,
+    coalesce(nullif(pg.uuid, ''), nullif(p.property_group_id, '')) as property_group_uuid,
     td.unit_name,
     td.property_name,
     td.tenant_name,
     coalesce(td.move_out_date, td.lease_to, current_date::timestamptz) as move_out_date
   from appfolio_tenant_directory td
+  left join appfolio_properties p on ${tenantDirectoryPropertyMatchSql('p', 'td.property_id')}
+  left join appfolio_property_groups pg on pg.uuid = p.property_group_id or pg.id = p.property_group_id
   where td.unit_id is not null
     and (
       td.move_out_date is not null
@@ -48,6 +55,7 @@ shadow_turns as (
     null::text as unit_turn_id,
     o.unit_id,
     o.property_id,
+    o.property_group_uuid,
     o.unit_name,
     o.property_name,
     o.move_out_date,
@@ -328,6 +336,7 @@ select
   fr.unit_turn_id,
   fr.unit_id,
   fr.property_id,
+  fr.property_group_uuid,
   fr.unit_name,
   fr.property_name,
   fr.move_out_date,
@@ -383,3 +392,26 @@ where fr.move_out_date >= current_date - ($1::int * interval '1 day')
 order by fr.strict_completed asc, fr.move_out_date desc
 limit $2::int
 `;
+
+/** Aggregate Turn Engine badge metrics in PostgreSQL without paging full rows over the tunnel. */
+export function buildTurnEngineCountQuery(): string {
+  const unpagedSql = TURN_ENGINE_SQL
+    .replace(/\norder by fr\.strict_completed asc, fr\.move_out_date desc\nlimit \$2::int\s*$/i, '')
+    .replace(/\$(\d+)/g, (_match, parameter: string) => {
+      const index = Number(parameter);
+      return `$${index <= 1 ? index : index - 1}`;
+    });
+
+  return `
+    select
+      count(*) filter (where lower(coalesce(turn_rows.status, '')) <> 'completed')::int as turns,
+      count(*) filter (where lower(coalesce(turn_rows.status, '')) <> 'completed' and lower(coalesce(turn_rows.status, '')) = 'upcoming')::int as upcoming_turns,
+      count(*) filter (where coalesce(turn_rows.ready_to_close, false) and lower(coalesce(turn_rows.status, '')) <> 'completed')::int as turns_ready_to_close,
+      count(*) filter (where coalesce(turn_rows.is_priority, false))::int as turns_priority,
+      count(*) filter (
+        where coalesce(turn_rows.is_priority, false)
+          and coalesce(turn_rows.elapsed_days, current_date - turn_rows.move_out_date::date) >= 180
+      )::int as turns_6mo_plus
+    from (${unpagedSql}) as turn_rows
+  `;
+}

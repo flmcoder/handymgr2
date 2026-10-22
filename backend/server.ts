@@ -42,9 +42,10 @@ import { buildTableSearchQuery, resolveSearchableTable, SEARCHABLE_TABLES } from
 import { shouldRefreshDispatchSnapshot } from './dispatchSnapshotPolicy';
 import { buildDispatchReassignmentKey, executeDispatchCron, isDispatchAutomationPaused, resolveDispatchVersion } from './dispatchCronPolicy';
 import { buildLocalWorkOrdersCountQuery, buildLocalWorkOrdersQuery, buildWorkOrderPagination, buildWorkOrderStatusScopeSql, normalizeWorkOrderDateFields, resolveExactWorkOrderReference, resolveWorkOrderHistoryDays, resolveWorkOrderLookupSearch, resolveWorkOrderStatusScope } from './workOrderQueryPolicy';
-import { TURN_ENGINE_SQL } from './turnEngineQuery';
+import { buildTurnEngineCountQuery, TURN_ENGINE_SQL } from './turnEngineQuery';
 import { upsertTurnTracker } from './sync/repositories';
 import { tenantDirectoryPropertyMatchSql } from './sync/tenantDirectoryPolicy';
+import { isKnownScannerProbePath } from './scannerPathPolicy';
 import {
   buildMagicPortalSmsMessage,
   consumeMagicTokenTransaction,
@@ -3919,6 +3920,16 @@ function normalizeUnitRow(row: any): Record<string, any> {
 const app = express();
 const DIST_DIR = path.resolve(process.cwd(), 'dist');
 
+// Drop common automated scanner probes before body parsing, session lookup,
+// database access, static file serving, or the SPA fallback.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (isKnownScannerProbePath(req.path)) {
+    res.status(404).end();
+    return;
+  }
+  next();
+});
+
 // AppFolio webhook ingress uses detached JWS verification on the exact raw payload.
 // Keep this route above express.json middleware to avoid body mutation.
 app.post('/api/webhooks/appfolio', express.raw({ type: '*/*', limit: '2mb' }), async (req: Request, res: Response) => {
@@ -6438,7 +6449,8 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
 
     // Use the same deduplicated native + occupancy-derived turn engine as the
     // Turn Board, then exclude terminal rows for the navigation/dashboard total.
-    const turnPromise = queryClient.unsafe(TURN_ENGINE_SQL, [365, 20_000, scope, '']);
+    const turnCountSql = buildTurnEngineCountQuery();
+    const turnPromise = queryClient.unsafe(turnCountSql, [365, scope, '']);
 
     // Inspections badge = active residents on an active lease with NO move-in
     // inspection on record (last inspection missing or predating move-in) —
@@ -6470,10 +6482,7 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
     const inspPromise = queryClient.unsafe(inspBaseSql, scope ? [scope] : []);
 
     const [woRows, turnRows, inspRows] = await Promise.all([woPromise, turnPromise, inspPromise]);
-    const activeTurnRows = (turnRows as any[]).filter((row) => String(row?.status || '').toLowerCase() !== 'completed');
-    const upcomingTurnRows = activeTurnRows.filter((row) => String(row?.status || '').toLowerCase() === 'upcoming');
-    const readyToCloseRows = (turnRows as any[]).filter((row) => !!row.ready_to_close && String(row?.status || '').toLowerCase() !== 'completed');
-    const priorityTurnRows = (turnRows as any[]).filter((row) => !!row.is_priority);
+    const turnMetrics = (turnRows as any[])[0] || {};
     const workOrderMetrics = (woRows as any[])[0] || {};
     const payloadBase = buildBadgeCountsPayload({
       workOrders: workOrderMetrics.total,
@@ -6483,29 +6492,18 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
       workOrdersAge31To60: workOrderMetrics.age_31_60,
       workOrdersAge61Plus: workOrderMetrics.age_61_plus,
       workOrdersAgeUnknown: workOrderMetrics.age_unknown,
-      turns: activeTurnRows.length,
-      upcomingTurns: upcomingTurnRows.length,
+      turns: turnMetrics.turns,
+      upcomingTurns: turnMetrics.upcoming_turns,
       inspections: (inspRows as any[])[0]?.total,
       propertyGroupId: scopeIds.join(','),
     });
-    // Add priority/ready metrics for dashboard attention (non-breaking)
-    const now = new Date();
-    const daysSince = (d: any) => {
-      if (!d) return null;
-      const t = new Date(d).getTime();
-      if (Number.isNaN(t)) return null;
-      return Math.floor((now.getTime() - t) / 86400000);
-    };
-    const priorityTurns6mo = priorityTurnRows.filter((row) => {
-      const days = row.elapsed_days != null ? Number(row.elapsed_days) : daysSince(row.move_out_date);
-      return days != null && days >= 180;
-    }).length;
+    // Add priority/ready metrics for dashboard attention (non-breaking).
     const payload: any = {
       ...payloadBase,
-      turns_priority: priorityTurnRows.length,
-      turns_ready_to_close: readyToCloseRows.length,
-      turns_6mo_plus: priorityTurns6mo,
-      turns_all_active: activeTurnRows.length,
+      turns_priority: Number(turnMetrics.turns_priority || 0),
+      turns_ready_to_close: Number(turnMetrics.turns_ready_to_close || 0),
+      turns_6mo_plus: Number(turnMetrics.turns_6mo_plus || 0),
+      turns_all_active: Number(turnMetrics.turns || 0),
     };
     res.json(payload);
   } catch (error) {
@@ -7999,6 +7997,7 @@ app.get('/api/local/v2/turns', async (req: Request, res: Response) => {
       unit_turn_id: row.unit_turn_id ? String(row.unit_turn_id) : '',
       unit_id: String(row.unit_id || ''),
       property_id: String(row.property_id || ''),
+      property_group_uuid: row.property_group_uuid ? String(row.property_group_uuid) : null,
       unit_name: String(row.unit_name || ''),
       property_name: String(row.property_name || ''),
       move_out_date: asIso(row.move_out_date),

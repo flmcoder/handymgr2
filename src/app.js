@@ -26,6 +26,7 @@ import { createTabsModule } from './tabs.js';
 import { createManagerReviewModule } from './managerReview.js';
 import { createNavInteractionsModule } from './navInteractions.js';
 import { createGroupFilterModule } from './groupFilter.js';
+import { createConcurrencyLimiter, createGeocodeCoordinateCache, mapWithConcurrency, normalizeGeocodeAddress } from './geocodeCachePolicy.js';
 
 ModuleRegistry.registerModules([
   ClientSideRowModelModule,
@@ -5389,6 +5390,7 @@ function resetInMemoryDataForSessionTransition() {
   _scopeRequestGeneration++;
   _workOrdersRequestGeneration++;
   clearWorkOrderLookup();
+  resetInitialCriticalDataReadiness();
   WORK_ORDERS_ACTIVE = []; WORK_ORDERS_INACTIVE = []; WORK_ORDERS = []; VENDORS = []; PROPERTIES = []; PROPERTY_GROUPS = []; TURNS = []; INSPECTIONS = []; RECENT_TASKS = []; WEBHOOK_EVENTS = []; TURN_RECORDS = []; TURN_PIPE_DATA = []; UNIT_TURNS_DB = []; API_ERRORS = [];
   WORK_ORDERS_ACTIVE_TOTAL = 0; WORK_ORDERS_ACTIVE_OFFSET = 0; WORK_ORDERS_ACTIVE_HAS_NEXT = false;
   _inactiveWorkOrdersLoaded = false; _inactiveWorkOrdersScope = '';
@@ -5416,7 +5418,7 @@ function resetInMemoryDataForSessionTransition() {
     upcoming_turns: 0,
     inspections: 0
   };
-  setNavBadge('woBadge', 0);
+  setNavBadge('woBadge', '…');
   setNavBadge('turnBadge', 0);
   setNavBadge('inspBadge', 0);
   var woSearch = $('#woSearch');
@@ -6522,11 +6524,37 @@ var NAV_BADGE_TOTALS = {
 var NAV_BADGE_TOTALS_SCOPE = '';
 var NAV_BADGE_TOTALS_LOADED = false;
 var _scopeRequestGeneration = 0;
+var _initialCriticalDataSettled = { badge_counts: false, work_orders: false, properties: false };
+var _initialCriticalDataReady = Promise.resolve();
+var _resolveInitialCriticalDataReady = null;
+var _initialCriticalDataGeneration = 0;
+
+function resetInitialCriticalDataReadiness() {
+  _initialCriticalDataGeneration++;
+  _initialCriticalDataSettled = { badge_counts: false, work_orders: false, properties: false };
+  _initialCriticalDataReady = new Promise(function(resolve) {
+    _resolveInitialCriticalDataReady = resolve;
+  });
+}
+
+function markInitialCriticalDataSettled(key, generation) {
+  if (generation !== undefined && generation !== _initialCriticalDataGeneration) return;
+  if (Object.prototype.hasOwnProperty.call(_initialCriticalDataSettled, key)) {
+    _initialCriticalDataSettled[key] = true;
+  }
+  if (_resolveInitialCriticalDataReady && Object.keys(_initialCriticalDataSettled).every(function(name) {
+    return _initialCriticalDataSettled[name];
+  })) {
+    var resolve = _resolveInitialCriticalDataReady;
+    _resolveInitialCriticalDataReady = null;
+    resolve();
+  }
+}
 
 function setNavBadge(id, value) {
   var el = document.getElementById(id);
   if (!el) return;
-  el.textContent = String(Number(value) || 0);
+  el.textContent = value === '…' ? '…' : String(Number(value) || 0);
 }
 
 function applyNavBadgeTotals() {
@@ -6537,9 +6565,11 @@ function applyNavBadgeTotals() {
 }
 
 async function fetchNavBadgeTotals(force, retryCount) {
+  var readinessGeneration = _initialCriticalDataGeneration;
   var scope = String(getEffectiveGroupUuid() || '');
   var requestGeneration = _scopeRequestGeneration;
   if (!force && NAV_BADGE_TOTALS_LOADED && NAV_BADGE_TOTALS_SCOPE === scope) return true;
+  if (!NAV_BADGE_TOTALS_LOADED) setNavBadge('woBadge', '…');
   try {
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var token = getProxyAccessToken();
@@ -6570,10 +6600,13 @@ async function fetchNavBadgeTotals(force, retryCount) {
       setTimeout(function() { fetchNavBadgeTotals(true, 1); }, 1500);
     }
     return false;
+  } finally {
+    markInitialCriticalDataSettled('badge_counts', readinessGeneration);
   }
 }
 
 async function fetchWorkOrders(options) {
+  var readinessGeneration = _initialCriticalDataGeneration;
   setDataSourceState('work_orders', 'loading', { error: '' });
   var requestedOffset = options && Number.isFinite(Number(options.offset))
     ? Math.max(0, Math.floor(Number(options.offset)))
@@ -6623,8 +6656,6 @@ async function fetchWorkOrders(options) {
     
     setApiStatus('loading', 'Work orders: ' + WORK_ORDERS_ACTIVE_TOTAL + ' active');
     setDataSourceState('work_orders', 'ok', { count: WORK_ORDERS_ACTIVE_TOTAL, active: WORK_ORDERS_ACTIVE_TOTAL, inactive: _inactiveWorkOrdersLoaded ? WORK_ORDERS_INACTIVE.length : null, error: '' });
-    // Refresh nav badge totals now that the scoped data has changed.
-    fetchNavBadgeTotals(true);
     return true;
   } catch (err) {
     if (workOrdersRequestGeneration !== _workOrdersRequestGeneration || requestGeneration !== _scopeRequestGeneration) return false;
@@ -6632,6 +6663,7 @@ async function fetchWorkOrders(options) {
     return false;
   } finally {
     if (workOrdersRequestGeneration === _workOrdersRequestGeneration) _workOrdersActivePageLoading = false;
+    markInitialCriticalDataSettled('work_orders', readinessGeneration);
   }
 }
 
@@ -7541,6 +7573,7 @@ async function fetchVendors(options) {
 
 // Properties: local PostgreSQL read
 async function fetchProperties() {
+  var readinessGeneration = _initialCriticalDataGeneration;
   var requestGeneration = _scopeRequestGeneration;
   var scopedGroupUuid = getEffectiveGroupUuid();
   setDataSourceState('properties', 'loading', { error: '' });
@@ -7638,6 +7671,8 @@ async function fetchProperties() {
     buildReferenceMaps(VENDORS, PROPERTIES);
     setDataSourceState('properties', 'no_response', { count: null, error: propertyError });
     return false;
+  } finally {
+    markInitialCriticalDataSettled('properties', readinessGeneration);
   }
 }
 
@@ -12559,9 +12594,10 @@ function wireBillingFilters() {
       upcoming_turns: 0,
       inspections: 0
     };
-    setNavBadge('woBadge', 0);
+    setNavBadge('woBadge', '…');
     setNavBadge('turnBadge', 0);
     setNavBadge('inspBadge', 0);
+    fetchNavBadgeTotals(true);
   });
 
   document.addEventListener('groupFilterChanged', function() {
@@ -13553,20 +13589,22 @@ function renderDashboardKPIs() {
       subText: 'Loading urgent queue…'
     });
   } else {
-    var scopedOpenTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.work_orders : openWOs.length;
-    var scopedUrgentTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.urgent_work_orders : urgentWOs.length;
+    var scopedOpenTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.work_orders : null;
+    var scopedUrgentTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.urgent_work_orders : null;
     setMetricVisualState('kpiOpen', 'kpiOpenSub', {
       state: 'ok',
-      value: String(scopedOpenTotal),
+      value: scopedOpenTotal === null ? '…' : String(scopedOpenTotal),
       subText: WORK_ORDERS.length + ' rows loaded for detail'
     });
     var openSubEl = $('#kpiOpenSub');
     if (openSubEl) openSubEl.innerHTML = WORK_ORDERS.length + ' rows loaded for detail' + agingHtml;
-    var urgSubText = scopedUrgentTotal > 0 ? scopedUrgentTotal + ' require attention' : 'No urgent items';
-    if (!NAV_BADGE_TOTALS_LOADED && unassignedUrgent.length > 0) urgSubText += ' \u2022 ' + unassignedUrgent.length + ' unassigned';
+    var urgSubText = scopedUrgentTotal === null
+      ? 'Loading urgent total…'
+      : (scopedUrgentTotal > 0 ? scopedUrgentTotal + ' require attention' : 'No urgent items');
+    if (NAV_BADGE_TOTALS_LOADED && unassignedUrgent.length > 0) urgSubText += ' \u2022 ' + unassignedUrgent.length + ' unassigned in loaded rows';
     setMetricVisualState('kpiUrgent', 'kpiUrgentSub', {
       state: 'ok',
-      value: String(scopedUrgentTotal),
+      value: scopedUrgentTotal === null ? '…' : String(scopedUrgentTotal),
       subText: urgSubText
     });
   }
@@ -13582,11 +13620,11 @@ function renderDashboardKPIs() {
       subText: 'Loading turns…'
     });
   } else {
-    var scopedTurnTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.turns : activeTurns.length;
+    var scopedTurnTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.turns : null;
     setMetricVisualState('kpiTurns', 'kpiTurnsSub', {
       state: 'ok',
-      value: String(scopedTurnTotal),
-      subText: scopedTurnTotal > 0 ? scopedTurnTotal + ' active now' : 'No active turns'
+      value: scopedTurnTotal === null ? '…' : String(scopedTurnTotal),
+      subText: scopedTurnTotal === null ? 'Loading turn totals…' : (scopedTurnTotal > 0 ? scopedTurnTotal + ' active now' : 'No active turns')
     });
   }
 
@@ -13721,8 +13759,8 @@ function renderDashboardKPIs() {
   fetchAndRenderPortfolioSunburst();
   renderWoSankey();
 
-  $('#woBadge').textContent = (NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.work_orders : openWOs.length) || '0';
-  $('#turnBadge').textContent = (NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.turns : activeTurns.length) || '0';
+  $('#woBadge').textContent = NAV_BADGE_TOTALS_LOADED ? String(NAV_BADGE_TOTALS.work_orders) : '…';
+  $('#turnBadge').textContent = NAV_BADGE_TOTALS_LOADED ? String(NAV_BADGE_TOTALS.turns) : '…';
 
   // Active filter indicator
   var fiEl = document.getElementById('filterIndicator');
@@ -14251,6 +14289,10 @@ async function renderDashboardInsightCharts(openWOs, urgentWOs) {
 var _geoChartsRendered = false;
 var _geocodedCache = null;
 var _geocodedCacheScope = '';
+var _geocodeCoordinateCache = createGeocodeCoordinateCache(function() { return window.localStorage; }, 'handymgr.geocode.coordinates.v1');
+var _geocodeRequestLimiter = createConcurrencyLimiter(3);
+var _geocodeRunKey = '';
+var _geocodePayloadsInFlight = new Map();
 
 function renderDashboardGeoCharts(force) {
   var buildInspMap = window.buildInspectionMapOption;
@@ -14280,7 +14322,7 @@ function renderDashboardGeoCharts(force) {
   if (!mapEl) return;
 
   // Map plots one point per property with missing inspections, from the
-  // scope-exact aggregate; geocoded coords are cached per scope.
+  // scope-exact aggregate; property coordinates persist independently of scope.
   var mapScope = getEffectiveGroupUuid() || '__all__';
   if (_geocodedCache && _geocodedCacheScope === mapScope && !force) {
     renderMapWithCoords(_geocodedCache);
@@ -14316,45 +14358,82 @@ function renderDashboardGeoCharts(force) {
     });
   }
 
-  if (mapMeta) mapMeta.textContent = 'Geocoding…';
-
   var mapGeneration = _chartAnalyticsGeneration;
-  fetchChartAnalytics('inspections').then(function(mapData) {
-    if (mapGeneration !== _chartAnalyticsGeneration) return;
+  var readinessGeneration = _initialCriticalDataGeneration;
+  var runKey = mapScope + ':' + mapGeneration + ':' + readinessGeneration;
+  if (_geocodeRunKey === runKey) return;
+  _geocodeRunKey = runKey;
+  if (mapMeta) mapMeta.textContent = 'Map loading after workspace data…';
+
+  _initialCriticalDataReady.then(async function() {
+    if (readinessGeneration !== _initialCriticalDataGeneration || mapGeneration !== _chartAnalyticsGeneration || mapScope !== (getEffectiveGroupUuid() || '__all__')) return;
+    if (mapMeta) mapMeta.textContent = 'Loading inspection map…';
+    var mapData = await fetchChartAnalytics('inspections');
+    if (readinessGeneration !== _initialCriticalDataGeneration || mapGeneration !== _chartAnalyticsGeneration || mapScope !== (getEffectiveGroupUuid() || '__all__')) return;
     if (!mapData || !(mapData.by_property || []).length) {
       if (mapMeta) mapMeta.textContent = 'No inspection data';
       var existingMapEmpty = echartsCore.getInstanceByDom(mapEl);
       if (existingMapEmpty) existingMapEmpty.clear();
       return;
     }
-    var inspData = mapData.by_property;
 
-  var seen = {};
-  var unique = inspData.filter(function(r) {
-    var key = String(r.property_id || r.propertyId || r.property_address || r.propertyName || '');
-    if (!key || seen[key]) return false;
-    seen[key] = true;
-    return true;
-  });
+    var addressGroups = new Map();
+    (mapData.by_property || []).forEach(function(row) {
+      var address = String(row.property_address || row.propertyAddress || row.property_name || row.propertyName || '').trim();
+      var addressKey = normalizeGeocodeAddress(address);
+      if (!addressKey) return;
+      if (!addressGroups.has(addressKey)) addressGroups.set(addressKey, { address: address, rows: [] });
+      addressGroups.get(addressKey).rows.push(row);
+    });
 
-  Promise.all(unique.map(function(r) {
-    var addr = String(r.property_address || r.propertyAddress || r.property_name || r.propertyName || '').trim();
-    if (!addr) return Promise.resolve(null);
-    return proxyAction('geocode', { address: addr })
-      .then(function(res) {
-        if (res && res.ok && typeof res.lat === 'number' && typeof res.lon === 'number') {
-          var grid = window.normalizeGpsToGrid(res.lat, res.lon);
-          return Object.assign({}, r, { _lat: res.lat, _lon: res.lon, _x: grid[0], _y: grid[1] });
+    var geocodedGroups = await mapWithConcurrency(Array.from(addressGroups.values()), 3, async function(group) {
+      var addressKey = normalizeGeocodeAddress(group.address);
+      var coordinates = _geocodeCoordinateCache.get(group.address);
+      if (!coordinates) {
+        try {
+          var geocodePromise = _geocodePayloadsInFlight.get(addressKey);
+          if (!geocodePromise) {
+            geocodePromise = _geocodeRequestLimiter.run(function() {
+              return proxyAction('geocode', { address: group.address });
+            }).then(function(result) {
+              if (!result || !result.ok || !Number.isFinite(Number(result.lat)) || !Number.isFinite(Number(result.lon))) return null;
+              var resolved = { lat: Number(result.lat), lon: Number(result.lon) };
+              _geocodeCoordinateCache.set(group.address, resolved);
+              return resolved;
+            }).finally(function() {
+              _geocodePayloadsInFlight.delete(addressKey);
+            });
+            _geocodePayloadsInFlight.set(addressKey, geocodePromise);
+          }
+          coordinates = await geocodePromise;
+        } catch (e) {
+          return [];
         }
-        return null;
-      })
-      .catch(function() { return null; });
-  })).then(function(geocoded) {
-    if (mapGeneration !== _chartAnalyticsGeneration) return;
-    _geocodedCache = geocoded.filter(function(r) { return r && r._x != null; });
+      }
+      if (!coordinates) return [];
+      var grid = window.normalizeGpsToGrid(coordinates.lat, coordinates.lon);
+      return group.rows.map(function(row) {
+        return Object.assign({}, row, {
+          _lat: coordinates.lat,
+          _lon: coordinates.lon,
+          _x: grid[0],
+          _y: grid[1],
+        });
+      });
+    });
+
+    if (readinessGeneration !== _initialCriticalDataGeneration || mapGeneration !== _chartAnalyticsGeneration || mapScope !== (getEffectiveGroupUuid() || '__all__')) return;
+    _geocodeCoordinateCache.flush();
+    _geocodedCache = geocodedGroups.reduce(function(all, group) { return all.concat(group); }, []);
     _geocodedCacheScope = mapScope;
     renderMapWithCoords(_geocodedCache);
-  });
+  }).catch(function(error) {
+    console.warn('[inspection-map] deferred map loading failed:', String(error && error.message || error || 'unknown error'));
+  }).finally(function() {
+    if (_geocodeRunKey === runKey) _geocodeRunKey = '';
+    if (readinessGeneration === _initialCriticalDataGeneration && (mapGeneration !== _chartAnalyticsGeneration || mapScope !== (getEffectiveGroupUuid() || '__all__'))) {
+      renderDashboardGeoCharts();
+    }
   });
 }
 
@@ -26346,6 +26425,10 @@ async function sectionRefresh(section, btn) {
 async function initApp() {
   if (appInitialized) return;
   appInitialized = true;
+  resetInitialCriticalDataReadiness();
+  if (_accessRole === 'vendors') {
+    ['badge_counts', 'work_orders', 'properties'].forEach(markInitialCriticalDataSettled);
+  }
   debugLogEvent('info', 'auth_init', 'Authenticated application initialization started', { role: _accessRole || 'unknown' });
   scheduleDebugEventFlush();
   _trackUserAccess();
@@ -26452,6 +26535,9 @@ async function initApp() {
 
       if (fresh) {
         // Cache is fresh — no need to fetch now. Schedule background refresh.
+        markInitialCriticalDataSettled('work_orders');
+        markInitialCriticalDataSettled('properties');
+        fetchNavBadgeTotals(true);
         setApiStatus('', 'Connected (cached)');
         $('#apiStatus').className = 'topbar-status';
         return;
@@ -26514,6 +26600,7 @@ async function initApp() {
         await loadStaleCache();
         renderAll();
       }
+        ['badge_counts', 'work_orders', 'properties'].forEach(markInitialCriticalDataSettled);
       updateCacheBadge(cacheLoaded ? 'cached' : 'offline', null, true);
       return;
     }
@@ -26552,6 +26639,7 @@ async function initApp() {
         await loadStaleCache();
         renderAll();
       }
+      ['badge_counts', 'work_orders', 'properties'].forEach(markInitialCriticalDataSettled);
       updateCacheBadge(cacheLoaded ? 'cached' : 'offline', null, true);
       return;
     } else if (isPingServerError) {
@@ -26608,6 +26696,7 @@ async function fetchAllLive() {
       withStepTimeout(fetchProperties, 60000),
       withStepTimeout(fetchPropertyGroups, 45000)
     ]);
+    void fetchNavBadgeTotals(true);
     var _coreElapsed = _formatElapsed(Date.now() - _coreStart);
     var woOk = coreResults[0];
     var propOk = coreResults[1];
