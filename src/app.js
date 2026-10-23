@@ -27,6 +27,7 @@ import { createManagerReviewModule } from './managerReview.js';
 import { createNavInteractionsModule } from './navInteractions.js';
 import { createGroupFilterModule } from './groupFilter.js';
 import { createConcurrencyLimiter, createGeocodeCoordinateCache, mapWithConcurrency, normalizeGeocodeAddress } from './geocodeCachePolicy.js';
+import { isRecordInPropertyGroupScope } from './propertyScopePolicy.js';
 
 ModuleRegistry.registerModules([
   ClientSideRowModelModule,
@@ -1257,31 +1258,11 @@ function isInPropertyGroup(propertyId, propertyName, groupName) {
   return false;
 }
 
-function isInEffectivePropertyScope(propertyId, propertyName) {
+function isInEffectivePropertyScope(recordOrPropertyId, propertyName) {
   var scopeIds = parseScopeUuidList(getEffectiveGroupUuid());
+  var record = recordOrPropertyId && typeof recordOrPropertyId === 'object' ? recordOrPropertyId : null;
   if (!scopeIds.length) return true;
-  var propertyIdText = String(propertyId || '').trim().toLowerCase();
-  var propertyNameText = String(propertyName || '').trim().toLowerCase();
-  var property = (PROPERTIES || []).find(function(candidate) {
-    var candidateId = String(candidate && (candidate.id || candidate.property_id || candidate.propertyId) || '').trim().toLowerCase();
-    var candidateName = String(candidate && candidate.name || '').trim().toLowerCase();
-    return (propertyIdText && candidateId === propertyIdText) || (propertyNameText && candidateName === propertyNameText);
-  });
-  if (property) {
-    var groupIds = [
-      property.propertyGroupId,
-      property.property_group_id,
-      property.propertyGroupUuid,
-      property.property_group_uuid,
-    ];
-    var rawGroupIds = parsePropertyGroupIds(property.PropertyGroupIds || property.property_group_ids || property._groupIds);
-    groupIds = groupIds.concat(rawGroupIds);
-    if (groupIds.some(function(groupId) {
-      return scopeIds.indexOf(String(groupId || '').trim().toLowerCase()) !== -1;
-    })) return true;
-  }
-  if (scopeIds.length && Array.isArray(PROPERTIES) && PROPERTIES.length > 0 && !property) return false;
-  return isInPropertyGroup(propertyId, propertyName, getEffectiveGroupId());
+  return isRecordInPropertyGroupScope(record, scopeIds);
 }
 
 // Helper: add a group name to a lookup map entry (creates array if needed)
@@ -6450,6 +6431,7 @@ function normalizeWorkOrderDisplayStatus(status) {
     'assigned': 'Assigned',
     'vendor assigned': 'Assigned',
     'in progress': 'Assigned',
+    'in_progress': 'Assigned',
     'approved': 'Assigned',
     'scheduled': 'Scheduled',
     'waiting': 'Waiting',
@@ -6460,7 +6442,8 @@ function normalizeWorkOrderDisplayStatus(status) {
     'work_done': 'Work Done',
     'work completed': 'Work Done',
     'completed': 'Work Done',
-    'ready to bill': 'Ready to Bill'
+    'ready to bill': 'Ready to Bill',
+    'ready_to_bill': 'Ready to Bill'
   };
   return statusAliases[normalized] || 'Other';
 }
@@ -6480,6 +6463,8 @@ function normalizeLocalWorkOrder(r) {
     canOpen: canOpen,
     propertyId: r.property_id || r.PropertyId || '',
     propertyGroupId: String(r.property_group_id || r.property_group_uuid || r.PropertyGroupId || r.PropertyGroupUuid || '').trim(),
+    property_group_uuid: String(r.property_group_uuid || r.propertyGroupUuid || r.property_group_id || r.PropertyGroupUuid || '').trim(),
+    property_group_uuid: String(r.property_group_uuid || r.propertyGroupUuid || r.property_group_id || r.PropertyGroupUuid || '').trim(),
     propertyGroupName: propertyGroupName,
     propertyName: r.property_name || r.property || r.PropertyName || '',
     propertyAddress: r.property_address || ((r.property_street || '') + ' ' + (r.property_city || '') + ' ' + (r.property_state || '') + ' ' + (r.property_zip || '')).trim(),
@@ -7669,7 +7654,7 @@ async function fetchProperties() {
     _propertyManagementStateById = {};
     _propertyManagementStateByName = {};
     buildReferenceMaps(VENDORS, PROPERTIES);
-    setDataSourceState('properties', 'no_response', { count: null, error: propertyError });
+    setDataSourceState('properties', 'error', { count: null, error: propertyError });
     return false;
   } finally {
     markInitialCriticalDataSettled('properties', readinessGeneration);
@@ -7690,6 +7675,8 @@ function normalizeTurnRecord(t) {
     unit: t.unit || t.Unit || t.unit_name || t.UnitName || t.unit_number || t.UnitNumber || t.unitName || '',
     property: t.property || t.Property || t.property_name || t.PropertyName || t.property_name_address || t.propertyName || '',
     propertyId: t.property_id || t.PropertyId || t.property_uuid || t.PropertyUUID || t.propertyId || 0,
+    property_group_uuid: String(t.property_group_uuid || t.propertyGroupUuid || t.property_group_id || t.PropertyGroupUuid || '').trim(),
+    property_group_uuid: String(t.property_group_uuid || t.propertyGroupUuid || t.property_group_id || t.PropertyGroupUuid || '').trim(),
     unitId: t.unit_id || t.UnitId || t.unit_uuid || t.UnitUUID || t.unitId || 0,
     notes: t.notes || '',
     referenceUser: t.reference_user || t.referenceUser || t.created_by || '',
@@ -8580,6 +8567,7 @@ async function fetchUpcomingMoveouts() {
       return {
         property:    t.property_name  || t.property  || t.PropertyName  || '',
         propertyId:  t.property_id    || t.propertyId || t.PropertyId   || 0,
+        property_group_uuid: String(t.property_group_uuid || t.propertyGroupUuid || t.property_group_id || t.PropertyGroupUuid || '').trim(),
         unit:        t.unit_name      || t.unit       || t.UnitName      || '',
         unitId:      t.unit_id        || t.unitId     || t.UnitId        || 0,
         tenant:      t.occupancy_name || t.tenant_name || t.tenant       || t.TenantName || '',
@@ -8618,6 +8606,7 @@ async function fetchTurnWorkOrders() {
         unitId: wo.UnitId || wo.unit_id || '',
         unitTurnId: wo.UnitTurnId || wo.unit_turn_id || '',
         propertyId: wo.PropertyId || wo.property_id || '',
+        property_group_uuid: String(wo.property_group_uuid || wo.propertyGroupUuid || wo.property_group_id || wo.PropertyGroupUuid || '').trim(),
         status: wo.Status || wo.status || '',
         type: wo.Type || wo.type || '',
         priority: wo.Priority || wo.priority || '',
@@ -10534,7 +10523,7 @@ function getUpcomingMoveOuts() {
 
   // Primary: use UPCOMING_MOVEOUTS from tenant directory (most accurate)
   UPCOMING_MOVEOUTS.forEach(function(mo) {
-    if (!isInEffectivePropertyScope(mo.propertyId, mo.property)) return;
+    if (!isInEffectivePropertyScope(mo)) return;
     if (!mo.moveOut) return;
     var moDate = new Date(mo.moveOut);
     if (isNaN(moDate.getTime())) return;
@@ -10543,13 +10532,13 @@ function getUpcomingMoveOuts() {
       if (seen[key]) return;
       seen[key] = true;
       var daysLeft = Math.round((moDate - today) / 86400000);
-      results.push({ property: mo.property, unit: mo.unit, tenant: mo.tenant, moveOut: mo.moveOut, daysLeft: daysLeft, phone: mo.phone || '', rent: mo.rent || '' });
+      results.push({ property: mo.property, propertyId: mo.propertyId, property_group_uuid: mo.property_group_uuid, unit: mo.unit, tenant: mo.tenant, moveOut: mo.moveOut, daysLeft: daysLeft, phone: mo.phone || '', rent: mo.rent || '' });
     }
   });
 
   // Fallback: also check inspections for move-outs not in UPCOMING_MOVEOUTS
   INSPECTIONS.forEach(function(r) {
-    if (!isInPropertyGroup(r.propertyId, r.propertyName, currentPropertyGroup)) return;
+    if (!isInEffectivePropertyScope(r)) return;
     if (!r.moveOut) return;
     var moDate = new Date(r.moveOut);
     if (isNaN(moDate.getTime())) return;
@@ -10558,7 +10547,7 @@ function getUpcomingMoveOuts() {
       if (seen[key]) return;
       seen[key] = true;
       var daysLeft = Math.round((moDate - today) / 86400000);
-      results.push({ property: r.propertyName, unit: r.unit, tenant: r.tenant, moveOut: r.moveOut, daysLeft: daysLeft });
+      results.push({ property: r.propertyName, propertyId: r.propertyId, property_group_uuid: r.property_group_uuid, unit: r.unit, tenant: r.tenant, moveOut: r.moveOut, daysLeft: daysLeft });
     }
   });
 
@@ -10722,7 +10711,7 @@ function getDashboardTurnEntries() {
   return TURN_PIPE_DATA.filter(function(p) {
     if (!isManagedTurnEntry(p)) return false;
     if (p.isClosed || p.isCompleted) return false;
-    if (!isInEffectivePropertyScope(p.propertyId, p.property)) return false;
+    if (!isInEffectivePropertyScope(p)) return false;
     var pmName = String(p.siteManager || 'Unassigned PM').trim() || 'Unassigned PM';
     if (DASH_TURN_PM_FILTER && pmName !== DASH_TURN_PM_FILTER) return false;
     return true;
@@ -10796,7 +10785,7 @@ function renderTurnDashboardStrip() {
 
   var baseEntries = TURN_PIPE_DATA.filter(function(p) {
     if (!isManagedTurnEntry(p)) return false;
-    return !p.isClosed && !p.isCompleted && isInEffectivePropertyScope(p.propertyId, p.property);
+    return !p.isClosed && !p.isCompleted && isInEffectivePropertyScope(p);
   });
   syncDashboardTurnPmFilter(baseEntries);
 
@@ -19016,6 +19005,18 @@ function renderWorkOrders() {
   var board = $('#kanbanBoard');
   if (!board) return;
   board.classList.toggle('layout-list', currentWOView === 'list');
+  var workOrderState = getDataSourceState('work_orders');
+  if (WORK_ORDERS.length === 0 && (workOrderState.status === 'no_response' || workOrderState.status === 'error')) {
+    board.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-triangle-exclamation" style="font-size:36px;display:block;margin-bottom:12px;color:var(--danger)"></i><div>Unable to load work orders: ' + escapeHtml(workOrderState.error || 'Unknown API or authentication error') + '</div><div class="empty-state-actions"><button type="button" class="btn btn-secondary" id="workOrdersRetryButton">Retry</button></div></div>';
+    var retryWorkOrdersButton = document.getElementById('workOrdersRetryButton');
+    if (retryWorkOrdersButton) retryWorkOrdersButton.onclick = function() {
+      retryWorkOrdersButton.disabled = true;
+      retryWorkOrdersButton.textContent = 'Retrying…';
+      fetchWorkOrders({ offset: 0 }).then(function() { renderWorkOrders(); });
+    };
+    renderCompletedWOHistorySection();
+    return;
+  }
   rebuildWOScopedFilters();
   var lookupActive = isWorkOrderLookupActive();
   var filtered = sortWorkOrders(getFilteredWOs());
@@ -19214,7 +19215,6 @@ function renderWorkOrders() {
   var tabsHtml = '<div id="woDatasetContext">' + statusContextHtml + '</div>';
 
   if ((WORK_ORDERS_ACTIVE.length + WORK_ORDERS_INACTIVE.length) === 0) {
-    var workOrderState = getDataSourceState('work_orders');
     if (workOrderState.status === 'no_response' || workOrderState.status === 'error') {
       board.innerHTML = tabsHtml + '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-triangle-exclamation" style="font-size:36px;display:block;margin-bottom:12px;color:var(--danger)"></i><div>Unable to load work orders: ' + escapeHtml(workOrderState.error || 'Unknown API or authentication error') + '</div><div class="empty-state-actions"><button type="button" class="btn btn-secondary" id="workOrdersRetryButton">Retry</button></div></div>';
       var retryWorkOrdersButton = document.getElementById('workOrdersRetryButton');
@@ -20864,6 +20864,7 @@ function buildTurnPipeline() {
       return {
         source: 'native',
         propertyId: turn.propertyId,
+        property_group_uuid: turn.property_group_uuid,
         unitId: turn.unitId,
         unitTurnId: turn.unitTurnId,
         moveOutDate: turn.moveOutDateKey || turn.moveOut,
@@ -20875,6 +20876,7 @@ function buildTurnPipeline() {
       return {
         source: 'moveout',
         propertyId: moveOut.propertyId,
+        property_group_uuid: moveOut.property_group_uuid,
         unitId: moveOut.unitId,
         moveOutDate: moveOut.moveOut,
         propertyName: moveOut.property,
@@ -21186,7 +21188,7 @@ function buildTurnPipeline() {
   }
 
   // Helper: build a pipeline entry
-  function addEntry(key, unit, property, propId, unitId, moveOut, turnData, moveoutTenant) {
+  function addEntry(key, unit, property, propId, unitId, moveOut, turnData, moveoutTenant, propertyGroupUuid) {
     if (!key || seenKeys[key]) return;
     if (!isManagedPropertyRef(propId, property)) return;
 
@@ -21378,6 +21380,7 @@ function buildTurnPipeline() {
       unit: unit,
       property: property,
       propertyId: propId,
+      property_group_uuid: String(propertyGroupUuid || (turnData && turnData.property_group_uuid) || '').trim(),
       unitId: unitId,
       moveOut: moveOut,
       tenant: moveoutTenant || '',
@@ -21433,18 +21436,18 @@ function buildTurnPipeline() {
 
   // PASS 1: Add all turns from unit_turn_detail report
   TURNS.forEach(function(turn) {
-    if (!isInEffectivePropertyScope(turn.propertyId, turn.property)) return;
+    if (!isInEffectivePropertyScope(turn)) return;
     var key = mergeKeyForTurn(turn.propertyId, turn.unitId, turn.moveOutDateKey || turn.moveOut) ||
               turn.unitTurnId || (turn.unit + '|' + turn.property);
-    addEntry(key, turn.unit, turn.property, turn.propertyId, turn.unitId, turn.moveOut, turn, '');
+    addEntry(key, turn.unit, turn.property, turn.propertyId, turn.unitId, turn.moveOut, turn, '', turn.property_group_uuid);
   });
 
   // PASS 2: Add upcoming move-outs not already in pipeline (the "Upcoming" phase)
   UPCOMING_MOVEOUTS.forEach(function(mo) {
-    if (!isInEffectivePropertyScope(mo.propertyId, mo.property)) return;
+    if (!isInEffectivePropertyScope(mo)) return;
     var key = mergeKeyForTurn(mo.propertyId, mo.unitId, mo.moveOut);
     if (!key || seenKeys[key]) return;
-    addEntry(key, mo.unit, mo.property, mo.propertyId, mo.unitId, mo.moveOut, null, mo.tenant);
+    addEntry(key, mo.unit, mo.property, mo.propertyId, mo.unitId, mo.moveOut, null, mo.tenant, mo.property_group_uuid);
   });
 
   // Sort: confirmed active (most elapsed) → on-radar (upcoming first, then oldest-awaiting)
@@ -22002,18 +22005,18 @@ function renderTurnBoard() {
   try {
     buildTurnPipeline();
   } catch (e) {
-    console.log('buildTurnPipeline error: ' + (e.message || e));
+    console.error('buildTurnPipeline failed:', e);
     TURN_PIPE_DATA = [];
   }
   try {
     renderTurnPipelineUI();
   } catch (e) {
-    console.log('renderTurnPipelineUI error: ' + (e.message || e));
+    console.error('renderTurnPipelineUI failed:', e);
   }
   try {
     renderTurnKPIs();
   } catch (e) {
-    console.log('renderTurnKPIs error: ' + (e.message || e));
+    console.error('renderTurnKPIs failed:', e);
   }
   syncTurnTrackerFromPipeline().catch(function() {});
 }
@@ -22021,7 +22024,7 @@ function renderTurnBoard() {
 function renderTurnKPIs() {
   var inScope = TURN_PIPE_DATA.filter(function(p) {
     if (!isManagedTurnEntry(p)) return false;
-    return isInEffectivePropertyScope(p.propertyId, p.property);
+    return isInEffectivePropertyScope(p);
   });
 
   // Separate confirmed-active turns from on-radar (unconfirmed) entries
@@ -22117,7 +22120,7 @@ function renderTurnPipelineUI() {
     if (filter === 'upcoming' && !p.isUpcoming) return false;
     if (group && p.property !== group) return false;
     // Property group filter (global)
-    if (!isInEffectivePropertyScope(p.propertyId, p.property)) return false;
+    if (!isInEffectivePropertyScope(p)) return false;
     if (search) {
       var hay = (p.unit + ' ' + p.property + ' ' + (p.tenant || '')).toLowerCase();
       if (hay.indexOf(search) === -1) return false;
@@ -22487,7 +22490,7 @@ function toggleTurnView(mode) {
 
     var entries = TURN_PIPE_DATA.filter(function(p) {
       if (p.isClosed) return false;
-      if (!isInEffectivePropertyScope(p.propertyId, p.property)) return false;
+      if (!isInEffectivePropertyScope(p)) return false;
       if (group && p.property !== group) return false;
       if (search) {
         var hay = (p.unit + ' ' + p.property + ' ' + (p.tenant || '')).toLowerCase();
@@ -24620,24 +24623,24 @@ function renderAll() {
     function() { populateDropdowns(); }
   ];
   fns.forEach(function(fn) {
-    try { fn(); } catch (e) { console.log('renderAll sub-error: ' + (e.message || e)); }
+    try { fn(); } catch (e) { console.error('renderAll sub-render failed:', e); }
   });
 }
 
 /* =================================================================
    INIT — Cache-first with WO-based pre-flight
-   ================================================================= */
+    console.error('buildTurnPipeline failed:', e);
 var _uiWired = false;
 
 function wireUpUI() {
   if (_uiWired) return;
   _uiWired = true;
-  initBillingEventDelegation();
+    console.error('renderTurnPipelineUI failed:', e);
 
   /* =================================================================
      EVENT DELEGATION — Single listeners on parent containers
      Replaces per-render querySelectorAll+addEventListener patterns.
-     Set up ONCE here; never re-attached on re-render.
+    console.error('renderTurnKPIs failed:', e);
      ================================================================= */
 
   // Kanban board — card clicks + column header clicks
@@ -26970,7 +26973,7 @@ function renderAttentionPanel() {
   var stalledEl = document.getElementById('attentionStalledBody');
   if (stalledEl) {
     var inScopeTurns = TURN_PIPE_DATA.filter(function(p) {
-      if (!isInEffectivePropertyScope(p.propertyId, p.property)) return false;
+      if (!isInEffectivePropertyScope(p)) return false;
       return !p.isCompleted && !p.isClosed;
     });
     var priorityTurns = inScopeTurns.filter(function(p) {
@@ -27185,7 +27188,7 @@ function renderAttentionPanel() {
   var priorityEl = document.getElementById('attentionPriorityBody');
   if (priorityEl) {
     var priorityTurnsDetail = [];
-    try { priorityTurnsDetail = TURN_PIPE_DATA.filter(function(p){ return isTurnPriorityItem(p) && !p.isUpcoming && Number(p.elapsed || 0) >= CONFIG.TURN_PRIORITY_DAYS && isInEffectivePropertyScope(p.propertyId, p.property); }); } catch(e){}
+    try { priorityTurnsDetail = TURN_PIPE_DATA.filter(function(p){ return isTurnPriorityItem(p) && !p.isUpcoming && Number(p.elapsed || 0) >= CONFIG.TURN_PRIORITY_DAYS && isInEffectivePropertyScope(p); }); } catch(e){}
     var openWOs180Detail = [];
     try { openWOs180Detail = (typeof WORK_ORDERS !== 'undefined' ? WORK_ORDERS : []).filter(function(w){
       if (!isInPropertyGroup(w.propertyId, w.propertyName, currentPropertyGroup)) return false;
@@ -27312,14 +27315,14 @@ function renderAttentionPanel() {
 var _origRenderAll = renderAll;
 renderAll = function() {
   _origRenderAll();
-  try { renderAttentionPanel(); } catch (e) { console.log('renderAttentionPanel error: ' + (e.message || e)); }
+  try { renderAttentionPanel(); } catch (e) { console.error('renderAttentionPanel failed:', e); }
 };
 
 // Patch renderDashboardKPIs to include attention panel
 var _origRenderDashKPIs = renderDashboardKPIs;
 renderDashboardKPIs = function() {
   _origRenderDashKPIs();
-  try { renderAttentionPanel(); } catch (e) { /* */ }
+  try { renderAttentionPanel(); } catch (e) { console.error('renderAttentionPanel failed after dashboard KPI render:', e); }
 };
 
 // ═══════════════════════════════════════════════════════
@@ -30277,6 +30280,13 @@ var DispatchControl = {
         if(lbl){
           lbl.textContent='Stale · retrying';
           lbl.title=String((e&&(e.message||e))||'Dispatch live poll failed');
+        }
+        if (DISPATCH._livePollFailures === 2) {
+          debugLogEvent('warning', 'dispatch_live_poll_degraded', 'Dispatch live polling has consecutive failures', {
+            action: 'reassignment_queue',
+            consecutive_failures: DISPATCH._livePollFailures,
+            error: String((e && (e.message || e)) || 'Dispatch live poll failed'),
+          });
         }
       }
     }
