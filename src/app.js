@@ -24629,18 +24629,16 @@ function renderAll() {
 
 /* =================================================================
    INIT — Cache-first with WO-based pre-flight
-    console.error('buildTurnPipeline failed:', e);
+  ================================================================= */
 var _uiWired = false;
 
 function wireUpUI() {
   if (_uiWired) return;
   _uiWired = true;
-    console.error('renderTurnPipelineUI failed:', e);
 
   /* =================================================================
      EVENT DELEGATION — Single listeners on parent containers
      Replaces per-render querySelectorAll+addEventListener patterns.
-    console.error('renderTurnKPIs failed:', e);
      ================================================================= */
 
   // Kanban board — card clicks + column header clicks

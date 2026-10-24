@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
-import packageJson from './package.json';
+import packageJson from './package.json' with { type: 'json' };
 
 export default defineConfig({
   // Use relative asset paths so the build works from either / or /handymgr2/.

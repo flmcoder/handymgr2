@@ -65,6 +65,7 @@ import { classifyBillingVendorBucket, parseBillingSpendTimeframe } from './billi
 import { normalizeDebugEvent, resolveDebugRetentionDays } from './debugEventsPolicy';
 import { createMagicPortalTestSendHandler } from './magicPortalTestSend';
 import { setStaticCacheHeaders } from './staticCache';
+import requestValidator from '../middleware/requestValidator.js';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
@@ -3919,6 +3920,8 @@ function normalizeUnitRow(row: any): Record<string, any> {
 }
 const app = express();
 const DIST_DIR = path.resolve(process.cwd(), 'dist');
+
+app.use(requestValidator);
 
 // Drop common automated scanner probes before body parsing, session lookup,
 // database access, static file serving, or the SPA fallback.
