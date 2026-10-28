@@ -65,7 +65,7 @@ import { classifyBillingVendorBucket, parseBillingSpendTimeframe } from './billi
 import { normalizeDebugEvent, resolveDebugRetentionDays } from './debugEventsPolicy';
 import { createMagicPortalTestSendHandler } from './magicPortalTestSend';
 import { setStaticCacheHeaders } from './staticCache';
-import requestValidator from '../middleware/requestValidator.js';
+import { getRootPostAction, getRootActionImplementationPolicy, isAllowedRootPostAction, rejectUnrecognizedRootPost } from '../middleware/requestValidator.js';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
@@ -3921,8 +3921,6 @@ function normalizeUnitRow(row: any): Record<string, any> {
 const app = express();
 const DIST_DIR = path.resolve(process.cwd(), 'dist');
 
-app.use(requestValidator);
-
 // Drop common automated scanner probes before body parsing, session lookup,
 // database access, static file serving, or the SPA fallback.
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -4022,11 +4020,7 @@ app.post('/api/webhooks/appfolio', express.raw({ type: '*/*', limit: '2mb' }), a
 });
 
 function getLegacyAction(req: Request): string {
-  const fromQuery = String(req.query?.action ?? '').trim();
-  if (fromQuery) return fromQuery;
-  const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : null;
-  const fromBody = String(body?.action ?? '').trim();
-  return fromBody;
+  return getRootPostAction(req);
 }
 
 async function respondSessionInfo(req: Request, res: Response): Promise<void> {
@@ -4097,6 +4091,10 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
 }));
+
+// Validate root POSTs after body parsing and CORS so legacy body actions work
+// and browser clients can read intentional 405 responses.
+app.use(rejectUnrecognizedRootPost);
 
 function readMagicPortalInput(req: Request): MagicPortalInput {
   const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
@@ -4325,67 +4323,6 @@ app.post('/api/magic-portal/open', magicPortalJson, magicPortalForm, async (req:
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Open tracking failed') });
   }
 });
-
-const legacyActionRoutes = {
-  units: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    res.json(await readUnitsFromDb(params));
-  },
-  unit_lookup: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
-    if (!unitId) {
-      res.status(400).json({ ok: false, error: 'Missing unit_id parameter' });
-      return;
-    }
-    const rows = await db.select().from(schema.appfolioUnits).where(eq(schema.appfolioUnits.unitId, unitId)).limit(1);
-    res.json(rows[0]
-      ? { ok: true, unit: { unit_id: normalizeDbRowValue(rows[0].unitId), property_id: normalizeDbRowValue(rows[0].propertyId), name: normalizeDbRowValue(rows[0].name), unit_number: normalizeDbRowValue(rows[0].unitNumber), status: normalizeDbRowValue(rows[0].status), bedrooms: rows[0].bedrooms ?? null, bathrooms: rows[0].bathrooms ?? null, square_feet: rows[0].squareFeet ?? null, market_rent: rows[0].marketRent ?? null, raw_json: rows[0].rawJson || {}, last_updated_at: asIso(rows[0].lastUpdatedAt), cached_at: asIso(rows[0].cachedAt) } }
-      : { ok: false, error: 'Unit not found in local database', unit_id: unitId });
-  },
-  turns: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    res.json(await readTurnsFromDb(params));
-  },
-  unit_turns: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    const days = Math.max(1, Number.parseInt(String(params.days || params.days_back || '90'), 10) || 90);
-    res.json(await readTurnsFromDb({ ...params, since: new Date(Date.now() - (days * 24 * 60 * 60 * 1000)).toISOString() }));
-  },
-  turns_incremental: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    const since = normalizeDbRowValue(params.since || params.updated_since || params.updatedFrom);
-    res.json(await readTurnsFromDb(since ? { ...params, since } : params));
-  },
-  unit_turns_history: async (req: Request, res: Response) => {
-    const params = toActionParams(req);
-    res.json(await readUnitTurnsHistoryFromDb(params));
-  },
-  unit_turns_sync: async (req: Request, res: Response) => {
-    const session = await requireProxySession(req, res);
-    if (!session) return;
-    const records = Array.isArray(req.body?.records) ? req.body.records.slice(0, 5_000) : [];
-    if (!records.length) {
-      res.status(400).json({ ok: false, error: 'records must be a non-empty array' });
-      return;
-    }
-    const result = await upsertTurnTracker(records);
-    res.json({ ok: true, ...result, received: records.length, synced_at: new Date().toISOString() });
-  },
-  estimates: async (req: Request, res: Response) => {
-    const allowed = await enforceScopedSession(req, res, {
-      requireSession: requireProxySession,
-      applyScope: applyProxySessionScope,
-    });
-    if (!allowed) return;
-    const params = toActionParams(req);
-    res.json(await readEstimatesFromDb(params));
-  },
-  device_setup: wrapDenoHandler(deviceAuthHandlers.handleDeviceSetup, 'request'),
-  device_otp_request: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpRequest, 'request'),
-  device_otp_verify: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpVerify, 'request'),
-  verify_role: wrapDenoHandler(deviceAuthHandlers.handleVerifyRole, 'request'),
-} as const;
 
 async function requireProxySession(req: Request, res: Response): Promise<any | null> {
   const token = getBearerToken(req);
@@ -5027,6 +4964,14 @@ app.post('/api/v2/reports/:reportFile', async (req: Request, res: Response) => {
 
 app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFunction) => {
   const action = getLegacyAction(req);
+  if (req.method === 'POST' && req.path === '/' && !isAllowedRootPostAction(action)) {
+    res.status(405).json({ ok: false, error: 'POST to root requires a recognized action' });
+    return;
+  }
+  if (req.method === 'POST' && req.path === '/' && !isRootPostAllowedActionHandled(action, Object.keys(legacyActionRoutes))) {
+    res.status(404).json({ ok: false, error: `Unknown action '${action}'` });
+    return;
+  }
   if (!action) {
     next();
     return;
@@ -5088,7 +5033,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     return;
   }
 
-  if (['portal_status', 'portal_schedule', 'portal_reschedule', 'portal_note', 'portal_reassign_request'].includes(action)) {
+  if (action === 'portal_status' || action === 'portal_schedule' || action === 'portal_reschedule' || action === 'portal_note' || action === 'portal_reassign_request') {
     await respondMagicPortalSubmission(req, res, action);
     return;
   }
@@ -5456,14 +5401,84 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     return;
   }
 
+  if (action === 'verify_role' || action === 'device_setup' || action === 'device_otp_request' || action === 'device_otp_verify') {
+    await (legacyActionRoutes as Record<string, any>)[action](req, res);
+    return;
+  }
+
   const routeHandler = (legacyActionRoutes as Record<string, any>)[action];
   if (!routeHandler) {
+    if (req.method === 'POST' && req.path === '/') {
+      res.status(404).json({ ok: false, error: `Unknown action '${action}'` });
+      return;
+    }
     next();
     return;
   }
 
   return routeHandler(req, res);
 });
+
+const legacyActionRoutes = {
+  units: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    res.json(await readUnitsFromDb(params));
+  },
+  unit_lookup: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    const unitId = normalizeDbRowValue(params.unit_id || params.unitId);
+    if (!unitId) {
+      res.status(400).json({ ok: false, error: 'Missing unit_id parameter' });
+      return;
+    }
+    const rows = await db.select().from(schema.appfolioUnits).where(eq(schema.appfolioUnits.unitId, unitId)).limit(1);
+    res.json(rows[0]
+      ? { ok: true, unit: { unit_id: normalizeDbRowValue(rows[0].unitId), property_id: normalizeDbRowValue(rows[0].propertyId), name: normalizeDbRowValue(rows[0].name), unit_number: normalizeDbRowValue(rows[0].unitNumber), status: normalizeDbRowValue(rows[0].status), bedrooms: rows[0].bedrooms ?? null, bathrooms: rows[0].bathrooms ?? null, square_feet: rows[0].squareFeet ?? null, market_rent: rows[0].marketRent ?? null, raw_json: rows[0].rawJson || {}, last_updated_at: asIso(rows[0].lastUpdatedAt), cached_at: asIso(rows[0].cachedAt) } }
+      : { ok: false, error: 'Unit not found in local database', unit_id: unitId });
+  },
+  turns: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    res.json(await readTurnsFromDb(params));
+  },
+  unit_turns: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    const days = Math.max(1, Number.parseInt(String(params.days || params.days_back || '90'), 10) || 90);
+    res.json(await readTurnsFromDb({ ...params, since: new Date(Date.now() - (days * 24 * 60 * 60 * 1000)).toISOString() }));
+  },
+  turns_incremental: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    const since = normalizeDbRowValue(params.since || params.updated_since || params.updatedFrom);
+    res.json(await readTurnsFromDb(since ? { ...params, since } : params));
+  },
+  unit_turns_history: async (req: Request, res: Response) => {
+    const params = toActionParams(req);
+    res.json(await readUnitTurnsHistoryFromDb(params));
+  },
+  unit_turns_sync: async (req: Request, res: Response) => {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    const records = Array.isArray(req.body?.records) ? req.body.records.slice(0, 5_000) : [];
+    if (!records.length) {
+      res.status(400).json({ ok: false, error: 'records must be a non-empty array' });
+      return;
+    }
+    const result = await upsertTurnTracker(records);
+    res.json({ ok: true, ...result, received: records.length, synced_at: new Date().toISOString() });
+  },
+  estimates: async (req: Request, res: Response) => {
+    const allowed = await enforceScopedSession(req, res, {
+      requireSession: requireProxySession,
+      applyScope: applyProxySessionScope,
+    });
+    if (!allowed) return;
+    const params = toActionParams(req);
+    res.json(await readEstimatesFromDb(params));
+  },
+  device_setup: wrapDenoHandler(deviceAuthHandlers.handleDeviceSetup, 'request'),
+  device_otp_request: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpRequest, 'request'),
+  device_otp_verify: wrapDenoHandler(deviceAuthHandlers.handleDeviceOtpVerify, 'request'),
+  verify_role: wrapDenoHandler(deviceAuthHandlers.handleVerifyRole, 'request'),
+} as const;
 
 const healthHandler = async (_req: Request, res: Response): Promise<void> => {
   const dbOk = await pingDatabase();
