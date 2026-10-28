@@ -6775,6 +6775,7 @@ async function fetchInactiveWorkOrders() {
   _inactiveWorkOrdersScope = requestScope;
   _inactiveWorkOrdersLoaded = false;
   WORK_ORDERS_INACTIVE = [];
+  setDataSourceState('work_orders_inactive', 'loading', { error: '' });
 
   var request = (async function() {
     try {
@@ -6793,9 +6794,13 @@ async function fetchInactiveWorkOrders() {
       if (_inactiveWorkOrdersScope !== requestScope) return false;
       WORK_ORDERS_INACTIVE = (data.results || data.data || []).map(normalizeLocalWorkOrder);
       _inactiveWorkOrdersLoaded = true;
+      setDataSourceState('work_orders_inactive', 'ok', { count: WORK_ORDERS_INACTIVE.length, error: '' });
       return true;
     } catch (error) {
       console.error('[work-orders] inactive history unavailable', error);
+      if (_inactiveWorkOrdersScope === requestScope) {
+        setDataSourceState('work_orders_inactive', 'error', { error: (error && error.message) || 'Completed work orders could not be loaded' });
+      }
       return false;
     } finally {
       if (_inactiveWorkOrdersLoading === request) _inactiveWorkOrdersLoading = null;
@@ -7737,6 +7742,7 @@ var INSPECTIONS = [];
 var INSPECTION_LOOKBACK_DAYS = 180;
 var DATA_SOURCE_STATE = {
   work_orders: { status: 'idle', count: null, error: '', last_updated_at: '' },
+  work_orders_inactive: { status: 'idle', count: null, error: '', last_updated_at: '' },
   properties: { status: 'idle', count: null, error: '', last_updated_at: '' },
   turns: { status: 'idle', count: null, error: '', last_updated_at: '' },
   inspections: { status: 'idle', count: null, error: '', last_updated_at: '' },
@@ -7775,6 +7781,7 @@ function getDataSourceState(name) {
 
 var _DATA_SOURCE_LABELS = {
   work_orders: 'Work orders',
+  work_orders_inactive: 'Completed work orders',
   properties: 'Properties',
   turns: 'Turns',
   inspections: 'Inspections',
@@ -15196,6 +15203,11 @@ function setWOSubtab(tab) {
   var allowed = { active: true, completed: true, closure: true, followup: true };
   var target = allowed[tab] ? tab : 'active';
   currentWOSubtab = target;
+  if (currentWOFilter !== 'all') {
+    // Status chips belong to the Open queue; a stale chip must not hide Completed rows.
+    currentWOFilter = 'all';
+    $$('[data-filter]').forEach(function(b) { b.classList.toggle('active', b.getAttribute('data-filter') === 'all'); });
+  }
 
   $$('[data-wo-subtab]').forEach(function(btn) {
     btn.classList.toggle('active', btn.dataset.woSubtab === target);
@@ -15221,8 +15233,8 @@ function setWOSubtab(tab) {
     renderWorkOrders();
     if (target === 'completed') {
       renderCompletedWOHistorySection();
-      fetchInactiveWorkOrders().then(function(ok) {
-        if (ok && currentWOSubtab === 'completed') renderWorkOrders();
+      fetchInactiveWorkOrders().then(function() {
+        if (currentWOSubtab === 'completed') renderWorkOrders();
       });
     } else {
       var activeSearch = $('#woSearch') ? String($('#woSearch').value || '').trim() : '';
@@ -19002,18 +19014,26 @@ function renderInspectionsGrid() {
   });
 }
 
+function retryCurrentWorkOrderSource() {
+  var load = currentWOTab === 'inactive' ? fetchInactiveWorkOrders() : fetchWorkOrders({ offset: 0 });
+  return Promise.resolve(load).then(function() { renderWorkOrders(); });
+}
+
 function renderWorkOrders() {
   var board = $('#kanbanBoard');
   if (!board) return;
   board.classList.toggle('layout-list', currentWOView === 'list');
-  var workOrderState = getDataSourceState('work_orders');
-  if (WORK_ORDERS.length === 0 && (workOrderState.status === 'no_response' || workOrderState.status === 'error')) {
+  // Each tab reports its own load state, so an Open failure must not block Completed (and vice versa).
+  var sourceIsInactive = currentWOTab === 'inactive';
+  var workOrderSourceRows = sourceIsInactive ? WORK_ORDERS_INACTIVE : WORK_ORDERS;
+  var workOrderState = getDataSourceState(sourceIsInactive ? 'work_orders_inactive' : 'work_orders');
+  if (workOrderSourceRows.length === 0 && (workOrderState.status === 'no_response' || workOrderState.status === 'error')) {
     board.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-triangle-exclamation" style="font-size:36px;display:block;margin-bottom:12px;color:var(--danger)"></i><div>Unable to load work orders: ' + escapeHtml(workOrderState.error || 'Unknown API or authentication error') + '</div><div class="empty-state-actions"><button type="button" class="btn btn-secondary" id="workOrdersRetryButton">Retry</button></div></div>';
     var retryWorkOrdersButton = document.getElementById('workOrdersRetryButton');
     if (retryWorkOrdersButton) retryWorkOrdersButton.onclick = function() {
       retryWorkOrdersButton.disabled = true;
       retryWorkOrdersButton.textContent = 'Retrying…';
-      fetchWorkOrders({ offset: 0 }).then(function() { renderWorkOrders(); });
+      retryCurrentWorkOrderSource();
     };
     renderCompletedWOHistorySection();
     return;
@@ -19063,14 +19083,14 @@ function renderWorkOrders() {
 
   // ── List view ──────────────────────────────────────────────────────────────
   if (currentWOView === 'list') {
-    var listWorkOrderState = getDataSourceState('work_orders');
+    var listWorkOrderState = getDataSourceState(sourceIsInactive ? 'work_orders_inactive' : 'work_orders');
     if (woPageRows.length === 0 && (listWorkOrderState.status === 'no_response' || listWorkOrderState.status === 'error')) {
       board.innerHTML = '<div id="woDatasetContext">' + statusContextHtml + '</div><div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-triangle-exclamation" style="font-size:36px;display:block;margin-bottom:12px;color:var(--danger)"></i><div>Unable to load work orders: ' + escapeHtml(listWorkOrderState.error || 'Unknown API or authentication error') + '</div><div class="empty-state-actions"><button type="button" class="btn btn-secondary" id="workOrdersRetryButton">Retry</button></div></div>';
       var listRetryButton = document.getElementById('workOrdersRetryButton');
       if (listRetryButton) listRetryButton.addEventListener('click', function() {
         listRetryButton.disabled = true;
         listRetryButton.textContent = 'Retrying…';
-        fetchWorkOrders({ offset: 0 }).then(function() { renderWorkOrders(); });
+        retryCurrentWorkOrderSource();
       });
       renderCompletedWOHistorySection();
       return;
