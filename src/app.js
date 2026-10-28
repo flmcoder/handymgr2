@@ -3508,7 +3508,8 @@ function updateRateBadge() {
     el.textContent = '\u23f8 paused ' + secsLeft + 's';
     el.style.color = 'var(--warning)';
   } else {
-    el.textContent = (rateLimiter.maxPerSec - rateLimiter.inFlight) + '/' + rateLimiter.maxPerSec + ' req/s';
+    var queued = rateLimiter.queue.length;
+    el.textContent = rateLimiter.maxPerSec + ' req/s' + (queued > 0 ? ' \u00b7 ' + queued + ' queued' : '');
     el.style.color = '';
   }
 }
