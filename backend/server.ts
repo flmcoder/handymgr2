@@ -65,7 +65,7 @@ import { classifyBillingVendorBucket, parseBillingSpendTimeframe } from './billi
 import { normalizeDebugEvent, resolveDebugRetentionDays } from './debugEventsPolicy';
 import { createMagicPortalTestSendHandler } from './magicPortalTestSend';
 import { setStaticCacheHeaders } from './staticCache';
-import { getRootPostAction, getRootActionImplementationPolicy, isAllowedRootPostAction, rejectUnrecognizedRootPost } from '../middleware/requestValidator.js';
+import { getRootPostAction, getRootActionImplementationPolicy, isAllowedRootPostAction, isRootPostAllowedActionHandled, rejectUnrecognizedRootPost } from '../middleware/requestValidator.js';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version?: string };
