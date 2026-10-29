@@ -3151,6 +3151,9 @@ function resolveUrl(path, method) {
 var rateLimiter = {
   queue: [],
   inFlight: 0,
+  // Progress of the current load batch, reset when the queue goes idle.
+  batchTotal: 0,
+  batchDone: 0,
   maxPerSec: 1,
   _defaultMaxPerSec: 1,
   minIntervalMs: 850,
@@ -3190,6 +3193,11 @@ var rateLimiter = {
 
   enqueue: function(fn) {
     return new Promise(function(resolve, reject) {
+      if (rateLimiter.queue.length === 0 && rateLimiter.inFlight === 0) {
+        rateLimiter.batchTotal = 0;
+        rateLimiter.batchDone = 0;
+      }
+      rateLimiter.batchTotal++;
       rateLimiter.queue.push({ fn: fn, resolve: resolve, reject: reject });
       rateLimiter.process();
     });
@@ -3242,11 +3250,13 @@ var rateLimiter = {
 
       item.fn().then(function(r) {
         rateLimiter.inFlight--;
+        rateLimiter.batchDone++;
         updateRateBadge();
         item.resolve(r);
         tick();
       }).catch(function(e) {
         rateLimiter.inFlight--;
+        rateLimiter.batchDone++;
         updateRateBadge();
         item.reject(e);
         tick();
@@ -3507,9 +3517,14 @@ function updateRateBadge() {
     var secsLeft = Math.ceil((rateLimiter.pauseUntil - Date.now()) / 1000);
     el.textContent = '\u23f8 paused ' + secsLeft + 's';
     el.style.color = 'var(--warning)';
+  } else if (rateLimiter.inFlight > 0 || rateLimiter.queue.length > 0) {
+    el.textContent = 'Loading ' + rateLimiter.batchDone + '/' + rateLimiter.batchTotal;
+    el.style.color = '';
+  } else if (rateLimiter.batchTotal > 0) {
+    el.textContent = 'Loaded ' + rateLimiter.batchDone + '/' + rateLimiter.batchTotal;
+    el.style.color = '';
   } else {
-    var queued = rateLimiter.queue.length;
-    el.textContent = rateLimiter.maxPerSec + ' req/s' + (queued > 0 ? ' \u00b7 ' + queued + ' queued' : '');
+    el.textContent = rateLimiter.maxPerSec + ' req/s';
     el.style.color = '';
   }
 }
@@ -19242,7 +19257,7 @@ function renderWorkOrders() {
       if (retryWorkOrdersButton) retryWorkOrdersButton.addEventListener('click', function() {
         retryWorkOrdersButton.disabled = true;
         retryWorkOrdersButton.textContent = 'Retrying…';
-        fetchWorkOrders({ offset: 0 }).then(function() { renderWorkOrders(); });
+        retryCurrentWorkOrderSource();
       });
     } else {
       board.innerHTML = tabsHtml + '<div style="padding:40px;text-align:center;color:var(--text-muted);width:100%"><i class="fas fa-inbox" style="font-size:36px;display:block;margin-bottom:12px;color:var(--border)"></i>No work orders loaded. Connect to API or import a cache file.</div>';
