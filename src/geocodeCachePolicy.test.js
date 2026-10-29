@@ -95,7 +95,7 @@ test('dashboard never derives the work-order navigation badge from the current p
   const dashboard = source.slice(dashboardStart, dashboardEnd);
   const cacheBranch = source.slice(source.indexOf("if (fresh) {", source.indexOf('async function initApp()')), source.indexOf('// STEP 2: Pre-flight', source.indexOf('async function initApp()')));
 
-  assert.match(dashboard, /\$\('#woBadge'\)\.textContent\s*=\s*NAV_BADGE_TOTALS_LOADED\s*\?\s*String\(NAV_BADGE_TOTALS\.work_orders\)\s*:\s*'…'/);
+  assert.match(dashboard, /\$\('#woBadge'\)\.textContent\s*=\s*getNavBadgeDisplay\('work_orders'\)/);
   assert.doesNotMatch(dashboard, /#woBadge[\s\S]{0,180}(?:openWOs\.length|WORK_ORDERS\.length)/);
   assert.match(cacheBranch, /fetchNavBadgeTotals\(true\)/);
 });
