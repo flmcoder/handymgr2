@@ -1372,7 +1372,7 @@ interface TurnPipeEntry {
  * are at each pipeline stage (cumulative — each stage includes all later stages).
   */
 export function buildTurnoverPipelineOption(turns: TurnPipeEntry[]): ECOption {
-  const safeTurns = Array.isArray(turns) ? turns : [];
+  const safeTurns = Array.isArray(turns) ? turns.filter((t): t is TurnPipeEntry => !!t && typeof t === 'object') : [];
   const active = safeTurns.filter(t => !t.isClosed);
   const total  = active.length || 1; // avoid div-zero
 
@@ -1386,7 +1386,10 @@ export function buildTurnoverPipelineOption(turns: TurnPipeEntry[]): ECOption {
     { key: 'work_done',    label: 'Work Done',   color: '#a78bfa' },
   ];
 
-  const funnelData = stageDefs.map(def => {
+  // Only chart stages that exist in the data; a missing stage key is skipped, not drawn as an empty slice.
+  const presentDefs = stageDefs.filter(def => active.some(t => t.stages?.[def.key] != null));
+
+  const funnelData = presentDefs.map(def => {
     const count = active.filter(t => t.stages?.[def.key]?.done).length;
     return {
       name: def.label,

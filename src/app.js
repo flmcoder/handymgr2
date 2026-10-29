@@ -5182,6 +5182,7 @@ var CONFIG = {
   // Inspections
   INSPECTION_OVERDUE_DAYS: 365,
   INSPECTION_DUE_SOON_DAYS: 270,
+  TURN_INSPECTION_SLA_DAYS: 270, // active turn with no post-move-out inspection, or inspection older than this, needs action
   // Vendor compliance
   VENDOR_EXPIRY_ALERT_DAYS: 60,
   VENDOR_GRID_INITIAL_LIMIT_DESKTOP: 90,
@@ -6552,10 +6553,27 @@ function markInitialCriticalDataSettled(key, generation) {
   }
 }
 
+var NAV_BADGE_TOTALS_STATUS = 'idle'; // idle | loading | ready | error
+
 function setNavBadge(id, value) {
   var el = document.getElementById(id);
   if (!el) return;
   el.textContent = value === '…' ? '…' : String(Number(value) || 0);
+}
+
+// Single display source for nav badges and dashboard KPIs: loaded totals,
+// '…' while the first fetch is in flight, and 0 once that fetch has failed.
+function getNavBadgeDisplay(key) {
+  if (NAV_BADGE_TOTALS_LOADED) return String(Number(NAV_BADGE_TOTALS[key]) || 0);
+  return NAV_BADGE_TOTALS_STATUS === 'error' ? '0' : '…';
+}
+
+function markNavBadgeFailed() {
+  if (NAV_BADGE_TOTALS_LOADED) return;
+  NAV_BADGE_TOTALS_STATUS = 'error';
+  setNavBadge('woBadge', '0');
+  setNavBadge('turnBadge', '0');
+  setNavBadge('inspBadge', '0');
 }
 
 function applyNavBadgeTotals() {
@@ -6570,7 +6588,10 @@ async function fetchNavBadgeTotals(force, retryCount) {
   var scope = String(getEffectiveGroupUuid() || '');
   var requestGeneration = _scopeRequestGeneration;
   if (!force && NAV_BADGE_TOTALS_LOADED && NAV_BADGE_TOTALS_SCOPE === scope) return true;
-  if (!NAV_BADGE_TOTALS_LOADED) setNavBadge('woBadge', '…');
+  if (!NAV_BADGE_TOTALS_LOADED) {
+    NAV_BADGE_TOTALS_STATUS = 'loading';
+    setNavBadge('woBadge', '…');
+  }
   try {
     var localBase = String(API_BASE_URL || window.location.origin || '').replace(/\/+$/, '');
     var token = getProxyAccessToken();
@@ -6580,7 +6601,10 @@ async function fetchNavBadgeTotals(force, retryCount) {
     var res = await fetchWithTimeout(url, { headers: headers }, 30000);
     var data = {};
     try { data = await res.json(); } catch (e) { data = {}; }
-    if (!res.ok || data.ok === false) return false;
+    if (!res.ok || data.ok === false) {
+      if (requestGeneration === _scopeRequestGeneration) markNavBadgeFailed();
+      return false;
+    }
     if (requestGeneration !== _scopeRequestGeneration || scope !== String(getEffectiveGroupUuid() || '')) return false;
     NAV_BADGE_TOTALS = {
       work_orders: Number(data.work_orders) || 0,
@@ -6592,11 +6616,13 @@ async function fetchNavBadgeTotals(force, retryCount) {
     };
     NAV_BADGE_TOTALS_SCOPE = scope;
     NAV_BADGE_TOTALS_LOADED = true;
+    NAV_BADGE_TOTALS_STATUS = 'ready';
     applyNavBadgeTotals();
     var activeTab = document.querySelector('.nav-tab.active');
     if (activeTab && activeTab.getAttribute('data-tab') === 'dashboard') renderDashboardKPIs();
     return true;
   } catch (e) {
+    if (requestGeneration === _scopeRequestGeneration) markNavBadgeFailed();
     if ((Number(retryCount) || 0) < 1 && requestGeneration === _scopeRequestGeneration) {
       setTimeout(function() { fetchNavBadgeTotals(true, 1); }, 1500);
     }
@@ -8005,6 +8031,16 @@ function getInspectionCompliance(row, nowRef) {
     dueSoon: dueSoon,
     current: !overdue && !dueSoon
   };
+}
+
+function getTurnInspectionSlaState(turn, nowRef) {
+  var now = nowRef || new Date();
+  var insp = turn && turn.stages && turn.stages.inspection;
+  var date = insp && insp.done ? toValidDateOrNull(insp.date) : null;
+  var missing = !date;
+  var daysSince = date ? daysBetween(date, now) : null;
+  var compliant = !missing && daysSince <= CONFIG.TURN_INSPECTION_SLA_DAYS;
+  return { date: date, missing: missing, daysSince: daysSince, compliant: compliant };
 }
 
 function isCurrentLeaseWithActiveResident(row, nowRef) {
@@ -13601,11 +13637,10 @@ function renderDashboardKPIs() {
       subText: 'Loading urgent queue…'
     });
   } else {
-    var scopedOpenTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.work_orders : null;
     var scopedUrgentTotal = NAV_BADGE_TOTALS_LOADED ? NAV_BADGE_TOTALS.urgent_work_orders : null;
     setMetricVisualState('kpiOpen', 'kpiOpenSub', {
       state: 'ok',
-      value: scopedOpenTotal === null ? '…' : String(scopedOpenTotal),
+      value: getNavBadgeDisplay('work_orders'),
       subText: WORK_ORDERS.length + ' rows loaded for detail'
     });
     var openSubEl = $('#kpiOpenSub');
@@ -13771,8 +13806,8 @@ function renderDashboardKPIs() {
   fetchAndRenderPortfolioSunburst();
   renderWoSankey();
 
-  $('#woBadge').textContent = NAV_BADGE_TOTALS_LOADED ? String(NAV_BADGE_TOTALS.work_orders) : '…';
-  $('#turnBadge').textContent = NAV_BADGE_TOTALS_LOADED ? String(NAV_BADGE_TOTALS.turns) : '…';
+  $('#woBadge').textContent = getNavBadgeDisplay('work_orders');
+  $('#turnBadge').textContent = getNavBadgeDisplay('turns');
 
   // Active filter indicator
   var fiEl = document.getElementById('filterIndicator');
@@ -14315,12 +14350,16 @@ function renderDashboardGeoCharts(force) {
   // ── Turnover Funnel (synchronous — uses TURN_PIPE_DATA in memory) ─────────
   var funnelEl = document.getElementById('dashTurnoverFunnel');
   var funnelMeta = document.getElementById('dashTurnoverFunnelMeta');
-  var turnPipe = Array.isArray(TURN_PIPE_DATA) ? TURN_PIPE_DATA.slice() : [];
+  var turnPipe = Array.isArray(TURN_PIPE_DATA) ? TURN_PIPE_DATA.filter(function(p) { return p && typeof p === 'object'; }) : [];
   if (funnelEl && turnPipe.length > 0) {
     var existingFunnel = echartsCore.getInstanceByDom(funnelEl);
     if (existingFunnel) existingFunnel.dispose();
+    var funnelOption = buildFunnel(turnPipe);
+    var funnelStageCount = (funnelOption && funnelOption.series && funnelOption.series[0] && funnelOption.series[0].data || []).length;
+    // Fewer than 3 stages would leave a tall empty canvas; shrink the container instead.
+    funnelEl.style.minHeight = funnelStageCount < 3 ? '140px' : '260px';
     var funnelChart = echartsCore.init(funnelEl, null, { renderer: 'canvas' });
-    funnelChart.setOption(buildFunnel(turnPipe));
+    funnelChart.setOption(funnelOption);
     if (funnelMeta) funnelMeta.textContent = turnPipe.filter(function(p) { return !p.isClosed; }).length + ' active turns';
   } else if (funnelEl && funnelMeta) {
     funnelMeta.textContent = 'No turn data';
@@ -27082,28 +27121,30 @@ function renderAttentionPanel() {
   }
 
   // Overdue inspections + compliance %
+  // Uses the same population and milestone as the turn board: open, non-upcoming
+  // turns in scope, judged by the post-move-out inspection stage.
   var overdueEl = document.getElementById('attentionOverdueBody');
   if (overdueEl) {
-    var scopedInspections = INSPECTIONS.filter(function(r) {
-      return isInPropertyGroup(r.propertyId, r.propertyName, currentPropertyGroup);
+    var inspTurns = TURN_PIPE_DATA.filter(function(p) {
+      if (!p || p.isCompleted || p.isClosed || p.isUpcoming) return false;
+      return isInEffectivePropertyScope(p);
     });
-    var overdue = scopedInspections.filter(function(r) {
-      var state = getInspectionCompliance(r, attnToday);
-      return state.overdue;
+    var overdue = inspTurns.filter(function(p) {
+      return !getTurnInspectionSlaState(p, attnToday).compliant;
     });
-    var totalInsp = scopedInspections.length;
+    var totalInsp = inspTurns.length;
     var compliant = totalInsp - overdue.length;
-    var compPct = totalInsp > 0 ? Math.round((compliant / totalInsp) * 100) : 100;
-    if (overdue.length === 0) {
+    var compPct = Math.round((compliant / totalInsp) * 100);
+    if (totalInsp === 0) {
+      overdueEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> No active turns to inspect</div>';
+    } else if (overdue.length === 0) {
       overdueEl.innerHTML = '<div class="attn-empty"><i class="fas fa-check-circle"></i> All inspections current (' + compPct + '% compliant)</div>';
     } else {
       var overdueHtml = '<div class="attn-count">' + overdue.length + ' overdue <span class="attn-inline-meta">(' + compPct + '% compliant)</span></div>';
-      overdue.slice(0, 5).forEach(function(r) {
-        var state = getInspectionCompliance(r, attnToday);
-        var ago = state.missingMoveInInspection
-          ? 'Missing move-in inspection'
-          : (state.anchorDate ? state.daysSince + 'd ago' : 'Never');
-        overdueHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(r.unit || '') + ' — ' + escapeHtml(r.propertyName || '') + '</span><span class="attn-value u-danger">' + ago + '</span></div>';
+      overdue.slice(0, 5).forEach(function(p) {
+        var slaState = getTurnInspectionSlaState(p, attnToday);
+        var ago = slaState.missing ? 'No post-move-out inspection' : slaState.daysSince + 'd since inspection';
+        overdueHtml += '<div class="attn-item"><span class="attn-label">' + escapeHtml(p.unit || '') + ' — ' + escapeHtml(p.property || '') + '</span><span class="attn-value u-danger">' + ago + '</span></div>';
       });
       if (overdue.length > 5) overdueHtml += '<div class="attn-more">+' + (overdue.length - 5) + ' more</div>';
       overdueEl.innerHTML = overdueHtml;
