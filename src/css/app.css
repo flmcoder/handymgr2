@@ -5896,6 +5896,7 @@ html.dark .form-textarea { background: var(--bg-input); border-color: var(--bord
 .dash-filter-toggle { display: inline-flex; gap: 4px; margin-bottom: 6px; }
 .dash-filter-toggle button { font-size: 11px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); cursor: pointer; }
 .dash-filter-toggle button.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sync-pending-badge { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 700; color: #b45309; background: color-mix(in srgb, #f59e0b 18%, transparent); }
 .map-empty-state { display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; min-height: 300px; padding: 16px; text-align: center; font-size: 12px; color: var(--text-muted); border: 1px dashed var(--border); border-radius: 8px; }
 .heavy-chart-fallback-title { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
 .heavy-chart-fallback { list-style: none; margin: 0; padding: 0; }

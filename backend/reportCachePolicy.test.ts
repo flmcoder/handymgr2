@@ -25,6 +25,23 @@ test('buildReportCacheKey is stable across object key order and differs by scope
   assert.notEqual(first, otherScope);
 });
 
+test('buildReportCacheKey treats empty scope containers as the global scope', () => {
+  const bare = buildReportCacheKey('work_order', { property_visibility: 'active', columns: [] });
+  const explicitEmpty = buildReportCacheKey('work_order', {
+    property_visibility: 'active',
+    columns: [],
+    properties: { properties_ids: [], property_groups_ids: [], portfolios_ids: [], owners_ids: [] },
+  });
+  const scoped = buildReportCacheKey('work_order', {
+    property_visibility: 'active',
+    columns: [],
+    properties: { property_groups_ids: ['group-a'] },
+  });
+
+  assert.equal(bare, explicitEmpty);
+  assert.notEqual(bare, scoped);
+});
+
 test('extractReportRows supports AppFolio array, results, and data payloads', () => {
   assert.deepEqual(extractReportRows([{ id: 1 }]), [{ id: 1 }]);
   assert.deepEqual(extractReportRows({ results: [{ id: 2 }] }), [{ id: 2 }]);

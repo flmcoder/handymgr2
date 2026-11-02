@@ -41,6 +41,7 @@ export const ROOT_API_ACTIONS = Object.freeze([
   'turns_incremental',
   'unit_turns_history',
   'unit_turns_sync',
+  'turn_record_stage',
   'estimates',
 ]);
 

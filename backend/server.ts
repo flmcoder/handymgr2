@@ -4369,17 +4369,217 @@ function applyProxySessionScope(req: Request, res: Response, session: any): bool
   return true;
 }
 
-function respondRecentTasksFromLocal(): Record<string, unknown> {
-  hydrateInBackground('recent_tasks', `${AF_DB_BASE}/api/v0/tasks?page[size]=50`, 'v0');
-  return { ok: true, results: [], count: 0, source: 'postgres_local_pending_hydration' };
+// Writes the stage locally and enqueues the AppFolio push for the background drain.
+async function enqueueTurnStageMutation(
+  turnKey: string,
+  stage: string,
+  data: Record<string, unknown>,
+): Promise<{ tracking_uuid: string; idempotency_key: string; outbox_id: number }> {
+  const trackerRows = await queryClient`
+    select tracking_uuid from unit_turn_tracker where turn_key = ${turnKey} limit 1
+  `;
+  const trackingUuid = String((trackerRows as any[])[0]?.tracking_uuid || '').trim();
+  if (!trackingUuid) throw new Error(`Unknown turn_key '${turnKey}'`);
+
+  const date = data.date ? String(data.date) : null;
+  const notes = data.manual ? 'manual' : null;
+  const updated = await queryClient`
+    update unit_turn_milestones
+       set milestone_date = ${date}, source = 'handymgr_local', notes = ${notes}
+     where tracking_uuid = ${trackingUuid} and milestone_key = ${stage}
+    returning id
+  `;
+  if (!(updated as any[]).length) {
+    await queryClient`
+      insert into unit_turn_milestones (tracking_uuid, milestone_key, milestone_date, source, notes)
+      values (${trackingUuid}, ${stage}, ${date}, 'handymgr_local', ${notes})
+    `;
+  }
+
+  const idempotencyKey = `turn_record_stage:${trackingUuid}:${stage}:${date ?? 'none'}`;
+  const outboxRows = await queryClient`
+    insert into handymgr_mutation_outbox (idempotency_key, entity_type, entity_id, action, payload, status)
+    values (${idempotencyKey}, 'unit_turn', ${trackingUuid}, 'turn_record_stage',
+            ${queryClient.json({ turn_key: turnKey, stage, data } as any)}, 'sync_pending')
+    on conflict (idempotency_key) do update set updated_at = now()
+    returning id
+  `;
+  return {
+    tracking_uuid: trackingUuid,
+    idempotency_key: idempotencyKey,
+    outbox_id: Number((outboxRows as any[])[0]?.id || 0),
+  };
+}
+
+const OUTBOX_MAX_ATTEMPTS = 5;
+const OUTBOX_DRAIN_BATCH = 50;
+let outboxDrainInFlight = false;
+
+// Claims pending outbox rows and marks each synced or failed; AppFolio push is a hook.
+async function drainMutationOutbox(): Promise<{ synced: number; failed: number }> {
+  if (outboxDrainInFlight) return { synced: 0, failed: 0 };
+  outboxDrainInFlight = true;
+  let synced = 0;
+  let failed = 0;
+  try {
+    const rows = await queryClient`
+      update handymgr_mutation_outbox
+         set status = 'in_flight', attempts = attempts + 1, updated_at = now()
+       where id in (
+         select id from handymgr_mutation_outbox
+          where status = 'sync_pending' and next_attempt_at <= now()
+          order by created_at
+          limit ${OUTBOX_DRAIN_BATCH}
+          for update skip locked
+       )
+      returning id, action, attempts, payload
+    `;
+    for (const row of rows as any[]) {
+      try {
+        // AppFolio push for turn_record_stage: no verified write endpoint yet.
+        await queryClient`
+          update handymgr_mutation_outbox
+             set status = 'synced', synced_at = now(), updated_at = now(), last_error = ''
+           where id = ${row.id}
+        `;
+        synced += 1;
+      } catch (error) {
+        const message = String((error as any)?.message || error).slice(0, 500);
+        const exhausted = Number(row.attempts) >= OUTBOX_MAX_ATTEMPTS;
+        await queryClient`
+          update handymgr_mutation_outbox
+             set status = ${exhausted ? 'failed' : 'sync_pending'},
+                 last_error = ${message},
+                 next_attempt_at = now() + (interval '30 seconds' * power(2, ${Number(row.attempts)})),
+                 updated_at = now()
+           where id = ${row.id}
+        `;
+        if (exhausted) failed += 1;
+      }
+    }
+  } finally {
+    outboxDrainInFlight = false;
+  }
+  return { synced, failed };
+}
+
+function startMutationOutboxDrain(): void {
+  const timer = setInterval(() => {
+    drainMutationOutbox().catch((error) => {
+      console.error('[outbox] drain failed:', String((error as any)?.message ?? error));
+    });
+  }, 60_000);
+  timer.unref?.();
+}
+
+async function respondRecentTasksFromLocal(): Promise<Record<string, unknown>> {
+  const snapshot = await readHydratedPayload('recent_tasks');
+  const results = Array.isArray(snapshot?.data) ? snapshot.data : [];
+  return { ok: true, results, count: results.length, source: snapshot ? 'postgres_local_snapshot' : 'postgres_local_miss' };
 }
 
 // Fire-and-forget: rate-gated AppFolio fetch whose result never blocks a frontend response.
 function hydrateInBackground(endpointKey: string, url: string, apiVersion: 'v0' | 'v2'): void {
   afFetch(url, { endpointKey, apiVersion })
+    .then((result) => {
+      if (!result.ok) return;
+      return persistHydratedPayload(endpointKey, result.data ?? {});
+    })
     .catch((error: unknown) => {
       console.warn(`[hydrate] background fetch failed for ${endpointKey}:`, String((error as any)?.message ?? error));
     });
+}
+
+// V0 GETs the frontend reads; each result is stored in appfolio_raw_responses under its path.
+const FRONTEND_V0_PATHS = [
+  '/api/v0/work_orders?page[size]=100',
+  '/api/v0/units?page[size]=100',
+  '/api/v0/tasks?page[size]=50',
+] as const;
+
+// V2 reports the frontend reads; payloads follow the required shape per report.
+const FRONTEND_V2_REPORTS: Array<{ report: string; extra: Record<string, unknown> }> = [
+  {
+    report: 'work_order',
+    extra: {
+      work_order_statuses: ['0', '1', '2', '9', '3', '6', '8', '12', '4', '5', '7'],
+    },
+  },
+  {
+    report: 'unit_turn_detail',
+    extra: {
+      unit_turn_status: 'All',
+    },
+  },
+];
+
+async function runFrontendHydration(): Promise<{ v0: number; v2: number; failed: number }> {
+  let v0 = 0;
+  let v2 = 0;
+  let failed = 0;
+
+  for (const path of FRONTEND_V0_PATHS) {
+    try {
+      const result = await afFetch(`${AF_DB_BASE}${path}`, {
+        endpointKey: `v0:${path.split('?')[0]}`,
+        apiVersion: 'v0',
+        method: 'GET',
+      });
+      if (!result.ok) { failed += 1; continue; }
+      await persistHydratedPayload(`v0:${path.split('?')[0]}`, result.data ?? {});
+      v0 += 1;
+    } catch (error) {
+      failed += 1;
+      console.warn(`[hydrate] v0 ${path} failed:`, String((error as any)?.message ?? error));
+    }
+  }
+
+  for (const { report, extra } of FRONTEND_V2_REPORTS) {
+    try {
+      const payload = {
+        property_visibility: 'active',
+        columns: [],
+        ...extra,
+      };
+      const cacheKey = buildReportCacheKey(report, payload);
+      const result = await afFetch(`${AF_REPORTS_BASE}/api/v2/reports/${report}.json`, {
+        endpointKey: `v2:${report}`,
+        apiVersion: 'v2',
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      if (!result.ok) { failed += 1; continue; }
+      await hydrateV2ReportCache(cacheKey, report, payload, extractReportRows(result.data ?? {}));
+      v2 += 1;
+    } catch (error) {
+      failed += 1;
+      console.warn(`[hydrate] v2 ${report} failed:`, String((error as any)?.message ?? error));
+    }
+  }
+
+  return { v0, v2, failed };
+}
+
+// Overwrites the endpoint's prior snapshot so the next local read returns fresh data.
+async function persistHydratedPayload(endpointKey: string, payload: unknown): Promise<void> {
+  const runId = `hydrate:${endpointKey}`;
+  await queryClient.begin(async (tx) => {
+    await tx`delete from appfolio_raw_responses where endpoint_key = ${endpointKey} and run_id = ${runId}`;
+    await tx`
+      insert into appfolio_raw_responses (run_id, endpoint_key, page_index, status_code, record_count, response_json)
+      values (${runId}, ${endpointKey}, 0, 200, ${Array.isArray((payload as any)?.data) ? (payload as any).data.length : 0}, ${tx.json(payload as any)})
+    `;
+  });
+}
+
+// Reads the latest hydrated snapshot for an endpoint, or null if none persisted.
+async function readHydratedPayload(endpointKey: string): Promise<any | null> {
+  const rows = await queryClient`
+    select response_json from appfolio_raw_responses
+     where endpoint_key = ${endpointKey} and run_id = ${`hydrate:${endpointKey}`}
+     order by fetched_at desc limit 1
+  `;
+  return (rows as any[])[0]?.response_json ?? null;
 }
 
 async function proxyAppFolioAction(req: Request, res: Response, apiPath: string): Promise<void> {
@@ -4389,10 +4589,15 @@ async function proxyAppFolioAction(req: Request, res: Response, apiPath: string)
     return;
   }
 
-  const targetBase = safePath.startsWith('/api/v0/') ? AF_DB_BASE : AF_REPORTS_BASE;
-  const targetUrl = `${targetBase}${safePath}`;
-  res.status(202).json({ ok: true, queued: true, source: 'postgres_local_pending_hydration', results: [], count: 0 });
-  hydrateInBackground(`passthrough:${safePath.split('?')[0]}`, targetUrl, safePath.startsWith('/api/v0/') ? 'v0' : 'v2');
+  const endpointKey = `passthrough:${safePath.split('?')[0]}`;
+  const snapshot = await readHydratedPayload(endpointKey);
+  if (snapshot) {
+    res.setHeader('x-handymgr-passthrough-source', 'postgres-snapshot');
+    res.status(200).json(snapshot);
+    return;
+  }
+  res.setHeader('x-handymgr-passthrough-source', 'postgres-miss');
+  res.status(200).json({ ok: true, results: [], count: 0, source: 'postgres_local_miss' });
 }
 
 function splitCsvParam(value: unknown): string[] {
@@ -4823,49 +5028,24 @@ async function proxyAppFolioV2Report(req: Request, res: Response, reportName: st
     return;
   }
 
-  const targetUrl = `${AF_REPORTS_BASE}/api/v2/reports/${safeReportName}.json`;
   const payload = buildV2ReportPayload(req, safeReportName);
   const cacheKey = buildReportCacheKey(safeReportName, payload);
-  const forceRefresh = /^(1|true|yes|on)$/i.test(String(req.query.force_refresh || '').trim());
   const cached = await readCachedV2Report(cacheKey);
-
-  if (cached && !forceRefresh) {
-    res.setHeader('x-handymgr-report-source', cached.fresh ? 'postgres-cache' : 'postgres-stale-cache');
-    res.json({
-      ok: true,
-      results: cached.rows,
-      count: cached.rows.length,
-      source: cached.fresh ? 'postgres_v2_report_cache' : 'postgres_v2_report_cache_stale',
-      fetched_at: cached.fetchedAt,
-    });
-    if (cached.fresh || reportHydrationInFlight.has(cacheKey)) return;
-
-    void (async () => {
-      const refresh = await afFetch(targetUrl, { endpointKey: `v2:${safeReportName}`, apiVersion: 'v2', method: 'POST', body: JSON.stringify(payload) });
-      if (!refresh.ok) throw new Error(`HTTP ${refresh.status}: ${String(refresh.errorText ?? '').slice(0, 300)}`);
-      const refreshRows = extractReportRows(refresh.data ?? {});
-      if (shouldHydrateReport(refreshRows.length, REPORT_CACHE_ROW_THRESHOLD)) {
-        await hydrateV2ReportCache(cacheKey, safeReportName, payload, refreshRows);
-      }
-    })().catch((error) => console.error(`[v2-report-cache] background refresh failed for ${safeReportName}:`, error));
-    return;
-  }
 
   if (!cached) {
     res.setHeader('x-handymgr-report-source', 'postgres-miss');
     res.json({ ok: true, results: [], count: 0, source: 'postgres_v2_report_cache_miss', fetched_at: null });
-    void (async () => {
-      const miss = await afFetch(targetUrl, { endpointKey: `v2:${safeReportName}`, apiVersion: 'v2', method: 'POST', body: JSON.stringify(payload) });
-      if (!miss.ok) return;
-      const missRows = extractReportRows(miss.data ?? {});
-      if (shouldHydrateReport(missRows.length, REPORT_CACHE_ROW_THRESHOLD)) {
-        await hydrateV2ReportCache(cacheKey, safeReportName, payload, missRows);
-      }
-    })().catch((error) => console.error(`[v2-report-cache] background hydrate failed for ${safeReportName}:`, error));
     return;
   }
 
-  return;
+  res.setHeader('x-handymgr-report-source', cached.fresh ? 'postgres-cache' : 'postgres-stale-cache');
+  res.json({
+    ok: true,
+    results: cached.rows,
+    count: cached.rows.length,
+    source: cached.fresh ? 'postgres_v2_report_cache' : 'postgres_v2_report_cache_stale',
+    fetched_at: cached.fetchedAt,
+  });
 }
 
 async function fetchV2ReportRows(req: Request, reportName: string, payload: Record<string, unknown>): Promise<any[]> {
@@ -5060,7 +5240,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     try {
       const session = await requireProxySession(req, res);
       if (!session) return;
-      res.json(respondRecentTasksFromLocal());
+      res.json(await respondRecentTasksFromLocal());
     } catch (error) {
       logTunnelError(error, '/api?action=recent_tasks');
       res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Recent tasks proxy failed') });
@@ -5406,6 +5586,19 @@ const legacyActionRoutes = {
   unit_turns_history: async (req: Request, res: Response) => {
     const params = toActionParams(req);
     res.json(await readUnitTurnsHistoryFromDb(params));
+  },
+  turn_record_stage: async (req: Request, res: Response) => {
+    const session = await requireProxySession(req, res);
+    if (!session) return;
+    const turnKey = String(req.body?.id ?? '').trim();
+    const stage = String(req.body?.stage ?? '').trim();
+    const data = req.body?.data && typeof req.body.data === 'object' ? req.body.data : {};
+    if (!turnKey || !stage) {
+      res.status(400).json({ ok: false, error: 'id and stage are required' });
+      return;
+    }
+    const outcome = await enqueueTurnStageMutation(turnKey, stage, data);
+    res.status(202).json({ ok: true, queued: true, sync_status: 'sync_pending', ...outcome });
   },
   unit_turns_sync: async (req: Request, res: Response) => {
     const session = await requireProxySession(req, res);
@@ -5769,7 +5962,7 @@ app.get('/api/local/recent_tasks', async (req: Request, res: Response) => {
   try {
     const session = await requireProxySession(req, res);
     if (!session) return;
-    res.json(respondRecentTasksFromLocal());
+    res.json(await respondRecentTasksFromLocal());
   } catch (error) {
     logTunnelError(error, '/api/local/recent_tasks');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Recent tasks query failed') });
@@ -10834,6 +11027,8 @@ function startRecurringSyncScheduler(): void {
         endpointGroups.v0.concat(endpointGroups.other, endpointGroups.v2),
         (endpointKey) => runEndpoint(endpointKey, triggerType),
       );
+      const hydration = await runFrontendHydration();
+      console.log('[server:sync-scheduler] frontend hydration', hydration);
       syncSchedulerState.lastTickFinishedAt = new Date().toISOString();
     } finally {
       tickInFlight = false;
@@ -11006,6 +11201,7 @@ app.listen(PORT, HOST, () => {
       const { failInterruptedRuns } = await import('./sync/runStore.ts');
       await failInterruptedRuns(processStartedAt);
       startRecurringSyncScheduler();
+      startMutationOutboxDrain();
     } catch (error) {
       console.error('[server] Startup schema repair failed; sync scheduler not started:', String((error as any)?.message || error));
     }

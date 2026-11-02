@@ -10907,7 +10907,7 @@ function renderTurnDashboardStrip() {
     }
     return '<button class="turn-dash-card ' + statusTone + '" data-turndash-open="' + escapeHtml(p.id) + '">' +
       '<div class="turn-dash-card-head"><div><div class="turn-dash-unit">' + escapeHtml(p.unit || 'Unit') + '</div><div class="turn-dash-property">' + escapeHtml(p.property || '') + '</div></div><span class="turn-dash-pm">' + pmName + '</span></div>' +
-      '<div class="turn-dash-status">' + escapeHtml(statusLabel) + '</div>' +
+      '<div class="turn-dash-status">' + escapeHtml(statusLabel) + (TURN_SYNC_PENDING[p.id] ? ' <span class="sync-pending-badge"><i class="fas fa-sync fa-spin"></i> Syncing…</span>' : '') + '</div>' +
       '<div class="turn-dash-progress"><div class="turn-dash-progress-fill" style="width:' + progressPct + '%"></div></div>' +
       '<div class="turn-dash-metrics">' +
         '<span class="turn-dash-metric"><strong>' + Math.max(0, p.elapsed) + 'd</strong> elapsed</span>' +
@@ -20811,12 +20811,19 @@ async function closeTurn(turnId) {
   }
 }
 
+// Turn ids with a stage write queued in the outbox (drives the "Syncing" badge).
+var TURN_SYNC_PENDING = {};
+
 // Save a turn record stage to proxy
 async function saveTurnRecordStage(turnId, stage, stageData) {
+  TURN_SYNC_PENDING[turnId] = true;
   try {
     await proxyPost('turn_record_stage', { id: turnId, stage: stage, data: stageData });
   } catch (err) {
     console.log('Save stage error: ' + (err.message || err));
+  } finally {
+    delete TURN_SYNC_PENDING[turnId];
+    renderTurnBoard();
   }
 }
 
