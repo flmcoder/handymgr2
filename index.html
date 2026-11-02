@@ -265,6 +265,10 @@
           <h4>PM Workload Comparison</h4>
           <span class="dashboard-insight-card__meta" id="dashPmLoadMeta">Loading…</span>
         </header>
+        <div class="dash-filter-toggle" role="group" aria-label="Owner filter">
+          <button type="button" class="is-active" data-dash-owner-filter="all">All owners</button>
+          <button type="button" data-dash-owner-filter="active">Active assignees only</button>
+        </div>
         <div class="billing-mini-chart" id="dashPmLoadChart"></div>
       </article>
       <article class="dashboard-insight-card" id="dashInsightWoTypeCard">
@@ -318,7 +322,7 @@
           <h4>Geocoded Inspection Map</h4>
           <span class="dashboard-insight-card__meta" id="dashInspectionMapMeta">Loading…</span>
         </header>
-        <div class="billing-mini-chart" id="dashInspectionMap" style="min-height:260px"></div>
+        <div class="billing-mini-chart" id="dashInspectionMap" style="min-height:300px;height:300px"></div>
       </article>
     </div>
   </div>

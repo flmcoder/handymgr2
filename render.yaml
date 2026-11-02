@@ -55,6 +55,8 @@ projects:
         sync: false
       - key: SYNC_SCHEDULER_V2_ENABLED
         value: "true"
+      - key: SYNC_SCHEDULER_INTERVAL_MINUTES
+        value: "15"
       region: oregon
       buildCommand: npm install && npm run build
       startCommand: npm start

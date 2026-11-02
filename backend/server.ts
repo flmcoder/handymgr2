@@ -11,6 +11,7 @@ import { db, pingDatabase, queryClient } from './db';
 import * as schema from './schema';
 import * as deviceAuthHandlers from './deviceAuth';
 import { AF_DB_BASE, AF_REPORTS_BASE, afHeaders, afReportCredentialMode } from './sync/afCredentials';
+import { afFetch } from './sync/fetchWorker';
 import {
   buildReportCacheKey,
   chunkReportRows,
@@ -4368,6 +4369,19 @@ function applyProxySessionScope(req: Request, res: Response, session: any): bool
   return true;
 }
 
+function respondRecentTasksFromLocal(): Record<string, unknown> {
+  hydrateInBackground('recent_tasks', `${AF_DB_BASE}/api/v0/tasks?page[size]=50`, 'v0');
+  return { ok: true, results: [], count: 0, source: 'postgres_local_pending_hydration' };
+}
+
+// Fire-and-forget: rate-gated AppFolio fetch whose result never blocks a frontend response.
+function hydrateInBackground(endpointKey: string, url: string, apiVersion: 'v0' | 'v2'): void {
+  afFetch(url, { endpointKey, apiVersion })
+    .catch((error: unknown) => {
+      console.warn(`[hydrate] background fetch failed for ${endpointKey}:`, String((error as any)?.message ?? error));
+    });
+}
+
 async function proxyAppFolioAction(req: Request, res: Response, apiPath: string): Promise<void> {
   const safePath = String(apiPath || '').trim();
   if (!safePath.startsWith('/api/v0/') && !safePath.startsWith('/api/v2/')) {
@@ -4377,27 +4391,8 @@ async function proxyAppFolioAction(req: Request, res: Response, apiPath: string)
 
   const targetBase = safePath.startsWith('/api/v0/') ? AF_DB_BASE : AF_REPORTS_BASE;
   const targetUrl = `${targetBase}${safePath}`;
-  const method = String(req.method || 'GET').toUpperCase();
-  const headers: Record<string, string> = {
-    ...afHeaders(safePath.startsWith('/api/v0/') ? 'v0' : 'v2'),
-  };
-
-  let body: string | undefined;
-  if (method !== 'GET' && method !== 'HEAD') {
-    headers['Content-Type'] = String(req.headers['content-type'] || 'application/json');
-    body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
-  }
-
-  const upstream = await fetch(targetUrl, {
-    method,
-    headers,
-    body,
-  });
-
-  const text = await upstream.text();
-  res.status(upstream.status);
-  res.setHeader('content-type', upstream.headers.get('content-type') || 'application/json; charset=utf-8');
-  res.send(text);
+  res.status(202).json({ ok: true, queued: true, source: 'postgres_local_pending_hydration', results: [], count: 0 });
+  hydrateInBackground(`passthrough:${safePath.split('?')[0]}`, targetUrl, safePath.startsWith('/api/v0/') ? 'v0' : 'v2');
 }
 
 function splitCsvParam(value: unknown): string[] {
@@ -4846,15 +4841,9 @@ async function proxyAppFolioV2Report(req: Request, res: Response, reportName: st
     if (cached.fresh || reportHydrationInFlight.has(cacheKey)) return;
 
     void (async () => {
-      const refreshResponse = await fetch(targetUrl, {
-        method: 'POST',
-        headers: afHeaders('v2'),
-        body: JSON.stringify(payload),
-      });
-      const refreshText = await refreshResponse.text();
-      if (!refreshResponse.ok) throw new Error(`HTTP ${refreshResponse.status}: ${refreshText.slice(0, 300)}`);
-      const refreshPayload = refreshText ? JSON.parse(refreshText) : {};
-      const refreshRows = extractReportRows(refreshPayload);
+      const refresh = await afFetch(targetUrl, { endpointKey: `v2:${safeReportName}`, apiVersion: 'v2', method: 'POST', body: JSON.stringify(payload) });
+      if (!refresh.ok) throw new Error(`HTTP ${refresh.status}: ${String(refresh.errorText ?? '').slice(0, 300)}`);
+      const refreshRows = extractReportRows(refresh.data ?? {});
       if (shouldHydrateReport(refreshRows.length, REPORT_CACHE_ROW_THRESHOLD)) {
         await hydrateV2ReportCache(cacheKey, safeReportName, payload, refreshRows);
       }
@@ -4862,41 +4851,21 @@ async function proxyAppFolioV2Report(req: Request, res: Response, reportName: st
     return;
   }
 
-  const upstream = await fetch(targetUrl, {
-    method: 'POST',
-    headers: afHeaders('v2'),
-    body: JSON.stringify(payload),
-  });
-
-  const text = await upstream.text();
-  if (upstream.status === 401) {
-    res.status(401).json({
-      ok: false,
-      status: 401,
-      error: 'HTTP Basic: Access denied.',
-      hint: 'AppFolio Reports API credentials were rejected. Verify AF_REPORTS_CLIENT_ID/AF_REPORTS_CLIENT_SECRET (or AF_V2_* aliases) for this database.',
-      credential_mode: afReportCredentialMode(),
-      report: safeReportName,
-    });
+  if (!cached) {
+    res.setHeader('x-handymgr-report-source', 'postgres-miss');
+    res.json({ ok: true, results: [], count: 0, source: 'postgres_v2_report_cache_miss', fetched_at: null });
+    void (async () => {
+      const miss = await afFetch(targetUrl, { endpointKey: `v2:${safeReportName}`, apiVersion: 'v2', method: 'POST', body: JSON.stringify(payload) });
+      if (!miss.ok) return;
+      const missRows = extractReportRows(miss.data ?? {});
+      if (shouldHydrateReport(missRows.length, REPORT_CACHE_ROW_THRESHOLD)) {
+        await hydrateV2ReportCache(cacheKey, safeReportName, payload, missRows);
+      }
+    })().catch((error) => console.error(`[v2-report-cache] background hydrate failed for ${safeReportName}:`, error));
     return;
   }
 
-  if (upstream.ok) {
-    try {
-      const parsed = text ? JSON.parse(text) : {};
-      const rows = extractReportRows(parsed);
-      if (shouldHydrateReport(rows.length, REPORT_CACHE_ROW_THRESHOLD)) {
-        void hydrateV2ReportCache(cacheKey, safeReportName, payload, rows);
-        res.setHeader('x-handymgr-report-hydration', 'started');
-      }
-    } catch (error) {
-      console.warn(`[v2-report-cache] unable to inspect ${safeReportName} response:`, error);
-    }
-  }
-
-  res.status(upstream.status);
-  res.setHeader('content-type', upstream.headers.get('content-type') || 'application/json; charset=utf-8');
-  res.send(text);
+  return;
 }
 
 async function fetchV2ReportRows(req: Request, reportName: string, payload: Record<string, unknown>): Promise<any[]> {
@@ -5091,23 +5060,7 @@ app.all(['/', '/api', '/api/'], async (req: Request, res: Response, next: NextFu
     try {
       const session = await requireProxySession(req, res);
       if (!session) return;
-
-      const upstream = await fetch(`${AF_DB_BASE}/api/v0/tasks?page[size]=50`, {
-        headers: afHeaders('v0'),
-      });
-      const text = await upstream.text();
-      let parsed: any = {};
-      try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
-      const results = Array.isArray(parsed?.data)
-        ? parsed.data
-        : (Array.isArray(parsed?.results) ? parsed.results : []);
-
-      if (!upstream.ok) {
-        res.json({ ok: true, results: [], count: 0, warning: 'Tasks API unavailable for this account', source: 'appfolio_live' });
-        return;
-      }
-
-      res.json({ ok: true, results, count: results.length, source: 'appfolio_live' });
+      res.json(respondRecentTasksFromLocal());
     } catch (error) {
       logTunnelError(error, '/api?action=recent_tasks');
       res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Recent tasks proxy failed') });
@@ -5816,23 +5769,7 @@ app.get('/api/local/recent_tasks', async (req: Request, res: Response) => {
   try {
     const session = await requireProxySession(req, res);
     if (!session) return;
-
-    const upstream = await fetch(`${AF_DB_BASE}/api/v0/tasks?page[size]=50`, {
-      headers: afHeaders('v0'),
-    });
-    const text = await upstream.text();
-    let parsed: any = {};
-    try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
-    const results = Array.isArray(parsed?.data)
-      ? parsed.data
-      : (Array.isArray(parsed?.results) ? parsed.results : []);
-
-    if (!upstream.ok) {
-      res.json({ ok: true, results: [], count: 0, warning: 'Tasks API unavailable for this account', source: 'appfolio_live' });
-      return;
-    }
-
-    res.json({ ok: true, results, count: results.length, source: 'appfolio_live' });
+    res.json(respondRecentTasksFromLocal());
   } catch (error) {
     logTunnelError(error, '/api/local/recent_tasks');
     res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Recent tasks query failed') });

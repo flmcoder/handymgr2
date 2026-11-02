@@ -728,3 +728,28 @@ export const appfolioPatchQueue = pgTable(
     statusPriorityIdx: index('appfolio_patch_queue_status_priority_idx').on(table.status, table.priority, table.id),
   }),
 );
+
+// Durable optimistic-write outbox drained by the background AppFolio worker.
+export const handymgrMutationOutbox = pgTable(
+  'handymgr_mutation_outbox',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    entityType: text('entity_type').notNull(),
+    entityId: text('entity_id').notNull(),
+    action: text('action').notNull(),
+    payload: jsonb('payload').notNull().default({}),
+    status: text('status').notNull().default('sync_pending'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).defaultNow().notNull(),
+    lastError: text('last_error').notNull().default(''),
+    appfolioResponse: jsonb('appfolio_response').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }),
+  },
+  (table) => ({
+    idempotencyIdx: unique('handymgr_mutation_outbox_idempotency_idx').on(table.idempotencyKey),
+    drainIdx: index('handymgr_mutation_outbox_drain_idx').on(table.status, table.nextAttemptAt),
+  }),
+);

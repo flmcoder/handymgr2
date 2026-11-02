@@ -4798,7 +4798,13 @@ html.dark .turn-dash-ticker-item strong{color:#e8ecf5}
 .turn-dash-row-pill.upcoming{background:var(--info-dim);color:var(--info)}
 .turn-dash-row-pill.active{background:var(--success-dim);color:var(--success)}
 @media(max-width:1100px){.turn-dash-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:768px){.turn-dash-strip{grid-template-columns:1fr}.turn-dash-controls{width:100%;justify-content:space-between}}
+@media(max-width:768px){
+  .turn-dash-strip{display:flex;grid-template-columns:none;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;gap:10px;padding-bottom:6px;overscroll-behavior-x:contain}
+  .turn-dash-strip > .turn-dash-card{flex:0 0 88%;scroll-snap-align:center;scroll-snap-stop:always}
+  .turn-dash-strip.compact-mode{display:flex;flex-direction:column;overflow-x:visible;scroll-snap-type:none}
+  .turn-dash-strip.compact-mode > .turn-dash-row{scroll-snap-align:none}
+  .turn-dash-controls{width:100%;justify-content:space-between}
+}
 
 /* TV oversight mode (dashboard-focused, navigation always visible) */
 body.tv-mode .main-content { max-width: 100vw; }
@@ -5177,7 +5183,7 @@ body.tv-mode-dashboard .turn-dash-controls .action-btn { font-size: 12px; }
 
   .dashboard-insight-grid { grid-template-columns: 1fr !important; padding: 8px; gap: 8px; }
   .dashboard-insight-card .billing-mini-chart { min-height: 220px; }
-  #dashboardEchartsSection .billing-mini-chart { min-height: 240px !important; }
+  #dashboardEchartsSection .billing-mini-chart:not(#dashTurnoverFunnel) { min-height: 240px !important; }
   .dashboard-visual-lane { gap: 10px; }
   .visual-panel__body { padding: 12px; }
   .action-board { grid-template-columns: 1fr; padding: 8px; gap: 8px; }
@@ -5887,7 +5893,27 @@ html.dark .form-textarea { background: var(--bg-input); border-color: var(--bord
 }
 
 #woModal .wo-status-current strong { color: var(--accent); font-size: 13px; }
-#woModal .wo-modal-status-chart { width: 100%; height: 126px; }
+.dash-filter-toggle { display: inline-flex; gap: 4px; margin-bottom: 6px; }
+.dash-filter-toggle button { font-size: 11px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); cursor: pointer; }
+.dash-filter-toggle button.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.map-empty-state { display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; min-height: 300px; padding: 16px; text-align: center; font-size: 12px; color: var(--text-muted); border: 1px dashed var(--border); border-radius: 8px; }
+.heavy-chart-fallback-title { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+.heavy-chart-fallback { list-style: none; margin: 0; padding: 0; }
+.heavy-chart-fallback li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.heavy-chart-fallback__rank { width: 18px; color: var(--text-muted); font-family: var(--font-mono); }
+.heavy-chart-fallback__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heavy-chart-fallback__value { font-weight: 700; font-family: var(--font-mono); }
+#woModal .wo-modal-status-chart { width: 100%; }
+#woModal .wo-stepper { display: flex; list-style: none; margin: 0; padding: 0; }
+#woModal .wo-stepper__step { flex: 1; display: flex; flex-direction: column; align-items: center; position: relative; text-align: center; }
+#woModal .wo-stepper__step::before { content: ''; position: absolute; top: 11px; left: -50%; right: 50%; height: 2px; background: var(--border); z-index: 0; }
+#woModal .wo-stepper__step:first-child::before { display: none; }
+#woModal .wo-stepper__step.is-done::before, #woModal .wo-stepper__step.is-current::before { background: var(--accent); }
+#woModal .wo-stepper__dot { position: relative; z-index: 1; width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: var(--bg-card); border: 2px solid var(--border); color: var(--text-muted); }
+#woModal .wo-stepper__step.is-done .wo-stepper__dot { background: var(--accent); border-color: var(--accent); color: #fff; }
+#woModal .wo-stepper__step.is-current .wo-stepper__dot { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+#woModal .wo-stepper__label { margin-top: 6px; font-size: 10px; color: var(--text-muted); }
+#woModal .wo-stepper__step.is-current .wo-stepper__label { color: var(--accent); font-weight: 700; }
 #woModal .wo-modal-rail .note-list { max-height: 260px; }
 #woModal #detailNoteError { white-space: pre-line; }
 
@@ -7558,7 +7584,7 @@ html.dark #sec-workorders .hm-ag-theme .ag-grid-scrolling-rows {
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 767px) {
   .wo-kpi-strip { grid-template-columns: 1fr 1fr; }
   .wo-kpi-card {
     grid-template-columns: minmax(0, 1fr) 52px;

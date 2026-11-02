@@ -6574,6 +6574,11 @@ function markNavBadgeFailed() {
   setNavBadge('woBadge', '0');
   setNavBadge('turnBadge', '0');
   setNavBadge('inspBadge', '0');
+  // Re-render the dashboard KPI in the same tick so it cannot keep '…' after the badges fall back to 0.
+  var activeTab = document.querySelector('.nav-tab.active');
+  if (activeTab && activeTab.getAttribute('data-tab') === 'dashboard') {
+    try { renderDashboardKPIs(); } catch (e) { console.error('renderDashboardKPIs failed after badge failure:', e); }
+  }
 }
 
 function applyNavBadgeTotals() {
@@ -8036,7 +8041,8 @@ function getInspectionCompliance(row, nowRef) {
 function getTurnInspectionSlaState(turn, nowRef) {
   var now = nowRef || new Date();
   var insp = turn && turn.stages && turn.stages.inspection;
-  var date = insp && insp.done ? toValidDateOrNull(insp.date) : null;
+  // Turn-engine evidence takes precedence; a null date for an active turn is non-compliant.
+  var date = toValidDateOrNull(turn && turn.inspectionDate) || (insp && insp.done ? toValidDateOrNull(insp.date) : null);
   var missing = !date;
   var daysSince = date ? daysBetween(date, now) : null;
   var compliant = !missing && daysSince <= CONFIG.TURN_INSPECTION_SLA_DAYS;
@@ -14230,6 +14236,21 @@ async function fetchDashboardStats() {
   return request;
 }
 
+var _dashOwnerFilter = 'all'; // 'all' | 'active'
+
+function setDashOwnerFilter(mode) {
+  _dashOwnerFilter = mode === 'active' ? 'active' : 'all';
+  document.querySelectorAll('[data-dash-owner-filter]').forEach(function(btn) {
+    btn.classList.toggle('is-active', btn.getAttribute('data-dash-owner-filter') === _dashOwnerFilter);
+  });
+  renderDashboardInsightCharts();
+}
+
+document.addEventListener('click', function(event) {
+  var btn = event.target && event.target.closest ? event.target.closest('[data-dash-owner-filter]') : null;
+  if (btn) setDashOwnerFilter(btn.getAttribute('data-dash-owner-filter'));
+});
+
 async function renderDashboardInsightCharts(openWOs, urgentWOs) {
   void openWOs;
   void urgentWOs;
@@ -14272,7 +14293,10 @@ async function renderDashboardInsightCharts(openWOs, urgentWOs) {
     return;
   }
 
-  var pmRows = (data.by_owner || []).slice(0, 6);
+  var ownerFilter = _dashOwnerFilter;
+  var pmRows = (data.by_owner || []).filter(function(r) {
+    return ownerFilter === 'all' || !/^unassigned/i.test(String(r.label || ''));
+  }).slice(0, 6);
   var propertyRows = (data.by_property || []).slice(0, 6);
   var statusRows = (data.by_status || []).slice(0, 6);
   var woTypeRows = (data.by_type || []).slice(0, 6);
@@ -14380,14 +14404,27 @@ function renderDashboardGeoCharts(force) {
     return;
   }
 
+  function showMapEmptyState(message) {
+    if (mapMeta) mapMeta.textContent = message;
+    var existing = echartsCore.getInstanceByDom(mapEl);
+    if (existing) existing.dispose();
+    mapEl.innerHTML = '<div class="map-empty-state"><i class="fas fa-map-marker-alt"></i> No valid location data available for current selection.</div>';
+  }
+
   function renderMapWithCoords(withCoords) {
-    var filteredCoords = withCoords;
+    var filteredCoords = (Array.isArray(withCoords) ? withCoords : []).filter(function(c) {
+      return c && Number.isFinite(Number(c._lat)) && Number.isFinite(Number(c._lon)) &&
+        Number.isFinite(Number(c._x)) && Number.isFinite(Number(c._y));
+    });
     if (!filteredCoords.length) {
-      if (mapMeta) mapMeta.textContent = 'No mapped properties in scope';
-      var existingMap = echartsCore.getInstanceByDom(mapEl);
-      if (existingMap) existingMap.clear();
+      showMapEmptyState('No mapped properties in scope');
       return;
     }
+    if (!mapEl.offsetWidth || !mapEl.offsetHeight) {
+      showMapEmptyState('Map container has no size');
+      return;
+    }
+    mapEl.innerHTML = '';
     var existingMap = echartsCore.getInstanceByDom(mapEl);
     if (existingMap) existingMap.dispose();
     var mapChart = echartsCore.init(mapEl, null, { renderer: 'canvas' });
@@ -14422,9 +14459,7 @@ function renderDashboardGeoCharts(force) {
     var mapData = await fetchChartAnalytics('inspections');
     if (readinessGeneration !== _initialCriticalDataGeneration || mapGeneration !== _chartAnalyticsGeneration || mapScope !== (getEffectiveGroupUuid() || '__all__')) return;
     if (!mapData || !(mapData.by_property || []).length) {
-      if (mapMeta) mapMeta.textContent = 'No inspection data';
-      var existingMapEmpty = echartsCore.getInstanceByDom(mapEl);
-      if (existingMapEmpty) existingMapEmpty.clear();
+      showMapEmptyState('No inspection data');
       return;
     }
 
@@ -14480,6 +14515,9 @@ function renderDashboardGeoCharts(force) {
     renderMapWithCoords(_geocodedCache);
   }).catch(function(error) {
     console.warn('[inspection-map] deferred map loading failed:', String(error && error.message || error || 'unknown error'));
+    if (readinessGeneration === _initialCriticalDataGeneration) {
+      try { showMapEmptyState('Map unavailable'); } catch (e) { /* container missing; nothing to recover */ }
+    }
   }).finally(function() {
     if (_geocodeRunKey === runKey) _geocodeRunKey = '';
     if (readinessGeneration === _initialCriticalDataGeneration && (mapGeneration !== _chartAnalyticsGeneration || mapScope !== (getEffectiveGroupUuid() || '__all__'))) {
@@ -14497,6 +14535,23 @@ function renderDashboardGeoCharts(force) {
 var _sunburstRenderedKey = '';
 var _dashboardUnitsLoadPromise = null;
 
+var HEAVY_CHART_MOBILE_QUERY = window.matchMedia ? window.matchMedia('(max-width: 767px)') : null;
+
+function isHeavyChartMobile() {
+  return !!(HEAVY_CHART_MOBILE_QUERY && HEAVY_CHART_MOBILE_QUERY.matches);
+}
+
+function renderTop5Fallback(el, title, rows) {
+  if (!el) return;
+  var html = '<ol class="heavy-chart-fallback">';
+  rows.slice(0, 5).forEach(function(row, index) {
+    html += '<li><span class="heavy-chart-fallback__rank">' + (index + 1) + '</span>' +
+      '<span class="heavy-chart-fallback__label">' + escapeHtml(String(row.label || '')) + '</span>' +
+      '<span class="heavy-chart-fallback__value">' + Number(row.value || 0).toLocaleString() + '</span></li>';
+  });
+  el.innerHTML = '<div class="heavy-chart-fallback-title">' + escapeHtml(title) + '</div>' + html + '</ol>';
+}
+
 function fetchAndRenderPortfolioSunburst(force) {
   var buildSunburst = window.buildPortfolioSunburstOption;
   var echartsCore   = window.echartsCore;
@@ -14505,6 +14560,17 @@ function fetchAndRenderPortfolioSunburst(force) {
   var el   = document.getElementById('dashPortfolioSunburst');
   var meta = document.getElementById('dashPortfolioSunburstMeta');
   if (!el) return;
+
+  if (isHeavyChartMobile()) {
+    var mobileProps = (PROPERTIES || []).map(function(property) {
+      return { label: String(property.name || 'Property'), value: (_unitsByPropertyId[String(property.id || '')] || []).length };
+    }).filter(function(row) { return row.value > 0; }).sort(function(a, b) { return b.value - a.value; });
+    var existingMobile = echartsCore.getInstanceByDom(el);
+    if (existingMobile) existingMobile.dispose();
+    renderTop5Fallback(el, 'Top 5 properties by units', mobileProps);
+    if (meta) meta.textContent = mobileProps.length + ' properties';
+    return;
+  }
 
   var grpUuid = getEffectiveGroupUuid();
   var grpName = currentPropertyGroup;
@@ -14607,6 +14673,17 @@ function renderWoSankey() {
         count: Number(row.value || 0),
       };
     }).filter(function(row) { return row.count > 0; }) : [];
+    if (isHeavyChartMobile()) {
+      var existingMobile = echartsCore.getInstanceByDom(el);
+      if (existingMobile) existingMobile.dispose();
+      var byStatus = {};
+      rows.forEach(function(row) { byStatus[row.status] = (byStatus[row.status] || 0) + row.count; });
+      renderTop5Fallback(el, 'Top 5 work order statuses', Object.keys(byStatus).map(function(k) {
+        return { label: k, value: byStatus[k] };
+      }).sort(function(a, b) { return b.value - a.value; }));
+      if (meta) meta.textContent = 'Top 5 of ' + rows.length + ' status groups';
+      return;
+    }
     if (!rows.length) {
       if (meta) meta.textContent = 'No work orders';
       var existingEmpty = echartsCore.getInstanceByDom(el);
@@ -14860,7 +14937,6 @@ var WO_CHARTS = {
   kpiUnassigned: null,
   kpiAging: null
 };
-var WO_MODAL_STATUS_CHART = null;
 var WO_CHART_RESIZE_OBSERVER = null;
 var WO_THEME_OBSERVER = null;
 var WO_VENDOR_SPEND_CACHE = { key: '', rows: [] };
@@ -18119,8 +18195,7 @@ function destroyChartInstance(chart) {
 
 function renderWOModalStatusChart(wo) {
   var host = document.getElementById('woModalStatusChart');
-  if (!host || !(echarts && typeof echarts.init === 'function')) return;
-  destroyChartInstance(WO_MODAL_STATUS_CHART);
+  if (!host) return;
   var stages = ['New', 'Assigned', 'Scheduled', 'Work Done', 'Completed'];
   var normalized = String((wo && wo.status) || '').trim().toLowerCase();
   var stageIndex = 0;
@@ -18128,28 +18203,14 @@ function renderWOModalStatusChart(wo) {
   if (normalized.indexOf('schedul') !== -1 || normalized.indexOf('waiting') !== -1) stageIndex = 2;
   if (normalized.indexOf('work done') !== -1 || normalized.indexOf('ready to bill') !== -1) stageIndex = 3;
   if (isTerminalWOStatus(normalized)) stageIndex = 4;
-  WO_MODAL_STATUS_CHART = echarts.init(host, null, { renderer: 'canvas' });
-  WO_MODAL_STATUS_CHART.setOption({
-    animationDuration: 450,
-    grid: { left: 10, right: 10, top: 12, bottom: 28, containLabel: false },
-    xAxis: {
-      type: 'category',
-      data: stages,
-      axisLine: { lineStyle: { color: '#7b8496' } },
-      axisTick: { show: false },
-      axisLabel: { color: '#7b8496', fontSize: 9, interval: 0 }
-    },
-    yAxis: { type: 'value', min: 0, max: 1, show: false },
-    tooltip: { trigger: 'item', formatter: function(params) { return params.name; } },
-    series: [{
-      type: 'bar',
-      barWidth: 12,
-      data: stages.map(function(_, index) {
-        return { value: 1, itemStyle: { color: index <= stageIndex ? '#0f8d91' : '#d9dee7', borderRadius: [3, 3, 0, 0] } };
-      })
-    }]
-  }, { notMerge: true });
-  requestAnimationFrame(function() { if (WO_MODAL_STATUS_CHART) WO_MODAL_STATUS_CHART.resize(); });
+  var html = '<ol class="wo-stepper">';
+  stages.forEach(function(label, index) {
+    var state = index < stageIndex ? 'is-done' : index === stageIndex ? 'is-current' : 'is-pending';
+    html += '<li class="wo-stepper__step ' + state + '"' + (index === stageIndex ? ' aria-current="step"' : '') + '>' +
+      '<span class="wo-stepper__dot">' + (index < stageIndex ? '<i class="fas fa-check"></i>' : (index + 1)) + '</span>' +
+      '<span class="wo-stepper__label">' + label + '</span></li>';
+  });
+  host.innerHTML = html + '</ol>';
 }
 
 function ensureWOChart(chart, element) {
@@ -18871,7 +18932,7 @@ async function renderWOVendorSpendChart() {
 }
 function getWorkOrderGridColumnDefs(rows) {
   var rowList = Array.isArray(rows) ? rows : [];
-  var isMobileQueue = typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 680px)').matches;
+  var isMobileQueue = typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 767px)').matches;
   
   function columnHasData(field) {
     return rowList.some(function(row) {
@@ -18959,7 +19020,7 @@ function renderWorkOrdersGrid(rows) {
       return params.data && params.data.__raw && params.data.__raw.canOpen === false ? 'wo-row-restricted' : '';
     },
     getRowHeight: function() {
-      return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 680px)').matches ? 112 : undefined;
+      return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 767px)').matches ? 112 : undefined;
     },
     overlayNoRowsTemplate: '<span style="padding:10px;color:var(--text-muted)">No work orders match the current filters.</span>',
     defaultColDef: {
@@ -21487,6 +21548,7 @@ function buildTurnPipeline() {
       sla: sla,
       costNum: costNum,
       totalBilled: totalBilledStr,
+      inspectionDate: (dbTurnMatch && dbTurnMatch.inspectionDate) || '',
       milestones11: (dbTurnMatch && dbTurnMatch.milestones11) || [],
       milestonesCompleted: (dbTurnMatch && dbTurnMatch.milestonesCompleted) || 0,
       completionPercent: (dbTurnMatch && dbTurnMatch.completionPercent) || 0,
@@ -26476,6 +26538,8 @@ async function sectionRefresh(section, btn) {
       renderTurnBoard();
     }
     if (section === 'inspections' || section === 'dashboard') {
+      // Rebuild derived inspection stages from fresh data before any dashboard alert is evaluated.
+      try { buildTurnPipeline(); } catch (e) { console.error('buildTurnPipeline failed after inspections refresh:', e); TURN_PIPE_DATA = []; }
       showToast('Refreshing inspections\u2026');
       await fetchInspections();
       renderInspections($('#inspSearch') ? $('#inspSearch').value : '');

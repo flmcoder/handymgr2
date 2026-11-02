@@ -90,7 +90,7 @@ Alternate names (`RINGCENTRAL_*`) are also read by backend and should be kept co
 | `WEBHOOK_JWKS_TTL_MS` | JWKS cache TTL | No | Render Dashboard |
 | `INTERNAL_SYNC_TOKEN` | Protect internal sync routes | Yes | Render Dashboard |
 | `SYNC_SCHEDULER_ENABLED` | Toggle scheduler | No | Render Dashboard |
-| `SYNC_SCHEDULER_INTERVAL_MINUTES` | Run interval | No | Render Dashboard |
+| `SYNC_SCHEDULER_INTERVAL_MINUTES` | Run interval (minimum 5, default 30; render.yaml sets 15) | No | render.yaml |
 | `SYNC_SCHEDULER_ENDPOINTS` | Endpoint allowlist | No | Render Dashboard |
 | `SYNC_SCHEDULER_BILLS_ENABLED` | Require recurring v0 bill cache sync; defaults to true | No | Render Dashboard |
 | `SYNC_SCHEDULER_MAX_PAGES` | Page cap per run | No | Render Dashboard |
