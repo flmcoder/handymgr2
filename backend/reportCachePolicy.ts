@@ -4,38 +4,28 @@ export const DEFAULT_REPORT_CACHE_ROW_THRESHOLD = 5_000;
 export const DEFAULT_REPORT_CACHE_BATCH_SIZE = 500;
 export const DEFAULT_REPORT_CACHE_TTL_MS = 30 * 60_000;
 
-function stableValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableValue);
-  if (!value || typeof value !== 'object') return value;
-
-  return Object.keys(value as Record<string, unknown>)
-    .sort()
-    .reduce<Record<string, unknown>>((result, key) => {
-      result[key] = stableValue((value as Record<string, unknown>)[key]);
-      return result;
-    }, {});
-}
-
-// Empty scope containers mean "all", so they are dropped before hashing.
-const EMPTY_SCOPE_KEYS = ['properties_ids', 'property_groups_ids', 'portfolios_ids', 'owners_ids'] as const;
-
-function withoutEmptyScopes(payload: Record<string, unknown>): Record<string, unknown> {
-  const properties = payload.properties;
-  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return payload;
-  const scopes = properties as Record<string, unknown>;
-  const kept: Record<string, unknown> = {};
-  for (const key of Object.keys(scopes)) {
-    const value = scopes[key];
-    const isEmptyScope = (EMPTY_SCOPE_KEYS as readonly string[]).includes(key) && Array.isArray(value) && value.length === 0;
-    if (!isEmptyScope) kept[key] = value;
+// Recursively drops null, undefined, empty arrays, and empty objects, then sorts keys,
+// so semantically empty fields hash the same whether a client sent them or not.
+function normalizeForKey(value: unknown): unknown {
+  if (value === null || value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    const items = value.map(normalizeForKey).filter((item) => item !== undefined);
+    return items.length ? items : undefined;
   }
-  const { properties: _ignored, ...rest } = payload;
-  return Object.keys(kept).length ? { ...rest, properties: kept } : rest;
+  if (typeof value !== 'object') return value;
+
+  const normalized: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    const child = normalizeForKey((value as Record<string, unknown>)[key]);
+    if (child !== undefined) normalized[key] = child;
+  }
+  return Object.keys(normalized).length ? normalized : undefined;
 }
 
 export function buildReportCacheKey(reportName: string, payload: Record<string, unknown>): string {
+  const normalized = normalizeForKey(payload) ?? {};
   return createHash('sha256')
-    .update(JSON.stringify({ reportName, payload: stableValue(withoutEmptyScopes(payload)) }))
+    .update(JSON.stringify({ reportName, payload: normalized }))
     .digest('hex');
 }
 
