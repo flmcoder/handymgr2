@@ -10945,6 +10945,17 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ ok: false, error: error.message || 'Unhandled server error' });
 });
 
+const SYNC_ENDPOINT_TIMEOUT_MS = Math.max(60_000, Number(process.env.SYNC_ENDPOINT_TIMEOUT_MS || '600000') || 600_000);
+
+// Rejects a sync that hangs so the scheduler's in-flight guard is always released.
+function withSyncTimeout<T>(work: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`sync ${label} exceeded ${timeoutMs}ms`)), timeoutMs);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
 function startRecurringSyncScheduler(): void {
   const enabled = !/^(0|false|no|off)$/i.test(String(process.env.SYNC_SCHEDULER_ENABLED || 'true').trim());
   syncSchedulerState.enabled = enabled;
@@ -10993,7 +11004,11 @@ function startRecurringSyncScheduler(): void {
     syncSchedulerState.inFlightEndpoints = Array.from(inFlight.values());
     try {
       const { runSync } = await import('./sync/syncRunner.ts');
-      const summary = await runSync({ endpointKey, triggerType, maxPages });
+      const summary = await withSyncTimeout(
+        runSync({ endpointKey, triggerType, maxPages }),
+        SYNC_ENDPOINT_TIMEOUT_MS,
+        endpointKey,
+      );
       syncSchedulerState.endpointSummaries[endpointKey] = {
         ...summary,
         updated_at: new Date().toISOString(),
