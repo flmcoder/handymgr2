@@ -227,21 +227,24 @@
         <div class="table-title"><i class="fas fa-film" style="color:var(--accent)"></i> Turn Progress Dashboard</div>
         <div class="section-subtitle">Click any card to jump to the turn board for more details.</div>
       </div>
-      <div class="turn-dash-controls">
-        <select id="dashTurnPmFilter" class="form-select" style="font-size:12px;padding:5px 10px;min-width:150px;font-family:var(--font-mono)">
-          <option value="">All PMs</option>
-        </select>
-        <select id="dashTurnViewMode" class="form-select" style="font-size:12px;padding:5px 10px;min-width:140px;font-family:var(--font-mono)">
-          <option value="cards">Card View</option>
-          <option value="compact">Compact View</option>
-        </select>
-        <button class="action-btn" id="dashTurnSync" type="button"><i class="fas fa-bolt"></i> Sync</button>
-        <span id="dashTurnSyncAgo" style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Never synced</span>
-        <button class="action-btn" id="dashTvMode" type="button"><i class="fas fa-tv"></i> TV Mode</button>
-        <button class="action-btn" id="dashTurnPrev" type="button"><i class="fas fa-chevron-left"></i></button>
-        <div class="turn-dash-page-label" id="dashTurnPageLabel">1 / 1</div>
-        <button class="action-btn" id="dashTurnNext" type="button"><i class="fas fa-chevron-right"></i></button>
-      </div>
+      <details class="turn-dash-filters">
+        <summary class="turn-dash-filters__summary"><i class="fas fa-sliders-h"></i> Filters</summary>
+        <div class="turn-dash-controls">
+          <select id="dashTurnPmFilter" class="form-select" style="font-size:12px;padding:5px 10px;min-width:150px;font-family:var(--font-mono)">
+            <option value="">All PMs</option>
+          </select>
+          <select id="dashTurnViewMode" class="form-select" style="font-size:12px;padding:5px 10px;min-width:140px;font-family:var(--font-mono)">
+            <option value="cards">Card View</option>
+            <option value="compact">Compact View</option>
+          </select>
+          <button class="action-btn" id="dashTurnSync" type="button"><i class="fas fa-bolt"></i> Sync</button>
+          <span id="dashTurnSyncAgo" style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">Never synced</span>
+          <button class="action-btn" id="dashTvMode" type="button"><i class="fas fa-tv"></i> TV Mode</button>
+          <button class="action-btn" id="dashTurnPrev" type="button"><i class="fas fa-chevron-left"></i></button>
+          <div class="turn-dash-page-label" id="dashTurnPageLabel">1 / 1</div>
+          <button class="action-btn" id="dashTurnNext" type="button"><i class="fas fa-chevron-right"></i></button>
+        </div>
+      </details>
     </div>
     <div class="turn-dash-ticker" id="dashTurnTicker" style="display:none">
       <div class="turn-dash-ticker-track" id="dashTurnTickerTrack"></div>

@@ -74,7 +74,7 @@ test('pool options enable keep-alive, recycling, and exponential reconnect backo
   assert.equal(options.max_lifetime, 1_800);
   assert.equal(options.connect_timeout, 15);
   assert.equal(options.idle_timeout, 20);
-  assert.equal(options.max, 10);
+  assert.equal(options.max, 25);
   const first = options.backoff(0);
   const later = options.backoff(10);
   assert.ok(first >= 0.5 && first <= 0.7, String(first));

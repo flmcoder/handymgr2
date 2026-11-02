@@ -124,7 +124,7 @@ export function buildPostgresResilienceOptions(
   const backoffBaseMs = envNumber(env, 'DB_BACKOFF_BASE_MS', 500, 50);
   const backoffMaxMs = envNumber(env, 'DB_BACKOFF_MAX_MS', 15_000, backoffBaseMs);
   return {
-    max: Math.floor(envNumber(env, 'DB_POOL_MAX', 10, 1)),
+    max: Math.floor(envNumber(env, 'DB_POOL_MAX', 25, 1)),
     idle_timeout: envNumber(env, 'DB_IDLE_TIMEOUT', 20, 0),
     connect_timeout: envNumber(env, 'DB_CONNECT_TIMEOUT', 15, 1),
     max_lifetime: envNumber(env, 'DB_MAX_LIFETIME', 1_800, 60),

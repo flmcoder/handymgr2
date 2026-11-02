@@ -4750,6 +4750,11 @@ th.sortable.desc::after { content: '\f0dd'; opacity: 1; color: var(--accent); }
 
 /* Turn Progress Dashboard */
 .turn-dash-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.turn-dash-filters{position:relative}
+.turn-dash-filters__summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-card);user-select:none}
+.turn-dash-filters__summary::-webkit-details-marker{display:none}
+.turn-dash-filters[open] .turn-dash-filters__summary{border-color:var(--accent);color:var(--accent)}
+.turn-dash-filters[open] .turn-dash-controls{margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)}
 .turn-dash-page-label{min-width:52px;text-align:center;font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
 .turn-dash-summary{padding:0 14px 12px;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono)}
 .turn-dash-ticker{margin:0 14px 10px;padding:6px 10px;border:1px solid var(--border-light);border-radius:6px;background:var(--bg-secondary);overflow:hidden}

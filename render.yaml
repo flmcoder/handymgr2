@@ -57,6 +57,8 @@ projects:
         value: "true"
       - key: SYNC_SCHEDULER_INTERVAL_MINUTES
         value: "15"
+      - key: DB_POOL_MAX
+        value: "25"
       region: oregon
       buildCommand: npm install && npm run build
       startCommand: npm start
