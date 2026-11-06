@@ -4492,9 +4492,9 @@ function hydrateInBackground(endpointKey: string, url: string, apiVersion: 'v0' 
 
 // V0 GETs the frontend reads; each result is stored in appfolio_raw_responses under its path.
 const FRONTEND_V0_PATHS = [
-  '/api/v0/work_orders?page[size]=100',
-  '/api/v0/units?page[size]=100',
-  '/api/v0/tasks?page[size]=50',
+  '/api/v0/work_orders?page%5Bsize%5D=100',
+  '/api/v0/units?page%5Bsize%5D=100',
+  '/api/v0/tasks?page%5Bsize%5D=50',
 ] as const;
 
 // V2 reports the frontend reads; payloads follow the required shape per report.
@@ -6578,8 +6578,31 @@ app.get('/api/local/db_search', async (req: Request, res: Response) => {
 app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
   try {
     const scopeIds = getPropertyGroupFilters(req);
-    const scope = scopeIds.length ? scopeIds : null;
+    const snapshot = await readHydratedPayload(badgeSnapshotKey(scopeIds));
+    if (snapshot) {
+      res.setHeader('x-handymgr-badge-source', 'postgres-snapshot');
+      res.json(snapshot);
+      return;
+    }
+    res.setHeader('x-handymgr-badge-source', 'postgres-miss');
+    res.json(emptyBadgeCountsPayload(scopeIds));
+  } catch (error) {
+    logTunnelError(error, '/api/local/badge_counts');
+    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Badge counts failed') });
+  }
+});
 
+function badgeSnapshotKey(scopeIds: string[]): string {
+  return `badge_counts:${scopeIds.slice().sort().join(',') || 'all'}`;
+}
+
+function emptyBadgeCountsPayload(scopeIds: string[]): Record<string, unknown> {
+  return buildBadgeCountsPayload({ propertyGroupId: scopeIds.join(',') }) as unknown as Record<string, unknown>;
+}
+
+// Runs the badge aggregates for one scope; called by the scheduler, never by a request.
+async function computeBadgeCountsPayload(scopeIds: string[]): Promise<Record<string, unknown>> {
+  const scope = scopeIds.length ? scopeIds : null;
     const woAggregateSql = `
       select
         count(*)::int as total,
@@ -6632,33 +6655,27 @@ app.get('/api/local/badge_counts', async (req: Request, res: Response) => {
     const [woRows, turnRows, inspRows] = await Promise.all([woPromise, turnPromise, inspPromise]);
     const turnMetrics = (turnRows as any[])[0] || {};
     const workOrderMetrics = (woRows as any[])[0] || {};
-    const payloadBase = buildBadgeCountsPayload({
-      workOrders: workOrderMetrics.total,
-      urgentWorkOrders: workOrderMetrics.urgent_total,
-      workOrdersAge0To7: workOrderMetrics.age_0_7,
-      workOrdersAge8To30: workOrderMetrics.age_8_30,
-      workOrdersAge31To60: workOrderMetrics.age_31_60,
-      workOrdersAge61Plus: workOrderMetrics.age_61_plus,
-      workOrdersAgeUnknown: workOrderMetrics.age_unknown,
-      turns: turnMetrics.turns,
-      upcomingTurns: turnMetrics.upcoming_turns,
-      inspections: (inspRows as any[])[0]?.total,
-      propertyGroupId: scopeIds.join(','),
-    });
-    // Add priority/ready metrics for dashboard attention (non-breaking).
-    const payload: any = {
-      ...payloadBase,
-      turns_priority: Number(turnMetrics.turns_priority || 0),
-      turns_ready_to_close: Number(turnMetrics.turns_ready_to_close || 0),
-      turns_6mo_plus: Number(turnMetrics.turns_6mo_plus || 0),
-      turns_all_active: Number(turnMetrics.turns || 0),
-    };
-    res.json(payload);
-  } catch (error) {
-    logTunnelError(error, '/api/local/badge_counts');
-    res.status(500).json({ ok: false, error: String((error as any)?.message || error || 'Badge counts failed') });
-  }
-});
+  const payloadBase = buildBadgeCountsPayload({
+    workOrders: workOrderMetrics.total,
+    urgentWorkOrders: workOrderMetrics.urgent_total,
+    workOrdersAge0To7: workOrderMetrics.age_0_7,
+    workOrdersAge8To30: workOrderMetrics.age_8_30,
+    workOrdersAge31To60: workOrderMetrics.age_31_60,
+    workOrdersAge61Plus: workOrderMetrics.age_61_plus,
+    workOrdersAgeUnknown: workOrderMetrics.age_unknown,
+    turns: turnMetrics.turns,
+    upcomingTurns: turnMetrics.upcoming_turns,
+    inspections: (inspRows as any[])[0]?.total,
+    propertyGroupId: scopeIds.join(','),
+  });
+  return {
+    ...payloadBase,
+    turns_priority: Number(turnMetrics.turns_priority || 0),
+    turns_ready_to_close: Number(turnMetrics.turns_ready_to_close || 0),
+    turns_6mo_plus: Number(turnMetrics.turns_6mo_plus || 0),
+    turns_all_active: Number(turnMetrics.turns || 0),
+  };
+}
 
 // Server-side aggregates for the dashboard charts. Same predicates as
 // badge_counts, so chart totals reconcile with badges and lists.
@@ -11044,6 +11061,7 @@ function startRecurringSyncScheduler(): void {
       );
       const hydration = await runFrontendHydration();
       console.log('[server:sync-scheduler] frontend hydration', hydration);
+      await persistHydratedPayload(badgeSnapshotKey([]), await computeBadgeCountsPayload([]));
       syncSchedulerState.lastTickFinishedAt = new Date().toISOString();
     } finally {
       tickInFlight = false;
